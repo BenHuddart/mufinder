@@ -6,7 +6,15 @@ from uuid import uuid4
 
 from PySide6.QtCore import QItemSelectionModel, Qt
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QComboBox, QDialog, QMessageBox, QPushButton, QToolButton
+from PySide6.QtWidgets import (
+    QApplication,
+    QComboBox,
+    QDialog,
+    QHeaderView,
+    QMessageBox,
+    QPushButton,
+    QToolButton,
+)
 
 from mufinder.app import workflow_table_utils
 from mufinder.app import selection_snapshot as selection_snapshot_module
@@ -14,6 +22,7 @@ from mufinder.app.selection_snapshot import SelectionScope
 from mufinder.app.muon_relaxation_widget import MuonRelaxationWidget
 from mufinder.app.param_dialog import ParameterDialog
 from mufinder.app.relaxation_types import RelaxationRunState
+from mufinder.app.theme import THEME_LIGHT, apply_theme
 from mufinder.castep_io.gui_metadata import keyword_visible_in_workflow
 from mufinder.app.workflow_table_utils import EXPORT_RELAXED_STRUCTURE_ACTION_TEXT
 from mufinder.castep_io.types import ValueWithUnit
@@ -67,6 +76,53 @@ def test_muon_relaxation_widget_tabbed_tables_use_square_corner_theme(qapp) -> N
     for table in widget._tables_by_charge_state.values():
         assert table.property("tabbedTable") == "true"
         assert table.property("squareTopCorners") == "true"
+
+
+def test_muon_relaxation_widget_label_and_supercell_can_be_dragged(qapp) -> None:
+    widget = MuonRelaxationWidget()
+
+    for table in widget._tables_by_charge_state.values():
+        header = table.horizontalHeader()
+        for column in (widget._LABEL_COLUMN, widget._SUPERCELL_COLUMN):
+            assert header.sectionResizeMode(column) == QHeaderView.ResizeMode.Interactive
+        assert (
+            header.sectionResizeMode(widget._INITIAL_FX_COLUMN)
+            == QHeaderView.ResizeMode.ResizeToContents
+        )
+
+
+def test_muon_table_fits_the_default_window_in_its_worst_realistic_row(qapp) -> None:
+    # 893 px is the table's viewport at the 1280x864 default window with a vertical scrollbar.
+    apply_theme(qapp, THEME_LIGHT)
+    view = MuonRelaxationWidget()
+    view.resize(964, 600)
+    view.add_staged_sites(
+        [
+            {
+                "id": str(uuid4()),
+                "label": f"Attached-F Site {index}",
+                "fractional_position": [0.123, 0.456, 0.789],
+            }
+            for index in range(40)
+        ]
+    )
+    view.show()
+    table = view._table
+    view.set_runtime_states(
+        {
+            view._submission_key_at_row(row, table=table): RelaxationRunState(
+                status="not converged",
+                total_energy=-144985.741,
+                final_fractional_position=(0.123, 0.456, 0.789),
+            )
+            for row in range(table.rowCount())
+        }
+    )
+    QApplication.processEvents()
+
+    assert table.item(0, view._STATUS_COLUMN).text() == "not converged"
+    assert table.horizontalHeader().length() <= 893
+    view.close()
 
 
 def test_muon_relaxation_widget_exposes_geometry_optimization_parameters(qapp) -> None:

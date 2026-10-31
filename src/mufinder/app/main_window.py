@@ -6,7 +6,6 @@ from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import replace
 from datetime import UTC, datetime
 from functools import partial
-import html
 import logging
 from pathlib import Path
 import posixpath
@@ -16,6 +15,7 @@ from uuid import UUID, uuid4
 
 from PySide6.QtCore import (
     QByteArray,
+    QEvent,
     QEventLoop,
     QSize,
     QSettings,
@@ -54,6 +54,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QProgressDialog,
     QPushButton,
+    QSplitter,
     QStackedWidget,
     QStatusBar,
     QTableWidget,
@@ -96,7 +97,6 @@ from mufinder.app.comparison_table_widget import ComparisonTablesPage
 from mufinder.app.blocking_call import run_blocking_call
 from mufinder.app.cluster_ui_utils import (
     format_cluster_connection_error,
-    make_message_box_resizable,
     prompt_for_cluster_credentials,
     prompt_to_trust_host_key,
     show_detailed_warning,
@@ -143,8 +143,9 @@ from mufinder.app.relaxation_adapter import (
 from mufinder.app.adapter_common import (
     IDENTITY_SUPERCELL,
     AdapterExpansion,
+    KpointAdjustment,
     coerce_supercell_matrix,
-    summarize_kpoint_adjustments,
+    kpoint_adjustment_status,
 )
 from mufinder.app.relaxation_types import (
     MuonRelaxationConfig,
@@ -489,6 +490,7 @@ class MainWindow(QMainWindow):
     _LAST_DIALOG_DIR_KEY = "ui/last_dialog_dir"
     _LAST_DIALOG_DIR_BY_CONTEXT_PREFIX = "ui/last_dialog_dir_by_context"
     _RECENT_PROJECTS_KEY = "ui/recent_projects"
+    _PROJECT_NAVIGATOR_WIDTH_KEY = "ui/project_navigator_width"
     # Quiet-period debounce for dashboard flushes: an isolated lifecycle event
     # (a single job completing with nothing else nearby) flushes this long
     # after the last request, so it still feels prompt.
@@ -531,8 +533,10 @@ class MainWindow(QMainWindow):
         _JOB_RESET_COLUMN,
         _JOB_DISMISS_COLUMN,
     )
+    # Both the default and the minimum: it fits a workspace label such as "Positive
+    # muon sites" at the deepest indent, with room for a scrollbar.
     _PROJECT_TREE_MIN_WIDTH = 220
-    _PROJECT_TREE_MAX_WIDTH = 300
+    _PROJECT_TREE_MAX_SAVED_WIDTH = 4096
     _ACTIVE_CONVERGENCE_DEFINITION_KEY = ConvergenceCutoffController.active_key
     _ACTIVE_KPOINT_DEFINITION_KEY = ConvergenceKpointController.active_key
     _ACTIVE_PRISTINE_RELAXATION_DEFINITION_KEY = PristineRelaxationController.active_key
@@ -554,6 +558,8 @@ class MainWindow(QMainWindow):
         super().__init__()
         self._project_service = ProjectService()
         self._document: ProjectDocument | None = None
+        self._kpoint_adjustments: tuple[KpointAdjustment, ...] = ()
+        self._kpoint_status_note = ""
         # Tracks whether the job dashboard is actually visible to the user.
         # Driven by jobs_dock.visibilityChanged, which (unlike isHidden())
         # also reports False on window minimize / tabbed-dock obscuring.
@@ -1085,6 +1091,10 @@ class MainWindow(QMainWindow):
         )
         self._workflow_controllers.append(self._energy_barriers_controller)
         self._journal_view = JournalWidget()
+        self._journal_view.set_route_checker(
+            lambda route: self._find_tree_item_by_route(route) is not None
+        )
+        self._journal_view.open_route_requested.connect(self.show_page)
         self._main_stack.addWidget(self._home_page)
         self._main_stack.addWidget(self._host_structure_view)
         self._main_stack.addWidget(self._convergence_overview_view)
@@ -1193,10 +1203,14 @@ class MainWindow(QMainWindow):
         central = QWidget()
         central_layout = QHBoxLayout(central)
 
-        self._project_tree_panel = QFrame(central)
+        self._navigator_splitter = QSplitter(Qt.Orientation.Horizontal, central)
+        self._navigator_splitter.setObjectName("projectNavigatorSplitter")
+        self._navigator_splitter.setChildrenCollapsible(False)
+        self._navigator_splitter.setHandleWidth(6)
+
+        self._project_tree_panel = QFrame(self._navigator_splitter)
         self._project_tree_panel.setObjectName("projectTreePanel")
         self._project_tree_panel.setMinimumWidth(self._PROJECT_TREE_MIN_WIDTH)
-        self._project_tree_panel.setMaximumWidth(self._PROJECT_TREE_MAX_WIDTH)
         project_tree_layout = QVBoxLayout(self._project_tree_panel)
         project_tree_layout.setContentsMargins(0, 0, 0, 0)
         project_tree_layout.setSpacing(0)
@@ -1232,9 +1246,18 @@ class MainWindow(QMainWindow):
         project_tree_body_layout.addWidget(self._project_tree, 1)
         project_tree_layout.addWidget(self._project_tree_body, 1)
 
-        central_layout.addWidget(self._project_tree_panel, 1)
-
-        central_layout.addWidget(self._main_stack, 3)
+        self._navigator_splitter.addWidget(self._project_tree_panel)
+        self._navigator_splitter.addWidget(self._main_stack)
+        self._navigator_splitter.handle(1).setAccessibleName("Resize project navigator")
+        # Window resizes go to the pages; the navigator keeps its width.
+        self._navigator_splitter.setStretchFactor(0, 0)
+        self._navigator_splitter.setStretchFactor(1, 1)
+        self._navigator_splitter.setSizes([self._saved_navigator_width(), self.width()])
+        self._navigator_splitter.handle(1).installEventFilter(self)
+        self._navigator_width_in_drag = self._project_tree_panel.width()
+        self._dragged_navigator_width: int | None = None
+        self._navigator_splitter.splitterMoved.connect(self._on_navigator_splitter_moved)
+        central_layout.addWidget(self._navigator_splitter)
         self.setCentralWidget(central)
 
         jobs_dock = QDockWidget("Job Dashboard", self)
@@ -1261,11 +1284,45 @@ class MainWindow(QMainWindow):
         self._jobs_backspace_shortcut.activated.connect(self._on_dashboard_delete_key_requested)
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, jobs_dock)
 
+    def _saved_navigator_width(self) -> int:
+        raw_value = self._settings.value(
+            self._PROJECT_NAVIGATOR_WIDTH_KEY, self._PROJECT_TREE_MIN_WIDTH
+        )
+        try:
+            width = int(raw_value)
+        except (TypeError, ValueError):
+            return self._PROJECT_TREE_MIN_WIDTH
+        if not self._PROJECT_TREE_MIN_WIDTH <= width <= self._PROJECT_TREE_MAX_SAVED_WIDTH:
+            return self._PROJECT_TREE_MIN_WIDTH
+        return width
+
+    def eventFilter(self, watched, event) -> bool:  # noqa: N802 - Qt API naming.
+        if (
+            event.type() == QEvent.Type.MouseButtonPress
+            and watched is self._navigator_splitter.handle(1)
+        ):
+            self._navigator_width_in_drag = self._project_tree_panel.width()
+        return super().eventFilter(watched, event)
+
+    def _on_navigator_splitter_moved(self, _position: int, _index: int) -> None:
+        # Only a drag lands here, so a window too narrow for the chosen width
+        # squeezes the navigator for now without changing the width closeEvent saves.
+        # The signal also fires for a drag the page minimum blocks; that one chose nothing.
+        width = self._project_tree_panel.width()
+        if width == self._navigator_width_in_drag:
+            return
+        self._navigator_width_in_drag = width
+        self._dragged_navigator_width = width
+
     def closeEvent(self, event) -> None:  # noqa: N802 - Qt API naming.
         if getattr(self, "_shutting_down", False):
             super().closeEvent(event)
             return
         self._settings.setValue(self._MAIN_WINDOW_GEOMETRY_KEY, self.saveGeometry())
+        if self._dragged_navigator_width is not None:
+            self._settings.setValue(
+                self._PROJECT_NAVIGATOR_WIDTH_KEY, self._dragged_navigator_width
+            )
         job_runtime_timer = getattr(self, "_job_runtime_timer", None)
         if job_runtime_timer is not None:
             job_runtime_timer.stop()
@@ -2274,28 +2331,22 @@ class MainWindow(QMainWindow):
         return workspace_id or None
 
     def _workflow_definitions(self) -> tuple[WorkflowDefinition, ...]:
-        def stage(
-            key: str, subtitle: str = "", children: tuple[WorkflowDefinition, ...] = ()
-        ) -> WorkflowDefinition:
+        def stage(key: str, children: tuple[WorkflowDefinition, ...] = ()) -> WorkflowDefinition:
             info = stage_info(key)
             return WorkflowDefinition(
                 key=key,
                 title=info.title,
-                subtitle=subtitle,
                 route=key,
                 completion_goal=info.completion_goal,
                 completion_check=COMPLETION_CHECKS[key],
                 children=children,
             )
 
-        def group(
-            key: str, subtitle: str, children: tuple[WorkflowDefinition, ...]
-        ) -> WorkflowDefinition:
+        def group(key: str, children: tuple[WorkflowDefinition, ...]) -> WorkflowDefinition:
             info = stage_group(key)
             return WorkflowDefinition(
                 key=key,
                 title=info.title,
-                subtitle=subtitle,
                 route=key,
                 completion_goal=info.completion_goal,
                 completion_check=COMPLETION_CHECKS[key],
@@ -2334,29 +2385,21 @@ class MainWindow(QMainWindow):
         )
 
         return (
-            stage("host_structure", "Load and inspect crystal"),
-            group(
-                "convergence",
-                "Find stable settings",
-                (
-                    stage("convergence_cutoff", "Accuracy check"),
-                    stage("convergence_kpoint", "Sampling check"),
-                ),
-            ),
-            stage("pristine_relaxation", "Optional cleanup"),
-            stage("uep", "Electrostatic screening"),
+            stage("host_structure"),
+            group("convergence", (stage("convergence_cutoff"), stage("convergence_kpoint"))),
+            stage("pristine_relaxation"),
+            stage("uep"),
             group(
                 "muon_sites",
-                "Place and refine muons",
                 (
                     stage("muon_candidates"),
                     stage("muon_relaxations"),
-                    stage("muon_analysis", children=analysis_workspaces),
+                    stage("muon_analysis", analysis_workspaces),
                 ),
             ),
-            stage("hyperfine_coupling", "Contact field and muonium"),
-            stage("magnetic_fields", "Build magnetic model", magnetic_workspaces),
-            stage("polarisation", "Simulate the μSR signal"),
+            stage("hyperfine_coupling"),
+            stage("magnetic_fields", magnetic_workspaces),
+            stage("polarisation"),
             stage("quantum_corrections"),
             stage("energy_barriers"),
             WorkflowDefinition(key="provenance_log", title="Journal", route="provenance_log"),
@@ -4483,7 +4526,7 @@ class MainWindow(QMainWindow):
                 if success_message is not None
                 else f"Submitted {plural(outcome.submitted_count, 'local job')}"
             )
-            self.statusBar().showMessage(message)
+            self.statusBar().showMessage(self._with_kpoint_status_note(message))
 
     def _submit_jobs_on_cluster(
         self,
@@ -4753,7 +4796,7 @@ class MainWindow(QMainWindow):
                 if success_message is not None
                 else f"Submitted {plural(submitted, 'cluster job')} on {cluster_name}"
             )
-            self.statusBar().showMessage(message)
+            self.statusBar().showMessage(self._with_kpoint_status_note(message))
 
     def _connect_for_cluster_submission(
         self, cluster: ClusterConfig, dialog_credentials: SSHCredentials | None
@@ -5726,6 +5769,7 @@ class MainWindow(QMainWindow):
             request_dashboard_flush=lambda **kwargs: self._request_dashboard_flush(**kwargs),
             persist_ui_state=lambda **kwargs: self._persist_document_ui_state(**kwargs),
             status_message=lambda message: self.statusBar().showMessage(message),
+            set_submitted_rows=lambda keys: self._set_submitted_rows(keys),
             definition_output_directory=lambda definition: definition_output_directory(
                 self._document, definition
             ),
@@ -6689,8 +6733,7 @@ class MainWindow(QMainWindow):
             return
 
         self._refresh_host_structure_view()
-        self._convergence_controller.refresh_simulation_cell()
-        self._kpoint_convergence_controller.refresh_simulation_cell()
+        self._refresh_sweep_simulation_cells()
         self._refresh_workflow_defaults(self._pristine_relaxation_view)
         self._pristine_relaxation_controller.refresh_view()
         self._refresh_convergence_overview()
@@ -7489,9 +7532,12 @@ class MainWindow(QMainWindow):
         self._document.ui_state["convergence_form"] = state
         self._convergence_controller.refresh_view()
 
-    def _refresh_all_supercell_options(self) -> None:
+    def _refresh_sweep_simulation_cells(self) -> None:
         self._convergence_controller.refresh_simulation_cell()
         self._kpoint_convergence_controller.refresh_simulation_cell()
+
+    def _refresh_all_supercell_options(self) -> None:
+        self._refresh_sweep_simulation_cells()
         self._refresh_workflow_supercell_options(self._pristine_relaxation_view)
         self._refresh_workflow_supercell_options(self._muon_relaxation_view)
         self._refresh_workflow_supercell_options(self._uep_view)
@@ -9177,32 +9223,24 @@ class MainWindow(QMainWindow):
             missing_source="Load a host structure before configuring muon-relaxation supercells.",
         )
 
-    def _notify_kpoint_adjustments(self, expansion: AdapterExpansion) -> None:
-        """Summarise the rows whose project k-point grid was rescaled.
+    def _note_kpoint_adjustments(self, expansion: AdapterExpansion) -> None:
+        """Keep the rows whose project k-point grid was rescaled for the coming submission."""
 
-        Rows with the same cell and grid change share one summary line, so the
-        dialog stays short however many rows are submitted; the per-row list
-        sits behind Show Details. Shown as a dialog so the note is not
-        overwritten by the trailing ``statusBar`` confirmation on the
-        configure path.
-        """
+        self._kpoint_adjustments = expansion.kpoint_adjustments
 
-        summary = summarize_kpoint_adjustments(expansion.kpoint_adjustments)
-        if summary is None:
-            return
-        box = make_message_box_resizable(QMessageBox(self))
-        box.setIcon(QMessageBox.Icon.Information)
-        box.setWindowTitle("K-point grids adjusted")
-        box.setText(summary.headline)
-        # Keep each grouped line whole: the box widens to fit rather than wrapping.
-        box.setInformativeText(
-            "<br>".join(f"<nobr>{html.escape(line)}</nobr>" for line in summary.body.splitlines())
+    def _set_submitted_rows(self, keys: Sequence[object]) -> None:
+        """Word the rescaled-grid note for the rows being submitted; ``()`` ends the note."""
+
+        submitted = {str(key) for key in keys}
+        self._kpoint_status_note = kpoint_adjustment_status(
+            [item for item in self._kpoint_adjustments if item.row_key in submitted]
         )
-        if len(expansion.kpoint_adjustments) > 1:
-            box.setDetailedText(summary.details)
-        box.setStandardButtons(QMessageBox.StandardButton.Ok)
-        box.setDefaultButton(QMessageBox.StandardButton.Ok)
-        box.exec()
+        self._kpoint_adjustments = ()
+
+    def _with_kpoint_status_note(self, message: str) -> str:
+        """Return a submission's status ``message`` with the rescaled-grid note, if any."""
+
+        return f"{message}; {self._kpoint_status_note}" if self._kpoint_status_note else message
 
     def _on_pristine_relaxation_configured(self, config: PristineRelaxationConfig) -> None:
         if self._document is None:
@@ -9230,7 +9268,7 @@ class MainWindow(QMainWindow):
         except (ValueError, StructureBridgeError) as exc:
             QMessageBox.warning(self, "Pristine relaxation setup invalid", str(exc))
             return
-        self._notify_kpoint_adjustments(expansion)
+        self._note_kpoint_adjustments(expansion)
 
         output_root = self._document.project_root / "files" / "pristine_relaxation"
         definition = self._project_service.register_pristine_relaxation_definition(
@@ -9274,7 +9312,7 @@ class MainWindow(QMainWindow):
         except (ValueError, StructureBridgeError) as exc:
             QMessageBox.warning(self, "Muon relaxation setup invalid", str(exc))
             return
-        self._notify_kpoint_adjustments(expansion)
+        self._note_kpoint_adjustments(expansion)
         output_root = self._document.project_root / "files" / "muon_relaxation"
         definition = self._project_service.register_muon_relaxation_definition(
             self._document,
@@ -9601,7 +9639,7 @@ class MainWindow(QMainWindow):
         except (ValueError, StructureBridgeError) as exc:
             QMessageBox.warning(self, "UEP setup invalid", str(exc))
             return
-        self._notify_kpoint_adjustments(expansion)
+        self._note_kpoint_adjustments(expansion)
 
         output_root = self._document.project_root / "files" / "uep"
         definition = self._project_service.register_uep_definition(
@@ -9913,6 +9951,7 @@ class MainWindow(QMainWindow):
         except ValueError:
             return
         self._refresh_host_structure_view()
+        self._refresh_sweep_simulation_cells()
         self._refresh_muon_generation_table()
         self._refresh_muon_relaxation_rows()
         # Drop the summary's pins that are keyed to the old host.
@@ -9963,6 +10002,7 @@ class MainWindow(QMainWindow):
                 try:
                     self._project_service.set_active_host_structure(self._document, source_id)
                     self._refresh_host_structure_view()
+                    self._refresh_sweep_simulation_cells()
                     self._refresh_muon_generation_table()
                     self._refresh_muon_relaxation_rows()
                     return True
@@ -10018,6 +10058,7 @@ class MainWindow(QMainWindow):
                 try:
                     self._project_service.set_active_host_structure(self._document, source_id)
                     self._refresh_host_structure_view()
+                    self._refresh_sweep_simulation_cells()
                     self._refresh_muon_generation_table()
                     self._refresh_muon_relaxation_rows()
                     return True

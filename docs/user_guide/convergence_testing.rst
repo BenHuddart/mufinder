@@ -52,9 +52,9 @@ Converge the cutoff first, then the k-point grid: the k-point sweep takes the
 adopted cutoff as its default ``CUT_OFF_ENERGY``.
 
 1. **Open the cutoff sweep.** Select ``Cutoff Energy`` in the navigator (or
-   click ``Open Cutoff Convergence`` on the overview page). Under
-   ``Simulation Cell``, leave ``Single unit cell`` selected or choose a saved
-   supercell from ``Saved supercells``.
+   click ``Open Cutoff Convergence`` on the overview page). In the ``Simulation
+   cell`` drop-down, leave ``Single unit cell`` selected or choose a saved
+   supercell.
 2. **List the cutoffs.** Click ``Generate From Range…`` and set
    ``Start (eV)``, ``Stop (eV)``, and ``Step (eV)`` (300, 1400, and 100 eV by
    default), or click ``Add Cutoff`` to add rows one at a time. Double-click a
@@ -118,8 +118,9 @@ sweep page and lists:
   into the ``Project Defaults`` dialog.
 
 Below the summary, each card shows a read-only copy of the examiner plot as it
-was when the value was adopted, drawn more compactly: the thresholds appear as
-``dE``, ``dF``, and (when used) ``dS`` badges instead of titles and legends.
+was when the value was adopted, drawn more compactly: no titles or legends, since
+the ``Criteria`` row above states the thresholds. At the default window size both
+cards fit without scrolling; the plots take the height the window has left.
 The k-point card uses the examiner's axes, with the number of k-points on a
 logarithmic scale and round spacings along the top, and names only the adopted
 grid. The pinned plot is replaced by a placeholder when
@@ -142,13 +143,15 @@ The sweep pages
    The current ``XC``, ``Cutoff`` and ``K-points`` defaults. Hover a value for
    how it was established, or click ``Edit…`` to open the ``Project Defaults``
    dialog (see `Adopting a result as a project default`_).
-``Simulation Cell``
-   A summary of the cell the sweep will run on, a ``Saved supercells``
-   drop-down (``Single unit cell`` plus every supercell saved for the active
-   host), ``Manage Supercells…`` to open the :doc:`/user_guide/supercells`, and ``Use
-   Unit Cell`` to return to the host unit cell. The cell is fixed for a job
-   when the job is defined; changing the selection later does not change jobs
-   already defined.
+``Simulation cell``
+   A drop-down of the cell the sweep will run on (``Single unit cell`` plus
+   every supercell saved for the active host) and ``Manage Supercells…`` to
+   open the :doc:`/user_guide/supercells`. Hover the drop-down for the full
+   name of the selected cell. If the selected supercell stops being available,
+   for example after the host changes, the sweep uses the unit cell and a
+   warning line under the row says so until you choose a cell, including
+   ``Single unit cell`` itself. The cell is fixed for a job when the job is
+   defined; changing the selection later does not change jobs already defined.
 Sweep table (``Cutoff Sweep`` / ``K-Point Grid Sweep``)
    One row per sweep point:
 
@@ -215,7 +218,10 @@ Generating k-point grids
 
    Grids generated for CoF₂ with a minimum spacing of 0.04 1/Ang.
 
-``Add Grid`` opens ``Add K-Point Grid``, pre-filled with the last row's grid.
+``Add Grid`` opens ``Add K-Point Grid``, pre-filled with the next grid up: one
+more k-point along each axis than the last row (``1 x 1 x 1`` when the last row
+holds no valid grid), stepping past any grid already listed. Edit the values for
+an anisotropic step; ``Generate From Spacing…`` follows the cell's own spacing.
 
 ``Generate From Spacing…`` opens ``Generate K-Point Grids``. MuFinder walks
 CASTEP's own spacing-to-grid rule, ``n_i = floor(|b_i| / (2 pi s)) + 1``, from
@@ -409,9 +415,9 @@ Limitations
   adopted grid from the cell it was converged on to each row's cell at
   equivalent k-point density. A unit-cell row uses the grid exactly, unless the
   grid was converged on a supercell of that unit cell, in which case it is
-  rescaled too. When the jobs are generated, one dialog summarises the
-  adjustments: rows sharing a cell and a grid change share one line with a row
-  count, at most five lines are listed, and Show Details lists every row.
+  rescaled too. A row's ``Supercell`` tooltip names the rescaled grid, and when
+  pristine or muon relaxation jobs are run the status bar counts the rescaled
+  rows among them.
 - The k-point examiner places grids by their number of k-points, so two grids
   with the same product ``a x b x c`` (possible with grids entered by hand)
   cannot both be examined. It keeps one, preferring a grid with a completed

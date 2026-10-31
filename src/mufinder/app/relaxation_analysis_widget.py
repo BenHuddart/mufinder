@@ -47,6 +47,7 @@ from mufinder.app.atomic_structure_viewer import (
     MUON_VIEWER_RADIUS_ANG,
     viewer_atom_style_for_species,
 )
+from mufinder.app.cluster_dendrogram import draw_cluster_dendrogram
 from mufinder.app.decimal_input import DecimalLineEdit
 from mufinder.app.plot_canvas import PlotFrame, create_plot_canvas
 from mufinder.app.screen_utils import clamped_size
@@ -77,7 +78,7 @@ from mufinder.app.theme import (
 )
 from mufinder.app.uep_clustering_dialog import _DendrogramNavigationToolbar
 from mufinder.app.viewer_dialog import StructureViewerDialog
-from mufinder.app.workflow_table_utils import create_workflow_table
+from mufinder.app.workflow_table_utils import create_workflow_table, table_natural_width
 from mufinder.domain.models import Structure
 from mufinder.domain.text import plural
 from mufinder.science.relaxation_analysis import (
@@ -925,23 +926,6 @@ class RelaxationClusteringDialog(StructureViewerDialog):
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
 
-    def _summary_table_natural_width(self) -> int:
-        """Return the width the cluster summary table needs to show every column in full."""
-
-        table = self._summary_table
-        header = table.horizontalHeader()
-        width = 0
-        for column in range(table.columnCount()):
-            if table.isColumnHidden(column):
-                continue
-            if header.sectionResizeMode(column) == QHeaderView.ResizeMode.Stretch:
-                width += max(header.sectionSizeHint(column), table.sizeHintForColumn(column))
-            else:
-                width += table.columnWidth(column)
-        if table.verticalHeader().isVisible():
-            width += table.verticalHeader().width()
-        return width + 2 * table.frameWidth() + table.verticalScrollBar().sizeHint().width()
-
     def _apply_default_split(self) -> None:
         """Split the plot and viewer panes until the user drags the handle.
 
@@ -957,7 +941,7 @@ class RelaxationClusteringDialog(StructureViewerDialog):
         if total <= 0:
             return
         plot_minimum = splitter.widget(0).minimumSizeHint().width()
-        right = max(total // 2, self._summary_table_natural_width())
+        right = max(total // 2, table_natural_width(self._summary_table))
         right = max(min(right, total - plot_minimum), 1)
         splitter.setSizes([total - right, right])
 
@@ -1394,15 +1378,11 @@ class RelaxationClusteringDialog(StructureViewerDialog):
         self._scan_canvas.draw_idle()
 
     def _render_soprano(self, result) -> None:
-        colors = cluster_color_map(result.cluster_labels)
         self._left_figure.clear()
         axis = self._left_figure.add_subplot(111)
         axis.set_facecolor(current_palette().bg_surface)
         if self._method() == _METHOD_HIERARCHICAL:
-            from scipy.cluster import hierarchy
-
-            linkage_matrix = np.asarray(result.linkage_matrix, dtype=float)
-            if linkage_matrix.size == 0:
+            if not result.linkage_matrix:
                 axis.axis("off")
                 axis.text(
                     0.5,
@@ -1414,12 +1394,10 @@ class RelaxationClusteringDialog(StructureViewerDialog):
                 )
                 self._left_canvas.draw_idle()
                 return
-            hierarchy.dendrogram(
-                linkage_matrix,
-                ax=axis,
-                color_threshold=0.0,
-                above_threshold_color=plot_series_colours().reference,
-                labels=[str(index + 1) for index in range(len(self._sites))],
+            draw_cluster_dendrogram(
+                axis,
+                result,
+                leaf_labels=[str(index + 1) for index in range(len(self._sites))],
             )
             axis.axhline(
                 self._hierarchical_input.value(),
@@ -1430,6 +1408,7 @@ class RelaxationClusteringDialog(StructureViewerDialog):
             axis.set_ylabel("Distance")
             axis.set_xlabel("Relaxed site")
         else:
+            colors = cluster_color_map(result.cluster_labels)
             vectors = np.asarray(result.normalized_genome_vectors, dtype=float)
             if len(vectors) == 0:
                 axis.text(

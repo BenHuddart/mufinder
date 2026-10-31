@@ -152,7 +152,7 @@ and k-point grid, so settle them first.
 1. Select ``Cutoff Energy`` under ``Convergence Testing``. On the ``Project
    defaults`` strip click ``Edit…``, choose an ``XC functional`` (the
    screenshots use ``PBE``) and click ``OK``.
-2. Leave ``Single unit cell`` selected under ``Simulation Cell``.
+2. Leave ``Single unit cell`` selected in the ``Simulation cell`` drop-down.
 3. Click ``Generate From Range…`` and accept ``Start (eV)``, ``Stop (eV)``
    and ``Step (eV)``, or change them.
 
@@ -209,12 +209,12 @@ Relaxing CoF₂ without a muon shows how well the functional reproduces the
 experimental lattice.
 
 1. Select ``Pristine Relaxation`` and click ``Add Job``.
-2. Leave the row's ``Supercell`` at ``Unit cell`` and ``Fix Cell`` at ``No
-   (relax)``, so the lattice relaxes as well as the atoms. Tick ``Spin
-   Polarized`` in the row's parameters.
+2. Leave the row's ``Supercell`` at ``Unit cell`` and ``Fix cell`` clear, so
+   the lattice relaxes as well as the atoms. Tick ``Spin Polarized`` in the
+   row's parameters.
 3. Click ``Run All Locally`` or ``Run All on Cluster``.
 4. When the job completes, read the relaxed ``a (Ang)``, ``b (Ang)`` and
-   ``c (Ang)``.
+   ``c (Ang)``, each with its change against the host.
 
    .. figure:: ../_generated/screenshots/pristine_relaxation_page.webp
       :alt: The Pristine Relaxation page with one completed variable-cell
@@ -222,8 +222,8 @@ experimental lattice.
 
       The pristine relaxation of CoF₂, from a synthetic CASTEP output.
 
-5. Click ``Generate Comparison Table…``, tick ``Include`` for the completed
-   job, keep or edit the ``Comparison table label`` and click ``OK``.
+5. Click ``Generate Comparison Table…``, leave the completed job ticked under
+   ``Include``, keep or edit the ``Comparison table label`` and click ``OK``.
 
 .. figure:: ../_generated/screenshots/comparison_job_dialog.webp
    :alt: The Generate Comparison Table dialog with one completed CoF2
@@ -239,8 +239,8 @@ experimental lattice.
 
 The table is saved under ``Pristine Relaxation`` in the navigator. This
 tutorial keeps the imported structure as the active host. See
-:doc:`/user_guide/structural_relaxation_analysis` (*Pristine Relaxation*) and
-:doc:`/user_guide/comparison_table` for reading the metrics.
+:doc:`/user_guide/pristine_relaxation` for the workflow and for reading the
+metrics.
 
 Optional: a first look with the UEP
 -----------------------------------

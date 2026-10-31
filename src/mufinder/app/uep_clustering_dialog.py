@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 )
 
 from mufinder.app.atomic_structure_viewer import AtomicStructureViewer, MUON_VIEWER_RADIUS_ANG
+from mufinder.app.cluster_dendrogram import draw_cluster_dendrogram
 from mufinder.app.decimal_input import DecimalLineEdit
 from mufinder.app.plot_canvas import PlotFrame, create_plot_canvas
 from mufinder.app.screen_utils import clamp_to_screen, clamped_size
@@ -802,31 +803,12 @@ class UepClusteringDialog(QDialog):
                 self._set_hierarchical_t_visual(float(event.ydata))
             self.refresh_clustering()
 
-    def _hierarchical_node_cluster_map(self, result: UepClusteringResult) -> dict[int, int | None]:
-        labels = np.asarray(result.cluster_labels, dtype=int)
-        linkage_matrix = np.asarray(result.linkage_matrix, dtype=float)
-        count = len(labels)
-        node_map: dict[int, int | None] = {index: int(labels[index]) for index in range(count)}
-        for row_index, row in enumerate(linkage_matrix):
-            node_id = count + row_index
-            left = node_map.get(int(row[0]))
-            right = node_map.get(int(row[1]))
-            node_map[node_id] = (
-                left if left is not None and right is not None and left == right else None
-            )
-        return node_map
-
-    def _render_hierarchical_plot(
-        self, result: UepClusteringResult, color_map: Mapping[int, str]
-    ) -> None:
-        from scipy.cluster import hierarchy
-
+    def _render_hierarchical_plot(self, result: UepClusteringResult) -> None:
         self._left_figure.clear()
         axis = self._left_figure.add_subplot(111)
         self._hier_axis = axis
         axis.set_facecolor(current_palette().bg_surface)
-        linkage_matrix = np.asarray(result.linkage_matrix, dtype=float)
-        if linkage_matrix.size == 0:
+        if not result.linkage_matrix:
             self._hier_cut_line_artist = None
             axis.axis("off")
             axis.text(
@@ -840,20 +822,13 @@ class UepClusteringDialog(QDialog):
             self._left_canvas.draw_idle()
             return
 
-        muted = plot_series_colours().reference
-        node_clusters = self._hierarchical_node_cluster_map(result)
-        hierarchy.dendrogram(
-            linkage_matrix,
-            ax=axis,
-            labels=[
+        draw_cluster_dendrogram(
+            axis,
+            result,
+            leaf_labels=[
                 str(self._site_number_map.get(index, index + 1))
                 for index in range(len(result.cluster_labels))
             ],
-            color_threshold=0.0,
-            above_threshold_color=muted,
-            link_color_func=lambda node_id: color_map.get(
-                int(node_clusters.get(int(node_id), -1) or -1), muted
-            ),
         )
         self._hier_cut_line_artist = axis.axhline(
             result.config.clustering_hier_t,
@@ -1085,7 +1060,7 @@ class UepClusteringDialog(QDialog):
         self._current_result = result
         color_map = self._color_map_for_result(result)
         if self._method_key() == "hier":
-            self._render_hierarchical_plot(result, color_map)
+            self._render_hierarchical_plot(result)
         else:
             self._render_kmeans_plot(result, color_map)
         self._render_structure_view(result, color_map)

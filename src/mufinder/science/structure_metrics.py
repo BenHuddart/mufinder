@@ -139,16 +139,20 @@ def _safe_percent_change(reference: float, value: float) -> float | None:
     return 100.0 * (value - reference) / reference
 
 
-def _format_with_change(value: float, reference: float) -> str:
-    """``value`` with its signed percent change against ``reference``: ``4.7091 (+0.30 %)``."""
+def format_with_change(value: float, reference: float | None, *, digits: int = 6) -> str:
+    """``value`` with its signed percent change against ``reference``: ``4.7091 (+0.30 %)``.
 
-    change = _safe_percent_change(reference, value)
+    Without a usable ``reference`` it is the value alone. ``digits`` is the
+    number of significant figures of the value.
+    """
+
+    change = None if reference is None else _safe_percent_change(reference, value)
     if change is None:
-        return _format_number(value)
+        return _format_number(value, digits=digits)
     # A change that rounds to zero reads "+0.00 %", never "-0.00 %".
     if abs(change) < 0.005:
         change = 0.0
-    return f"{_format_number(value)} ({change:+.2f} %)"
+    return f"{_format_number(value, digits=digits)} ({change:+.2f} %)"
 
 
 _SUBSCRIPT_DIGITS = str.maketrans("0123456789", "₀₁₂₃₄₅₆₇₈₉")
@@ -241,7 +245,7 @@ def dft_metric_values(
     values: dict[str, MetricValue] = {
         key: MetricValue(
             dft_lattice[key],
-            _format_with_change(dft_lattice[key], experimental_lattice[key]),
+            format_with_change(dft_lattice[key], experimental_lattice[key]),
             warning=warning,
         )
         for key in _LATTICE_KEYS

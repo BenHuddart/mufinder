@@ -25,7 +25,7 @@ Importing a structure
 2. **Load the file.** Click ``Load Structure (.cif/.mcif/.cell)`` and choose the
    file.
 3. **Check the result.** The atom table, the 3D viewer and the summary above
-   them (label, source, atom count, species) show the structure that was read.
+   them (source file, atom count, species) show the structure that was read.
    The new structure becomes the active host.
 4. **Add spins if you need them.** Edit the ``Spin (hbar/2)`` column in the
    atom table, and set ``Propagation vector (r.l.u.):`` for magnetic work (see
@@ -48,16 +48,22 @@ The host-structure panel
    :doc:`/user_guide/examples/cof2` loaded, its two Co carrying
    spins of +3 and −3 ħ/2.
 
-- ``Active host structure:`` switches between the imported and relaxed host
-  structures (see `Switching hosts`_).
 - ``Load Structure (.cif/.mcif/.cell)`` imports another structure, and
   ``Supercell Editor…`` opens the :doc:`/user_guide/supercells`.
-- A compact two-row summary (label, source, atom count, species) sits above
-  the atom table and the 3D viewer, which share a resizable splitter.
-- The atom table lists every atom in the structure, one row each, however
-  large the cell. Its ``Spin (hbar/2)`` column holds each atom's editable spin,
-  and ``Propagation vector (r.l.u.):`` under it takes the propagation vector in
+- ``Active host structure:`` switches between the imported and relaxed host
+  structures (see `Switching hosts`_).
+- ``Current Structure`` gives the source file, the atom count and the species on
+  one line, for example ``imports/CoF2.cif · 6 atoms · Co:2, F:4``, which wraps
+  only when it is too long for the page. A structure with no source file, such
+  as a relaxed host, shows its label instead. Under
+  that line, ``Propagation vector (r.l.u.):`` takes the propagation vector in
   reciprocal-lattice units.
+- The atom table and the 3D viewer share a resizable splitter. The table opens
+  wide enough for every column, and the viewer takes the rest of the window and
+  never gets narrower than 380 px. In a narrow window the table scrolls
+  sideways instead.
+- The atom table lists every atom in the structure, one row each, however
+  large the cell. Its ``Spin (hbar/2)`` column holds each atom's editable spin.
 - The viewer is the shared :doc:`/user_guide/structure_viewer`. Selecting rows
   in the atom table selects the same atoms in the viewer, and the other way
   round.
@@ -89,7 +95,7 @@ Switching hosts
 ``Active host structure:`` lists every structure that can be the active host:
 first each imported structure (``Original — <label>``), by name, then the result
 of each completed, converged pristine relaxation (``Relaxed — <job label>
-(<date>)``), newest first (see :doc:`/user_guide/structural_relaxation_analysis`). Each
+(<date>)``), newest first (see :doc:`/user_guide/pristine_relaxation`). Each
 entry's tooltip says where it came from. Choosing another entry makes it the
 active host, and every stage that follows uses it.
 

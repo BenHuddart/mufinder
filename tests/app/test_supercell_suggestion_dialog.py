@@ -42,6 +42,13 @@ def _suggestion(
     )
 
 
+def _label_texts(dialog: SupercellSuggestionDialog) -> list[str]:
+    """Return the texts of the labels directly in the dialog's layout, top to bottom."""
+    layout = dialog.layout()
+    widgets = [layout.itemAt(index).widget() for index in range(layout.count())]
+    return [widget.text() for widget in widgets if isinstance(widget, QLabel)]
+
+
 # Three-candidate suggestion: sub-criterion, recommended (criterion), expensive.
 def _three_candidate_suggestion() -> SupercellSuggestion:
     return _suggestion(
@@ -86,39 +93,41 @@ def test_table_has_correct_row_count(qapp) -> None:
     dialog.close()
 
 
-def test_table_recommended_row_tagged(qapp) -> None:
+def test_table_has_three_columns_with_no_blank_header(qapp) -> None:
     dialog = SupercellSuggestionDialog(suggestion=_three_candidate_suggestion())
     assert dialog._table is not None
-    rec_item = dialog._table.item(1, dialog._TAG_COLUMN)
-    assert rec_item is not None
-    assert rec_item.text() == "(Recommended)"
+    headers = [
+        dialog._table.horizontalHeaderItem(column).text()
+        for column in range(dialog._table.columnCount())
+    ]
+    assert headers == ["Scaling", "Atoms", "Min image (Å)"]
     dialog.close()
 
 
-def test_table_non_recommended_rows_untagged(qapp) -> None:
+def test_table_marks_recommended_row_in_scaling_cell(qapp) -> None:
     dialog = SupercellSuggestionDialog(suggestion=_three_candidate_suggestion())
     assert dialog._table is not None
-    for row in (0, 2):
-        item = dialog._table.item(row, dialog._TAG_COLUMN)
-        assert item is not None
-        assert item.text() == ""
+    assert dialog._table.item(1, dialog._SCALING_COLUMN).text() == "4 × 4 × 4 (Recommended)"
+    assert dialog._table.item(0, dialog._SCALING_COLUMN).text() == "3 × 3 × 3"
+    assert dialog._table.item(2, dialog._SCALING_COLUMN).text() == "5 × 5 × 5"
     dialog.close()
 
 
-def test_table_scaling_column_text(qapp) -> None:
+def test_table_ticks_distances_that_reach_the_target(qapp) -> None:
     dialog = SupercellSuggestionDialog(suggestion=_three_candidate_suggestion())
     assert dialog._table is not None
-    item = dialog._table.item(0, dialog._SCALING_COLUMN)
-    assert item is not None
-    assert "3" in item.text()
+    assert dialog._table.item(0, dialog._DISTANCE_COLUMN).text() == "9.00 Å"
+    assert dialog._table.item(1, dialog._DISTANCE_COLUMN).text() == "12.00 Å ✓"
+    assert dialog._table.item(2, dialog._DISTANCE_COLUMN).text() == "15.00 Å ✓"
     dialog.close()
 
 
-def test_table_criterion_column_yes_no(qapp) -> None:
+def test_distance_header_explains_the_tick(qapp) -> None:
     dialog = SupercellSuggestionDialog(suggestion=_three_candidate_suggestion())
     assert dialog._table is not None
-    assert dialog._table.item(0, dialog._CRITERION_COLUMN).text() == "No"
-    assert dialog._table.item(1, dialog._CRITERION_COLUMN).text() == "Yes"
+    tooltip = dialog._table.horizontalHeaderItem(dialog._DISTANCE_COLUMN).toolTip()
+    assert "tick" in tooltip
+    assert "10 Å" in tooltip
     dialog.close()
 
 
@@ -184,11 +193,11 @@ def test_chosen_matrix_none_before_accept(qapp) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_affordable_recommended_row_tagged(qapp) -> None:
+def test_affordable_recommended_row_marked(qapp) -> None:
     dialog = SupercellSuggestionDialog(suggestion=_affordable_recommended_suggestion())
     assert dialog._table is not None
-    assert dialog._table.item(0, dialog._TAG_COLUMN).text() == "(Recommended)"
-    assert dialog._table.item(1, dialog._TAG_COLUMN).text() == ""
+    assert "(Recommended)" in dialog._table.item(0, dialog._SCALING_COLUMN).text()
+    assert "(Recommended)" not in dialog._table.item(1, dialog._SCALING_COLUMN).text()
     dialog.close()
 
 
@@ -212,11 +221,60 @@ def test_primitive_exceeds_budget_table_has_one_row(qapp) -> None:
     dialog.close()
 
 
-def test_primitive_exceeds_budget_shows_warning_label(qapp) -> None:
+def test_primitive_exceeds_budget_shows_only_the_status_line(qapp) -> None:
     dialog = SupercellSuggestionDialog(suggestion=_single_suggestion())
-    labels = dialog.findChildren(QLabel)
-    texts = " ".join(label.text() for label in labels)
-    assert "200" in texts  # primitive_atom_count referenced in warning
+    assert _label_texts(dialog) == [
+        "The primitive cell already has 200 atoms, so no search under 200 atoms was possible. "
+        "This calculation will be expensive. It does not reach 10 Å."
+    ]
+    dialog.close()
+
+
+def test_primitive_exceeds_budget_status_omits_target_when_reached(qapp) -> None:
+    suggestion = _suggestion(
+        candidates=[_cand((1, 1, 1), 240, 12.0, True)],
+        primitive_atom_count=240,
+        primitive_exceeds_budget=True,
+    )
+    dialog = SupercellSuggestionDialog(suggestion=suggestion)
+    assert _label_texts(dialog) == [
+        "The primitive cell already has 240 atoms, so no search under 200 atoms was possible. "
+        "This calculation will be expensive."
+    ]
+    dialog.close()
+
+
+# ---------------------------------------------------------------------------
+# Status line under the table
+# ---------------------------------------------------------------------------
+
+
+def test_no_status_line_when_recommendation_meets_target_within_budget(qapp) -> None:
+    dialog = SupercellSuggestionDialog(suggestion=_three_candidate_suggestion())
+    assert len(_label_texts(dialog)) == 1  # the intro alone
+    dialog.close()
+
+
+def test_status_line_when_no_cell_under_budget_reaches_target(qapp) -> None:
+    dialog = SupercellSuggestionDialog(suggestion=_affordable_recommended_suggestion())
+    assert _label_texts(dialog)[1] == (
+        "No cell under 200 atoms reaches 10 Å. The recommended cell is the best one under "
+        "that limit."
+    )
+    dialog.close()
+
+
+def test_status_line_when_recommended_cell_is_over_budget(qapp) -> None:
+    suggestion = _suggestion(
+        candidates=[_cand((6, 6, 6), 432, 12.0, True)],
+        recommended_index=0,
+        primitive_atom_count=2,
+    )
+    dialog = SupercellSuggestionDialog(suggestion=suggestion)
+    assert _label_texts(dialog)[1] == (
+        "No cell under 200 atoms reaches 10 Å. The recommended cell is the smallest that does, "
+        "and its 432 atoms may be expensive."
+    )
     dialog.close()
 
 
@@ -240,14 +298,29 @@ def test_chosen_scaling_none_after_reject(qapp) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Intro text contains both thresholds
+# Intro text comes from the suggestion
 # ---------------------------------------------------------------------------
 
 
-def test_intro_mentions_distance_target(qapp) -> None:
+def test_intro_is_two_sentences_with_the_default_thresholds(qapp) -> None:
     dialog = SupercellSuggestionDialog(suggestion=_three_candidate_suggestion())
-    labels = dialog.findChildren(QLabel)
-    texts = " ".join(label.text() for label in labels)
-    assert "10" in texts  # distance_target = 10.0
-    assert "8" in texts  # display_threshold = 8.0
+    assert _label_texts(dialog)[0] == (
+        "Diagonal supercells whose periodic muon images are at least 8 Å apart. The recommended "
+        "cell is the cheapest one that reaches 10 Å (✓) with fewer than 200 atoms."
+    )
+    dialog.close()
+
+
+def test_intro_and_status_follow_the_suggestion_thresholds(qapp) -> None:
+    suggestion = _suggestion(
+        candidates=[_cand((3, 3, 3), 27, 9.0, False)],
+        distance_target=12.5,
+        display_threshold=6.0,
+        max_atoms=500,
+    )
+    dialog = SupercellSuggestionDialog(suggestion=suggestion)
+    intro, status = _label_texts(dialog)
+    assert "at least 6 Å apart" in intro
+    assert "reaches 12.5 Å (✓) with fewer than 500 atoms" in intro
+    assert status.startswith("No cell under 500 atoms reaches 12.5 Å.")
     dialog.close()

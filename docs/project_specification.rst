@@ -270,15 +270,17 @@ which inputs and options, can be reconstructed.
 The ``provenance_log`` route surfaces as a user-facing ``Journal`` page derived
 from the persisted ``provenance.jsonl`` records rather than inferred job
 history. Entries are grouped by local calendar day with human-readable date
-headers and no precise times. The default presentation is curated and
-narrative-focused: it includes major workflow actions, submission milestones,
-comparison-table creation and terminal calculation outcomes, and omits
-intermediate runtime states such as queued, running and retrieving. The
-Journal follows MuFinder branding as a notebook-style expedition record using
-the existing palette and typography tokens; completion and warning or failure
-milestones may use stamp-style affordances. Export supports plain text by
-default and Markdown as a secondary format, mirroring the curated Journal
-rather than dumping raw provenance rows.
+headers, one compact card each with the local time. The default presentation is
+curated and narrative-focused: it includes major workflow actions, submission
+milestones, comparison-table creation and terminal calculation outcomes, and
+omits intermediate runtime states such as queued, running and retrieving. A card
+expands to the details logged for it and the exact time, and links to its
+workflow page. The Journal follows MuFinder branding as a notebook-style
+expedition record using the existing palette and typography tokens; a stamp
+marks milestones, completions, entries needing attention and failures, and red
+marks failures only. Export supports plain text by default and Markdown as a
+secondary format, giving the curated summary of each entry rather than its
+details or raw provenance rows.
 
 UI architecture
 ---------------
@@ -379,12 +381,14 @@ Pristine relaxation
 - Completion handling retrieves and parses both ``.castep`` and ``-out.cell``.
   A run whose geometry optimization did not converge is not treated as
   successful. Parsed relaxed lattices expose ``a``, ``b`` and ``c`` in the
-  workflow table and the result payload.
+  workflow table, each with its change against the host, and in the result
+  payload.
 - A ``Generate Comparison Table`` feature compares one or more completed DFT
   relaxations against the active experimental host structure as a persisted
   subtab with editable title, a one-line tooltip on each metric, a link to the
   metric descriptions in the user guide and CSV export
-  (see :doc:`/user_guide/comparison_table`).
+  (see :doc:`/user_guide/pristine_relaxation` and
+  :doc:`/user_guide/comparison_table`).
 
 Muon site generation and relaxation
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -429,10 +433,10 @@ Host structure magnetic editing and the supercell editor
 - Spin-arrow display defaults to disabled for a non-magnetic host and
   auto-enables when any per-atom spin is set non-zero; spins render as clearly
   visible 3D arrows with signed styling for opposite directions.
-- The panel defaults to an expanded viewer area with user-resizable split
-  between the metadata table and the viewer; current-structure metadata is a
-  compact two-row summary; left-clicking empty space in the viewer clears the
-  atom selection.
+- The panel opens the atom table at the width of its contents and gives the rest
+  to the viewer, with a user-resizable split between them; current-structure
+  metadata is a one-line summary; left-clicking empty space in the viewer clears
+  the atom selection.
 - The Supercell Editor provides a simple diagonal mode (Nx, Ny, Nz) and an
   advanced full 3×3 integer matrix mode, read-only visual verification of the
   magnetic pattern across the generated supercell, and lets the user save,

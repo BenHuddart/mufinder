@@ -171,7 +171,7 @@ def test_expand_pristine_relaxation_jobs_records_supercell_kpoint_adjustment() -
     )
 
     assert [
-        (adjustment.row_label, adjustment.cell_label, adjustment.adjusted_grid)
+        (adjustment.row_key, adjustment.cell_label, adjustment.adjusted_grid)
         for adjustment in expansion.kpoint_adjustments
     ] == [("row_b", "2x1x1", (2, 4, 4))]
 

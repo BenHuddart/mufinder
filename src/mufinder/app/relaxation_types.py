@@ -80,6 +80,9 @@ class RelaxationRunState:
     lattice_a: float | None = None
     lattice_b: float | None = None
     lattice_c: float | None = None
+    #: The ``(a, b, c)`` of the structure the row relaxed from, tiled to a
+    #: supercell row's cell; ``None`` when there is nothing to compare with.
+    host_lattice_lengths: tuple[float, float, float] | None = None
     final_fractional_position: tuple[float, float, float] | None = None
     job_id: UUID | None = None
     job_label: str | None = None

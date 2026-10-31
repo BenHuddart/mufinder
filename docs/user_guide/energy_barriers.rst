@@ -221,36 +221,36 @@ file alongside the product image.
 Configuration UI
 ----------------
 
-The configuration dialog is intentionally curated around the most relevant
-barrier-search controls first. For NEB rows, the default dialog surface
-emphasizes:
+The heading of the configuration dialog names the hop as the endpoint pickers
+do, with its length (``8g · cluster 1 → 16m · cluster 2 · 1.72 Å``); with
+several paths selected it gives their number. Its rows start with the settings
+shared by every workflow, then the three a band usually needs:
 
-- precision and cutoff controls;
-- electronic energy tolerance;
-- Monkhorst-Pack grid;
-- the NEB image count (``TSSEARCH_MAX_PATH_POINTS``, default 11). It counts
-  the intermediate images only, so the finished band holds two more: the
-  reactant and the product. An even value is rounded up to the next odd
-  number, because climbing image is locked on and CASTEP would otherwise add
-  the image itself;
-- NEB spring constant, tangent mode, method, maximum iterations, and
-  normalization controls;
-- the transition-state force tolerance (``TSSEARCH_FORCE_TOL``), shown in
-  eV/Å with CASTEP's own 0.05 eV/Å default pre-filled;
-- the CASTEP task-farm count (see `Task farming`_).
+- the precision and cutoff controls, the electronic energy tolerance and the
+  Monkhorst-Pack grid;
+- ``Images`` (``TSSEARCH_MAX_PATH_POINTS``, default 11). It counts the
+  intermediate images only, so the finished band holds two more: the reactant
+  and the product. An even value is rounded up to the next odd number, because
+  climbing image is locked on and CASTEP would otherwise add the image itself;
+- ``Force tolerance (eV/Å)`` (``TSSEARCH_FORCE_TOL``), with CASTEP's own
+  0.05 eV/Å default pre-filled;
+- ``Task farms``, the CASTEP task-farm count (see `Task farming`_).
 
-``TASK``, ``TSSEARCH_METHOD``, and ``TSSEARCH_NEB_CLIMBING`` (``TRUE``) are
-locked by the workflow and cannot be edited.
+The exchange-correlation functional and the spin treatment follow, and then the
+rows the workflow locks: ``TS Search Method`` (``NEB``) and ``Climbing image``
+(``TRUE``), with ``TASK`` above the table.
 
-The dialog also exposes the workflow-supported advanced parameter surface via
-the searchable ``Add Parameter`` flow so expert users can opt into additional
-CASTEP controls without overwhelming the default view.
+The other NEB controls are behind the searchable ``Add Parameter`` flow, as is
+the rest of the CASTEP surface: ``Spring constant (eV/Å²)``, ``Tangent``,
+``NEB method``, ``Max iterations`` and ``Normed``. CASTEP uses its own default
+for any of them that is not added, and a value set on a path stays in that
+path's dialog as an added row.
 
 .. figure:: ../_generated/screenshots/gdru2si2_neb_configuration.webp
    :alt: The Configure NEB Parameters dialog for the GdRu2Si2 site 1 to site 2
-         path: 1000 eV, a 3 x 3 x 3 grid, 41 path points, a force tolerance of
-         0.08 eV/A, PBE, spin polarised, the locked TS search method and
-         climbing image, and 4 task farms.
+         path: 1000 eV, a 3 x 3 x 3 grid, 41 images, a force tolerance of
+         0.08 eV/A, 4 task farms, PBE, spin polarised, and the locked TS search
+         method and climbing image.
 
    The NEB settings of the GdRu₂Si₂ band. The 40 images entered are rounded up
    to 41, the count CASTEP runs with climbing image on.

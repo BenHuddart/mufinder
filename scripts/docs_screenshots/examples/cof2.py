@@ -66,7 +66,6 @@ from ..render import (
     scratch_directory,
     select_all_sites,
     settle,
-    show_host_with_spins,
     synthetic_runs,
     view_along_a,
     when_modal,
@@ -817,12 +816,7 @@ def _build_results(directory: Path, *, running_pristine: bool = False) -> Path:
     document.ui_state["magnetic_field_form"] = {"demag_shape": "none"}
     service.save_project(document)
 
-    # The muon relaxations run in the 2x2x2 supercell, so configuring them
-    # rescales the adopted unit-cell k-point grid and says so.
-    with (
-        opened(app, document.project_root) as window,
-        refuse_message_boxes(app, expected=("K-point grids adjusted",)),
-    ):
+    with opened(app, document.project_root) as window, refuse_message_boxes(app):
         document = window._document
         # Pristine relaxation: one variable-cell row, run as Run All Locally runs it.
         pristine = window._pristine_relaxation_view
@@ -907,6 +901,18 @@ def running_relaxation_project(directory: Path) -> Path:
     """The CoF2 project with its pristine relaxation part-way through."""
 
     return _build_results(directory, running_pristine=True)
+
+
+def expand_journal_batch(page: QWidget) -> None:
+    """Open the positive-muon relaxation batch's Journal card and scroll to it."""
+
+    card = next(
+        card
+        for card in page._cards()
+        if card.accessibleName().endswith("Muon relaxations launched: positive muon")
+    )
+    card.set_expanded(True)
+    settle(QApplication.instance())
 
 
 # --- The legacy folder ----------------------------------------------------------
@@ -1103,14 +1109,6 @@ def open_comparison_job_dialog(window: MainWindow) -> None:
     window._pristine_relaxation_view.generate_comparison_requested.emit()
 
 
-def tick_every_job(dialog: QWidget) -> None:
-    from PySide6.QtCore import Qt
-
-    for row in range(dialog._table.rowCount()):
-        dialog._table.item(row, dialog._CHECK_COLUMN).setCheckState(Qt.CheckState.Checked)
-    focus_default_button(dialog)
-
-
 def show_running_progress(window: MainWindow) -> QWidget:
     """Inspect the running pristine relaxation, as its dashboard Inspect button does.
 
@@ -1254,7 +1252,7 @@ SCENES: dict[str, Scene] = {
     "host_structure_page": Scene(
         fixture_project,
         "host_structure",
-        Page("_host_structure_view", (1100, 760), prepare=show_host_with_spins),
+        Page("_host_structure_view", (1100, 760), prepare=view_along_a),
     ),
     "supercell_editor": Scene(
         fixture_project,
@@ -1300,6 +1298,11 @@ SCENES: dict[str, Scene] = {
         ),
     ),
     "journal_page": Scene(results_project, "provenance_log", Page("_journal_view", (1100, 800))),
+    "journal_expanded_card": Scene(
+        results_project,
+        "provenance_log",
+        Page("_journal_view", (1100, 800), prepare=expand_journal_batch),
+    ),
     "castep_setup_dialog": Scene(
         fixture_project, None, Dialog(lambda window: window._open_castep_setup_dialog())
     ),
@@ -1328,7 +1331,7 @@ SCENES: dict[str, Scene] = {
             open_comparison_job_dialog,
             kind="ComparisonJobDialog",
             size=(900, 380),
-            prepare=tick_every_job,
+            prepare=focus_default_button,
         ),
     ),
     "comparison_table": Scene(

@@ -202,10 +202,9 @@ into workflow-layer ``expand_*`` calls. Their shared machinery lives in
   shape for every adapter's public ``expand_*`` function: ``jobs`` plus
   ``kpoint_adjustments``, one
   :class:`~mufinder.app.adapter_common.KpointAdjustment` per row whose grid
-  was rescaled. :func:`~mufinder.app.adapter_common.summarize_kpoint_adjustments`
-  groups them by cell and grid change into a short summary plus a per-row
-  detail text; ``main_window`` shows both in one dialog from the configure
-  path, so the dialog's height does not grow with the number of rows.
+  was rescaled. :func:`~mufinder.app.adapter_common.kpoint_adjustment_status`
+  words them for the status bar, where ``main_window`` adds the rows being
+  submitted to the submission's message.
 - The supercell adapters (pristine relaxation, muon relaxation, UEP) share one
   expansion prologue. :func:`~mufinder.app.adapter_common.seed_workflow_defaults`
   layers the project exchange-correlation functional and cut-off energy over
@@ -286,10 +285,15 @@ defined by two of these modules, and a pinned count may only fall.
 
    * - Module
      - Owns
+   * - ``mufinder.app.eliding_label``
+     - The single-line label that elides instead of widening its parent
+       (``ElidingLabel``) and the combo box whose current text elides instead
+       of clipping (``ElidingComboBox``)
    * - ``mufinder.app.workflow_table_utils``
      - Workflow row tables (``create_workflow_table``,
        ``set_workflow_table_item``, ``fill_workflow_table`` for a table of
-       display text, ``set_header_tooltips``; ``accessible_name`` names a
+       display text, ``set_header_tooltips``, ``table_natural_width`` for the
+       width that shows every column; ``accessible_name`` names a
        table and ``name_row_control`` names a row's own controls after the
        row), the shared right-click menu
        (``standard_row_actions``, ``bind_reset_failed_context_menu``; a
@@ -497,11 +501,20 @@ defined by two of these modules, and a pinned count may only fall.
    * - ``mufinder.app.plot_canvas``
      - Embedded matplotlib plots (``create_plot_canvas``, ``PlotFrame``; see Plot
        canvas policy).
+   * - ``mufinder.app.cluster_dendrogram``
+     - The hierarchical clustering dendrogram the UEP and relaxation clustering
+       dialogs both draw (``draw_cluster_dendrogram``), its links coloured by
+       ``cluster_color_map`` from the node clusters that
+       ``dendrogram_node_clusters`` in ``mufinder.science.uep_clustering`` works
+       out.
    * - ``mufinder.app.convergence_plot``
      - The convergence plot the examiner dialog and the pinned overview cards
        both draw (``draw_convergence_plot``) from a sweep's saved ``plot_data``
        (``ConvergencePlotData``), including the k-point count and spacing axes
        (``spacing_axis_ticks``).
+   * - ``mufinder.domain.routes``
+     - The navigator route of a comparison table, which the Journal's link and
+       the comparison controller both name (``comparison_route``)
    * - ``mufinder.services.job_execution_controller``
      - Job state transitions: submission, start, completion, failure, cancellation
        and retrieval (``JobExecutionController``; see :doc:`/job_lifecycle`), and
@@ -1459,7 +1472,7 @@ Controller summary
        through the deps (``run_examiner``, ``show_warning``,
        ``confirm_choice``, ``refresh_after_default_adopted``).
 
-       It also owns the ``Simulation Cell`` selector.
+       It also owns the ``Simulation cell`` selector.
        ``refresh_simulation_cell`` shows the stage's saved supercells, the
        selection and the species of the resolved cell; the
        ``show_simulation_cell_structure`` hook hands that cell to a widget that
@@ -1910,8 +1923,9 @@ selected, resolved or written, so spin-polarized ``.cell`` files keep their
 Structure comparison
 --------------------
 
-The :doc:`/user_guide/comparison_table` is computed by the ``science`` layer and
-rendered by ``app``. The implementation is intentionally layered:
+The comparison table (:doc:`/user_guide/comparison_table`) is computed by the
+``science`` layer and rendered by ``app``. The implementation is intentionally
+layered:
 
 - normalization in ``mufinder.science.supercell_matching``,
 - atom matching in ``mufinder.science.atom_matching``,

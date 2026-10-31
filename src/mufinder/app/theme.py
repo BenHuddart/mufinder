@@ -1964,6 +1964,12 @@ def _button_styles(p: MuFinderPalette) -> str:
     QComboBox[multiRowTarget="true"] {{
         padding: 3px 27px 3px 7px;
     }}
+    QCheckBox#rowCheckBox {{
+        margin-left: 16px;
+    }}
+    QCheckBox#rowCheckBox[multiRowTarget="true"]::indicator {{
+        border: 2px solid {p.text_primary};
+    }}
     QPushButton#overviewActionButton {{
         border-color: {p.accent};
         background: {p.bg_surface};
@@ -2173,7 +2179,7 @@ def _label_styles(p: MuFinderPalette, heading_font: str) -> str:
         padding-top: 6px;
     }}
     QLabel#journalEntryTitle {{
-        font-size: 15px;
+        font-size: 13px;
         font-weight: 700;
         font-family: "{heading_font}";
         color: {p.text_primary};
@@ -2182,9 +2188,20 @@ def _label_styles(p: MuFinderPalette, heading_font: str) -> str:
         font-size: 11px;
         font-weight: 600;
         color: {p.text_muted};
-        text-transform: uppercase;
+    }}
+    QLabel#journalChevron {{
+        font-size: 11px;
+        color: {p.text_muted};
     }}
     QLabel#journalEntryBody {{
+        font-size: 12px;
+        color: {p.text_primary};
+    }}
+    QLabel#journalDetailTime {{
+        font-size: 11px;
+        color: {p.text_muted};
+    }}
+    QLabel#journalDetailLine {{
         font-size: 12px;
         color: {p.text_primary};
     }}
@@ -2194,15 +2211,15 @@ def _label_styles(p: MuFinderPalette, heading_font: str) -> str:
         padding: 18px;
     }}
     QLabel#journalStamp {{
-        border-radius: 9px;
-        padding: 2px 8px;
-        font-size: 10px;
-        font-weight: 700;
-        color: #FFFFFF;
+        min-width: 10px;
+        max-width: 10px;
+        min-height: 10px;
+        max-height: 10px;
+        border-radius: 5px;
         background: {p.border};
     }}
     QLabel#journalStamp[stampKind="milestone"] {{
-        background: {p.accent};
+        background: {p.text_muted};
     }}
     QLabel#journalStamp[stampKind="success"] {{
         background: {p.seal_gold};
@@ -2288,11 +2305,19 @@ def _card_and_menu_styles(p: MuFinderPalette) -> str:
     QFrame#journalEntryCard {{
         border: 1px solid {p.border};
         border-left: 4px solid {p.border};
-        border-radius: 12px;
+        border-radius: 8px;
         background: {p.bg_surface};
     }}
+    QWidget#journalCardHeader, QWidget#journalEntryDetails {{
+        background: transparent;
+    }}
+    QFrame#journalEntryCard:focus {{
+        border-top-color: {p.text_primary};
+        border-right-color: {p.text_primary};
+        border-bottom-color: {p.text_primary};
+    }}
     QFrame#journalEntryCard[stampKind="milestone"] {{
-        border-left-color: {p.accent};
+        border-left-color: {p.border};
     }}
     QFrame#journalEntryCard[stampKind="success"] {{
         border-left-color: {p.seal_gold};

@@ -5,6 +5,7 @@ from __future__ import annotations
 from functools import partial
 from types import SimpleNamespace
 
+from matplotlib import colors as mcolors
 import numpy as np
 import pytest
 from PySide6.QtCore import QPoint, QSize, Qt
@@ -13,7 +14,7 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QLabel, QSizePolicy
 
 from mufinder.app.atomic_structure_viewer import MUON_VIEWER_RADIUS_ANG, _CameraState
-from mufinder.app.theme import current_palette
+from mufinder.app.theme import cluster_color_map, current_palette, plot_series_colours
 from mufinder.app.uep_clustering_dialog import _GEOMETRY_STATE_EMIT_DELAY_MS, UepClusteringDialog
 from mufinder.science.uep import StationaryPointClassification, UepOptimizationResult
 from mufinder.science.uep_clustering import relaxed_site_number_map
@@ -483,6 +484,31 @@ def test_uep_clustering_dialog_dendrogram_labels_use_global_energy_rank(qapp, mo
         str(relaxed_site_number_map(optimizations)[index]) for index in range(len(optimizations))
     ]
     assert captured["labels"] == expected_labels
+    dialog.close()
+
+
+def test_uep_clustering_dialog_dendrogram_links_take_the_cluster_colours(qapp) -> None:
+    host = _host_structure()
+    dialog = UepClusteringDialog(
+        source_job_label="uep_source_row1",
+        source_structure=host,
+        viewer_host_structure=host,
+        optimizations=[
+            _optimization((0.65, 0.65, 0.65), 0.50),
+            _optimization((0.10, 0.10, 0.10), 0.01),
+            _optimization((0.66, 0.67, 0.64), 0.52),
+            _optimization((0.12, 0.09, 0.11), 0.02),
+        ],
+    )
+    colours = {
+        mcolors.to_hex(collection.get_color()[0]) for collection in dialog._hier_axis.collections
+    }
+    labels = dialog._current_result.cluster_labels
+    assert len(set(labels)) == 2
+    assert colours == {
+        *(mcolors.to_hex(colour) for colour in cluster_color_map(labels).values()),
+        mcolors.to_hex(plot_series_colours().reference),
+    }
     dialog.close()
 
 

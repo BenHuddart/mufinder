@@ -158,8 +158,8 @@ sliding down), so CASTEP kept 40.
 
 .. figure:: ../../_generated/screenshots/gdru2si2_neb_configuration.webp
    :alt: The Configure NEB Parameters dialog for the site 1 to site 2 path
-         with a cut-off of 1000 eV, a 3 x 3 x 3 k-point grid, 41 path points,
-         a force tolerance of 0.08 eV/A, PBE, spin polarised and 4 task farms.
+         with a cut-off of 1000 eV, a 3 x 3 x 3 k-point grid, 41 images,
+         a force tolerance of 0.08 eV/A, 4 task farms, PBE and spin polarised.
 
    The NEB settings of the 1 → 2 path.
 

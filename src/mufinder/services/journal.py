@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import Counter
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
@@ -15,15 +15,21 @@ from mufinder.domain.charge_states import (
     canonical_charge_state,
     muon_charge_state_label,
 )
+from mufinder.domain.constants import MEV_PER_EV
 from mufinder.domain.enums import FailureReason, WorkflowStage
 from mufinder.domain.models import (
     GENERATION_METHOD_LABELS,
     MANUAL_DEFAULT_METHOD,
     ProvenanceRecord,
 )
+from mufinder.domain.routes import comparison_route
 from mufinder.domain.text import execution_target_text, plural
 from mufinder.services.failure_diagnosis import FAILURE_REASON_SUMMARIES
-from mufinder.services.generation_runs import generation_run_from_provenance, run_journal_line
+from mufinder.services.generation_runs import (
+    generation_run_from_provenance,
+    run_journal_line,
+    run_methods_sentence,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,7 +50,14 @@ class JournalJobRow:
 
 @dataclass(frozen=True, slots=True)
 class JournalEntry:
-    """One user-facing journal entry derived from provenance."""
+    """One user-facing journal entry derived from provenance.
+
+    ``body`` is the curated text exports print. ``summary`` is the shorter line a
+    collapsed card shows when it differs from the body (see :attr:`card_summary`).
+    ``detail_lines`` and ``job_rows`` feed :func:`entry_details`, ``job_column``
+    heads the first column of the job table, and ``route`` is the navigator route
+    of the page ``open_label`` opens.
+    """
 
     timestamp: datetime
     stamp_kind: str
@@ -54,6 +67,34 @@ class JournalEntry:
     linked_entity_ids: tuple[UUID, ...] = ()
     linked_job_id: UUID | None = None
     job_rows: tuple[JournalJobRow, ...] = ()
+    summary: str = ""
+    detail_lines: tuple[str, ...] = ()
+    job_column: str = "Calculation"
+    route: str | None = None
+    open_label: str | None = None
+
+    @property
+    def card_summary(self) -> str:
+        """The one line a collapsed card shows under its title."""
+
+        return self.summary or self.body
+
+
+@dataclass(frozen=True, slots=True)
+class JournalJobTable:
+    """A batch's per-job table as display text, in column order."""
+
+    headers: tuple[str, ...]
+    rows: tuple[tuple[str, ...], ...]
+
+
+@dataclass(frozen=True, slots=True)
+class JournalDetails:
+    """What an expanded card shows: the exact time, logged details and any job table."""
+
+    exact_time: str
+    lines: tuple[str, ...] = ()
+    job_table: JournalJobTable | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,6 +132,21 @@ _STAMP_LABELS = {
     "success": "Completed",
     "warning": "Attention",
     "danger": "Failed",
+}
+
+#: The navigator route of each workflow's page.
+_WORKFLOW_ROUTES: dict[WorkflowStage, str] = {
+    WorkflowStage.CONVERGENCE_CUTOFF: "convergence_cutoff",
+    WorkflowStage.CONVERGENCE_KPOINT: "convergence_kpoint",
+    WorkflowStage.PRISTINE_RELAXATION: "pristine_relaxation",
+    WorkflowStage.UEP: "uep",
+    WorkflowStage.MUON_GENERATION: "muon_candidates",
+    WorkflowStage.MUON_RELAXATION: "muon_relaxations",
+    WorkflowStage.SITE_ANALYSIS: "muon_analysis",
+    WorkflowStage.HYPERFINE_COUPLING: "hyperfine_coupling",
+    WorkflowStage.MAGNETIC_FIELD: "magnetic_fields",
+    WorkflowStage.QUANTUM_CORRECTIONS: "quantum_corrections",
+    WorkflowStage.ENERGY_BARRIERS: "energy_barriers",
 }
 
 #: How a job of each workflow is named before its row label (``pristine
@@ -131,6 +187,54 @@ def stamp_label(stamp_kind: str) -> str:
     return _STAMP_LABELS.get(stamp_kind, "Entry")
 
 
+def entry_meta_text(entry: JournalEntry) -> str:
+    """The right of a card's header: the workflow, if any, and the local time."""
+
+    time_text = entry.timestamp.astimezone().strftime("%H:%M")
+    return f"{entry.workflow_label} · {time_text}" if entry.workflow_label else time_text
+
+
+def entry_details(entry: JournalEntry) -> JournalDetails:
+    """The details block of an expanded card, built when the card is first expanded."""
+
+    local = entry.timestamp.astimezone()
+    failures = tuple(
+        f"{row.label}: {row.failure_reason}" for row in entry.job_rows if row.failure_reason
+    )
+    return JournalDetails(
+        exact_time=f"{_day_label(local)} at {local.strftime('%H:%M:%S %Z').strip()}",
+        lines=(*entry.detail_lines, *failures),
+        job_table=_job_table(entry) if entry.job_rows else None,
+    )
+
+
+def _job_table(entry: JournalEntry) -> JournalJobTable:
+    """Per-job rows, with each energy relative to the batch's lowest in meV."""
+
+    energies = [row.total_energy for row in entry.job_rows if row.total_energy is not None]
+    lowest = min(energies, default=0.0)
+    rows = []
+    for row in entry.job_rows:
+        relative = (
+            f"{(row.total_energy - lowest) * MEV_PER_EV:.1f}"
+            if row.total_energy is not None
+            else "—"
+        )
+        rows.append(
+            (
+                row.label,
+                row.status.capitalize(),
+                relative,
+                f"{row.max_force:.3g}" if row.max_force is not None else "—",
+                str(row.warnings_count) if row.warnings_count else "—",
+            )
+        )
+    return JournalJobTable(
+        headers=(entry.job_column, "Status", "ΔE (meV)", "Max force (eV/Å)", "Warnings"),
+        rows=tuple(rows),
+    )
+
+
 def build_journal(project_name: str, records: Iterable[ProvenanceRecord]) -> JournalDocument:
     """Convert structured provenance into a curated journal view model."""
 
@@ -152,6 +256,7 @@ def _entries(records: Iterable[ProvenanceRecord]) -> list[JournalEntry]:
 
     entries: list[JournalEntry] = []
     dismissals: list[ProvenanceRecord] = []
+    configurations: dict[WorkflowStage | None, ProvenanceRecord] = {}
 
     def flush_dismissals() -> None:
         if dismissals:
@@ -164,10 +269,12 @@ def _entries(records: Iterable[ProvenanceRecord]) -> list[JournalEntry]:
                 flush_dismissals()
             dismissals.append(record)
             continue
+        if record.action in _CONFIGURE_ACTIONS:
+            configurations[record.workflow_stage] = record
         new: list[JournalEntry] = []
         batch = by_submission.get(id(record))
         if batch is not None:
-            new.append(_batch_entry(batch))
+            new.append(_batch_entry(batch, configurations.get(record.workflow_stage)))
         elif id(record) not in folded and (entry := _entry_from_record(record)):
             new.append(entry)
         finished = by_last_outcome.get(id(record))
@@ -300,7 +407,9 @@ def _entry_from_record(record: ProvenanceRecord) -> JournalEntry | None:
     builder = mapping.get(record.action)
     if builder is None:
         return None
-    return builder(record)
+    entry = builder(record)
+    details = _DETAIL_BUILDERS.get(record.action)
+    return replace(entry, detail_lines=details(record)) if details else entry
 
 
 def _entry(
@@ -319,7 +428,14 @@ def _entry(
         workflow_label=_workflow_label(record.workflow_stage),
         linked_entity_ids=linked_entities,
         linked_job_id=record.job_id,
+        route=_WORKFLOW_ROUTES.get(record.workflow_stage),
+        open_label=_open_label(record.workflow_stage),
     )
+
+
+def _open_label(workflow_stage: WorkflowStage | None) -> str | None:
+    label = _workflow_label(workflow_stage)
+    return f"Open in {label}" if label else None
 
 
 def _workflow_label(workflow_stage: WorkflowStage | None) -> str | None:
@@ -347,12 +463,14 @@ def _text_param(record: ProvenanceRecord, key: str) -> str | None:
 def _import_structure_entry(record: ProvenanceRecord) -> JournalEntry:
     source_file = _text_param(record, "source_file")
     file_name = Path(source_file).name if source_file else "structure file"
-    return _entry(
+    entry = _entry(
         record,
         stamp_kind="milestone",
         title="Host structure imported",
         body=f"Imported {file_name} into the project and recorded a portable project copy.",
     )
+    # The record is stamped with the generation workflow; the structure has its own page.
+    return replace(entry, route="host_structure", open_label="Open in Host Structure")
 
 
 def _import_legacy_relaxations_entry(record: ProvenanceRecord) -> JournalEntry:
@@ -576,6 +694,16 @@ def _criterion_text(record: ProvenanceRecord, prefix: str, reference: str) -> st
     the record holds no tolerance.
     """
 
+    parts = _threshold_parts(record, prefix)
+    if not parts:
+        return ""
+    joined = parts[0] if len(parts) == 1 else ", ".join(parts[:-1]) + " and " + parts[-1]
+    return f": {joined} of {reference}"
+
+
+def _threshold_parts(record: ProvenanceRecord, prefix: str) -> list[str]:
+    """Each tolerance a default was adopted under: ``energy within 0.001 eV/atom``."""
+
     parts: list[str] = []
     for key, quantity, unit in (
         ("energy_threshold", "energy", "eV/atom"),
@@ -585,10 +713,7 @@ def _criterion_text(record: ProvenanceRecord, prefix: str, reference: str) -> st
         value = _float_param(record, f"{prefix}_{key}")
         if value is not None:
             parts.append(f"{quantity} within {value:g} {unit}")
-    if not parts:
-        return ""
-    joined = parts[0] if len(parts) == 1 else ", ".join(parts[:-1]) + " and " + parts[-1]
-    return f": {joined} of {reference}"
+    return parts
 
 
 def _float_param(record: ProvenanceRecord, key: str) -> float | None:
@@ -938,8 +1063,33 @@ def _batch_outcome_text(batch: _SubmittedBatch) -> str:
     return text if finished == total else f"{finished} of {total} finished: {text}"
 
 
-def _batch_entry(batch: _SubmittedBatch) -> JournalEntry:
-    """The submission's card, with the batch's outcome and one row per job."""
+def _batch_summary(batch: _SubmittedBatch, outcome: str) -> str:
+    """The card's line: ``10 sites on this computer, 8 processes each · 10 of 10 completed``."""
+
+    jobs = list(batch.jobs.values())
+    if batch.record.workflow_stage == WorkflowStage.MUON_RELAXATION:
+        # One site can be relaxed in both charge states in one batch.
+        noun = "site" if len(_submission_charges(batch.record)) == 1 else "relaxation"
+    else:
+        noun = "job"
+    text = f"{plural(len(jobs), noun)} on {_target_text(batch.record)}"
+    processes = sorted(
+        {job["num_processes"] for job in jobs if isinstance(job.get("num_processes"), int)}
+    )
+    if len(processes) == 1:
+        each = " each" if len(jobs) > 1 else ""
+        text += f", {plural(processes[0], 'process', 'processes')}{each}"
+    elif processes:
+        text += f", {processes[0]} to {processes[-1]} processes"
+    return f"{text} · {outcome}" if outcome else text
+
+
+def _batch_entry(batch: _SubmittedBatch, configuration: ProvenanceRecord | None) -> JournalEntry:
+    """The submission's card, with the batch's outcome and one row per job.
+
+    ``configuration`` is the workflow's latest configuration at the submission;
+    the card's details give the parameters its rows for these jobs share.
+    """
 
     entry = _submit_jobs_entry(batch.record)
     outcome = _batch_outcome_text(batch)
@@ -949,7 +1099,17 @@ def _batch_entry(batch: _SubmittedBatch) -> JournalEntry:
         for label, job_id in zip(labels, batch.jobs, strict=True)
     )
     body = f"{entry.body} {outcome}." if outcome else entry.body
-    return replace(entry, body=body, job_rows=rows)
+    row_keys = {(str(job.get("row_label")), job.get("charge_state")) for job in batch.jobs.values()}
+    line = _configuration_parameters_line(configuration, row_keys) if configuration else ""
+    stage = batch.record.workflow_stage
+    return replace(
+        entry,
+        body=body,
+        job_rows=rows,
+        summary=_batch_summary(batch, outcome),
+        detail_lines=(line,) if line else (),
+        job_column="Site" if stage == WorkflowStage.MUON_RELAXATION else "Calculation",
+    )
 
 
 def _job_row(label: str, outcome: ProvenanceRecord | None) -> JournalJobRow:
@@ -1055,9 +1215,12 @@ def _dismissals_entry(records: Sequence[ProvenanceRecord]) -> JournalEntry:
             f"{f': {labels}' if labels else ''}."
         ),
     )
+    stage = records[0].workflow_stage if len(stages) == 1 else None
     return replace(
         entry,
-        workflow_label=_workflow_label(records[0].workflow_stage) if len(stages) == 1 else None,
+        workflow_label=_workflow_label(stage),
+        route=_WORKFLOW_ROUTES.get(stage),
+        open_label=_open_label(stage),
         linked_entity_ids=tuple(
             entity
             for record in records
@@ -1070,11 +1233,19 @@ def _dismissals_entry(records: Sequence[ProvenanceRecord]) -> JournalEntry:
 def _create_comparison_table_entry(record: ProvenanceRecord) -> JournalEntry:
     table_label = _text_param(record, "table_label") or "comparison table"
     count = _int_param(record, "dft_structure_count") or 0
-    return _entry(
+    entry = _entry(
         record,
         stamp_kind="success",
         title="Comparison table created",
         body=f"Created '{table_label}' using {plural(count, 'relaxed DFT structure')}.",
+    )
+    if not record.output_entity_ids:
+        return entry
+    # The record lists the table itself first, then the structures it compares.
+    return replace(
+        entry,
+        route=comparison_route(record.output_entity_ids[0]),
+        open_label=f"Open in '{table_label}'",
     )
 
 
@@ -1126,6 +1297,197 @@ def _failure_text(record: ProvenanceRecord) -> str:
         if sentence not in parts:
             parts.append(sentence)
     return " ".join(parts)
+
+
+def _quantity_text(value: object, default_unit: str) -> str | None:
+    """A recorded quantity, either a number or ``{"value": ..., "unit": ...}``, as text."""
+
+    unit = default_unit
+    if isinstance(value, dict):
+        unit = str(value.get("unit") or default_unit)
+        value = value.get("value")
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return f"{value:g} {unit}"
+
+
+def _grid_text(value: object) -> str | None:
+    """A k-point grid of three whole numbers as ``4×4×6``."""
+
+    if not isinstance(value, list) or len(value) != 3:
+        return None
+    if not all(isinstance(item, int) and not isinstance(item, bool) for item in value):
+        return None
+    return "×".join(str(item) for item in value)
+
+
+def _supercell_text(matrix: object) -> str | None:
+    """A supercell matrix as ``Supercell 2×2×2``, or by its rows when it is not diagonal."""
+
+    if not isinstance(matrix, list) or len(matrix) != 3:
+        return None
+    if not all(isinstance(row, list) and len(row) == 3 for row in matrix):
+        return None
+    if all(matrix[i][j] == 0 for i in range(3) for j in range(3) if i != j):
+        return f"Supercell {matrix[0][0]}×{matrix[1][1]}×{matrix[2][2]}"
+    rows = "; ".join(" ".join(str(item) for item in row) for row in matrix)
+    return f"Supercell [{rows}]"
+
+
+def _shared_value(
+    rows: Sequence[Mapping[str, object]], read: Callable[[Mapping[str, object]], object]
+) -> object:
+    """What ``read`` gives for every row, or ``None`` when the rows differ or there are none."""
+
+    values = [read(row) for row in rows]
+    return values[0] if values and all(value == values[0] for value in values) else None
+
+
+def _row_parameter(row: Mapping[str, object], key: str) -> object:
+    # Older records keep a row's settings under ``params``; provenance is never rewritten.
+    values = row.get("parameter_values", row.get("params"))
+    return values.get(key) if isinstance(values, dict) else None
+
+
+def _configuration_parameters_line(
+    record: ProvenanceRecord, row_keys: set[tuple[str, object]] | None = None
+) -> str:
+    """The supercell and the shared parameters a configuration recorded, on one line.
+
+    A row's parameter counts when every row (of the ``(label, charge state)`` pairs
+    in ``row_keys``, when given) has the same value. Parameters left at the project
+    default are not in the record.
+    """
+
+    configuration = record.parameters.get("configuration")
+    if not isinstance(configuration, dict):
+        return ""
+    raw_rows = configuration.get("rows")
+    rows = [row for row in raw_rows if isinstance(row, dict)] if isinstance(raw_rows, list) else []
+    if row_keys is not None and rows:
+        rows = [row for row in rows if (str(row.get("label")), row.get("charge_state")) in row_keys]
+        if not rows:
+            # These rows are not what the batch ran, so they say nothing about it.
+            return ""
+    shared = configuration.get("shared_params")
+    parameters = dict(shared) if isinstance(shared, dict) else {}
+    for key in ("spin_polarized", "xc_functional", "cut_off_energy", "kpoint_mp_grid"):
+        value = _shared_value(rows, lambda row, key=key: _row_parameter(row, key))
+        if value is not None:
+            parameters[key] = value
+
+    parts: list[str | None] = []
+    if rows:
+        parts.append(_supercell_text(_shared_value(rows, lambda row: row.get("supercell_matrix"))))
+    elif record.parameters.get("simulation_cell_mode") == "unit_cell":
+        parts.append("Unit cell")
+    spin = parameters.get("spin_polarized")
+    if isinstance(spin, bool):
+        parts.append("spin polarized" if spin else "not spin polarized")
+    functional = parameters.get("xc_functional")
+    parts.append(str(functional) if functional else None)
+    parts.append(_quantity_text(parameters.get("cut_off_energy"), "eV"))
+    parts.append(_grid_text(parameters.get("kpoint_mp_grid")))
+    return " · ".join(part for part in parts if part)
+
+
+def _sweep_line(record: ProvenanceRecord) -> str:
+    """A convergence sweep's range: ``6 cutoff values: 300 eV to 800 eV``."""
+
+    configuration = record.parameters.get("configuration")
+    if not isinstance(configuration, dict):
+        return ""
+    # Records written before the schema 2 migration keep the cutoffs under their legacy key.
+    values = configuration.get("sweep_values") or configuration.get("cutoff_energies")
+    if not isinstance(values, list) or not values:
+        return ""
+    if record.action == "configure_convergence_kpoint":
+        noun, first, last = "grid value", _grid_text(values[0]), _grid_text(values[-1])
+    else:
+        noun = "cutoff value"
+        first, last = _quantity_text(values[0], "eV"), _quantity_text(values[-1], "eV")
+    if first is None or last is None:
+        return ""
+    span = first if len(values) == 1 else f"{first} to {last}"
+    return f"{plural(len(values), noun)}: {span}"
+
+
+def _configuration_detail_lines(record: ProvenanceRecord) -> tuple[str, ...]:
+    """Shared parameters and the supercell; a long row list collapses to a count and three names."""
+
+    lines = [_configuration_parameters_line(record), _sweep_line(record)]
+    configuration = record.parameters.get("configuration")
+    if isinstance(configuration, dict):
+        for key, noun in (("rows", "row"), ("sources", "source")):
+            items = configuration.get(key)
+            if isinstance(items, list) and items:
+                labels = _label_summary(
+                    [item.get("label") for item in items if isinstance(item, dict)]
+                )
+                lines.append(
+                    f"{plural(len(items), noun)}: {labels}" if labels else plural(len(items), noun)
+                )
+    return tuple(line for line in lines if line)
+
+
+def _default_detail_lines(prefix: str) -> Callable[[ProvenanceRecord], tuple[str, ...]]:
+    """Details of an adopted default: the tolerances it met and its functional."""
+
+    def build(record: ProvenanceRecord) -> tuple[str, ...]:
+        parts = [part[:1].upper() + part[1:] for part in _threshold_parts(record, prefix)]
+        functional = _text_param(record, f"{prefix}_xc_functional")
+        if functional:
+            parts.append(f"Functional {functional}")
+        return (" · ".join(parts),) if parts else ()
+
+    return build
+
+
+def _generation_detail_lines(record: ProvenanceRecord) -> tuple[str, ...]:
+    """The run's inputs and seed, in the words of its methods sentence."""
+
+    run = generation_run_from_provenance(record.parameters)
+    return (run_methods_sentence(run),) if run is not None else ()
+
+
+def _legacy_import_detail_lines(record: ProvenanceRecord) -> tuple[str, ...]:
+    """The source folder, every skipped run with its reason, and every conflict."""
+
+    lines: list[str] = []
+    source = _text_param(record, "source_folder")
+    if source:
+        lines.append(f"Source folder {source}")
+    skipped = record.parameters.get("skipped")
+    for item in skipped if isinstance(skipped, list) else []:
+        if isinstance(item, dict):
+            lines.append(f"Skipped run {item.get('site_index')}: {item.get('reason')}")
+    sites = record.parameters.get("imported_sites")
+    for site in sites if isinstance(sites, list) else []:
+        if isinstance(site, dict) and isinstance(site.get("conflicts"), list):
+            lines.extend(f"{site.get('label')}: {conflict}" for conflict in site["conflicts"])
+    return tuple(lines)
+
+
+_CONFIGURE_ACTIONS = frozenset(
+    {
+        "configure_convergence_cutoff",
+        "configure_convergence_kpoint",
+        "configure_pristine_relaxation",
+        "configure_uep",
+        "configure_muon_relaxation",
+        "configure_quantum_corrections",
+        "configure_energy_barriers",
+    }
+)
+
+#: What each kind of record adds to its expanded card, beyond the exact time.
+_DETAIL_BUILDERS: dict[str, Callable[[ProvenanceRecord], tuple[str, ...]]] = {
+    **dict.fromkeys(_CONFIGURE_ACTIONS, _configuration_detail_lines),
+    "set_recommended_cutoff": _default_detail_lines("recommended_cutoff"),
+    "set_recommended_kpoint_grid": _default_detail_lines("recommended_kpoint"),
+    "generate_candidates": _generation_detail_lines,
+    "import_legacy_relaxations": _legacy_import_detail_lines,
+}
 
 
 def _count_sequence(record: ProvenanceRecord, parent_key: str, child_key: str) -> int:

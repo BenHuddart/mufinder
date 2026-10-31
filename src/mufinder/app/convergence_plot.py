@@ -9,7 +9,8 @@ spacings along the top, and names only the recommended grid on the plot.
 
 The examiner draws the full plot (``compact=False``): titles, legends and the
 analysis marks it passes in. A pinned card draws it compactly
-(``compact=True``): smaller text and the thresholds as badges.
+(``compact=True``): smaller text, with the thresholds left to the card's
+``Criteria`` row and the top-right corner left to the card's pop-out button.
 """
 
 from __future__ import annotations
@@ -322,12 +323,10 @@ def draw_convergence_plot(
                 )
                 spacing_ax.set_xticks(positions, labels)
                 spacing_ax.xaxis.set_minor_locator(NullLocator())
-                # A compact plot shares the label's row with the energy badge on the right.
+                # On a compact plot the label's row is as tall as the pop-out button
+                # in the top-right corner, so a tick label at the right stays clear of it.
                 spacing_ax.set_xlabel(
-                    SPACING_AXIS_LABEL,
-                    labelpad=6,
-                    fontsize=label_size,
-                    loc="left" if compact else "center",
+                    SPACING_AXIS_LABEL, labelpad=14 if compact else 6, fontsize=label_size
                 )
                 style_plot_axes(spacing_ax, facecolor=axes_face, tick_labelsize=tick_size)
                 # The twin would repeat the energy axis's grid at its own ticks.
@@ -425,7 +424,8 @@ def draw_convergence_plot(
             recommended_label,
             xy=(recommended, 1.0),
             xycoords=energy_ax.get_xaxis_transform(),
-            xytext=(4, -4),
+            # Without a spacing axis above it, the panel's top reaches the pop-out button.
+            xytext=(4, -4 if spacing_ax is not None else -24),
             textcoords="offset points",
             ha="left",
             va="top",
@@ -434,9 +434,7 @@ def draw_convergence_plot(
             bbox=plot_badge_box(),
         )
 
-    if compact:
-        _draw_threshold_badges(energy_ax, force_ax, spacing_ax, data)
-    elif x_values:
+    if not compact and x_values:
         energy_ax.legend(loc="best")
         style_plot_legend(energy_ax.get_legend(), frame_alpha=0.95)
         handles = force_handles + stress_handles
@@ -466,71 +464,3 @@ def _draw_threshold_titles(energy_ax: Axes, force_ax: Axes, data: ConvergencePlo
         force_ax.set_title(
             f"Force convergence (threshold {data.force_threshold:.3g} eV/Ang)", pad=10
         )
-
-
-def _draw_threshold_badges(
-    energy_ax: Axes, force_ax: Axes, spacing_ax: Axes | None, data: ConvergencePlotData
-) -> None:
-    """Show the thresholds as badges above each panel's top-right corner, in each series' colour.
-
-    With a spacing axis along the top, the energy badge moves up to the row of
-    that axis's label, clear of its tick labels.
-    """
-
-    colors = plot_series_colours()
-    badge = {"fontsize": 8, "va": "bottom", "bbox": plot_badge_box()}
-    if data.energy_threshold is not None:
-        energy_text = f"dE <= {data.energy_threshold:.3g} eV/atom"
-        if spacing_ax is None:
-            energy_ax.text(
-                0.99,
-                1.01,
-                energy_text,
-                transform=energy_ax.transAxes,
-                ha="right",
-                color=colors.energy,
-                **badge,
-            )
-        else:
-            energy_ax.annotate(
-                energy_text,
-                xy=(0.99, 0.0),
-                xycoords=(energy_ax.transAxes, spacing_ax.xaxis.label),
-                ha="right",
-                color=colors.energy,
-                **badge,
-            )
-    if data.force_threshold is None:
-        return
-    force_text = f"dF <= {data.force_threshold:.3g} eV/Ang"
-    if not (data.stresses and data.stress_threshold is not None):
-        force_ax.text(
-            0.99,
-            1.01,
-            force_text,
-            transform=force_ax.transAxes,
-            ha="right",
-            color=colors.force,
-            **badge,
-        )
-        return
-    stress_badge = force_ax.text(
-        0.99,
-        1.01,
-        f"dS <= {data.stress_threshold:.3g} GPa",
-        transform=force_ax.transAxes,
-        ha="right",
-        color=colors.stress,
-        **badge,
-    )
-    # The dF badge sits just left of the dS badge, wherever layout puts it.
-    force_ax.annotate(
-        force_text,
-        xy=(0.0, 0.0),
-        xycoords=stress_badge,
-        xytext=(-8, 0),
-        textcoords="offset points",
-        ha="right",
-        color=colors.force,
-        **badge,
-    )

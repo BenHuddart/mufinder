@@ -1153,6 +1153,22 @@ def completed_energy_barrier_neb_candidates(
     return sorted(candidates, key=lambda item: (item.job.label, item.key))
 
 
+def energy_barrier_source_site_labels(
+    document: ProjectDocument | None,
+    source: Mapping[str, object] | None,
+) -> tuple[str, str] | None:
+    """Return a generated path's initial and final site labels, if both are known."""
+
+    if source is None or document is None:
+        return None
+    labels: list[str] = []
+    for field in ("reactant_site_id", "product_site_id"):
+        site_id = uuid_from_source(source, field)
+        site = document.sites.get(site_id) if site_id is not None else None
+        labels.append((site.label or "").strip() if site is not None else "")
+    return (labels[0], labels[1]) if all(labels) else None
+
+
 def energy_barrier_neb_result_path_label(
     document: ProjectDocument | None,
     candidate: EnergyBarrierCompletedNebCandidate,
@@ -1160,15 +1176,8 @@ def energy_barrier_neb_result_path_label(
 ) -> str:
     """Describe a completed NEB result as ``initial → final``, else by its job label."""
 
-    if source is not None and document is not None:
-        labels: list[str] = []
-        for field in ("reactant_site_id", "product_site_id"):
-            site_id = uuid_from_source(source, field)
-            site = document.sites.get(site_id) if site_id is not None else None
-            labels.append((site.label or "").strip() if site is not None else "")
-        if all(labels):
-            return f"{labels[0]} → {labels[1]}"
-    return candidate.job.label
+    labels = energy_barrier_source_site_labels(document, source)
+    return f"{labels[0]} → {labels[1]}" if labels is not None else candidate.job.label
 
 
 # --- completed relaxations ----------------------------------------------------

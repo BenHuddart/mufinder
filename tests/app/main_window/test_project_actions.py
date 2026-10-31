@@ -507,6 +507,27 @@ def test_main_window_journal_populates_from_imported_provenance(
     window.close()
 
 
+def test_journal_open_in_shows_the_workflow_page(main_window, tmp_path: Path) -> None:
+    window = main_window
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "journal_open.mufinder", "JournalOpen")
+    window._document = doc
+    service.set_recommended_cutoff(doc, 600.0)
+    window._refresh_ui_after_project_change()
+    select_route(window, "provenance_log")
+
+    card = window._journal_view._cards()[-1]
+    card.set_expanded(True)
+    button = card.findChild(main_window_module.QPushButton)
+    assert button.text() == "Open in Cutoff Convergence"
+    assert not button.isHidden()
+
+    button.click()
+
+    assert window._main_stack.currentWidget() is window._convergence_view
+    window.close()
+
+
 def test_main_window_close_prompts_to_save_visible_project(
     main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

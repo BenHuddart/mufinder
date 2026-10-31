@@ -23,7 +23,10 @@ from mufinder.services.source_candidates import CompletedPristineJob
 
 
 class ComparisonJobDialog(QDialog):
-    """Allow users to select one or more completed pristine jobs for comparison."""
+    """Allow users to select one or more completed pristine jobs for comparison.
+
+    Every job starts ticked.
+    """
 
     _CHECK_COLUMN = 0
     _LABEL_COLUMN = 1
@@ -110,7 +113,7 @@ class ComparisonJobDialog(QDialog):
                 | Qt.ItemFlag.ItemIsUserCheckable
                 | Qt.ItemFlag.ItemIsSelectable
             )
-            include.setCheckState(Qt.CheckState.Unchecked)
+            include.setCheckState(Qt.CheckState.Checked)
             include.setData(Qt.ItemDataRole.UserRole, str(job.job_id))
             self._table.setItem(row, self._CHECK_COLUMN, include)
 

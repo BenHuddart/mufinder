@@ -18,10 +18,10 @@ from collections.abc import Sequence
 from typing import Any
 
 from PySide6.QtCore import Signal
-from PySide6.QtWidgets import QComboBox, QPushButton, QTableWidget, QWidget
+from PySide6.QtWidgets import QCheckBox, QPushButton, QTableWidget, QWidget
 
 from mufinder.app.relaxation_types import PristineRelaxationConfig, PristineRelaxationRow
-from mufinder.app.selection_snapshot import SelectionSnapshotComboBox, resolve_target_keys
+from mufinder.app.selection_snapshot import SelectionSnapshotCheckBox, resolve_target_keys
 from mufinder.app.workflow_row_widget import RelaxationRowTableWidget, RowEntry
 from mufinder.app.workflow_table_utils import (
     multi_row_outcome_text,
@@ -29,12 +29,19 @@ from mufinder.app.workflow_table_utils import (
     set_workflow_table_item,
     show_status_message,
 )
+from mufinder.science.structure_metrics import format_with_change
+
+
+#: Significant figures of a lattice cell, which leaves the three of them room
+#: for the row's other columns at the default window size.
+_LATTICE_DIGITS = 5
 
 
 class PristineRelaxationWidget(RelaxationRowTableWidget):
     """UI for configuring pristine-relaxation jobs with per-row supercells."""
 
     _LABEL_COLUMN = 0
+    _LABEL_COLUMN_WIDTH = 106
     _SUPERCELL_COLUMN = 1
     _FIX_CELL_COLUMN = 2
     _STATUS_COLUMN = 3
@@ -46,7 +53,7 @@ class PristineRelaxationWidget(RelaxationRowTableWidget):
     _COLUMN_HEADERS = (
         "Label",
         "Supercell",
-        "Fix Cell",
+        "Fix cell",
         "Status",
         "a (Ang)",
         "b (Ang)",
@@ -65,6 +72,7 @@ class PristineRelaxationWidget(RelaxationRowTableWidget):
     _ROW_LABEL_TEMPLATE = "relax_{number}"
     _NAME_PREFIX_DEFAULT = "pristine_relax"
     _NO_ROWS_MESSAGE = "Add one or more relaxation rows first."
+    _EMPTY_ROWS_TEXT = "Add a job to relax the host unit cell or a saved supercell."
 
     generate_comparison_requested = Signal()
 
@@ -73,23 +81,24 @@ class PristineRelaxationWidget(RelaxationRowTableWidget):
         self._generate_comparison_button = QPushButton("Generate Comparison Table…")
         self._build_layout(
             title="Pristine Relaxation",
-            subtitle="Create labelled geometry-optimization jobs with per-job supercells and cell constraints.",
+            subtitle=(
+                "Relax the host without a muon, to check the settings against experiment "
+                "and give the later stages a reference structure."
+            ),
             table_group_title="Relaxation Jobs",
-            run_extras=(self._generate_comparison_button,),
+            control_extras=(self._generate_comparison_button,),
         )
         self._connect_signals()
         self._generate_comparison_button.clicked.connect(self.generate_comparison_requested.emit)
 
     def create_row_cells(self, table: QTableWidget, row: int, row_id: int) -> None:
-        fix_combo = SelectionSnapshotComboBox(table)
-        fix_combo.selection_snapshot_key = row_id
-        fix_combo.addItem("Yes (fixed)", True)
-        fix_combo.addItem("No (relax)", False)
-        fix_combo.setCurrentIndex(fix_combo.findData(False))
-        fix_combo.currentIndexChanged.connect(
-            lambda _index, combo=fix_combo: self._on_fix_cell_combo_changed(row_id, combo)
+        fix_check = SelectionSnapshotCheckBox(table)
+        fix_check.setObjectName("rowCheckBox")
+        fix_check.selection_snapshot_key = row_id
+        fix_check.toggled.connect(
+            lambda _checked, check=fix_check: self._on_fix_cell_toggled(row_id, check)
         )
-        table.setCellWidget(row, self._FIX_CELL_COLUMN, fix_combo)
+        table.setCellWidget(row, self._FIX_CELL_COLUMN, fix_check)
         for column in (self._LATTICE_A_COLUMN, self._LATTICE_B_COLUMN, self._LATTICE_C_COLUMN):
             set_workflow_table_item(table, row, column, "")
 
@@ -104,36 +113,45 @@ class PristineRelaxationWidget(RelaxationRowTableWidget):
         locked: bool,
     ) -> None:
         del row_id, status
-        fix_combo = table.cellWidget(row, self._FIX_CELL_COLUMN)
-        if isinstance(fix_combo, QComboBox):
-            fix_combo.setEnabled(not locked)
-            name_row_control(fix_combo, "Fix Cell for", self._row_display_label(row, table=table))
+        fix_check = table.cellWidget(row, self._FIX_CELL_COLUMN)
+        if isinstance(fix_check, QCheckBox):
+            fix_check.setEnabled(not locked)
+            name_row_control(fix_check, "Fix cell for", self._row_display_label(row, table=table))
         lattice = (
             (None, None, None)
             if runtime is None
             else (runtime.lattice_a, runtime.lattice_b, runtime.lattice_c)
         )
-        for column, value in zip(
+        references = (
+            runtime.host_lattice_lengths
+            if runtime is not None and runtime.host_lattice_lengths is not None
+            else (None, None, None)
+        )
+        for column, value, reference in zip(
             (self._LATTICE_A_COLUMN, self._LATTICE_B_COLUMN, self._LATTICE_C_COLUMN),
             lattice,
+            references,
             strict=True,
         ):
-            self._set_float_item(row, column, value, table=table)
+            text = (
+                ""
+                if value is None
+                else format_with_change(value, reference, digits=_LATTICE_DIGITS)
+            )
+            set_workflow_table_item(table, row, column, text)
 
     def _fix_all_cell_at_row(self, row: int, *, table: QTableWidget | None = None) -> bool:
-        combo = (table or self._table).cellWidget(row, self._FIX_CELL_COLUMN)
-        if isinstance(combo, QComboBox):
-            return bool(combo.currentData())
-        return False
+        check = (table or self._table).cellWidget(row, self._FIX_CELL_COLUMN)
+        return isinstance(check, QCheckBox) and check.isChecked()
 
-    def _on_fix_cell_combo_changed(self, row_id: int, combo: SelectionSnapshotComboBox) -> None:
+    def _on_fix_cell_toggled(self, row_id: int, check: SelectionSnapshotCheckBox) -> None:
         snapshot_keys = [
             key
-            for row in combo.selection_snapshot_rows
+            for row in check.selection_snapshot_rows
             if (key := self._row_id_at(row)) is not None
         ]
         target_row_ids = resolve_target_keys(
-            combo,
+            check,
             clicked_key=row_id,
             snapshot_keys=snapshot_keys,
             eligibility=self._row_is_editable,
@@ -141,7 +159,7 @@ class PristineRelaxationWidget(RelaxationRowTableWidget):
             action="Set this cell constraint on",
         )
         if not target_row_ids:
-            combo.restore_pre_interaction_index()
+            check.restore_pre_interaction_state()
             return
         if len(target_row_ids) > 1:
             show_status_message(
@@ -155,11 +173,11 @@ class PristineRelaxationWidget(RelaxationRowTableWidget):
             if target_row_id == row_id or location is None:
                 continue
             table, target_row = location
-            target_combo = table.cellWidget(target_row, self._FIX_CELL_COLUMN)
-            if isinstance(target_combo, QComboBox):
-                previous = target_combo.blockSignals(True)
-                target_combo.setCurrentIndex(combo.currentIndex())
-                target_combo.blockSignals(previous)
+            target_check = table.cellWidget(target_row, self._FIX_CELL_COLUMN)
+            if isinstance(target_check, QCheckBox):
+                previous = target_check.blockSignals(True)
+                target_check.setChecked(check.isChecked())
+                target_check.blockSignals(previous)
         self._emit_state()
 
     def config_for_rows(self, rows: Sequence[RowEntry]) -> PristineRelaxationConfig:
@@ -204,7 +222,6 @@ class PristineRelaxationWidget(RelaxationRowTableWidget):
                 row = self._insert_row(
                     row_id, str(entry.get("label", self._new_row_label())).strip()
                 )
-                fix_combo = self._table.cellWidget(row, self._FIX_CELL_COLUMN)
-                if isinstance(fix_combo, QComboBox):
-                    index = fix_combo.findData(bool(entry.get("fix_all_cell", False)))
-                    fix_combo.setCurrentIndex(index if index >= 0 else 0)
+                fix_check = self._table.cellWidget(row, self._FIX_CELL_COLUMN)
+                if isinstance(fix_check, QCheckBox):
+                    fix_check.setChecked(bool(entry.get("fix_all_cell", False)))

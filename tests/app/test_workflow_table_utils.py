@@ -38,6 +38,7 @@ from mufinder.app.workflow_table_utils import (
     RESETTABLE_ROW_STATUSES,
     RowMenuAction,
     SupercellColumn,
+    table_natural_width,
     bind_reset_failed_context_menu,
     create_workflow_table,
     format_table_number,
@@ -1305,3 +1306,27 @@ def test_row_menu_submenu_children_get_keys_even_under_an_on_rows_parent(qapp) -
     entry.menu().actions()[0].trigger()
 
     assert seen == [["positivemuon:Site 1"]]
+
+
+def test_table_natural_width_shows_every_column_before_the_table_is_shown(qapp) -> None:
+    table = create_workflow_table(
+        ("Name", "A long column heading", "Hidden"),
+        default_resize_mode=QHeaderView.ResizeMode.ResizeToContents,
+        stretch_last_section=False,
+    )
+    table.setRowCount(1)
+    table.setItem(0, 0, QTableWidgetItem("A rather long name in this cell"))
+    table.setColumnHidden(2, True)
+
+    width = table_natural_width(table)
+    table.setColumnHidden(2, False)
+    assert table_natural_width(table) > width
+
+    table.setColumnHidden(2, True)
+    table.resize(width, 200)
+    table.show()
+    qapp.processEvents()
+    assert not table.horizontalScrollBar().isVisible()
+    for column in (0, 1):
+        assert table.columnWidth(column) >= table.sizeHintForColumn(column)
+    table.close()

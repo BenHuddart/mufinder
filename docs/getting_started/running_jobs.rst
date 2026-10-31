@@ -186,9 +186,9 @@ affected.
 - After the prompt is answered the table selection is set to the selected
   rows (``All``) or the clicked row (``This ... only``); cancelling restores the
   previous selection.
-- Controls that propagate: the ``Supercell`` and ``Fix Cell`` drop-downs, the
-  per-row ``Configure`` and remove buttons, and every Job Dashboard action
-  button.
+- Controls that propagate: the ``Supercell`` drop-down, the ``Fix cell``
+  checkbox, the per-row ``Configure`` and remove buttons, and every Job Dashboard
+  action button.
 - Controls that only make sense for one row (``Open Wizard`` in the UEP table,
   ``View…`` in the Energy Barriers table) always act on their own row and
   never prompt.
@@ -201,7 +201,7 @@ inside the rows, so tables stay usable on a small laptop screen:
 - Each workflow table shows ``N selected`` beside its buttons. The Job
   Dashboard shows ``N selected · row buttons apply to all selected`` above the
   table, only while two or more rows are selected.
-- After a multi-row ``Supercell`` or ``Fix Cell`` change the status bar reports
+- After a multi-row ``Supercell`` or ``Fix cell`` change the status bar reports
   how many rows were changed and how many were skipped.
 
 A selection may mix rows an action applies to with rows it does not (a running

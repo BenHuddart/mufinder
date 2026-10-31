@@ -678,8 +678,8 @@ def test_full_catalog_applies_the_hidden_flag_without_adding_keywords(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # This catalog lacks MAGRES_TASK and TSSEARCH_LST_MAX_ITER; their
-    # visibility-only overrides must not invent them.
+    # This catalog lacks MAGRES_TASK and the TSSEARCH keywords; their
+    # visibility-only and label-only overrides must not invent them.
     refresh_from_catalog(
         tmp_path,
         monkeypatch,
@@ -698,6 +698,7 @@ def test_full_catalog_applies_the_hidden_flag_without_adding_keywords(
     assert unit_cell is not None and unit_cell.user_visible is False
     assert get_keyword_spec("param", "magres_task") is None
     assert get_keyword_spec("param", "tssearch_lst_max_iter") is None
+    assert get_keyword_spec("param", "tssearch_force_tol") is None
 
 
 def test_hidden_keywords_still_parse_and_write() -> None:

@@ -216,13 +216,13 @@ def test_percent_change_against_zero_reference_is_undefined_and_shown_without_ch
     assert sm._safe_percent_change(0.0, 5.0) is None
     assert sm._safe_percent_change(1e-13, 5.0) is None
     assert sm._safe_percent_change(10.0, 11.0) == 100.0 * (11.0 - 10.0) / 10.0
-    assert sm._format_with_change(5.0, 0.0) == "5"
+    assert sm.format_with_change(5.0, 0.0) == "5"
 
 
 def test_a_change_that_rounds_to_zero_is_never_negative() -> None:
-    assert sm._format_with_change(89.99999, 90.0) == "90 (+0.00 %)"
-    assert sm._format_with_change(90.0, 90.0) == "90 (+0.00 %)"
-    assert sm._format_with_change(89.99, 90.0) == "89.99 (-0.01 %)"
+    assert sm.format_with_change(89.99999, 90.0) == "90 (+0.00 %)"
+    assert sm.format_with_change(90.0, 90.0) == "90 (+0.00 %)"
+    assert sm.format_with_change(89.99, 90.0) == "89.99 (-0.01 %)"
 
 
 def _strained_supercell(matrix: tuple[tuple[int, int, int], ...], strain: np.ndarray) -> Structure:
@@ -271,3 +271,12 @@ def test_a_non_diagonal_supercell_column_reads_the_host_cell_it_implies() -> Non
     assert values["c"].display == "5 (+0.00 %)"
     assert values["gamma"].display == "90 (+0.00 %)"
     assert values["cell_volume"].display == "126.25 (+1.00 %)"
+
+
+def test_format_with_change_without_a_reference_is_the_value_alone() -> None:
+    assert sm.format_with_change(4.7091, None) == "4.7091"
+
+
+def test_format_with_change_takes_the_significant_figures_of_the_value() -> None:
+    assert sm.format_with_change(4.70908, 4.695, digits=5) == "4.7091 (+0.30 %)"
+    assert sm.format_with_change(4.70908, None, digits=5) == "4.7091"

@@ -15,6 +15,7 @@ from PySide6.QtWidgets import QPushButton, QWidget
 
 from mufinder.app.atomic_structure_viewer import AtomicStructureViewer
 from mufinder.app.relaxation_analysis_widget import RelaxationClusteringDialog
+from mufinder.app.workflow_table_utils import table_natural_width
 from mufinder.domain.models import Structure
 from mufinder.science.relaxation_analysis import RelaxedMuonSite
 from tests.support.structures import host_structure
@@ -160,7 +161,7 @@ def test_relaxation_clustering_split_keeps_the_summary_table_whole_on_small_wind
         _resize_and_settle(qapp, dialog, 900, 620)
         plot_pane, summary_pane = dialog._main_splitter.sizes()
 
-        assert summary_pane >= dialog._summary_table_natural_width()
+        assert summary_pane >= table_natural_width(dialog._summary_table)
         assert plot_pane >= dialog._main_splitter.widget(0).minimumSizeHint().width()
         # Freed from the viewer's old 610 px minimum, the plot gets more than the ~260 px it had.
         assert plot_pane > 300

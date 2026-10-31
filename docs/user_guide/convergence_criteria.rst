@@ -170,7 +170,7 @@ The results are a list of labelled rows, grouped by blank lines:
 The first line of each row is the result and the second explains it. A ``Stress``
 row follows ``Force`` when stress is included, and a ``Notes`` row ends the list
 when the sweep has caveats. A k-point sweep has no ``Sweep length`` row, names
-grids rather than cutoffs (``converged at 4 x 4 x 6 (spacing 0.05 1/Ang)``), and
+grids rather than cutoffs (``converged at 4 x 4 x 6 (spacing 0.06289 1/Ang)``), and
 adds under ``Reference`` that a sweep should extend beyond the grid it is meant to
 certify. A ``too short`` sweep length and a recommendation of ``none`` are shown in
 the warning colour.

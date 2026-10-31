@@ -741,6 +741,81 @@ def test_relaxation_clustering_dialog_switches_to_hierarchical_when_shown(qapp) 
     dialog.close()
 
 
+@pytest.mark.parametrize("mode", [theme_module.THEME_LIGHT, theme_module.THEME_DARK])
+def test_relaxation_dendrogram_links_carry_the_viewer_cluster_colours(qapp, mode) -> None:
+    theme_module.apply_theme(qapp, mode)
+    host = host_structure()
+    dialog = _clustering_dialog(
+        host,
+        [
+            _relaxed_site(host, (0.100, 0.100, 0.100), -10.0),
+            _relaxed_site(host, (0.112, 0.100, 0.100), -9.99),
+            _relaxed_site(host, (0.300, 0.300, 0.300), -9.5),
+            _relaxed_site(host, (0.312, 0.300, 0.300), -9.49),
+            _relaxed_site(host, (0.480, 0.100, 0.400), -9.0),
+        ],
+    )
+    overlays = []
+    dialog._viewer.set_point_overlays = overlays.append
+    try:
+        dialog._method_combo.setCurrentIndex(dialog._method_combo.findData("hier"))
+        dialog._hierarchical_input.setValue(0.2)
+        dialog._flush_pending_refresh()
+
+        labels = dialog._current_labels
+        assert len(set(labels)) == 3
+        viewer_colours = dict(zip(labels, overlays[-1][0]["colors"]))
+        # The single-site cluster has no link of its own to colour.
+        cluster_colours = {
+            label: colour for label, colour in viewer_colours.items() if labels.count(label) > 1
+        }
+        assert len(set(cluster_colours.values())) == 2
+
+        below_cut, above_cut = [], []
+        for collection in dialog._left_figure.axes[0].collections:
+            colour = mcolors.to_hex(collection.get_color()[0])
+            for segment in collection.get_segments():
+                (above_cut if segment[:, 1].max() > 0.2 else below_cut).append(colour)
+
+        assert set(below_cut) == {mcolors.to_hex(c) for c in cluster_colours.values()}
+        reference = mcolors.to_hex(theme_module.plot_series_colours().reference)
+        assert set(above_cut) == {reference}
+    finally:
+        dialog.close()
+        theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)
+
+
+def test_relaxation_dendrogram_colours_a_same_site_group_as_one_cluster(qapp) -> None:
+    """Relaxations the physical floors call one site share a cluster at every cut."""
+
+    host = host_structure()
+    dialog = _clustering_dialog(
+        host,
+        [
+            _relaxed_site(host, (0.100, 0.100, 0.100), -10.0),
+            _relaxed_site(host, (0.1000001, 0.100, 0.100), -10.0),
+            _relaxed_site(host, (0.400, 0.400, 0.300), -9.0),
+        ],
+    )
+    overlays = []
+    dialog._viewer.set_point_overlays = overlays.append
+    try:
+        dialog._method_combo.setCurrentIndex(dialog._method_combo.findData("hier"))
+        dialog._hierarchical_input.setValue(0.01)
+        dialog._flush_pending_refresh()
+
+        labels = dialog._current_labels
+        assert labels[0] == labels[1] != labels[2]
+        colours = {
+            mcolors.to_hex(collection.get_color()[0])
+            for collection in dialog._left_figure.axes[0].collections
+        }
+        reference = mcolors.to_hex(theme_module.plot_series_colours().reference)
+        assert colours == {mcolors.to_hex(overlays[-1][0]["colors"][0]), reference}
+    finally:
+        dialog.close()
+
+
 def test_relaxation_clustering_dialog_shows_only_active_method_controls(qapp) -> None:
     host = host_structure()
     workspace = default_workspace_state(

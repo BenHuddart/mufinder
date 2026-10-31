@@ -91,8 +91,9 @@ Help text with other wording does not hide its keyword: ``CML_FILENAME`` and
 An entry in ``KEYWORD_OVERRIDES`` (``mufinder.castep_io.catalog_overrides``)
 may also set ``user_visible``, which takes precedence over the rule. The
 override applies to a full catalog and to the starter catalog alike, and an
-override that sets nothing else adjusts a keyword the catalog provides without
-adding one the catalog lacks. It is set for these kinds of entry:
+override that sets nothing else, or only a ``label``, adjusts a keyword the
+catalog provides without adding one the catalog lacks. It is set for these kinds
+of entry:
 
 - **Parser compatibility.** ``UNIT_CELL``, because MuFinder writes the lattice
   from the project structure, and ``TSSEARCH_LST_MAX_ITER``, which the starter
