@@ -1119,6 +1119,7 @@ class MagneticPresetDialog(QDialog):
     """Guided helper that builds a helix, conical, cycloid or spin-density wave from crystal axes."""
 
     _DELTA_LIMIT_RLU = 4.0
+    _PROPAGATION_VECTOR = "vector"
 
     _KINDS = {
         "Helix": "helix",
@@ -1155,6 +1156,7 @@ class MagneticPresetDialog(QDialog):
         self._propagation_combo = QComboBox()
         for axis in ("a", "b", "c"):
             self._propagation_combo.addItem(f"Along {axis}*", f"{axis}*")
+        self._propagation_combo.addItem("Enter a vector (r.l.u.)", self._PROPAGATION_VECTOR)
         for slot in q_basis_slots(self._model):
             if not np.allclose(slot.q_rlu, 0.0, atol=1e-12):
                 self._propagation_combo.addItem(
@@ -1180,6 +1182,17 @@ class MagneticPresetDialog(QDialog):
         wavevector_layout.addWidget(self._wavevector, 1)
         wavevector_layout.addWidget(self._wavevector_unit)
         self._wavevector_row_label = QLabel("")
+        self._typed_q = direction_inputs(
+            (0.0, 0.0, 0.0),
+            minimum=-self._DELTA_LIMIT_RLU,
+            maximum=self._DELTA_LIMIT_RLU,
+            placeholders=("qx", "qy", "qz"),
+        )
+        for edit, axis in zip(self._typed_q, "xyz", strict=True):
+            edit.setAccessibleName(f"q{axis} in r.l.u.")
+        self._typed_q_group = direction_group(self._typed_q)
+        self._typed_q_row_label = QLabel("q (r.l.u.)")
+        self._typed_q_direction: np.ndarray | None = None
         self._reference_combo = QComboBox()
         for axis in ("a", "b", "c"):
             self._reference_combo.addItem(f"Crystal axis {axis}", axis)
@@ -1215,6 +1228,11 @@ class MagneticPresetDialog(QDialog):
         # δ only rescales q along the same axis, so it keeps the reference axis the user chose.
         self._wavevector.textChanged.connect(lambda *_: self._refresh())
         self._wavevector_unit.currentIndexChanged.connect(self._on_wavevector_unit_changed)
+        # The summary follows every keystroke; the reference axis waits for the finished entry,
+        # as the steps between two parallel vectors point elsewhere.
+        for edit in self._typed_q:
+            edit.textChanged.connect(lambda *_: self._refresh())
+            edit.editingFinished.connect(self._on_typed_q_finished)
         for widget in (self._reference_combo, self._handedness_combo):
             widget.currentIndexChanged.connect(lambda *_: self._refresh())
         for edit in (self._cone_angle, self._moment):
@@ -1243,6 +1261,7 @@ class MagneticPresetDialog(QDialog):
         form.addRow("Structure", self._kind_combo)
         form.addRow("Propagation", self._propagation_combo)
         form.addRow(self._wavevector_row_label, self._wavevector_group)
+        form.addRow(self._typed_q_row_label, self._typed_q_group)
         form.addRow(self._reference_row_label, self._reference_combo)
         form.addRow(self._handedness_row_label, self._handedness_combo)
         form.addRow(self._cone_angle_row_label, self._cone_angle)
@@ -1276,7 +1295,7 @@ class MagneticPresetDialog(QDialog):
         self._label_edited = bool(self._label_edit.text().strip())
 
     def q_basis_coefficients(self) -> tuple[float, float, float] | None:
-        """Return the stored basis row the preset propagates along, or ``None`` for a new reciprocal-axis q."""
+        """Return the stored basis row the preset propagates along, or ``None`` for a new q."""
 
         source = self._propagation_combo.currentData()
         return unit_q_coeff(source) if isinstance(source, int) else None
@@ -1285,6 +1304,8 @@ class MagneticPresetDialog(QDialog):
         source = self._propagation_combo.currentData()
         if isinstance(source, int):
             return float_triplet(self._model.q_basis_rlu[source])
+        if source == self._PROPAGATION_VECTOR:
+            return direction_value(self._typed_q, "q")
         try:
             if self._wavevector_in_inverse_angstrom():
                 return wavevector_rlu_from_inverse_angstrom(
@@ -1295,6 +1316,32 @@ class MagneticPresetDialog(QDialog):
             return reciprocal_axis_q_rlu(str(source), self._wavevector_value("δ"))
         except MagneticStructureError as exc:
             raise ValueError(str(exc)) from None
+
+    def _axis_source(self) -> str | None:
+        """The reciprocal axis the preset propagates along, or ``None`` for a row or a typed vector."""
+
+        source = self._propagation_combo.currentData()
+        if isinstance(source, int) or source == self._PROPAGATION_VECTOR:
+            return None
+        return str(source)
+
+    def _on_typed_q_finished(self) -> None:
+        self._refresh(reset_reference=self._typed_q_turned())
+
+    def _typed_q_turned(self) -> bool:
+        """Note the typed q's direction; a new direction resets the reference axis, a new length keeps it."""
+
+        try:
+            q_rlu = np.array(direction_value(self._typed_q, "q"))
+        except ValueError:
+            return False
+        length = float(np.linalg.norm(q_rlu))
+        if length <= 1e-12:
+            return False
+        direction = q_rlu / length
+        previous = self._typed_q_direction
+        self._typed_q_direction = direction
+        return previous is None or not np.allclose(np.cross(previous, direction), 0.0, atol=1e-9)
 
     def _wavevector_value(self, label: str) -> float:
         converted = self._converted_wavevector
@@ -1339,17 +1386,24 @@ class MagneticPresetDialog(QDialog):
         """
 
         limit = self._DELTA_LIMIT_RLU
-        source = self._propagation_combo.currentData()
-        if self._wavevector_in_inverse_angstrom() and not isinstance(source, int):
+        axis = self._axis_source()
+        if self._wavevector_in_inverse_angstrom() and axis is not None:
             try:
-                limit *= reciprocal_axis_length(self._structure.lattice_vectors, str(source))
+                limit *= reciprocal_axis_length(self._structure.lattice_vectors, axis)
             except MagneticStructureError:
                 pass
         self._wavevector.setRange(-limit, limit, keep_text=True)
 
     def _propagation_text(self) -> str:
         source = self._propagation_combo.currentData()
-        return f"q{source + 1}" if isinstance(source, int) else str(source)
+        if isinstance(source, int):
+            return f"q{source + 1}"
+        if source == self._PROPAGATION_VECTOR:
+            try:
+                return f"({q_vector_text(self.q_vector())})"
+            except ValueError:
+                return "a typed q"
+        return str(source)
 
     def component(self, q_coeff: Sequence[float]) -> MagneticComponent:
         kind = self._kind()
@@ -1374,9 +1428,12 @@ class MagneticPresetDialog(QDialog):
 
     def _refresh(self, *, reset_reference: bool = False) -> None:
         kind = self._kind()
-        from_axis = not isinstance(self._propagation_combo.currentData(), int)
+        from_axis = self._axis_source() is not None
         self._wavevector_group.setVisible(from_axis)
         self._wavevector_row_label.setVisible(from_axis)
+        typed = self._propagation_combo.currentData() == self._PROPAGATION_VECTOR
+        self._typed_q_group.setVisible(typed)
+        self._typed_q_row_label.setVisible(typed)
         inverse_angstrom = self._wavevector_in_inverse_angstrom()
         self._wavevector_row_label.setText(
             "Wavevector k (Å⁻¹)" if inverse_angstrom else "Wavevector δ (r.l.u.)"
@@ -1491,14 +1548,20 @@ def direction_inputs(
     return (x, y, z)
 
 
-def direction_group(inputs: DecimalTriple) -> QWidget:
+def inline_group(widgets: Sequence[QWidget]) -> QWidget:
+    """Lay ``widgets`` out in one compact row with no margins of its own."""
+
     group = QWidget()
     style_inline_group(group)
     layout = QHBoxLayout(group)
     layout.setContentsMargins(0, 0, 0, 0)
-    for edit in inputs:
-        layout.addWidget(edit)
+    for widget in widgets:
+        layout.addWidget(widget)
     return group
+
+
+def direction_group(inputs: DecimalTriple) -> QWidget:
+    return inline_group(inputs)
 
 
 def decimal_value(edit: DecimalLineEdit, label: str) -> float:
@@ -1596,6 +1659,14 @@ def _compact_float(value: float) -> str:
     if abs(value) < 5e-13:
         value = 0.0
     return f"{float(value):.5g}"
+
+
+def component_kind_label(component: MagneticComponent) -> str:
+    """The name a component's stored ``kind`` is shown under."""
+
+    if component.kind == "legacy_moment":
+        return "Moment"
+    return component.kind.replace("_", " ").title()
 
 
 def component_q_label(model: MagneticStructureModel, component: MagneticComponent) -> str:

@@ -62,7 +62,7 @@ from mufinder.science.magnetic_structure import (
     atom_phases_for_selection,
     is_texture_component,
     magnetic_builder_checklist,
-    magnetic_model_from_legacy_structure,
+    magnetic_model_from_host_spins,
     magnetic_period_along_axes,
     magnetic_structure_to_ase_atoms,
     moment_at_atom,
@@ -71,6 +71,7 @@ from mufinder.science.magnetic_structure import (
     normalize_texture_magnitude,
     prune_texture_terms,
     q_basis_combination_rlu,
+    q_basis_placeholder,
     q_basis_slots,
     q_cartesian_direction,
     q_coeff_expression,
@@ -1357,7 +1358,7 @@ def test_legacy_magnetic_structure_converts_to_components() -> None:
         ],
     }
 
-    model = magnetic_model_from_legacy_structure(structure)
+    model = magnetic_model_from_host_spins(structure)
 
     assert model.q_basis_rlu[0] == pytest.approx((0.0, 0.0, 0.25))
     assert len(model.components) == 1
@@ -1382,7 +1383,7 @@ def test_mcif_magnetic_structure_preserves_q_basis_labels_and_unit_cell_moments(
         ],
     }
 
-    model = magnetic_model_from_legacy_structure(structure)
+    model = magnetic_model_from_host_spins(structure)
 
     assert model.q_basis_rlu[0] == pytest.approx((0.0, 0.0, 0.25))
     assert model.q_basis_rlu[1] == pytest.approx((0.5, 0.0, 0.0))
@@ -1419,7 +1420,7 @@ def test_legacy_model_converts_stored_crystal_axis_moments_to_cartesian() -> Non
         ],
     }
 
-    model = magnetic_model_from_legacy_structure(structure)
+    model = magnetic_model_from_host_spins(structure)
 
     assert moment_at_atom(structure, model, 0) == pytest.approx([1.0, 3**0.5, 0.0])
     assert moment_at_atom(structure, model, 1) == pytest.approx([0.0, 1.0, 0.0])
@@ -1431,7 +1432,7 @@ def test_legacy_model_converts_stored_crystal_axis_moments_to_cartesian() -> Non
 
 def test_legacy_model_no_magnetism_yields_no_components() -> None:
     structure = _structure()
-    model = magnetic_model_from_legacy_structure(structure)
+    model = magnetic_model_from_host_spins(structure)
     assert model.components == ()
     # Default q basis is all zero.
     assert model.q_basis_rlu == (
@@ -1444,7 +1445,7 @@ def test_legacy_model_no_magnetism_yields_no_components() -> None:
 def test_legacy_model_from_atomic_spins_scalar() -> None:
     structure = _structure()
     structure.properties["atomic_spins"] = [1.5, -2.0]
-    model = magnetic_model_from_legacy_structure(structure)
+    model = magnetic_model_from_host_spins(structure)
     # Two non-zero scalar spins -> two collinear components along z.
     assert len(model.components) == 2
     np.testing.assert_allclose(
@@ -1460,7 +1461,7 @@ def test_legacy_model_uses_top_level_propagation_vector() -> None:
     structure = _structure()
     structure.properties["propagation_vector"] = [0.0, 0.0, 0.5]
     structure.properties["atomic_spins"] = [1.0, 0.0]
-    model = magnetic_model_from_legacy_structure(structure)
+    model = magnetic_model_from_host_spins(structure)
     assert model.q_basis_rlu[0] == pytest.approx((0.0, 0.0, 0.5))
     # Non-zero propagation -> q_coeff (1,0,0).
     assert model.components[0].terms[0].q_coeff == (1.0, 0.0, 0.0)
@@ -1469,7 +1470,7 @@ def test_legacy_model_uses_top_level_propagation_vector() -> None:
 def test_legacy_model_skips_zero_moment_entries() -> None:
     structure = _structure()
     structure.properties["initial_magnetic_moments"] = [0.0, 0.0]
-    model = magnetic_model_from_legacy_structure(structure)
+    model = magnetic_model_from_host_spins(structure)
     assert model.components == ()
 
 
@@ -1479,7 +1480,7 @@ def test_legacy_model_handles_bad_propagation_vector_gracefully() -> None:
         "propagation_vector": "not-a-vector",
         "moments": [{"label": "Fe1", "vector": [0.0, 0.0, 1.0]}],
     }
-    model = magnetic_model_from_legacy_structure(structure)
+    model = magnetic_model_from_host_spins(structure)
     # Bad propagation vector falls back to zero -> q_coeff stays (0,0,0).
     assert model.q_basis_rlu[0] == (0.0, 0.0, 0.0)
     assert model.components[0].terms[0].q_coeff == (0.0, 0.0, 0.0)
@@ -1493,7 +1494,7 @@ def test_legacy_moment_entry_with_out_of_range_atom_index_is_skipped() -> None:
             {"label": "Fe1", "atom_index": 0, "vector": [0.0, 0.0, 1.0]},
         ],
     }
-    model = magnetic_model_from_legacy_structure(structure)
+    model = magnetic_model_from_host_spins(structure)
     assert len(model.components) == 1
     assert model.components[0].selector.values == (0,)
 
@@ -2167,7 +2168,7 @@ def test_magnetic_builder_checklist_starts_with_components_to_add() -> None:
 
     assert without_host["components"] == (CHECKLIST_TODO, "Load a host structure first.")
     assert empty["components"][0] == CHECKLIST_TODO
-    assert "Add Preset" in empty["components"][1]
+    assert "menu" in empty["components"][1]
     assert empty["q_basis"][0] == CHECKLIST_TODO
     assert empty["preview"][0] == CHECKLIST_TODO
     assert empty["ready"] == (CHECKLIST_TODO, "Finish the steps above first.")
@@ -2653,8 +2654,52 @@ def test_a_payload_without_components_falls_back_to_the_host_spins() -> None:
 
     model = magnetic_model_for_host({"schema_version": 2}, host)
 
-    assert model == magnetic_model_from_legacy_structure(host)
+    assert model == magnetic_model_from_host_spins(host)
     assert len(model.components) == 1
+
+
+def test_the_old_host_spin_builder_name_still_imports() -> None:
+    from mufinder import science
+    from mufinder.science import magnetic_structure as module
+
+    assert module.magnetic_model_from_legacy_structure is magnetic_model_from_host_spins
+    assert science.magnetic_model_from_legacy_structure is magnetic_model_from_host_spins
+
+
+def test_q_basis_placeholder_is_true_of_the_model() -> None:
+    q_zero = _ferromagnet("on q = 0")
+    on_a_row = MagneticComponent(
+        component_id="row",
+        label="on q1",
+        kind="collinear",
+        selector=AtomSelector.all(),
+        terms=(FourierTerm((1.0, 0.0, 0.0), ComplexVector.from_vector([0.0, 0.0, 1.0])),),
+    )
+    basis = ((0.25, 0.0, 0.0), (0.0, 0.0, 0.0), (0.0, 0.0, 0.0))
+
+    assert q_basis_placeholder(MagneticStructureModel()) == "No components yet"
+    # Rows left behind in the basis do not make any component's q non-zero.
+    assert q_basis_placeholder(MagneticStructureModel(q_basis_rlu=basis)) == "No components yet"
+    assert (
+        q_basis_placeholder(MagneticStructureModel(q_basis_rlu=basis, components=(q_zero,)))
+        == "All components have q = 0"
+    )
+    assert (
+        q_basis_placeholder(MagneticStructureModel(q_basis_rlu=basis, components=(on_a_row,)))
+        is None
+    )
+    assert (
+        q_basis_placeholder(
+            MagneticStructureModel(
+                q_basis_rlu=basis, components=(q_zero, replace(on_a_row, enabled=False))
+            )
+        )
+        == "All enabled components have q = 0"
+    )
+    assert (
+        q_basis_placeholder(MagneticStructureModel(components=(replace(q_zero, enabled=False),)))
+        == "All components have q = 0"
+    )
 
 
 def test_no_host_gives_an_empty_model() -> None:

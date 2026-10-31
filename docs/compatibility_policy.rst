@@ -481,7 +481,7 @@ Compatibility ledger
        next major release.
    * - ``magnetic_structure`` moments with ``coordinate_system: "crystalaxis"``
      - ``mufinder.science.magnetic_structure``
-       (``magnetic_model_from_legacy_structure``)
+       (``magnetic_model_from_host_spins``)
      - The MCIF importer stores each moment as a Cartesian ``vector`` in μB,
        with ``coordinate_system: "cartesian"`` and the components as written
        in ``source_components`` under ``source_coordinate_system``. A moment
@@ -491,6 +491,16 @@ Compatibility ledger
        project already stores are not recomputed.
      - Read-side repair. Keep until a saved-project schema version bump
        includes a migration that converts stored crystal-axis moments.
+   * - ``magnetic_model_from_legacy_structure``
+     - ``mufinder.science.magnetic_structure``, also exported from
+       ``mufinder.science``
+     - Import alias for ``magnetic_model_from_host_spins``, kept for external
+       imports. Only the ``mufinder.science`` export and one test that it still
+       resolves refer to it. Not persisted. The component ``kind`` value ``legacy_moment``
+       and the ``legacy_atom_N`` component ids are unchanged, so saved models
+       need no shim.
+     - Public import alias. Keep for one minor release (through 0.9.x); then
+       drop the alias and its ``mufinder.science`` export.
    * - ``magnetic_field`` records without ``site_source``
      - ``mufinder.services.magnetic_field_results``
        (``field_result_site_source``, ``attach_magnetic_field_results``)

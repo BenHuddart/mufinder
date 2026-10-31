@@ -42,6 +42,7 @@ from mufinder.app.demagnetizing_dialogs import (
 from mufinder.app.icons import icon
 from mufinder.app.magnetic_analysis_dialogs import DipolarTensorDialog, NuclearRelaxationDialog
 from mufinder.app.magnetic_component_dialogs import (
+    component_kind_label,
     component_moment_label,
     component_q_label,
     selector_label,
@@ -929,7 +930,7 @@ class MagneticFieldWidget(QWidget):
             [
                 (
                     component.label,
-                    component.kind.replace("_", " ").title(),
+                    component_kind_label(component),
                     selector_label(component.selector, self._host_structure),
                     component_q_label(self._model, component),
                     component_moment_label(component),

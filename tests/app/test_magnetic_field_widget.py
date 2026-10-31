@@ -36,6 +36,7 @@ from mufinder.science.magnetic_structure import (
     MagneticComponent,
     MagneticStructureModel,
     build_collinear_component,
+    magnetic_model_from_host_spins,
 )
 from mufinder.science.nuclear_relaxation import NuclearRelaxationOptions
 from mufinder.services.magnetic_field_results import (
@@ -3320,4 +3321,18 @@ def test_a_calculation_that_ends_after_the_page_reloaded_is_not_shown(
     )
     assert widget._result_table.item(0, 0).text() == "the first field"
     assert emitted == []
+    widget.close()
+
+
+def test_magnetic_field_widget_shows_host_spin_components_as_moment(qapp, tmp_path) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "magnetic-moment.mufinder", "Magnetic Moment")
+    service.add_structure(document, feo_host_structure())
+    widget = MagneticFieldWidget()
+    widget.set_document(document)
+    widget.set_model(magnetic_model_from_host_spins(feo_host_structure()))
+
+    summary = widget._component_summary_table
+    assert summary.rowCount() == 2
+    assert summary.item(0, 1).text() == "Moment"
     widget.close()
