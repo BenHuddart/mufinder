@@ -288,7 +288,8 @@ defined by two of these modules, and a pinned count may only fall.
      - Owns
    * - ``mufinder.app.eliding_label``
      - The single-line label that elides instead of widening its parent
-       (``ElidingLabel``)
+       (``ElidingLabel``) and the combo box whose current text elides instead
+       of clipping (``ElidingComboBox``)
    * - ``mufinder.app.workflow_table_utils``
      - Workflow row tables (``create_workflow_table``,
        ``set_workflow_table_item``, ``fill_workflow_table`` for a table of
@@ -1472,7 +1473,7 @@ Controller summary
        through the deps (``run_examiner``, ``show_warning``,
        ``confirm_choice``, ``refresh_after_default_adopted``).
 
-       It also owns the ``Simulation Cell`` selector.
+       It also owns the ``Simulation cell`` selector.
        ``refresh_simulation_cell`` shows the stage's saved supercells, the
        selection and the species of the resolved cell; the
        ``show_simulation_cell_structure`` hook hands that cell to a widget that

@@ -6727,8 +6727,7 @@ class MainWindow(QMainWindow):
             return
 
         self._refresh_host_structure_view()
-        self._convergence_controller.refresh_simulation_cell()
-        self._kpoint_convergence_controller.refresh_simulation_cell()
+        self._refresh_sweep_simulation_cells()
         self._refresh_workflow_defaults(self._pristine_relaxation_view)
         self._pristine_relaxation_controller.refresh_view()
         self._refresh_convergence_overview()
@@ -7527,9 +7526,12 @@ class MainWindow(QMainWindow):
         self._document.ui_state["convergence_form"] = state
         self._convergence_controller.refresh_view()
 
-    def _refresh_all_supercell_options(self) -> None:
+    def _refresh_sweep_simulation_cells(self) -> None:
         self._convergence_controller.refresh_simulation_cell()
         self._kpoint_convergence_controller.refresh_simulation_cell()
+
+    def _refresh_all_supercell_options(self) -> None:
+        self._refresh_sweep_simulation_cells()
         self._refresh_workflow_supercell_options(self._pristine_relaxation_view)
         self._refresh_workflow_supercell_options(self._muon_relaxation_view)
         self._refresh_workflow_supercell_options(self._uep_view)
@@ -9951,6 +9953,7 @@ class MainWindow(QMainWindow):
         except ValueError:
             return
         self._refresh_host_structure_view()
+        self._refresh_sweep_simulation_cells()
         self._refresh_muon_generation_table()
         self._refresh_muon_relaxation_rows()
         # Drop the summary's pins that are keyed to the old host.
@@ -10001,6 +10004,7 @@ class MainWindow(QMainWindow):
                 try:
                     self._project_service.set_active_host_structure(self._document, source_id)
                     self._refresh_host_structure_view()
+                    self._refresh_sweep_simulation_cells()
                     self._refresh_muon_generation_table()
                     self._refresh_muon_relaxation_rows()
                     return True
@@ -10056,6 +10060,7 @@ class MainWindow(QMainWindow):
                 try:
                     self._project_service.set_active_host_structure(self._document, source_id)
                     self._refresh_host_structure_view()
+                    self._refresh_sweep_simulation_cells()
                     self._refresh_muon_generation_table()
                     self._refresh_muon_relaxation_rows()
                     return True

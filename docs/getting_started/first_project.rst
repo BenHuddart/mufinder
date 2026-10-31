@@ -152,7 +152,7 @@ and k-point grid, so settle them first.
 1. Select ``Cutoff Energy`` under ``Convergence Testing``. On the ``Project
    defaults`` strip click ``Edit…``, choose an ``XC functional`` (the
    screenshots use ``PBE``) and click ``OK``.
-2. Leave ``Single unit cell`` selected under ``Simulation Cell``.
+2. Leave ``Single unit cell`` selected in the ``Simulation cell`` drop-down.
 3. Click ``Generate From Range…`` and accept ``Start (eV)``, ``Stop (eV)``
    and ``Step (eV)``, or change them.
 
