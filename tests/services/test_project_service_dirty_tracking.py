@@ -11,8 +11,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.domain.models import Result
+from mufinder.persistence import json_store
 from mufinder.persistence.json_store import ProjectStore
 from mufinder.persistence.codec import to_jsonable
 from mufinder.services.project_service import ProjectService
@@ -315,3 +318,32 @@ def test_deleting_entity_prunes_file_and_cache(tmp_path: Path) -> None:
     # Cache entry for the removed job should be gone (per class docstring choice).
     root_key = ProjectService._resolved_root(root)
     assert (root_key, "jobs", str(job.id)) not in service._content_hashes
+
+
+def test_failed_save_leaves_the_earlier_project_loadable_and_a_later_save_recovers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = ProjectService()
+    root = tmp_path / "failed.mufinder"
+    doc, _job, _result = _populated_document(service, root)
+    doc.ui_state["some_form"] = {"a": 1}
+    service.save_project(doc)
+    state_before = (root / "state.json").read_bytes()
+    manifest_before = (root / "project.json").read_bytes()
+
+    def _no_space(_descriptor: int) -> None:
+        raise OSError(28, "No space left on device")
+
+    doc.ui_state["some_form"] = {"a": 2}
+    with monkeypatch.context() as failing:
+        failing.setattr(json_store.os, "fsync", _no_space)
+        with pytest.raises(OSError, match="No space left"):
+            service.save_project(doc)
+
+    assert (root / "project.json").read_bytes() == manifest_before
+    assert (root / "state.json").read_bytes() == state_before
+    assert ProjectService().load_project(root).ui_state["some_form"] == {"a": 1}
+
+    # The failed write was not recorded as saved, so the next save writes it.
+    service.save_project(doc)
+    assert ProjectService().load_project(root).ui_state["some_form"] == {"a": 2}

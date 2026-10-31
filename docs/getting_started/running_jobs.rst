@@ -254,7 +254,7 @@ right-click menu, or Delete/Backspace):
   ``Trust host key`` / ``Cancel`` for an unknown SSH host key.
 - If ``Save`` fails while closing, for example on a read-only folder or a full
   disk, the reason is shown and the window stays open. The next close asks
-  again.
+  again. The file that could not be written keeps its earlier content.
 
 The Job Dashboard
 -----------------
