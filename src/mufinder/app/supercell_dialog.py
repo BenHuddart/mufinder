@@ -38,7 +38,7 @@ from mufinder.app.workflow_table_utils import create_workflow_table
 from mufinder.domain.enums import WorkflowStage
 from mufinder.domain.text import plural
 from mufinder.domain.models import Structure
-from mufinder.science.supercell import build_supercell_structure
+from mufinder.science.supercell import build_supercell_structure, normalize_supercell_matrix
 from mufinder.science.supercell_suggestion import SupercellSuggestionError, suggest_supercell
 from mufinder.services.journal import workflow_label
 from mufinder.services.project_service import ProjectDocument, ProjectService
@@ -53,8 +53,9 @@ class SupercellEditorDialog(StructureViewerDialog):
     _MATRIX_COLUMN = 2
     _ATOMS_COLUMN = 3
     _USAGE_COLUMN = 4
-    # Fits two digits beside the stepper arrows under the application theme.
-    _SCALING_BOX_WIDTH = 84
+    # Stepper arrows, padding and line edit margins under the application theme,
+    # around the widest value.
+    _SCALING_BOX_CHROME = 70
 
     def __init__(
         self,
@@ -113,7 +114,12 @@ class SupercellEditorDialog(StructureViewerDialog):
         ):
             spinbox.setRange(1, 64)
             spinbox.setValue(1)
-            spinbox.setFixedWidth(self._SCALING_BOX_WIDTH)
+            spinbox.ensurePolished()
+            metrics = spinbox.fontMetrics()
+            spinbox.setFixedWidth(
+                max(metrics.horizontalAdvance(str(n)) for n in range(1, spinbox.maximum() + 1))
+                + self._SCALING_BOX_CHROME
+            )
             spinbox.setAccessibleName(name)
             spinbox.setToolTip(f"{name}: repeats of the unit cell along {axis}.")
             spinbox.valueChanged.connect(lambda *_: self._generate_preview())
@@ -412,7 +418,7 @@ class SupercellEditorDialog(StructureViewerDialog):
             super().keyPressEvent(event)
             return
         focused = self.focusWidget()
-        if isinstance(focused, QPushButton):
+        if isinstance(focused, QPushButton) and not event.isAutoRepeat():
             focused.click()
 
     def showEvent(self, event: QShowEvent) -> None:  # noqa: N802 - Qt API naming.
@@ -521,7 +527,7 @@ class SupercellEditorDialog(StructureViewerDialog):
         self._current_asset_id = saved.id
         self._refresh_assets(select_id=saved.id)
         self._name_edit.setText(saved.label)
-        self._status_label.setText(f"Saved '{saved.label}' with {len(saved.species)} atoms.")
+        self._status_label.setText(f"Saved '{saved.label}' with {len(saved.species)} atoms")
         return saved
 
     def _save_current(self):
@@ -540,10 +546,11 @@ class SupercellEditorDialog(StructureViewerDialog):
             asset_structure_id=self._current_asset_id,
         )
         copied = frozen and matrix != asset.matrix
-        if matrix != asset.matrix and not copied and not self._confirm_shared_change(asset):
-            return None
 
         try:
+            normalize_supercell_matrix(matrix)
+            if matrix != asset.matrix and not copied and not self._confirm_shared_change(asset):
+                return None
             if copied:
                 saved = self._project_service.create_workflow_supercell_asset(
                     self._document,
@@ -586,7 +593,7 @@ class SupercellEditorDialog(StructureViewerDialog):
                 f" calculations use '{asset.label}', which was not changed"
             )
         else:
-            self._status_label.setText(f"Saved '{saved.label}' with {len(saved.species)} atoms.")
+            self._status_label.setText(f"Saved '{saved.label}' with {len(saved.species)} atoms")
         return saved
 
     def _confirm_shared_change(self, asset: WorkflowSupercellAsset) -> bool:
@@ -638,7 +645,7 @@ class SupercellEditorDialog(StructureViewerDialog):
         self._current_asset_id = None
         self._refresh_assets()
         self._new_asset()
-        self._status_label.setText(f"Deleted '{removed.label}'.")
+        self._status_label.setText(f"Deleted '{removed.label}'")
 
     def _use_selected(self) -> None:
         if self._current_asset_id is None:

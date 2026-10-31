@@ -417,6 +417,25 @@ def test_distinct_label_adds_copy_only_when_the_name_is_taken(tmp_path: Path) ->
         label="Cell copy",
     )
     assert distinct("Cell") == "Cell copy 2"
+    assert distinct("Cell copy") == "Cell copy 2"
+
+
+def test_a_selection_of_another_hosts_cell_does_not_count_as_selecting_it(tmp_path: Path) -> None:
+    document, host = _document_with_host(tmp_path)
+    cell = supercell_assets.create_workflow_supercell_asset(
+        document, workflow_stage=None, host_structure_id=host.id, matrix=_DOUBLE_A
+    )
+    supercell_assets.use_workflow_supercell_asset(
+        document, workflow_stage=_STAGE, asset_structure_id=cell.id
+    )
+    other_host = silicon_oxide_host()
+    document.structures[other_host.id] = other_host
+    document.project.host_structure_id = other_host.id
+
+    assert (
+        supercell_assets.workflows_selecting_supercell_asset(document, asset_structure_id=cell.id)
+        == []
+    )
 
 
 def test_editor_seed_is_the_identity_for_a_new_project(tmp_path: Path) -> None:

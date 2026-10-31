@@ -128,12 +128,6 @@ _WORKFLOW_LABELS: dict[WorkflowStage, str] = {
 }
 
 
-def workflow_label(stage: WorkflowStage) -> str:
-    """Return the name users know the workflow ``stage`` by."""
-
-    return _WORKFLOW_LABELS[stage]
-
-
 _STAMP_LABELS = {
     "milestone": "Milestone",
     "success": "Completed",
@@ -445,10 +439,14 @@ def _open_label(workflow_stage: WorkflowStage | None) -> str | None:
     return f"Open in {label}" if label else None
 
 
+def workflow_label(stage: WorkflowStage) -> str:
+    """Return the name users know the workflow ``stage`` by."""
+
+    return _WORKFLOW_LABELS.get(stage, stage.value.replace("_", " ").title())
+
+
 def _workflow_label(workflow_stage: WorkflowStage | None) -> str | None:
-    if workflow_stage is None:
-        return None
-    return _WORKFLOW_LABELS.get(workflow_stage, workflow_stage.value.replace("_", " ").title())
+    return None if workflow_stage is None else workflow_label(workflow_stage)
 
 
 def _int_param(record: ProvenanceRecord, key: str) -> int | None:

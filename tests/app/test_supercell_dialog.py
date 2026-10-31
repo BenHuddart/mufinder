@@ -5,9 +5,10 @@ from __future__ import annotations
 from functools import partial
 
 import pytest
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QEvent, Qt
+from PySide6.QtGui import QKeyEvent
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QDialog, QHeaderView
+from PySide6.QtWidgets import QApplication, QDialog, QHeaderView
 
 from mufinder.app import theme as theme_module
 from mufinder.app import workflow_table_utils
@@ -226,6 +227,27 @@ def test_supercell_editor_return_on_a_focused_button_presses_it(qapp, tmp_path) 
     dialog.close()
 
 
+def test_supercell_editor_holding_return_presses_a_button_once(qapp, tmp_path) -> None:
+    dialog_args = _project_with_saved_cells(tmp_path)
+    dialog = SupercellEditorDialog(**dialog_args, initial_matrix=[[4, 0, 0], [0, 4, 0], [0, 0, 1]])
+    dialog.show()
+    qapp.processEvents()
+    dialog._save_as_button.setFocus()
+    rows = dialog._asset_table.rowCount()
+
+    for auto_repeat in (False, True, True):
+        event = QKeyEvent(
+            QEvent.Type.KeyPress,
+            Qt.Key.Key_Return,
+            Qt.KeyboardModifier.NoModifier,
+            autorep=auto_repeat,
+        )
+        QApplication.sendEvent(dialog._save_as_button, event)
+
+    assert dialog._asset_table.rowCount() == rows + 1
+    dialog.close()
+
+
 def test_supercell_editor_save_as_with_an_empty_name_loads_the_name(qapp, tmp_path) -> None:
     dialog_args = _project_with_saved_cells(tmp_path)
     dialog = SupercellEditorDialog(**dialog_args, initial_matrix=[[4, 0, 0], [0, 4, 0], [0, 0, 1]])
@@ -278,7 +300,7 @@ def test_supercell_editor_scaling_row_has_narrow_named_boxes(qapp, tmp_path) -> 
     boxes = (dialog._simple_nx, dialog._simple_ny, dialog._simple_nz)
     assert [box.accessibleName() for box in boxes] == ["Nx", "Ny", "Nz"]
     for box in boxes:
-        assert box.width() == dialog._SCALING_BOX_WIDTH
+        assert box.width() < box.sizeHint().width()
         assert box.toolTip().endswith(".")
     # The toggle sits beneath the boxes, lined up with them.
     assert dialog._advanced_toggle.y() >= boxes[0].geometry().bottom()
@@ -399,6 +421,30 @@ def test_supercell_editor_cancelling_the_question_keeps_the_cell_and_the_edit(
     assert _stored_matrix(cell) == [[3, 0, 0], [0, 3, 0], [0, 0, 3]]
     assert dialog.matrix() == [[4, 0, 0], [0, 3, 0], [0, 0, 3]]
     assert dialog._current_asset_id == cell.id
+    dialog.close()
+
+
+def test_supercell_editor_rejects_an_invalid_matrix_before_asking(
+    qapp, tmp_path, monkeypatch
+) -> None:
+    dialog, cell = _editor_on_cell_three(tmp_path, monkeypatch, stages=_CUTOFF_AND_KPOINT)
+    dialog._advanced_toggle.setChecked(True)
+    dialog._advanced_cells[0][0].setValue(0)
+    monkeypatch.setattr(
+        workflow_table_utils,
+        "confirm_destructive",
+        lambda *_args, **_kwargs: pytest.fail("no question for a matrix that cannot be saved"),
+    )
+
+    warnings: list[str] = []
+    monkeypatch.setattr(
+        "mufinder.app.supercell_dialog.QMessageBox.warning",
+        lambda _parent, title, _text: warnings.append(title),
+    )
+    dialog._save_button.click()
+
+    assert warnings == ["Supercell unavailable"]
+    assert _stored_matrix(cell) == [[3, 0, 0], [0, 3, 0], [0, 0, 3]]
     dialog.close()
 
 

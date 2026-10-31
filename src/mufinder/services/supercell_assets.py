@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
+import re
 from typing import Any
 from uuid import UUID
 
@@ -470,8 +471,15 @@ def workflows_selecting_supercell_asset(
     *,
     asset_structure_id: UUID,
 ) -> list[WorkflowStage]:
-    """Return the workflow stages whose active selection is the asset, in workflow order."""
+    """Return the workflow stages that simulate the asset, in workflow order.
 
+    A selection of an asset of another host resolves to the unit cell, so it does not count.
+    """
+
+    structure = document.structures.get(asset_structure_id)
+    host = active_host_structure(document)
+    if structure is None or host is None or structure.parent_structure_id != host.id:
+        return []
     return [
         stage
         for stage in WorkflowStage
@@ -493,10 +501,11 @@ def distinct_supercell_asset_label(
     }
     if label.casefold() not in taken:
         return label
-    candidate = f"{label} copy"
+    base = re.sub(r" copy( \d+)?$", "", label, flags=re.IGNORECASE)
+    candidate = f"{base} copy"
     number = 2
     while candidate.casefold() in taken:
-        candidate = f"{label} copy {number}"
+        candidate = f"{base} copy {number}"
         number += 1
     return candidate
 
