@@ -1732,7 +1732,12 @@ class MainWindow(QMainWindow):
             return
 
         project_root = Path(base_dir) / f"{project_name.strip()}.mufinder"
-        if project_root.exists() and any(project_root.iterdir()):
+        try:
+            target_in_use = project_root.exists() and any(project_root.iterdir())
+        except OSError as exc:
+            QMessageBox.critical(self, "Project error", str(exc))
+            return
+        if target_in_use:
             QMessageBox.warning(
                 self,
                 "Project exists",

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Iterator
 from dataclasses import replace
 from pathlib import Path
@@ -1042,6 +1043,28 @@ def test_new_project_failure_shows_the_reason_and_keeps_the_open_project(
 
     assert messages == [("Project error", str(error))]
     assert window._document is current
+
+
+@pytest.mark.skipif(not hasattr(os, "geteuid") or os.geteuid() == 0, reason="needs file modes")
+def test_new_project_reports_an_unreadable_target_folder(
+    main_window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = main_window
+    messages = _record_critical_messages(monkeypatch)
+    monkeypatch.setattr(
+        main_window_module.QInputDialog, "getText", lambda *_a, **_k: ("Fresh", True)
+    )
+    monkeypatch.setattr(window, "_get_existing_directory", lambda **_k: str(tmp_path))
+    target = tmp_path / "Fresh.mufinder"
+    target.mkdir()
+    target.chmod(0o000)
+    try:
+        window._new_project()
+    finally:
+        target.chmod(0o755)
+
+    assert [title for title, _text in messages] == ["Project error"]
+    assert window._document is None
 
 
 def test_close_without_a_prompt_survives_a_failed_autosave(
