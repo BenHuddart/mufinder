@@ -406,9 +406,9 @@ any other afterwards. In the dialog, set:
    value and q stays the same.
 3. A reference crystal axis, ``a``, ``b`` or ``c``. It defaults to the axis
    most nearly perpendicular to q, preferring a, then b, then c, and resets to
-   that default when the ``Propagation`` choice changes, or when a finished
-   entry of a typed q changes its direction, but not when only the length of q
-   changes. For a helix and a conical structure the rotation plane is
+   that default when the ``Propagation`` choice changes, but not when only δ
+   changes. A typed q follows the default until an axis is chosen, and then
+   keeps that axis; if q ends up parallel to it, the summary line says so. For a helix and a conical structure the rotation plane is
    perpendicular to q and the moment at zero phase lies along the reference
    axis projected into that plane; a conical structure's cone axis is q. For a
    cycloid the rotation plane holds q and the reference axis. For a

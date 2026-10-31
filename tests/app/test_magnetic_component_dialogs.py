@@ -759,31 +759,34 @@ def test_magnetic_preset_dialog_refuses_a_zero_or_invalid_typed_vector(qapp, mon
     dialog.close()
 
 
-def test_magnetic_preset_dialog_typed_vector_resets_the_reference_only_when_it_turns(qapp) -> None:
+def test_magnetic_preset_dialog_typed_vector_keeps_a_chosen_reference_axis(qapp) -> None:
     dialog = MagneticPresetDialog(feo_host_structure())
     select_combo_data(dialog._propagation_combo, "vector")
 
-    def enter(values: tuple[float, float, float]) -> None:
-        set_direction_inputs_text(dialog._typed_q, values)
-        dialog._typed_q[0].editingFinished.emit()
-
-    enter((0.1, 0.0, 0.0))
+    # Nothing chosen: the reference follows the default for q.
+    set_direction_inputs_text(dialog._typed_q, (0.1, 0.0, 0.0))
     assert dialog._reference_combo.currentData() == "b"
-
-    select_combo_data(dialog._reference_combo, "c")
-    enter((0.2, 0.0, 0.0))
-    assert dialog._reference_combo.currentData() == "c"
-
-    # A rescale passes through other directions while it is typed, which do not count.
-    enter((0.1, 0.1, 0.1))
-    select_combo_data(dialog._reference_combo, "c")
-    dialog._typed_q[0].setText("0.2")
-    assert dialog._reference_combo.currentData() == "c"
-    enter((0.2, 0.2, 0.2))
-    assert dialog._reference_combo.currentData() == "c"
-
-    enter((0.0, 0.0, 0.2))
+    set_direction_inputs_text(dialog._typed_q, (0.0, 0.0, 0.2))
     assert dialog._reference_combo.currentData() == "a"
+
+    # A choice survives a rescale, whose fields pass through other directions one by one.
+    set_direction_inputs_text(dialog._typed_q, (0.1, 0.1, 0.1))
+    select_combo_data(dialog._reference_combo, "c")
+    dialog._reference_combo.activated.emit(dialog._reference_combo.currentIndex())
+    for index in range(3):
+        dialog._typed_q[index].setText("0.2")
+        assert dialog._reference_combo.currentData() == "c"
+
+    # A q along the chosen axis is reported, not silently moved to another axis.
+    set_direction_inputs_text(dialog._typed_q, (0.0, 0.0, 0.2))
+    assert dialog._reference_combo.currentData() == "c"
+    assert dialog._summary.text().startswith("Cannot build this preset")
+
+    # Changing Propagation starts from the default again.
+    select_combo_data(dialog._propagation_combo, "a*")
+    select_combo_data(dialog._propagation_combo, "vector")
+    set_direction_inputs_text(dialog._typed_q, (0.1, 0.0, 0.0))
+    assert dialog._reference_combo.currentData() == "b"
     dialog.close()
 
 

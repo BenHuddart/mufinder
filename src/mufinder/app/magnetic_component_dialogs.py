@@ -1192,7 +1192,7 @@ class MagneticPresetDialog(QDialog):
             edit.setAccessibleName(f"q{axis} in r.l.u.")
         self._typed_q_group = direction_group(self._typed_q)
         self._typed_q_row_label = QLabel("q (r.l.u.)")
-        self._typed_q_direction: np.ndarray | None = None
+        self._reference_chosen = False
         self._reference_combo = QComboBox()
         for axis in ("a", "b", "c"):
             self._reference_combo.addItem(f"Crystal axis {axis}", axis)
@@ -1222,17 +1222,17 @@ class MagneticPresetDialog(QDialog):
 
         self._build_layout()
         self._kind_combo.currentIndexChanged.connect(lambda *_: self._refresh())
-        self._propagation_combo.currentIndexChanged.connect(
-            lambda *_: self._refresh(reset_reference=True)
-        )
+        self._propagation_combo.currentIndexChanged.connect(self._on_propagation_changed)
         # δ only rescales q along the same axis, so it keeps the reference axis the user chose.
         self._wavevector.textChanged.connect(lambda *_: self._refresh())
         self._wavevector_unit.currentIndexChanged.connect(self._on_wavevector_unit_changed)
-        # The summary follows every keystroke; the reference axis waits for the finished entry,
-        # as the steps between two parallel vectors point elsewhere.
+        # A typed q moves through other directions while it is entered, so it only keeps the
+        # reference axis on its default; an axis the user chose stays until Propagation changes.
         for edit in self._typed_q:
-            edit.textChanged.connect(lambda *_: self._refresh())
-            edit.editingFinished.connect(self._on_typed_q_finished)
+            edit.textChanged.connect(
+                lambda *_: self._refresh(reset_reference=not self._reference_chosen)
+            )
+        self._reference_combo.activated.connect(self._on_reference_chosen)
         for widget in (self._reference_combo, self._handedness_combo):
             widget.currentIndexChanged.connect(lambda *_: self._refresh())
         for edit in (self._cone_angle, self._moment):
@@ -1325,23 +1325,12 @@ class MagneticPresetDialog(QDialog):
             return None
         return str(source)
 
-    def _on_typed_q_finished(self) -> None:
-        self._refresh(reset_reference=self._typed_q_turned())
+    def _on_propagation_changed(self, *_args: object) -> None:
+        self._reference_chosen = False
+        self._refresh(reset_reference=True)
 
-    def _typed_q_turned(self) -> bool:
-        """Note the typed q's direction; a new direction resets the reference axis, a new length keeps it."""
-
-        try:
-            q_rlu = np.array(direction_value(self._typed_q, "q"))
-        except ValueError:
-            return False
-        length = float(np.linalg.norm(q_rlu))
-        if length <= 1e-12:
-            return False
-        direction = q_rlu / length
-        previous = self._typed_q_direction
-        self._typed_q_direction = direction
-        return previous is None or not np.allclose(np.cross(previous, direction), 0.0, atol=1e-9)
+    def _on_reference_chosen(self, *_args: object) -> None:
+        self._reference_chosen = True
 
     def _wavevector_value(self, label: str) -> float:
         converted = self._converted_wavevector
