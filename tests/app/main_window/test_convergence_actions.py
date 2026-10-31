@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
+from uuid import uuid4
 
 import pytest
 
@@ -19,8 +20,13 @@ from mufinder.services.convergence_defaults import (
     CONVERGENCE_OVERVIEW_SNAPSHOTS_KEY,
     CUTOFF_EXAMINER_STATE_KEY,
 )
-from mufinder.services.project_service import ProjectService
-from tests.support.main_window import select_route
+from mufinder.services.project_service import (
+    ProjectService,
+    SiteHostMismatch,
+    StructureHostMismatch,
+)
+from tests.support.main_window import open_project_with_host, select_route
+from tests.support.structures import host_structure
 
 
 def test_convergence_configured_registers_snapshot(
@@ -2067,3 +2073,98 @@ def test_cutoff_rows_saved_with_task_only_parameters_are_read_back_as_defaults(
     assert sent in ([], [[]])
     assert len(doc.jobs) == 2
     window.close()
+
+
+_FALLBACK = "Using single unit cell: the saved supercell was not available."
+_SWEEPS = (
+    ("_convergence_view", WorkflowStage.CONVERGENCE_CUTOFF),
+    ("_kpoint_convergence_view", WorkflowStage.CONVERGENCE_KPOINT),
+)
+
+
+def _project_with_saved_cells_selected(window: MainWindow, tmp_path: Path):
+    """Both sweeps on a saved supercell of the host, with a second host available."""
+
+    service, document, host = open_project_with_host(window, tmp_path)
+    other = host_structure()
+    other.label = "Other host"
+    service.add_structure(document, other)
+    document.project.host_structure_id = host.id
+    assets = {}
+    for view_name, stage in _SWEEPS:
+        asset = service.create_workflow_supercell_asset(
+            document,
+            workflow_stage=stage,
+            host_structure_id=host.id,
+            matrix=[[2, 0, 0], [0, 1, 0], [0, 0, 1]],
+            reuse_existing=False,
+        )
+        getattr(window, view_name).simulation_cell_selection_requested.emit(str(asset.id))
+        assets[view_name] = asset
+    return document, host, other, assets
+
+
+def _assert_both_sweeps_show_the_fallback(window: MainWindow) -> None:
+    for view_name, _stage in _SWEEPS:
+        view = getattr(window, view_name)
+        assert view._simulation_cell_combo.currentText() == "Single unit cell"
+        assert view._simulation_cell_combo.toolTip().startswith("Using single unit cell")
+        assert not view._simulation_cell_warning.isHidden()
+        assert view._simulation_cell_warning.text() == _FALLBACK
+
+
+def test_active_host_combo_refreshes_both_sweeps_simulation_cell_at_once(
+    main_window, tmp_path: Path
+) -> None:
+    window = main_window
+    document, host, other, assets = _project_with_saved_cells_selected(window, tmp_path)
+    for view_name, asset in assets.items():
+        view = getattr(window, view_name)
+        assert view._simulation_cell_combo.currentData() == str(asset.id)
+        assert view._simulation_cell_warning.isHidden()
+
+    window._host_structure_view.active_host_change_requested.emit(str(other.id))
+
+    assert document.project.host_structure_id == other.id
+    _assert_both_sweeps_show_the_fallback(window)
+
+    # Back on the first host the supercell is listed again, and the line is still true.
+    window._host_structure_view.active_host_change_requested.emit(str(host.id))
+
+    _assert_both_sweeps_show_the_fallback(window)
+    for view_name, asset in assets.items():
+        combo = getattr(window, view_name)._simulation_cell_combo
+        assert combo.findData(str(asset.id)) >= 0
+
+
+@pytest.mark.parametrize(
+    ("mismatch_type", "handler_name"),
+    [
+        (SiteHostMismatch, "_handle_site_host_mismatch"),
+        (StructureHostMismatch, "_handle_structure_host_mismatch"),
+    ],
+)
+def test_switching_host_from_a_mismatch_prompt_refreshes_both_sweeps(
+    main_window,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mismatch_type,
+    handler_name: str,
+) -> None:
+    window = main_window
+    document, host, other, _assets = _project_with_saved_cells_selected(window, tmp_path)
+    monkeypatch.setattr(
+        main_window_module.workflow_table_utils,
+        "confirm_choice",
+        lambda *_args, **_kwargs: "switch",
+    )
+    mismatch = mismatch_type(
+        active_host_id=host.id,
+        active_host_label=host.label,
+        offenders=[(uuid4(), "item", other.id, other.label)],
+    )
+
+    assert getattr(window, handler_name)(mismatch) is True
+
+    assert document.project.host_structure_id == other.id
+    _assert_both_sweeps_show_the_fallback(window)

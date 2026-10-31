@@ -489,6 +489,16 @@ KEYWORD_OVERRIDES: dict[str, dict[str, dict[str, object]]] = {
             "advanced_workflows": ("energy_barriers",),
             "allowed_values": ("LSTQST", "NEB"),
         },
+        # Plain labels for the NEB rows. The two physical ones name their unit,
+        # so their editors show none (see ``keyword_unit_in_label``).
+        "tssearch_max_path_points": {"label": "Images"},
+        "tssearch_force_tol": {"label": "Force tolerance (eV/Å)"},
+        "tssearch_neb_spring_constant": {"label": "Spring constant (eV/Å²)"},
+        "tssearch_neb_tangent_mode": {"label": "Tangent"},
+        "tssearch_neb_method": {"label": "NEB method"},
+        "tssearch_neb_max_iter": {"label": "Max iterations"},
+        "tssearch_neb_normed": {"label": "Normed"},
+        "tssearch_neb_climbing": {"label": "Climbing image"},
         "cut_off_energy": {
             "label": "Cutoff Energy",
             "description": "Plane-wave cutoff energy.",

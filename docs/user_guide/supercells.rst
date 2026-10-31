@@ -142,11 +142,12 @@ Using supercells in a workflow
 Each workflow chooses its own simulation cell; there is no project-wide
 selection that calculation inputs read.
 
-- The cutoff and k-point convergence pages have a ``Simulation Cell`` section:
-  a summary of the active cell, a ``Saved supercells`` drop-down with ``Single
-  unit cell`` and the saved supercells of the active host, ``Manage
-  Supercells…`` to open the editor, and ``Use Unit Cell`` to return to the
-  host unit cell without deleting any saved supercell.
+- The cutoff and k-point convergence pages have a ``Simulation cell`` row: a
+  drop-down with ``Single unit cell`` and the saved supercells of the active
+  host, and ``Manage Supercells…`` to open the editor. Choosing ``Single unit
+  cell`` returns to the host unit cell without deleting any saved supercell. A
+  selected supercell that stops being available falls back to the unit cell,
+  with a warning line under the row until you choose a cell.
 - The pristine-relaxation, muon-relaxation and UEP tables have a per-row
   ``Supercell`` drop-down with ``Unit cell``, the saved supercells and
   ``Manage Supercells…``.

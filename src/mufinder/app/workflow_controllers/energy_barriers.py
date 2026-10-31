@@ -57,10 +57,12 @@ from mufinder.services.muon_sites_summary import (
     downstream_site_scope,
     set_show_every_relaxed_site,
 )
+from mufinder.services.project_service import ProjectDocument
 from mufinder.services.source_candidates import (
     ENERGY_BARRIERS_FORM_STATE_KEY,
     EnergyBarrierNebCandidate,
     EnergyBarrierSourceCandidate,
+    QuantumSourceCandidate,
     charge_state_for_job,
     charge_state_label_for_job,
     completed_energy_barrier_neb_candidates,
@@ -74,6 +76,7 @@ from mufinder.services.source_candidates import (
     energy_barrier_path_preview_structure,
     energy_barrier_path_symmetry_uses_magnetic_order,
     energy_barrier_source_label,
+    energy_barrier_source_site_labels,
     enumerate_energy_barrier_source_candidates,
     float_from_source,
     fractional_triplet_from_source,
@@ -144,17 +147,24 @@ from mufinder.app.workflow_parameters import (
 from mufinder.app.workflow_submission import effective_row_status, workflow_row_state_is_ready
 from mufinder.app.workflow_table_utils import format_energy_ev
 
-# Climbing image is locked on (see the NEB Configure dialog's locked_values): a
-# barrier calculation needs the top image driven onto the saddle, so it is not
-# user-editable here.
+# The NEB dialog's default rows after the shared ones: the two NEB settings that
+# are routinely changed. The dialog adds the task-farm row below them. The other
+# NEB keywords stay behind Add Parameter, and climbing image is locked on (see the
+# dialog's locked_values): a barrier calculation needs the top image driven onto
+# the saddle, so it is not user-editable here.
 _KEYWORD_NAMES = workflow_basic_parameter_names(
     "tssearch_max_path_points",
+    "tssearch_force_tol",
+)
+# A value stored for one of these stays in the dialog as an added row, including
+# one the dialog would not keep by itself (Normed off) or that differs between
+# the selected paths.
+_ADD_PARAMETER_NEB_KEYWORDS = (
     "tssearch_neb_spring_constant",
     "tssearch_neb_tangent_mode",
     "tssearch_neb_method",
     "tssearch_neb_max_iter",
     "tssearch_neb_normed",
-    "tssearch_force_tol",
 )
 # Default NEB image count (TSSEARCH_MAX_PATH_POINTS, intermediate images only).
 # Odd, as climbing-image NEB requires. 11 gives a finer band than the CASTEP minimum: a smoother barrier
@@ -275,10 +285,7 @@ class EnergyBarriersController(WorkflowJobController):
         return [
             EnergyBarrierEndpointRow(
                 key=candidate.key,
-                label=scope.pinned_label(candidate.key)
-                or candidate.site.label
-                or candidate.job.label
-                or candidate.structure.label,
+                label=_endpoint_label(scope, candidate),
                 charge_state=charge_state_label_for_job(candidate.job),
                 source_job=candidate.job.label,
                 relative_energy=_format_endpoint_relative_energy(relative.get(candidate.key)),
@@ -688,6 +695,10 @@ class EnergyBarriersController(WorkflowJobController):
 
         params, advanced, extras = workflow_row_configuration(definition, key)
         params = strip_legacy_energy_barrier_params(params)
+        advanced = (
+            *advanced,
+            *(name for name in _ADD_PARAMETER_NEB_KEYWORDS if name in params),
+        )
         values = self._project_parameter_values(target_lattice=target_lattice)
         candidate = (
             source_candidate
@@ -765,7 +776,7 @@ class EnergyBarriersController(WorkflowJobController):
             advanced_names=frozenset(advanced_names),
             title="Inspect NEB Parameters" if read_only else "Configure NEB Parameters",
             intro_text=(
-                f"Path: {str(first.source.get('label', '')).strip() or first.key}"
+                _hop_heading(document, first, source_candidates.get(first.key))
                 if len(candidates) == 1
                 else f"Selected paths: {len(candidates)}"
             ),
@@ -1229,6 +1240,40 @@ class EnergyBarriersController(WorkflowJobController):
                 )
             )
         view.set_neb_results(neb_result_rows)
+
+
+def _endpoint_label(scope: DownstreamSiteScope, candidate: QuantumSourceCandidate) -> str:
+    """Return the name the endpoint pickers give a relaxed site."""
+
+    return (
+        scope.pinned_label(candidate.key)
+        or candidate.site.label
+        or candidate.job.label
+        or candidate.structure.label
+    )
+
+
+def _hop_heading(
+    document: ProjectDocument,
+    candidate: EnergyBarrierNebCandidate,
+    source_candidate: EnergyBarrierSourceCandidate | None,
+) -> str:
+    """Return the hop as the endpoint pickers name it, with its length.
+
+    A path whose endpoints are no longer eligible is named by its stored sites.
+    """
+
+    if source_candidate is not None:
+        scope = downstream_site_scope(document, ENERGY_BARRIERS_SCOPE)
+        names = (
+            _endpoint_label(scope, source_candidate.reactant),
+            _endpoint_label(scope, source_candidate.product),
+        )
+    else:
+        names = energy_barrier_source_site_labels(document, candidate.source)
+    hop = f"{names[0]} → {names[1]}" if names is not None else "Selected path"
+    length_ang = float_from_source(candidate.source, "path_length_ang")
+    return hop if length_ang is None else f"{hop} · {length_ang:.2f} Å"
 
 
 def _source_ids(

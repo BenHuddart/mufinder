@@ -6,10 +6,19 @@ materialization, ``NUM_FARMS`` rendering and ``validate_artifacts``.
 
 from __future__ import annotations
 
+from functools import partial
 from pathlib import Path
 from uuid import UUID
 
 import pytest
+from PySide6.QtWidgets import QDialog
+
+from mufinder.app.workflow_dialogs import (
+    NudgedElasticBandConfigDialog,
+    run_source_configure_dialog,
+)
+from mufinder.app.workflow_parameters import mixed_parameter_names
+from mufinder.castep_io.types import ValueWithUnit
 
 from mufinder.services.muon_sites_summary import ENERGY_BARRIERS_SCOPE, set_show_every_relaxed_site
 from mufinder.castep_io.output_parser import CastepResult
@@ -750,6 +759,94 @@ def test_energy_barriers_controller_regeneration_keeps_paths_with_jobs(tmp_path:
     ]
 
 
+@pytest.mark.parametrize(
+    ("name", "stored", "shown"),
+    [
+        (
+            "tssearch_neb_spring_constant",
+            {"value": 3.5, "unit": "eV/ang**2"},
+            ValueWithUnit(3.5, "eV/ang**2"),
+        ),
+        ("tssearch_neb_tangent_mode", "SPLINE", "SPLINE"),
+        ("tssearch_neb_method", "FIRE", "FIRE"),
+        ("tssearch_neb_max_iter", 24, 24),
+        ("tssearch_neb_normed", False, False),
+    ],
+)
+def test_neb_value_stored_earlier_stays_as_an_added_parameter(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str, stored: object, shown: object
+) -> None:
+    service = ProjectService()
+    document, _definition, _source, output_root = _seed_energy_barriers_document(
+        service, tmp_path, row_settings={"parameter_values": {name: stored}}
+    )
+    controller = _neb_controller(service, document, output_root)
+
+    request = controller.configure_request(["source-key"])
+
+    assert request is not None
+    monkeypatch.setattr(
+        NudgedElasticBandConfigDialog, "exec", lambda _dialog: QDialog.DialogCode.Accepted
+    )
+    result = run_source_configure_dialog(
+        partial(NudgedElasticBandConfigDialog, specs=controller.parameter_specs()), request
+    )
+
+    assert result is not None
+    assert result.values[name] == shown
+    assert name in result.advanced_names
+
+
+def test_neb_keyword_differing_between_paths_is_shown_as_mixed(qapp, tmp_path: Path) -> None:
+    service = ProjectService()
+    document, _definition, _source, output_root = _seed_energy_barriers_document(
+        service,
+        tmp_path,
+        row_settings={"parameter_values": {"tssearch_neb_max_iter": 24}},
+    )
+    controller = _neb_controller(service, document, output_root)
+
+    request = controller.configure_request(["source-key"])
+    assert request is not None
+    other_row = {
+        name: value
+        for name, value in request.row_values[0].items()
+        if name != "tssearch_neb_max_iter"
+    }
+    mixed = mixed_parameter_names((request.row_values[0], other_row))
+
+    dialog = NudgedElasticBandConfigDialog(
+        specs=controller.parameter_specs(),
+        values=other_row,
+        advanced_names=request.advanced_names,
+        mixed_names=mixed,
+    )
+
+    assert "tssearch_neb_max_iter" in dialog.untouched_mixed_names()
+    assert "tssearch_neb_max_iter" in dialog._rows
+    dialog.close()
+
+
+def test_neb_dialog_heading_falls_back_when_the_endpoints_no_longer_resolve(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = ProjectService()
+    document, _definition, source, output_root = _seed_energy_barriers_document(service, tmp_path)
+    controller = _neb_controller(service, document, output_root)
+    monkeypatch.setattr(controller, "candidates", lambda: [])
+
+    # No eligible endpoint any more: the stored sites still name the hop.
+    request = controller.configure_request(["source-key"])
+    assert request is not None
+    assert request.intro_text == "siteA → siteB · 2.50 Å"
+
+    # Without its sites the heading says so, and never shows the internal key.
+    del document.sites[UUID(source["reactant_site_id"])]
+    request = controller.configure_request(["source-key"])
+    assert request is not None
+    assert request.intro_text == "Selected path · 2.50 Å"
+
+
 def test_energy_barriers_controller_configure_request_and_apply(tmp_path: Path) -> None:
     from mufinder.app.workflow_config_codecs import workflow_row_configuration
 
@@ -764,7 +861,7 @@ def test_energy_barriers_controller_configure_request_and_apply(tmp_path: Path) 
     assert request is not None
     assert request.keys == ("source-key",)
     assert request.title == "Configure NEB Parameters"
-    assert request.intro_text == "Path: siteA_to_siteB_path1"
+    assert request.intro_text == "siteA → siteB · 2.50 Å"
     assert request.read_only is False
     assert request.num_farms == 2
     assert request.species_options == ("Si", "H:mu")

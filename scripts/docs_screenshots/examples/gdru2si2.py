@@ -452,10 +452,11 @@ def prepare_neb_dialog(dialog: QWidget) -> None:
 def task_farm_row(dialog: Any) -> QRect:
     """The ``Task farms`` row of the NEB configuration dialog, with its split of the images."""
 
-    spin = dialog._num_farms_spin
-    top_left = spin.parentWidget().mapTo(dialog, spin.geometry().topLeft())
+    settle(QApplication.instance())
+    row = dialog._num_farms_spin.parentWidget()
+    top_left = row.mapTo(dialog, row.rect().topLeft())
     margin = 4
-    return QRect(0, top_left.y() - margin, dialog.width(), spin.height() + 2 * margin)
+    return QRect(0, top_left.y() - margin, dialog.width(), row.height() + 2 * margin)
 
 
 # --- Scenes -------------------------------------------------------------------
@@ -494,7 +495,7 @@ SCENES: dict[str, Scene] = {
         Dialog(
             open_neb_configuration,
             kind="NudgedElasticBandConfigDialog",
-            size=(900, 790),
+            size=(900, 650),
             prepare=prepare_neb_dialog,
         ),
     ),
@@ -504,7 +505,7 @@ SCENES: dict[str, Scene] = {
         Dialog(
             open_neb_configuration,
             kind="NudgedElasticBandConfigDialog",
-            size=(900, 790),
+            size=(900, 650),
             prepare=prepare_neb_dialog,
             region=task_farm_row,
         ),
