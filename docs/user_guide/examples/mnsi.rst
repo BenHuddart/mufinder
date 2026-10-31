@@ -58,18 +58,18 @@ q = (0.0147, 0.0147, 0.0147) in reciprocal lattice units, and the Mn moment is
 0.385 μB at 5 K (Dalmas de Réotier *et al.*, 2016). The helix is left-handed, and
 the moments turn in the plane perpendicular to [111].
 
-The builder takes the vector in two steps. The propagation direction of
-``Add Preset…`` is a crystal axis or a row of the q basis, and [111] is not an
-axis, so q is first typed into row ``q1`` of the ``Propagation-Vector Basis``
-panel, and the preset then propagates along that row.
+[111] is not a crystal axis, so in the builder's ``Add`` menu ``Helix, cycloid
+or SDW from a preset…`` takes the vector with ``Enter a vector (r.l.u.)`` as its
+``Propagation``. The builder stores q in the first free row of the q basis,
+``q1``.
 
 .. figure:: ../../_generated/screenshots/mnsi_preset_helper.webp
-   :alt: The Add Magnetic Preset dialog set to a left-handed helix along basis
-         row q1 = (0.0147, 0.0147, 0.0147), moment 0.385 μB applied to the
-         species Mn.
+   :alt: The Add Magnetic Preset dialog set to a left-handed helix with the
+         typed vector q = (0.0147, 0.0147, 0.0147), moment 0.385 μB applied to
+         the species Mn.
 
-   The preset helper, with ``Helix`` along ``q1``, ``Left-handed``, a moment of
-   0.385 μB and the species ``Mn`` as the atoms it applies to.
+   The preset helper, with ``Helix`` along the typed q, ``Left-handed``, a moment
+   of 0.385 μB and the species ``Mn`` as the atoms it applies to.
 
 The result is one helix component on the four Mn. The checklist is complete
 once the preview repeats the cell along every axis along which q is
@@ -77,8 +77,8 @@ incommensurate, and the structure type is ``incommensurate``.
 
 .. figure:: ../../_generated/screenshots/mnsi_magnetic_structure_builder.webp
    :alt: The Magnetic Structure Builder with the MnSi helix: one component,
-         Helix along q1 on the species Mn, a complete checklist, the q basis row
-         q1 and the Mn spins of a 2 x 2 x 2 preview.
+         a helix along (0.0147, 0.0147, 0.0147) on the species Mn, a complete
+         checklist, the q basis row q1 and the Mn spins of a 2 x 2 x 2 preview.
 
    The builder with the helix. Its Mn moment is the vector pair Re [0.314,
    -0.157, -0.157], Im [0, -0.272, 0.272], whose real and imaginary parts are

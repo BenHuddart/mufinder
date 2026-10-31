@@ -2498,6 +2498,11 @@ class AtomicStructureViewer(QWidget):
         layout.addLayout(viewer_row, stretch=1)
         layout.addWidget(self._selection_label)
 
+    def add_control_widget(self, widget: QWidget) -> None:
+        """Add a host's own control to the end of the viewer's wrapping control row."""
+
+        self._controls_layout.addWidget(widget)
+
     def _configure_pyvista_interaction(self) -> None:
         plotter = self._canvas.plotter
         plotter.enable_custom_trackball_style(right="rotate", middle="pan")

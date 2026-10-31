@@ -41,7 +41,7 @@ from typing import TYPE_CHECKING
 from PySide6.QtWidgets import QApplication, QDialog, QGroupBox, QWidget
 
 from mufinder.domain.models import Structure
-from mufinder.science.magnetic_structure import MagneticStructureModel
+from mufinder.science.magnetic_structure import MagneticStructureModel, allocate_q_basis_row
 
 if TYPE_CHECKING:
     from mufinder.app.main_window import MainWindow
@@ -95,17 +95,13 @@ def mnsi_host() -> Structure:
     )
 
 
-def q_basis_model() -> MagneticStructureModel:
-    """The model after the propagation vector is typed into the first row of the q basis."""
-
-    return MagneticStructureModel(q_basis_rlu=(Q_RLU, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)))
-
-
 def choose_helix(dialog: QDialog) -> None:
-    """Fill the ``Add Magnetic Preset`` dialog: a left-handed helix of Mn moments along the first q-basis row."""
+    """Fill the ``Add Magnetic Preset`` dialog: a left-handed helix of Mn moments along the typed q."""
 
     dialog._kind_combo.setCurrentIndex(dialog._kind_combo.findData("helix"))
-    dialog._propagation_combo.setCurrentIndex(dialog._propagation_combo.findData(0))
+    dialog._propagation_combo.setCurrentIndex(dialog._propagation_combo.findData("vector"))
+    for edit, value in zip(dialog._typed_q, Q_RLU, strict=True):
+        edit.setText(str(value))
     dialog._handedness_combo.setCurrentIndex(dialog._handedness_combo.findData(-1))
     dialog._moment.setText(str(MN_MOMENT_MU_B))
     dialog._selector_combo.setCurrentIndex(dialog._selector_combo.findText("Species: Mn"))
@@ -117,12 +113,13 @@ def mnsi_magnetic_model() -> MagneticStructureModel:
 
     from mufinder.app.magnetic_component_dialogs import MagneticPresetDialog
 
-    model = q_basis_model()
+    model = MagneticStructureModel()
     dialog = MagneticPresetDialog(mnsi_host(), model=model)
     choose_helix(dialog)
-    helix = dialog.component(dialog.q_basis_coefficients())
+    q_basis, q_coeff = allocate_q_basis_row(model, dialog.q_vector())
+    helix = dialog.component(q_coeff)
     dialog.deleteLater()
-    return MagneticStructureModel(q_basis_rlu=model.q_basis_rlu, components=(helix,))
+    return MagneticStructureModel(q_basis_rlu=q_basis, components=(helix,))
 
 
 def mnsi_project(
@@ -169,9 +166,9 @@ def _builder_step(step) -> None:
 
 
 def open_preset_helper(window: MainWindow) -> None:
-    """Open the builder of the q basis alone and click ``Add Preset...``."""
+    """Open the empty builder and choose the ``Add`` menu's preset item."""
 
-    _builder_step(lambda builder: builder._add_preset_button.click())
+    _builder_step(lambda builder: builder._add_preset_action.trigger())
     open_builder(window)
 
 
@@ -304,7 +301,7 @@ SCENES: dict[str, Scene] = {
         Dialog(open_component_editor, kind="MagneticComponentDialog", prepare=focus_default_button),
     ),
     "mnsi_preset_helper": Scene(
-        mnsi_project("MnSi q basis", _APPROXIMANT_PERIOD, q_basis_model()),
+        mnsi_project("MnSi empty", _APPROXIMANT_PERIOD, MagneticStructureModel()),
         "magnetic_fields",
         Dialog(open_preset_helper, kind="MagneticPresetDialog", prepare=choose_helix),
     ),

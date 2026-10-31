@@ -715,6 +715,92 @@ def test_magnetic_preset_dialog_keeps_the_reference_axis_while_the_wavevector_ch
     dialog.close()
 
 
+def test_magnetic_preset_dialog_takes_a_typed_vector_on_an_empty_basis(qapp) -> None:
+    dialog = MagneticPresetDialog(feo_host_structure(), model=MagneticStructureModel())
+    assert dialog._propagation_combo.findText("Enter a vector (r.l.u.)") == 3
+    assert dialog._typed_q_group.isHidden()
+
+    select_combo_data(dialog._propagation_combo, "vector")
+    assert not dialog._typed_q_group.isHidden()
+    assert dialog._wavevector_group.isHidden()
+    # Nothing typed yet: the dialog says why it cannot build, and refuses.
+    assert dialog._summary.text().startswith("Cannot build this preset")
+
+    set_direction_inputs_text(dialog._typed_q, (0.0147, 0.0147, 0.0147))
+
+    assert dialog.q_basis_coefficients() is None
+    assert dialog.q_vector() == (0.0147, 0.0147, 0.0147)
+    assert dialog._label_edit.text() == "Helix along (0.0147, 0.0147, 0.0147)"
+    assert "q = (0.0147, 0.0147, 0.0147)" in dialog._summary.text()
+    component = dialog.component((1.0, 0.0, 0.0))
+    assert component.kind == "helix"
+    assert component.terms[0].q_coeff == (1.0, 0.0, 0.0)
+    dialog.close()
+
+
+def test_magnetic_preset_dialog_refuses_a_zero_or_invalid_typed_vector(qapp, monkeypatch) -> None:
+    warnings: list[str] = []
+    monkeypatch.setattr(
+        magnetic_component_dialogs_module.QMessageBox,
+        "warning",
+        lambda _parent, _title, text: warnings.append(text),
+    )
+    dialog = MagneticPresetDialog(feo_host_structure())
+    select_combo_data(dialog._propagation_combo, "vector")
+
+    dialog.accept()
+    assert len(warnings) == 1
+
+    dialog._typed_q[1].setText("")
+    dialog.accept()
+    assert len(warnings) == 2
+    assert dialog._label_edit.text() == "Helix along a typed q"
+    assert dialog.result() != QDialog.DialogCode.Accepted
+    dialog.close()
+
+
+def test_magnetic_preset_dialog_typed_vector_keeps_a_chosen_reference_axis(qapp) -> None:
+    dialog = MagneticPresetDialog(feo_host_structure())
+    select_combo_data(dialog._propagation_combo, "vector")
+
+    # Nothing chosen: the reference follows the default for q.
+    set_direction_inputs_text(dialog._typed_q, (0.1, 0.0, 0.0))
+    assert dialog._reference_combo.currentData() == "b"
+    set_direction_inputs_text(dialog._typed_q, (0.0, 0.0, 0.2))
+    assert dialog._reference_combo.currentData() == "a"
+
+    # A choice survives a rescale, whose fields pass through other directions one by one.
+    set_direction_inputs_text(dialog._typed_q, (0.1, 0.1, 0.1))
+    select_combo_data(dialog._reference_combo, "c")
+    dialog._reference_combo.activated.emit(dialog._reference_combo.currentIndex())
+    for index in range(3):
+        dialog._typed_q[index].setText("0.2")
+        assert dialog._reference_combo.currentData() == "c"
+
+    # A q along the chosen axis is reported, not silently moved to another axis.
+    set_direction_inputs_text(dialog._typed_q, (0.0, 0.0, 0.2))
+    assert dialog._reference_combo.currentData() == "c"
+    assert dialog._summary.text().startswith("Cannot build this preset")
+
+    # Changing Propagation starts from the default again.
+    select_combo_data(dialog._propagation_combo, "a*")
+    select_combo_data(dialog._propagation_combo, "vector")
+    set_direction_inputs_text(dialog._typed_q, (0.1, 0.0, 0.0))
+    assert dialog._reference_combo.currentData() == "b"
+    dialog.close()
+
+
+def test_magnetic_preset_dialog_typed_vector_ignores_the_wavevector_unit(qapp) -> None:
+    dialog = MagneticPresetDialog(feo_host_structure())
+    select_combo_data(dialog._wavevector_unit, "inverse_angstrom")
+    select_combo_data(dialog._propagation_combo, "vector")
+    set_direction_inputs_text(dialog._typed_q, (0.25, 0.0, 0.0))
+
+    assert dialog.q_vector() == (0.25, 0.0, 0.0)
+    assert dialog._wavevector_row_label.isHidden()
+    dialog.close()
+
+
 # --- Contact-shell tie warnings ---------------------------------------------------
 #
 # B2 FeMn with Fe up and Mn down: at the tetrahedral site (1/2, 1/4, 0) two Fe

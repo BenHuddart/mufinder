@@ -173,9 +173,9 @@ Build components in the builder
    about q = (0.0147, 0.0147, 0.0147), previewed over ``2 x 2 x 2`` cells. Its
    checklist is complete, and the structure type is ``incommensurate``.
 
-The ``Magnetic Structure Builder`` owns the component table, ``Preview
-Supercell`` controls, atom selection, a checklist and the live structure
-viewer. The component table lists ``Enabled``, ``Component``, ``Type``,
+The ``Magnetic Structure Builder`` owns the component table, atom selection, a
+checklist and the live structure viewer, whose control row holds the ``Preview
+cells`` boxes. The component table lists ``Enabled``, ``Component``, ``Type``,
 ``Apply to``, ``q`` and ``Moment`` for each component, top to bottom in the
 order the model stores them. The ``q`` column gives each distinct wavevector a
 component uses as its q-basis combination and its value in reciprocal lattice
@@ -184,22 +184,23 @@ q = 0 term shows the vector alone.
 
 To build a structure:
 
-1. Click ``Edit Magnetic Structure…`` on the page. If the host carries scalar
-   spin metadata, click ``Build From Host Spins`` to convert it into the
-   propagation-vector model. When the builder already holds components it first
-   asks for confirmation, because the conversion replaces them.
-2. Add components:
+1. Click ``Edit Magnetic Structure…`` on the page.
+2. Add components from the ``Add`` menu:
 
-   - ``Add Component`` creates a new propagation-vector component using a
-     preset for collinear, spin-density-wave, helix, cycloid, or conical
+   - ``Single moment or modulation…`` creates a new propagation-vector component
+     using a preset for collinear, spin-density-wave, helix, cycloid, or conical
      textures; its q comes from a typed vector or from the stored basis rows
      (see `Set the propagation vectors`_).
-   - ``Add Preset…`` builds a helix, conical, cycloid or spin-density-wave
-     component from a propagation direction and the crystal axes (see `Use the
-     preset helper`_).
-   - ``Add Texture…`` creates one grouped multi-q texture assignment,
+   - ``Helix, cycloid or SDW from a preset…`` builds a helix, conical, cycloid or
+     spin-density-wave component from a propagation direction and the crystal
+     axes (see `Use the preset helper`_).
+   - ``Multi-q texture…`` creates one grouped multi-q texture assignment,
      currently supporting square and hexagonal skyrmion lattices as well as
      custom Fourier texture terms (see `Add a multi-q texture`_).
+   - ``From host spins`` converts a host's scalar spin metadata into the
+     propagation-vector model, one component per atom, whose ``Type`` is
+     ``Moment``. When the builder already holds components it first asks for
+     confirmation, because the conversion replaces them.
 
    Components can be applied to all atoms, to atoms of a species, to a
    symmetry-equivalent atom group, or to atoms selected in the builder preview.
@@ -235,8 +236,8 @@ To build a structure:
    - Selecting no rows previews the full magnetic structure. Selecting one or
      more rows previews only those components; when every selected component is
      disabled the preview shows no moments and says so.
-   - The diagonal ``Preview Supercell`` controls evaluate the magnetic moments
-     outside the unit cell so longer-wavelength propagation vectors can be
+   - The ``Preview cells`` boxes ``a``, ``b`` and ``c`` in the viewer's control
+     row evaluate the magnetic moments outside the unit cell so longer-wavelength propagation vectors can be
      inspected. Pressing ``Enter`` in a repeat box applies the value and keeps
      the builder open; Enter never presses ``Use Structure``.
 
@@ -258,7 +259,7 @@ or a problem (⚠), with a one-line reason:
 - ``Set the propagation-vector basis`` is done when every row an enabled
   component uses holds a non-zero vector, or when every enabled component has
   q = 0 and no row is needed. A used row that holds no vector is a problem;
-- ``Check the preview supercell`` compares the ``Preview Supercell`` repeats
+- ``Check the preview supercell`` compares the ``Preview cells`` repeats
   with the magnetic period along a, b and c, taken over every finite-q term of
   the enabled components. It is done when the preview shows at least one whole
   magnetic cell, or the largest preview (12 repeats) along an axis whose
@@ -273,7 +274,8 @@ Set the propagation vectors
 
 Every Fourier term stores its wavevector as a combination of the model's three
 q-basis rows, ``q = l q1 + m q2 + n q3``. The ``Propagation-Vector Basis``
-panel under the component table shows those rows:
+panel under the component table appears when an enabled component uses one of
+those rows, and shows them:
 
 - ``Row`` names the row, ``q1`` to ``q3``;
 - ``q (r.l.u.)`` is the stored vector ``h, k, l``;
@@ -285,15 +287,21 @@ Selecting components in the component table shows the rows they use in bold,
 with the row name in the accent colour, so a grouped texture's mapping onto the
 stored basis can be read directly.
 
+When no enabled component uses a row, one line stands in for the panel: ``No
+components yet`` for an empty builder, ``All components have q = 0`` when no
+component uses a row, and ``All enabled components have q = 0`` when only a
+disabled component does. A vector for a first component is entered in the
+dialog that adds it, so nothing has to be typed into the basis beforehand.
+
 .. figure:: ../_generated/screenshots/mnsi_q_basis.webp
    :alt: The Propagation-Vector Basis panel with row q1 holding 0.0147, 0.0147,
-         0.0147 in bold and used by Helix along q1, and q2 and q3 unused.
+         0.0147 in bold and used by the MnSi helix, and q2 and q3 unused.
 
    The panel with the helix of :doc:`/user_guide/examples/mnsi` selected: it
    uses ``q1`` only, and ``q2`` and ``q3`` are unused.
 
-To choose a component's q, use ``Add Component`` (or ``Edit…``). The
-add-component dialog shows the same rows, read-only, in its own
+To choose a component's q, use ``Single moment or modulation…`` in the ``Add``
+menu (or ``Edit…``). The add-component dialog shows the same rows, read-only, in its own
 ``Propagation-Vector Basis`` group, and its ``q from`` choice sets how the
 component's q is stored:
 
@@ -324,7 +332,8 @@ the dialog is accepted. A component stored on rows follows them when a row is
 edited. ``Edit…`` reopens a component on the row or combination it is stored
 as; a component whose only q is zero reopens on vector entry.
 
-To change a stored row directly, double-click its ``q (r.l.u.)`` cell. The
+To change a stored row directly while the panel is shown, double-click its
+``q (r.l.u.)`` cell. The
 entry is three numbers separated by commas or spaces, optionally in brackets.
 Components keep their basis coefficients, so every component that uses the row
 changes wavevector with it, and the ``q`` column, preview and structure type
@@ -380,14 +389,16 @@ target covers it again.
 Use the preset helper
 ~~~~~~~~~~~~~~~~~~~~~
 
-``Add Preset…`` opens the ``Add Magnetic Preset`` dialog, which builds one
+``Helix, cycloid or SDW from a preset…`` in the ``Add`` menu opens the ``Add
+Magnetic Preset`` dialog, which builds one
 ordinary component from crystal-axis choices; the component can be edited like
 any other afterwards. In the dialog, set:
 
 1. ``Structure``: ``Helix``, ``Conical``, ``Cycloid`` or ``Spin-density wave``.
 2. ``Propagation``: ``Along a*``, ``Along b*`` or ``Along c*`` with a
-   wavevector (default ``Along c*`` with δ = 0.25 r.l.u.), or a stored basis
-   row ``qN``, on which the component is then stored. The unit beside the
+   wavevector (default ``Along c*`` with δ = 0.25 r.l.u.), ``Enter a vector
+   (r.l.u.)`` with a typed ``q (r.l.u.)`` for any other direction, or a stored
+   basis row ``qN``, on which the component is then stored. The unit beside the
    wavevector is ``r.l.u.`` (the default, ``Wavevector δ (r.l.u.)``) or ``Å⁻¹``
    (``Wavevector k (Å⁻¹)``), the signed length of the wavevector along the
    chosen axis, :math:`2\pi` included. It is converted through the lattice,
@@ -399,7 +410,8 @@ any other afterwards. In the dialog, set:
 3. A reference crystal axis, ``a``, ``b`` or ``c``. It defaults to the axis
    most nearly perpendicular to q, preferring a, then b, then c, and resets to
    that default when the ``Propagation`` choice changes, but not when only δ
-   changes. For a helix and a conical structure the rotation plane is
+   changes. A typed q follows the default until an axis is chosen, and then
+   keeps that axis; if q ends up parallel to it, the summary line says so. For a helix and a conical structure the rotation plane is
    perpendicular to q and the moment at zero phase lies along the reference
    axis projected into that plane; a conical structure's cone axis is q. For a
    cycloid the rotation plane holds q and the reference axis. For a
@@ -412,27 +424,26 @@ any other afterwards. In the dialog, set:
    follows the choices, such as ``Helix along c*``, until it is typed over.
 
 .. figure:: ../_generated/screenshots/mnsi_preset_helper.webp
-   :alt: The Add Magnetic Preset dialog set to a left-handed helix along basis
-         row q1 = (0.0147, 0.0147, 0.0147), with the moment at zero phase along
-         crystal axis a, 0.385 μB, applied to the species Mn.
+   :alt: The Add Magnetic Preset dialog set to a left-handed helix with the
+         typed vector q = (0.0147, 0.0147, 0.0147), with the moment at zero phase
+         along crystal axis a, 0.385 μB, applied to the species Mn.
 
    The helix of :doc:`/user_guide/examples/mnsi`. Its q has no crystal-axis
-   choice, so it is typed into row ``q1`` of the basis first and the preset
-   propagates along that row.
+   choice, so it is entered with ``Enter a vector (r.l.u.)``.
 
 A summary line describes the structure the choices give. Only a conical
 structure reads the cone angle, so a hidden, invalid cone angle never blocks
 another structure. A reference axis parallel to q, a zero wavevector or a
 non-positive moment is reported there and refused when the dialog is accepted.
-The new q is stored like a typed vector in the add-component dialog, and the
+A new q, along an axis or typed, is stored like a typed vector in the add-component dialog, and the
 moments come from the same helix, cycloid, conical and spin-density-wave
 builders.
 
 Add a multi-q texture
 ~~~~~~~~~~~~~~~~~~~~~
 
-To add a skyrmion lattice or another multi-q texture, click ``Add Texture…``
-in the builder. The ``Add Magnetic Texture`` dialog starts from an abstract spin
+To add a skyrmion lattice or another multi-q texture, choose ``Multi-q
+texture…`` in the builder's ``Add`` menu. The ``Add Magnetic Texture`` dialog starts from an abstract spin
 texture before applying it to selected atoms:
 
 1. Enter a ``Label`` and the ``Amplitude`` in the ``Texture`` group.

@@ -473,10 +473,10 @@ form with the muon at the 4a site with every equivalent site, no demagnetizing
 field and the contact coupling that reproduces the edges of the published
 prediction. The helix is built by the ``Add Magnetic
 Preset`` dialog itself, driven through the choices the page describes: a
-left-handed helix of 0.385 μB Mn moments along the first q-basis row, which
-holds q = (0.0147, 0.0147, 0.0147). The scenes show the builder with its
+left-handed helix of 0.385 μB Mn moments along the typed vector
+q = (0.0147, 0.0147, 0.0147), which is stored in the first q-basis row. The scenes show the builder with its
 checklist, the ``Propagation-Vector Basis`` panel alone, the component dialog's
-``q from`` choice, the preset helper opened over a q basis with no component yet,
+``q from`` choice, the preset helper opened on an empty builder,
 the results page and the distribution plot of the four sites, the
 ``Calculation Settings`` dialog with the approximant option on, and the finite
 fields of the approximant at site II. The distribution is sampled on a grid of

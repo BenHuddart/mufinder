@@ -543,6 +543,23 @@ def component_q_basis_indices(component: MagneticComponent) -> tuple[int, ...]:
     return tuple(sorted(used))
 
 
+def q_basis_placeholder(model: MagneticStructureModel) -> str | None:
+    """Return the line that stands in for the q-basis rows, or ``None`` when they are needed.
+
+    The rows are needed as soon as an enabled component references one. That
+    covers a reference to a row holding no vector, whose q is zero until the
+    row is filled in, because the builder checklist asks for exactly that.
+    """
+
+    if not model.components:
+        return "No components yet"
+    if any(component_q_basis_indices(c) for c in enabled_magnetic_components(model)):
+        return None
+    if used_q_basis_indices(model):
+        return "All enabled components have q = 0"
+    return "All components have q = 0"
+
+
 def q_coeff_expression(q_coeff: Sequence[float]) -> str:
     """Write a q-basis coefficient vector as a combination of ``q1``, ``q2`` and ``q3``.
 
@@ -741,7 +758,7 @@ def magnetic_builder_checklist(
                 "components",
                 components_title,
                 CHECKLIST_TODO,
-                "Use 'Add Component', 'Add Preset…' or 'Build From Host Spins'.",
+                "Use the 'Add' menu.",
             )
         )
     elif not enabled:
@@ -2120,8 +2137,8 @@ def prune_texture_terms(
     return MagneticTexture(tuple(terms)).combine_terms()
 
 
-def magnetic_model_from_legacy_structure(structure: Structure) -> MagneticStructureModel:
-    """Build a v1 magnetic model from current scalar-spin or MCIF metadata."""
+def magnetic_model_from_host_spins(structure: Structure) -> MagneticStructureModel:
+    """Build a magnetic model from the host's scalar-spin or MCIF metadata."""
 
     q_basis = _legacy_q_basis_rlu(structure)
     propagation = q_basis[0]
@@ -2167,13 +2184,17 @@ def magnetic_model_from_legacy_structure(structure: Structure) -> MagneticStruct
     )
 
 
+# Public import alias; see docs/compatibility_policy.rst.
+magnetic_model_from_legacy_structure = magnetic_model_from_host_spins
+
+
 def magnetic_model_for_host(stored: object, host: Structure | None) -> MagneticStructureModel:
     """Return the magnetic model saved for ``host``, or one built from its spins.
 
     ``stored`` is the project's (or a workspace's) saved model payload. When it
     is not a mapping, the host's own ``magnetic_structure`` property is used. A
     payload with ``components`` is read as a model; anything else falls back to
-    :func:`magnetic_model_from_legacy_structure`. With no host the model is
+    :func:`magnetic_model_from_host_spins`. With no host the model is
     empty.
     """
 
@@ -2182,7 +2203,7 @@ def magnetic_model_for_host(stored: object, host: Structure | None) -> MagneticS
     payload = stored if isinstance(stored, dict) else host.properties.get("magnetic_structure")
     if isinstance(payload, dict) and "components" in payload:
         return MagneticStructureModel.from_json(payload)
-    return magnetic_model_from_legacy_structure(host)
+    return magnetic_model_from_host_spins(host)
 
 
 # --- Builder geometry: q-basis rows, propagation and moment directions ---------
