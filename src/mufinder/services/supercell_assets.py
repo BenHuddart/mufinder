@@ -34,6 +34,8 @@ _WORKFLOW_SUPERCELLS_STATE_KEY = "workflow_supercells"
 WORKFLOW_SUPERCELL_UNIT_CELL = "unit_cell"
 #: Selection mode: simulate one saved supercell asset.
 WORKFLOW_SUPERCELL_SAVED = "saved_supercell"
+# Past tense: pages keep showing it after the supercell becomes available again.
+_FALLBACK_STATUS = "Using single unit cell: the saved supercell was not available."
 
 
 @dataclass(slots=True, frozen=True)
@@ -665,7 +667,7 @@ def resolve_workflow_structure(
                     available_assets=available_assets,
                     selection=selection,
                     normalized_selection=normalized,
-                    status_message="Saved supercell unavailable for the active host; using single unit cell.",
+                    status_message=_FALLBACK_STATUS,
                 )
             source_workflow_stage = selected_asset.owner_workflow_stage
             if selected_asset.source_asset_structure_id is not None:
@@ -693,7 +695,7 @@ def resolve_workflow_structure(
             available_assets=available_assets,
             selection=selection,
             normalized_selection=normalized,
-            status_message="Saved supercell unavailable for the active host; using single unit cell.",
+            status_message=_FALLBACK_STATUS,
         )
 
     if normalize_state and normalized != selection:

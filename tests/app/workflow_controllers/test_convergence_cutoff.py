@@ -684,7 +684,7 @@ def test_refresh_simulation_cell_without_a_project_disables_the_selector() -> No
     assert view.species_options == [()]
 
 
-_FALLBACK_MESSAGE = "Saved supercell unavailable for the active host; using single unit cell."
+_FALLBACK_MESSAGE = "Using single unit cell: the saved supercell was not available."
 
 
 def _fallen_back_controller(service: ProjectService, tmp_path: Path):

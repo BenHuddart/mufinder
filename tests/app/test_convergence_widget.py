@@ -69,7 +69,7 @@ def test_simulation_cell_combo_keeps_the_summary_as_its_tooltip(
     qapp, widget_type: type[SweepConvergenceWidget]
 ) -> None:
     widget = widget_type()
-    unavailable = "Saved supercell unavailable for the active host; using single unit cell."
+    unavailable = "Using single unit cell: the saved supercell was not available."
 
     widget.set_simulation_cell_options(
         summary=unavailable, assets=[], selected_structure_id=None, enabled=True
@@ -90,7 +90,7 @@ def test_simulation_cell_combo_keeps_the_summary_as_its_tooltip(
     assert not widget._simulation_cell_create_button.isEnabled()
 
 
-_FALLBACK = "Saved supercell unavailable for the active host; using single unit cell."
+_FALLBACK = "Using single unit cell: the saved supercell was not available."
 
 
 def _set_fallback(widget: SweepConvergenceWidget, warning: str) -> None:
@@ -166,6 +166,33 @@ def test_long_supercell_name_does_not_widen_the_page(
     )
 
     assert widget.minimumSizeHint().width() == base_width
+
+
+@pytest.mark.parametrize("widget_type", _SWEEP_WIDGETS)
+def test_long_supercell_name_elides_visibly_with_the_full_name_in_tooltips(
+    qapp, widget_type: type[SweepConvergenceWidget]
+) -> None:
+    widget = widget_type()
+    _show_at_default_page_size(widget, qapp)
+    combo = widget._simulation_cell_combo
+    _set_fallback(widget, "")
+    assert combo.displayed_text() == combo.currentText() == "Single unit cell"
+
+    long_name = "a very long supercell name for checking elision " * 3
+    widget.set_simulation_cell_options(
+        summary=f"Using saved supercell: {long_name}",
+        assets=[{"structure_id": "abc", "label": long_name}],
+        selected_structure_id="abc",
+        enabled=True,
+    )
+    qapp.processEvents()
+
+    shown = combo.displayed_text()
+    assert combo.currentText() == long_name.strip()
+    assert shown.endswith("\N{HORIZONTAL ELLIPSIS}")
+    assert combo.fontMetrics().horizontalAdvance(shown) < combo.width()
+    assert long_name.strip() in combo.toolTip()
+    assert combo.itemData(1, Qt.ItemDataRole.ToolTipRole) == long_name.strip()
 
 
 @pytest.mark.parametrize("widget_type", _SWEEP_WIDGETS)

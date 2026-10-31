@@ -43,6 +43,7 @@ from PySide6.QtWidgets import (
 )
 
 from mufinder.app.convergence_types import ConvergenceConfig, SweepKeyCodec, SweepPointRunState
+from mufinder.app.eliding_label import ElidingComboBox
 from mufinder.app.export_dialogs import JobFilesMenu
 from mufinder.app.project_defaults_widget import ProjectDefaultsStrip
 from mufinder.app.selection_snapshot import (
@@ -214,7 +215,7 @@ class SweepConvergenceWidget(QWidget):
         self._table = self._create_table()
 
         self._name_prefix = QLineEdit(self._NAME_PREFIX_DEFAULT)
-        self._simulation_cell_combo = QComboBox()
+        self._simulation_cell_combo = ElidingComboBox()
         self._simulation_cell_combo.setSizeAdjustPolicy(
             QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
         )
@@ -493,6 +494,9 @@ class SweepConvergenceWidget(QWidget):
                 label = str(asset.get("label", "")).strip() or "Saved supercell"
                 structure_id = str(asset.get("structure_id", "")).strip()
                 self._simulation_cell_combo.addItem(label, structure_id)
+                self._simulation_cell_combo.setItemData(
+                    self._simulation_cell_combo.count() - 1, label, Qt.ItemDataRole.ToolTipRole
+                )
 
             selected_index = 0
             if selected_structure_id:
