@@ -77,7 +77,6 @@ class WorkflowDefinition:
 
     key: str
     title: str
-    subtitle: str = ""
     route: str | None = None
     completion_goal: str | None = None
     completion_check: Callable[[ProjectDocument], bool] | None = None
