@@ -209,12 +209,12 @@ Relaxing CoF₂ without a muon shows how well the functional reproduces the
 experimental lattice.
 
 1. Select ``Pristine Relaxation`` and click ``Add Job``.
-2. Leave the row's ``Supercell`` at ``Unit cell`` and ``Fix Cell`` at ``No
-   (relax)``, so the lattice relaxes as well as the atoms. Tick ``Spin
-   Polarized`` in the row's parameters.
+2. Leave the row's ``Supercell`` at ``Unit cell`` and ``Fix cell`` clear, so
+   the lattice relaxes as well as the atoms. Tick ``Spin Polarized`` in the
+   row's parameters.
 3. Click ``Run All Locally`` or ``Run All on Cluster``.
 4. When the job completes, read the relaxed ``a (Ang)``, ``b (Ang)`` and
-   ``c (Ang)``.
+   ``c (Ang)``, each with its change against the host.
 
    .. figure:: ../_generated/screenshots/pristine_relaxation_page.webp
       :alt: The Pristine Relaxation page with one completed variable-cell
@@ -222,8 +222,8 @@ experimental lattice.
 
       The pristine relaxation of CoF₂, from a synthetic CASTEP output.
 
-5. Click ``Generate Comparison Table…``, tick ``Include`` for the completed
-   job, keep or edit the ``Comparison table label`` and click ``OK``.
+5. Click ``Generate Comparison Table…``, leave the completed job ticked under
+   ``Include``, keep or edit the ``Comparison table label`` and click ``OK``.
 
 .. figure:: ../_generated/screenshots/comparison_job_dialog.webp
    :alt: The Generate Comparison Table dialog with one completed CoF2

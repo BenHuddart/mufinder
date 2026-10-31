@@ -35,13 +35,15 @@ from typing import TypeVar
 from PySide6.QtCore import QEvent, QItemSelection, QItemSelectionModel, QObject, Qt, QTimer
 from PySide6.QtGui import QKeyEvent, QMouseEvent, QWheelEvent
 from PySide6.QtWidgets import (
-    QComboBox,
+    QCheckBox,
     QMessageBox,
     QPushButton,
     QTableWidget,
     QToolButton,
     QWidget,
 )
+
+from mufinder.app.eliding_label import ElidingComboBox
 
 KeyT = TypeVar("KeyT")
 
@@ -227,7 +229,7 @@ class SelectionSnapshotToolButton(_SnapshotMixin, QToolButton):
         super().keyPressEvent(event)
 
 
-class SelectionSnapshotComboBox(_SnapshotMixin, QComboBox):
+class SelectionSnapshotComboBox(_SnapshotMixin, ElidingComboBox):
     """QComboBox that snapshots its table's selection on mouse/keyboard activation.
 
     Snapshots at mousePressEvent (which opens the popup) and on navigation
@@ -279,6 +281,39 @@ class SelectionSnapshotComboBox(_SnapshotMixin, QComboBox):
         # change handler would read a snapshot left over from an earlier press.
         self._capture_selection_snapshot()
         super().wheelEvent(event)
+
+
+class SelectionSnapshotCheckBox(_SnapshotMixin, QCheckBox):
+    """QCheckBox that snapshots its table's selection on mouse/keyboard activation."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.pre_interaction_checked: bool = False
+
+    def _capture_selection_snapshot(self) -> None:
+        # Remember the state the user started from, so a cancelled multi-row
+        # prompt can put the box back (see restore_pre_interaction_state).
+        self.pre_interaction_checked = self.isChecked()
+        super()._capture_selection_snapshot()
+
+    def restore_pre_interaction_state(self) -> None:
+        """Put the box back to the state it showed before the user changed it.
+
+        Signals are blocked so the owning widget's change handler does not run
+        again for what is an undo, not a new choice.
+        """
+        previous = self.blockSignals(True)
+        self.setChecked(self.pre_interaction_checked)
+        self.blockSignals(previous)
+
+    def mousePressEvent(self, event: QMouseEvent) -> None:
+        self._capture_selection_snapshot()
+        super().mousePressEvent(event)
+
+    def keyPressEvent(self, event: QKeyEvent) -> None:
+        if event.key() == Qt.Key.Key_Space:
+            self._capture_selection_snapshot()
+        super().keyPressEvent(event)
 
 
 class SelectionScope(Enum):

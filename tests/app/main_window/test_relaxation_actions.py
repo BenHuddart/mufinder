@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 
 import mufinder.app.main_window as main_window_module
@@ -20,7 +21,8 @@ from mufinder.app.workflow_config_codecs import (
     serialize_pristine_relaxation_config,
 )
 from mufinder.domain.enums import JobStatus, WorkflowStage
-from mufinder.domain.models import CalculationRun, ComparisonTable, Job, Structure
+from mufinder.domain.models import CalculationRun, ComparisonTable, Job, Result, Structure
+from mufinder.science.supercell_matching import normalize_for_comparison
 from mufinder.services.project_service import ProjectService
 from mufinder.services.project_summary import pristine_relaxation_complete
 
@@ -362,17 +364,6 @@ def _pristine_kpoint_document(tmp_path: Path, name: str):
     return doc
 
 
-def _capture_message_boxes(monkeypatch: pytest.MonkeyPatch) -> list:
-    boxes: list = []
-
-    def _exec(box) -> int:
-        boxes.append(box)
-        return int(main_window_module.QMessageBox.StandardButton.Ok.value)
-
-    monkeypatch.setattr(main_window_module.QMessageBox, "exec", _exec)
-    return boxes
-
-
 def _supercell_row(label: str):
     return PristineRelaxationRow(
         label=label,
@@ -382,57 +373,225 @@ def _supercell_row(label: str):
     )
 
 
-def test_on_pristine_relaxation_configured_surfaces_kpoint_adjustment(
+def _refuse_message_boxes(monkeypatch: pytest.MonkeyPatch) -> None:
+    def _exec(box) -> int:
+        raise AssertionError(f"Unexpected message box: {box.text()}")
+
+    monkeypatch.setattr(main_window_module.QMessageBox, "exec", _exec)
+
+
+def _fake_local_submission(window, monkeypatch: pytest.MonkeyPatch) -> list[list[str]]:
+    """Stand in for the local backend, reporting through the window's status wording."""
+
+    submitted: list[list[str]] = []
+
+    def _submit(jobs, **_extras) -> None:
+        submitted.append([job.label for job in jobs])
+        window.statusBar().showMessage(
+            window._with_kpoint_status_note(f"Submitted {len(jobs)} local jobs")
+        )
+
+    monkeypatch.setattr(window, "_submit_jobs_locally", _submit)
+    return submitted
+
+
+def _rows_in_a_supercell(window, count: int):
+    view = window._pristine_relaxation_view
+    host = window._document.structures[window._document.project.host_structure_id]
+    view.set_host_lattice(host.lattice_vectors)
+    for row in range(count):
+        view._add_row()
+        view.set_row_supercell(view._row_id_at(row), ((2, 0, 0), (0, 1, 0), (0, 0, 1)))
+    return view
+
+
+def test_running_supercell_rows_reports_rescaled_grids_in_the_status_bar(
     main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # A supercell row rescales the project k-point grid; the adjustment must be
-    # surfaced to the user, not dropped.
     window = main_window
     window._document = _pristine_kpoint_document(tmp_path, "PristineMsg")
-    boxes = _capture_message_boxes(monkeypatch)
+    _refuse_message_boxes(monkeypatch)
+    submitted = _fake_local_submission(window, monkeypatch)
+    view = _rows_in_a_supercell(window, 4)
 
-    window._on_pristine_relaxation_configured(
-        main_window_module.PristineRelaxationConfig(
-            name_prefix="pristine_relax", rows=(_supercell_row("super"),)
-        )
+    view._run_local_selected_rows()
+
+    assert len(submitted) == 1
+    assert (
+        window.statusBar().currentMessage()
+        == "Submitted 4 local jobs; K-point grid rescaled for 4 rows"
     )
-
-    assert len(boxes) == 1
-    box = boxes[0]
-    assert box.text() == "K-point grid rescaled for 1 row."
-    assert "• 2x1x1 supercell: 4x4x4 → 2x4x4 (1 row)" in box.informativeText()
-    # A single row needs no details: the summary already says everything.
-    assert box.detailedText() == ""
-    assert box.defaultButton() is box.button(main_window_module.QMessageBox.StandardButton.Ok)
     window.close()
 
 
-def test_on_pristine_relaxation_configured_keeps_the_kpoint_summary_short_for_many_rows(
+def test_rescaled_grid_note_counts_only_the_rows_being_run(
     main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # Many rows in one supercell share one summary line; the per-row list sits
-    # in the scrollable details so the dialog never outgrows the screen.
     window = main_window
-    window._document = _pristine_kpoint_document(tmp_path, "PristineMany")
-    boxes = _capture_message_boxes(monkeypatch)
-    rows = tuple(_supercell_row(f"site_{index}") for index in range(60))
+    window._document = _pristine_kpoint_document(tmp_path, "PristineOne")
+    _refuse_message_boxes(monkeypatch)
+    _fake_local_submission(window, monkeypatch)
+    view = _rows_in_a_supercell(window, 4)
 
-    window._on_pristine_relaxation_configured(
-        main_window_module.PristineRelaxationConfig(name_prefix="pristine_relax", rows=rows)
-    )
+    view._table.selectRow(1)
+    view._run_local_selected_rows()
 
-    assert len(boxes) == 1
-    box = boxes[0]
-    assert box.text() == "K-point grid rescaled for 60 rows."
-    assert box.informativeText() == (
-        "<nobr>Each grid keeps the project&#x27;s reciprocal-space density.</nobr><br>"
-        "<nobr></nobr><br>"
-        "<nobr>• 2x1x1 supercell: 4x4x4 → 2x4x4 (60 rows)</nobr>"
+    assert (
+        window.statusBar().currentMessage()
+        == "Submitted 1 local jobs; K-point grid rescaled for 1 row"
     )
-    details = box.detailedText().splitlines()
-    assert len(details) == 60
-    assert details[0] == "site_0: 4x4x4 → 2x4x4 (2x1x1 supercell)"
     window.close()
+
+
+def test_rescaled_grid_note_does_not_reach_a_later_submission(
+    main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = main_window
+    window._document = _pristine_kpoint_document(tmp_path, "PristineOnce")
+    _refuse_message_boxes(monkeypatch)
+    _fake_local_submission(window, monkeypatch)
+    view = _rows_in_a_supercell(window, 1)
+
+    view._run_local_selected_rows()
+    assert window._with_kpoint_status_note("Submitted 1 local job") == "Submitted 1 local job"
+    window.close()
+
+
+def test_rescaled_grid_note_is_not_shown_when_nothing_is_submitted(
+    main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = main_window
+    window._document = _pristine_kpoint_document(tmp_path, "PristineNone")
+    _refuse_message_boxes(monkeypatch)
+    monkeypatch.setattr(window, "_submit_jobs_locally", lambda *_args, **_kwargs: None)
+    view = _rows_in_a_supercell(window, 2)
+
+    view._run_local_selected_rows()
+
+    assert "K-point" not in window.statusBar().currentMessage()
+    window.close()
+
+
+def test_rescaled_grid_note_keys_a_muon_row_by_its_charge_state(
+    main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = main_window
+    window._document = _pristine_kpoint_document(tmp_path, "MuonMsg")
+    _refuse_message_boxes(monkeypatch)
+    host = window._document.structures[window._document.project.host_structure_id]
+    rows = tuple(
+        main_window_module.MuonRelaxationRow(
+            site_id=host.id,
+            label="site_1",
+            initial_fractional_position=(0.1, 0.2, 0.3),
+            charge_state=charge_state,
+            supercell_matrix=((2, 0, 0), (0, 1, 0), (0, 0, 1)),
+        )
+        for charge_state in ("positive_muon", "muonium")
+    )
+
+    window._on_muon_relaxation_configured(main_window_module.MuonRelaxationConfig(rows=rows))
+    window._set_submitted_rows(["positivemuon:site_1"])
+
+    assert (
+        window._with_kpoint_status_note("Submitted 1 local job")
+        == "Submitted 1 local job; K-point grid rescaled for 1 row"
+    )
+    window._set_submitted_rows(())
+    window.close()
+
+
+def test_pristine_row_state_compares_a_supercell_row_with_the_tiled_host(
+    main_window, tmp_path: Path
+) -> None:
+    window = main_window
+    service = ProjectService()
+    doc = _pristine_kpoint_document(tmp_path, "PristineLattice")
+    window._document = doc
+    host = doc.structures[doc.project.host_structure_id]
+    window._on_pristine_relaxation_configured(
+        main_window_module.PristineRelaxationConfig(
+            name_prefix="pristine_relax",
+            rows=(
+                _supercell_row("super"),
+                PristineRelaxationRow(label="unit", fix_all_cell=False, parameter_values={}),
+                PristineRelaxationRow(label="pending", fix_all_cell=False, parameter_values={}),
+            ),
+        )
+    )
+    controller = window._pristine_relaxation_controller
+    definition = controller.active_definition()
+
+    def _complete(label: str, lattice: list[list[float]]) -> None:
+        job = service.add_job(
+            doc,
+            label=label,
+            workflow_stage=main_window_module.WorkflowStage.PRISTINE_RELAXATION,
+            calc_type="castep_pristine_relaxation",
+        )
+        job.status = JobStatus.COMPLETED
+        relaxed = Structure(
+            label=f"{label} relaxed",
+            lattice_vectors=lattice,
+            species=["Si"] * 2,
+            fractional_positions=[[0.0, 0.0, 0.0], [0.5, 0.0, 0.0]],
+            parent_structure_id=host.id,
+        )
+        service.add_structure(doc, relaxed)
+        run = CalculationRun(job_id=job.id, run_index=1, status=JobStatus.COMPLETED)
+        doc.runs[run.id] = run
+        result = Result(
+            calculation_run_id=run.id,
+            result_type="pristine_relaxation",
+            data={
+                "lattice_a": lattice[0][0],
+                "lattice_b": lattice[1][1],
+                "lattice_c": lattice[2][2],
+            },
+            derived_structure_ids=[relaxed.id],
+        )
+        doc.results[result.id] = result
+        run.result_id = result.id
+        definition.parameters.setdefault("job_ids_by_label", {})[label] = str(job.id)
+
+    _complete("super", [[8.08, 0.0, 0.0], [0.0, 4.04, 0.0], [0.0, 0.0, 4.04]])
+    _complete("unit", [[4.04, 0.0, 0.0], [0.0, 4.04, 0.0], [0.0, 0.0, 4.04]])
+
+    states = controller.build_states()
+
+    assert states["super"].host_lattice_lengths == pytest.approx((8.0, 4.0, 4.0))
+    assert states["unit"].host_lattice_lengths == pytest.approx((4.0, 4.0, 4.0))
+    assert states["pending"].host_lattice_lengths is None
+
+    # The same numbers the comparison table compares against.
+    tiled = normalize_for_comparison(host, doc.structures[_relaxed_id(doc, "super")]).experimental
+    assert states["super"].host_lattice_lengths == pytest.approx(
+        np.linalg.norm(np.asarray(tiled.lattice_vectors), axis=1)
+    )
+
+    # A later host does not change what a finished row relaxed from.
+    new_host = Structure(
+        label="Other",
+        lattice_vectors=[[6.0, 0.0, 0.0], [0.0, 6.0, 0.0], [0.0, 0.0, 6.0]],
+        species=["Si"],
+        fractional_positions=[[0.0, 0.0, 0.0]],
+    )
+    service.add_structure(doc, new_host)
+    definition.input_structure_ids[0] = new_host.id
+    assert controller.build_states()["unit"].host_lattice_lengths == pytest.approx((4.0, 4.0, 4.0))
+
+    # With its source gone a row shows the length alone.
+    del doc.structures[host.id]
+    assert controller.build_states()["unit"].host_lattice_lengths is None
+    window.close()
+
+
+def _relaxed_id(doc, label: str):
+    return next(
+        structure.id
+        for structure in doc.structures.values()
+        if structure.label == f"{label} relaxed"
+    )
 
 
 def test_main_window_form_pristine_relaxation_shows_ready_before_submission(

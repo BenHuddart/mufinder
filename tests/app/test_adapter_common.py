@@ -28,7 +28,7 @@ from mufinder.app.adapter_common import (
     rescale_kpoint_grid,
     row_values_has_keyword,
     seed_workflow_defaults,
-    summarize_kpoint_adjustments,
+    kpoint_adjustment_status,
     supercell_label,
     template_has_explicit_kpoints,
 )
@@ -43,7 +43,7 @@ def _adjustment(
     adjusted_grid: tuple[int, int, int] = (2, 2, 2),
 ) -> KpointAdjustment:
     return KpointAdjustment(
-        row_label=row_label,
+        row_key=row_label,
         cell_label=cell_label,
         project_grid=(4, 4, 4),
         adjusted_grid=adjusted_grid,
@@ -60,57 +60,16 @@ def test_adapter_expansion_defaults_to_no_kpoint_adjustments() -> None:
     assert expansion.kpoint_adjustments == ()
 
 
-def test_kpoint_adjustment_message_names_the_row_change_and_cell() -> None:
-    assert _adjustment("site_1").message == "site_1: 4x4x4 → 2x2x2 (2x2x2 supercell)"
-    assert _adjustment("bulk", "unit cell", (4, 4, 2)).message == "bulk: 4x4x4 → 4x4x2 (unit cell)"
+def test_kpoint_adjustment_status_is_empty_without_adjustments() -> None:
+    assert kpoint_adjustment_status(()) == ""
 
 
-def test_summarize_kpoint_adjustments_is_none_without_adjustments() -> None:
-    assert summarize_kpoint_adjustments(()) is None
-
-
-def test_summarize_kpoint_adjustments_groups_rows_by_cell_and_grid_change() -> None:
-    adjustments = [_adjustment(f"site_{index}") for index in range(40)]
-    adjustments += [_adjustment(f"slab_{index}", "2x2x1", (2, 2, 4)) for index in range(8)]
-    adjustments.append(_adjustment("bulk", "unit cell", (4, 4, 2)))
-
-    summary = summarize_kpoint_adjustments(adjustments)
-
-    assert summary is not None
-    assert summary.headline == "K-point grid rescaled for 49 rows."
-    assert summary.body.splitlines() == [
-        "Each grid keeps the project's reciprocal-space density.",
-        "",
-        "• 2x2x2 supercell: 4x4x4 → 2x2x2 (40 rows)",
-        "• 2x2x1 supercell: 4x4x4 → 2x2x4 (8 rows)",
-        "• unit cell: 4x4x4 → 4x4x2 (1 row)",
-    ]
-    assert summary.details.splitlines() == [adjustment.message for adjustment in adjustments]
-
-
-def test_summarize_kpoint_adjustments_stays_short_for_many_distinct_cells() -> None:
-    adjustments = [
-        _adjustment(f"row_{index}", f"{index + 2}x1x1", (2, 4, 4)) for index in range(200)
-    ]
-
-    summary = summarize_kpoint_adjustments(adjustments, max_groups=3)
-
-    assert summary is not None
-    assert summary.body.splitlines()[2:] == [
-        "• 2x1x1 supercell: 4x4x4 → 2x4x4 (1 row)",
-        "• 3x1x1 supercell: 4x4x4 → 2x4x4 (1 row)",
-        "• 4x1x1 supercell: 4x4x4 → 2x4x4 (1 row)",
-        "• and 197 more changes; see Show Details.",
-    ]
-    assert len(summary.details.splitlines()) == 200
-
-
-def test_summarize_kpoint_adjustments_counts_a_single_row_in_the_singular() -> None:
-    summary = summarize_kpoint_adjustments([_adjustment("only")])
-
-    assert summary is not None
-    assert summary.headline == "K-point grid rescaled for 1 row."
-    assert summary.details == _adjustment("only").message
+def test_kpoint_adjustment_status_counts_the_rows() -> None:
+    assert kpoint_adjustment_status([_adjustment("only")]) == "K-point grid rescaled for 1 row"
+    assert (
+        kpoint_adjustment_status([_adjustment(f"site_{index}") for index in range(4)])
+        == "K-point grid rescaled for 4 rows"
+    )
 
 
 def test_build_input_template_parses_param_and_cell() -> None:
@@ -380,7 +339,7 @@ def test_prepare_row_drops_and_forces_values_and_rescales_the_project_grid() -> 
     assert prepared.values == {"task": "SINGLEPOINT"}
     assert prepared.kpoint_grid == (2, 2, 4)
     assert prepared.kpoint_adjustment == KpointAdjustment(
-        row_label="row_a",
+        row_key="row_a",
         cell_label="2x2x1",
         project_grid=(4, 4, 4),
         adjusted_grid=(2, 2, 4),

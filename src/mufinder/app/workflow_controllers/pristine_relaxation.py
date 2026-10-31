@@ -24,18 +24,21 @@ from dataclasses import replace
 from uuid import UUID
 
 from mufinder.castep_io.output_parser import CastepResult
+from mufinder.science.kpoint_grids import lattice_parameters, supercell_lattice_vectors
 from mufinder.services.job_artifacts import ParsedJobArtifacts
 from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.domain.models import (
     CalculationDefinition,
     CalculationRun,
     Job,
+    Result,
 )
 from mufinder.services.definition_mappings import (
     relaxation_mapping_job_priority,
     remove_labels_from_definition,
     sync_equivalent_mappings,
 )
+from mufinder.services.project_document import ProjectDocument
 from mufinder.services.project_service import CONTINUABLE_JOB_STATUSES
 from mufinder.services.source_candidates import (
     CompletedPristineJob,
@@ -45,7 +48,11 @@ from mufinder.workflow import StructureBridgeError, render_job, write_job_direct
 
 from mufinder.app.adapter_common import AdapterExpansion
 from mufinder.app.relaxation_adapter import expand_pristine_relaxation_jobs
-from mufinder.app.relaxation_types import PristineRelaxationConfig, RelaxationRunState
+from mufinder.app.relaxation_types import (
+    PristineRelaxationConfig,
+    PristineRelaxationRow,
+    RelaxationRunState,
+)
 from mufinder.app.relaxation_widget import PristineRelaxationWidget
 from mufinder.app.workflow_controllers.base import (
     ControllerResult,
@@ -62,6 +69,31 @@ from mufinder.app.workflow_config_codecs import (
     serialize_pristine_relaxation_config,
 )
 from mufinder.app.workflow_submission import effective_row_status
+
+
+def _source_lattice_lengths(
+    document: ProjectDocument, result: Result, row: PristineRelaxationRow
+) -> tuple[float, float, float] | None:
+    """The ``(a, b, c)`` of the structure ``row`` relaxed from, tiled to the row's cell.
+
+    The relaxed structure records its source, which stays right when another
+    structure later becomes the host. ``None`` when either structure is gone.
+    """
+
+    if not result.derived_structure_ids:
+        return None
+    relaxed = document.structures.get(result.derived_structure_ids[0])
+    if relaxed is None or relaxed.parent_structure_id is None:
+        return None
+    source = document.structures.get(relaxed.parent_structure_id)
+    if source is None:
+        return None
+    a, b, c, *_angles = lattice_parameters(
+        supercell_lattice_vectors(
+            source.lattice_vectors, row.supercell_matrix or ((1, 0, 0), (0, 1, 0), (0, 0, 1))
+        )
+    )
+    return a, b, c
 
 
 class PristineRelaxationController(WorkflowJobController):
@@ -236,12 +268,15 @@ class PristineRelaxationController(WorkflowJobController):
             lattice_a = None
             lattice_b = None
             lattice_c = None
+            host_lattice_lengths = None
             if run is not None and run.result_id is not None:
                 result = document.results.get(run.result_id)
                 if result is not None and isinstance(result.data, dict):
                     lattice_a = result.data.get("lattice_a")
                     lattice_b = result.data.get("lattice_b")
                     lattice_c = result.data.get("lattice_c")
+                if result is not None:
+                    host_lattice_lengths = _source_lattice_lengths(document, result, row)
 
             states[row.label] = RelaxationRunState(
                 status=status_value,
@@ -250,6 +285,7 @@ class PristineRelaxationController(WorkflowJobController):
                 lattice_a=float(lattice_a) if isinstance(lattice_a, (int, float)) else None,
                 lattice_b=float(lattice_b) if isinstance(lattice_b, (int, float)) else None,
                 lattice_c=float(lattice_c) if isinstance(lattice_c, (int, float)) else None,
+                host_lattice_lengths=host_lattice_lengths,
                 job_id=job.id,
                 job_label=job.label,
                 geom_converged=(run.convergence_achieved if run is not None else None),

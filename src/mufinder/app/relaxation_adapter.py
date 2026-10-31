@@ -315,7 +315,9 @@ def expand_muon_relaxation_jobs(
             drop=("task", "write_cell_structure", "charge", "fix_all_cell"),
         )
         if prepared.kpoint_adjustment is not None:
-            kpoint_adjustments.append(prepared.kpoint_adjustment)
+            kpoint_adjustments.append(
+                replace(prepared.kpoint_adjustment, row_key=f"{charge_prefix}:{label}")
+            )
 
         param = prepared.template.param
         forced_keywords = [KeywordAssignment("charge", muon_charge_for_state(charge_state))]

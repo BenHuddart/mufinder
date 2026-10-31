@@ -5,7 +5,7 @@ from __future__ import annotations
 from uuid import uuid4
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QDialog, QLabel
+from PySide6.QtWidgets import QDialog, QLabel, QMessageBox
 
 from mufinder.app.comparison_job_dialog import (
     ComparisonJobDialog,
@@ -29,18 +29,35 @@ def _job(label: str) -> CompletedPristineJob:
     )
 
 
-def test_comparison_job_dialog_collects_checked_job_ids(qapp) -> None:
+def test_comparison_job_dialog_starts_with_every_job_ticked(qapp) -> None:
     jobs = [_job("job-a"), _job("job-b")]
     dialog = ComparisonJobDialog(jobs=jobs, default_label="Comparison 1")
 
-    first = dialog._table.item(0, dialog._CHECK_COLUMN)
-    assert first is not None
-    first.setCheckState(Qt.CheckState.Checked)
-
-    selected = dialog.selected_job_ids()
-
-    assert selected == [jobs[0].job_id]
+    assert dialog.selected_job_ids() == [jobs[0].job_id, jobs[1].job_id]
     assert dialog.table_label() == "Comparison 1"
+
+
+def test_comparison_job_dialog_collects_only_the_jobs_left_ticked(qapp) -> None:
+    jobs = [_job("job-a"), _job("job-b")]
+    dialog = ComparisonJobDialog(jobs=jobs, default_label="Comparison 1")
+
+    dialog._table.item(1, dialog._CHECK_COLUMN).setCheckState(Qt.CheckState.Unchecked)
+
+    assert dialog.selected_job_ids() == [jobs[0].job_id]
+
+
+def test_comparison_job_dialog_refuses_when_every_job_is_unticked(qapp, monkeypatch) -> None:
+    warnings: list[str] = []
+    monkeypatch.setattr(
+        QMessageBox, "warning", lambda _parent, title, _text: warnings.append(title)
+    )
+    dialog = ComparisonJobDialog(jobs=[_job("job-a")], default_label="Comparison 1")
+    dialog._table.item(0, dialog._CHECK_COLUMN).setCheckState(Qt.CheckState.Unchecked)
+
+    dialog._accept_if_valid()
+
+    assert warnings == ["No jobs selected"]
+    assert dialog.result() != QDialog.DialogCode.Accepted
 
 
 def test_comparison_job_dialog_trims_table_label(qapp) -> None:
