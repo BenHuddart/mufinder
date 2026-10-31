@@ -185,16 +185,18 @@ A relaxed site is named by its label on the Muon Sites summary when it is pinned
 (``8g · cluster 1``), and otherwise by its own label. A field or simulation
 calculated at an unrelaxed UEP site says it is an estimate.
 
-Recalculating with identical inputs does not add an entry on the same day; on a
-later day it does. Each record keeps a fingerprint of its inputs for this. A UEP
+Recalculating with identical inputs does not add an entry when it repeats the
+latest finding about the same thing (the same UEP job, workspace, Magnetic Fields
+page, simulation or row) on the same day; on a later day it does. Each record keeps
+a fingerprint of its inputs for this. A UEP
 grouping, a site grouping and a magnetic field also fingerprint what they found, so
 adding the ZPE to a UEP search, or regrouping after a relaxation was run again,
 is a new entry. A Magnetic Fields calculation that gives the values already stored
 adds no entry on any day.
 
-A repeat of an earlier result on the same day also adds no entry, even after another
-result in between: calculating ``A``, ``B`` and ``A`` again gives the entries ``A``
-and ``B``. The workflow page always holds the current result.
+Going back to an earlier result adds an entry: calculating ``A``, ``B`` and ``A``
+again on one day gives three, so the last entry about anything is always current. A
+new polarisation simulation has its own entry even with the same settings as another.
 
 What the Journal includes
 ~~~~~~~~~~~~~~~~~~~~~~~~~

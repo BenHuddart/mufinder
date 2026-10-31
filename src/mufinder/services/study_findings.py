@@ -13,10 +13,12 @@ carries the numbers its expanded card shows, in the record's ``parameters``:
 ``barrier_calculated``           ``services.job_findings``
 ================================ ==============================================
 
-Recalculating with identical inputs adds nothing: each record keeps an
-:func:`input_fingerprint`, and :func:`record_finding` skips one whose
-fingerprint was already recorded on the same local day. A later day records it
-again, because the repeat is then part of the project's history.
+Recalculating with identical inputs adds nothing: each record names its subject
+(``SUBJECT_KEY``: the job, workspace, page, simulation or row it is about) and keeps
+an :func:`input_fingerprint`, and :func:`record_finding` skips one that repeats the
+latest finding about the same subject on the same local day. So the last card about
+a subject is always current: ``A``, ``B``, ``A`` gives three. A later day records a
+repeat too, because it is then part of the project's history.
 """
 
 from __future__ import annotations
@@ -36,6 +38,8 @@ LOGGER = logging.getLogger(__name__)
 
 #: The ``parameters`` key of a finding's fingerprint.
 FINGERPRINT_KEY = "input_fingerprint"
+#: The ``parameters`` key of what a finding is about, within its action.
+SUBJECT_KEY = "finding_subject"
 
 #: The method of a UEP grouping saved without one.
 _UEP_DISTANCE_GROUPING = "legacy_cartesian_hier"
@@ -49,17 +53,26 @@ def input_fingerprint(*inputs: object) -> str:
 
 
 def record_finding(document: ProjectDocument, record: ProvenanceRecord) -> bool:
-    """Append ``record`` unless it repeats a finding of the same local day; say if it did."""
+    """Append ``record`` unless it repeats the latest finding about its subject today.
 
-    fingerprint = record.parameters.get(FINGERPRINT_KEY)
-    day = record.timestamp.astimezone().date()
-    for earlier in document.provenance:
-        if (
-            earlier.action == record.action
-            and earlier.parameters.get(FINGERPRINT_KEY) == fingerprint
-            and earlier.timestamp.astimezone().date() == day
-        ):
-            return False
+    Returns whether it was appended.
+    """
+
+    latest = next(
+        (
+            earlier
+            for earlier in reversed(document.provenance)
+            if earlier.action == record.action
+            and earlier.parameters.get(SUBJECT_KEY) == record.parameters.get(SUBJECT_KEY)
+        ),
+        None,
+    )
+    if (
+        latest is not None
+        and latest.parameters.get(FINGERPRINT_KEY) == record.parameters.get(FINGERPRINT_KEY)
+        and latest.timestamp.astimezone().date() == record.timestamp.astimezone().date()
+    ):
+        return False
     try:
         append_provenance(document, record)
     except OSError:
@@ -149,6 +162,7 @@ def record_uep_minima(
                     isinstance(result, Mapping) and result.get("total_energy_ev") is not None
                     for result in results
                 ),
+                SUBJECT_KEY: str(job.id),
                 FINGERPRINT_KEY: input_fingerprint(str(job.id), starts, grouping, signature),
             },
             job_id=job.id,
@@ -165,4 +179,10 @@ def _uep_minimum(cluster: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-__all__ = ["FINGERPRINT_KEY", "input_fingerprint", "record_finding", "record_uep_minima"]
+__all__ = [
+    "FINGERPRINT_KEY",
+    "SUBJECT_KEY",
+    "input_fingerprint",
+    "record_finding",
+    "record_uep_minima",
+]

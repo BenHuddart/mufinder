@@ -658,7 +658,7 @@ defined by two of these modules, and a pinned count may only fall.
    * - ``mufinder.services.study_findings``
      - Findings, the provenance records of results that conclude a study:
        ``input_fingerprint``, and ``record_finding``, which skips a repeat of the
-       same local day. Each finding is built by the service that holds its result:
+       latest finding about the same subject on the same local day. Each finding is built by the service that holds its result:
        ``muon_sites_summary`` for grouped sites, ``magnetic_field_results`` for
        fields, ``polarisation_simulations`` for simulations, this module for UEP
        minima, and ``mufinder.services.job_findings`` for zero-point energies and

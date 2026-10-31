@@ -30,7 +30,7 @@ from mufinder.domain.text import space_group_text
 from mufinder.persistence.codec import to_jsonable, uuid_or_none
 from mufinder.science.spglib_compat import SYMMETRY_TOLERANCE_ANG, host_symmetry
 from mufinder.services.project_document import ProjectDocument
-from mufinder.services.study_findings import FINGERPRINT_KEY, input_fingerprint
+from mufinder.services.study_findings import FINGERPRINT_KEY, SUBJECT_KEY, input_fingerprint
 from mufinder.services.project_summary import (
     MUON_SITES_SUMMARY_SNAPSHOTS_KEY,
     relaxation_analysis_workspaces,
@@ -293,6 +293,7 @@ def relaxed_sites_grouped_record(
             "sites": sites,
             "grouping": grouping,
             "grouping_summary": grouping_summary(grouping),
+            SUBJECT_KEY: str(workspace.get("id", "")),
             FINGERPRINT_KEY: input_fingerprint(
                 str(workspace.get("id", "")), sorted(job_ids, key=str), grouping, sites
             ),

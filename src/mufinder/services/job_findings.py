@@ -3,8 +3,9 @@
 :meth:`~mufinder.services.job_execution_controller.JobExecutionController.complete_job_with_result`
 calls :func:`record_job_finding` once a job's result is stored. See
 :mod:`mufinder.services.study_findings` for what a finding is. A job's fingerprint
-is its row, the row's stored settings and what the row was calculated from, so
-running a reset job again with the same inputs records nothing new that day.
+is its row, the row's stored settings and what the row was calculated from, and its
+subject is its row, so running a reset job again with the same inputs records nothing
+new that day.
 """
 
 from __future__ import annotations
@@ -34,7 +35,12 @@ from mufinder.services.source_candidates import (
     quantum_source_energy_group,
     quantum_source_relative_energies,
 )
-from mufinder.services.study_findings import FINGERPRINT_KEY, input_fingerprint, record_finding
+from mufinder.services.study_findings import (
+    FINGERPRINT_KEY,
+    SUBJECT_KEY,
+    input_fingerprint,
+    record_finding,
+)
 from mufinder.workflow.energy_barriers import (
     NUDGED_ELASTIC_BAND_CALC_TYPE,
     NUDGED_ELASTIC_BAND_SET_CALC_TYPE,
@@ -126,6 +132,7 @@ def _quantum_corrected_record(
             "warnings": list(raw_warnings) if isinstance(raw_warnings, list) else [],
             "comparison": comparison,
             "ordering_changed": _ordering_changed(comparison),
+            SUBJECT_KEY: key,
             FINGERPRINT_KEY: input_fingerprint(
                 key,
                 _row_settings(definition, key),
@@ -256,6 +263,7 @@ def _barrier_calculated_record(
             "endpoint_delta_eV": delta,
             "num_images": data.get("num_images"),
             "path_length_ang": parse_numeric(source.get("path_length_ang")) if source else None,
+            SUBJECT_KEY: key,
             FINGERPRINT_KEY: input_fingerprint(key, _row_settings(definition, key), source),
         },
         job_id=job.id,

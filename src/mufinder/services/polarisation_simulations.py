@@ -67,7 +67,12 @@ from mufinder.services.magnetic_field_results import (
 )
 from mufinder.services.project_document import ProjectDocument, active_host_structure
 from mufinder.services.project_summary import magnetic_field_workspaces
-from mufinder.services.study_findings import FINGERPRINT_KEY, input_fingerprint, record_finding
+from mufinder.services.study_findings import (
+    FINGERPRINT_KEY,
+    SUBJECT_KEY,
+    input_fingerprint,
+    record_finding,
+)
 
 #: Title of the Magnetic Fields page as a source.
 MAGNETIC_FIELD_PAGE_TITLE = "Magnetic Fields"
@@ -423,6 +428,7 @@ def _polarisation_simulated_record(record: PolarisationSimulationRecord) -> Prov
             "site_count": len(record.simulation.static.site_labels),
             "estimate": record.estimate,
             "warnings": list(record.simulation.warnings),
+            SUBJECT_KEY: record.simulation_id,
             FINGERPRINT_KEY: input_fingerprint(
                 settings,
                 [(source["record_id"], source["weight"]) for source in sources],

@@ -27,6 +27,7 @@ from mufinder.services.project_service import ProjectDocument, ProjectService
 from mufinder.services.source_candidates import eligible_quantum_source_candidates
 from mufinder.services.study_findings import (
     FINGERPRINT_KEY,
+    SUBJECT_KEY,
     input_fingerprint,
     record_finding,
     record_uep_minima,
@@ -56,8 +57,12 @@ def _actions(document: ProjectDocument, action: str) -> list[ProvenanceRecord]:
 # --- the fingerprint -----------------------------------------------------------
 
 
-def _finding(fingerprint: str, **fields: object) -> ProvenanceRecord:
-    return ProvenanceRecord(action="a_finding", parameters={FINGERPRINT_KEY: fingerprint}, **fields)
+def _finding(fingerprint: str, subject: str = "the subject", **fields: object) -> ProvenanceRecord:
+    return ProvenanceRecord(
+        action="a_finding",
+        parameters={SUBJECT_KEY: subject, FINGERPRINT_KEY: fingerprint},
+        **fields,
+    )
 
 
 def test_a_repeat_on_the_same_day_is_skipped_and_a_later_day_records_it(document) -> None:
@@ -65,11 +70,40 @@ def test_a_repeat_on_the_same_day_is_skipped_and_a_later_day_records_it(document
 
     assert record_finding(document, first) is True
     assert record_finding(document, _finding("same", timestamp=first.timestamp)) is False
-    assert record_finding(document, _finding("other", timestamp=first.timestamp)) is True
     later = first.timestamp + timedelta(days=1)
     assert record_finding(document, _finding("same", timestamp=later)) is True
 
-    assert len(_actions(document, "a_finding")) == 3
+    assert len(_actions(document, "a_finding")) == 2
+
+
+def test_going_back_to_an_earlier_result_is_a_new_finding_so_the_last_is_current(document) -> None:
+    now = _finding("A").timestamp
+
+    assert record_finding(document, _finding("A", timestamp=now)) is True
+    assert record_finding(document, _finding("B", timestamp=now)) is True
+    assert record_finding(document, _finding("A", timestamp=now)) is True
+    # A straight repeat of the latest still adds nothing.
+    assert record_finding(document, _finding("A", timestamp=now)) is False
+
+    assert [record.parameters[FINGERPRINT_KEY] for record in _actions(document, "a_finding")] == [
+        "A",
+        "B",
+        "A",
+    ]
+
+
+def test_only_the_latest_finding_about_the_same_subject_and_action_counts(document) -> None:
+    now = _finding("A").timestamp
+
+    assert record_finding(document, _finding("A", "one", timestamp=now)) is True
+    # Another subject's finding in between does not make a repeat new.
+    assert record_finding(document, _finding("B", "two", timestamp=now)) is True
+    assert record_finding(document, _finding("A", "one", timestamp=now)) is False
+    # The same fingerprint about another subject is its own finding.
+    assert record_finding(document, _finding("A", "two", timestamp=now)) is True
+    other_action = _finding("A", "one", timestamp=now)
+    other_action.action = "another_finding"
+    assert record_finding(document, other_action) is True
 
 
 def test_a_finding_reaches_the_project_stream_on_disk(service, document) -> None:
@@ -238,6 +272,16 @@ def test_each_distinct_field_result_is_recorded_once(document) -> None:
         record.parameters["results"][0]["magnitude_T"]
         for record in _actions(document, "field_calculated")
     ] == [0.42, 0.5]
+
+
+def test_going_back_to_an_earlier_field_adds_a_third_entry(document) -> None:
+    for tesla in (0.42, 0.5, 0.42, 0.42):
+        _store(document, _field_form(tesla))
+
+    assert [
+        record.parameters["results"][0]["magnitude_T"]
+        for record in _actions(document, "field_calculated")
+    ] == [0.42, 0.5, 0.42]
 
 
 def test_a_field_source_added_to_a_stored_record_is_not_a_calculation(document) -> None:

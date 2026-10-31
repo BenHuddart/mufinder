@@ -464,12 +464,16 @@ def test_each_distinct_simulation_records_one_finding(document) -> None:
     assert finding.parameters["site_count"] == 1
     assert finding.parameters["sources"][0]["title"] == "Magnetic Fields"
 
-    # The same inputs under a new simulation are a repeat too.
+    # A new simulation is its own subject, even with the same inputs.
     simulate(settings)
-    assert _stored_finding_count(document) == 1
-
-    simulate(replace(settings, end_time_us=5.0), first.simulation_id)
     assert _stored_finding_count(document) == 2
+
+    changed = replace(settings, end_time_us=5.0)
+    simulate(changed, first.simulation_id)
+    assert _stored_finding_count(document) == 3
+    # Back to the earlier settings: the last entry about this simulation stays current.
+    simulate(settings, first.simulation_id)
+    assert _stored_finding_count(document) == 4
 
 
 def store_and_return(document, record):

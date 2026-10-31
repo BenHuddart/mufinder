@@ -46,7 +46,12 @@ from mufinder.domain.models import ProvenanceRecord, Result
 from mufinder.persistence.codec import to_jsonable
 from mufinder.science.polarisation import PolarisationError, PolarisationResult
 from mufinder.services.project_document import ProjectDocument
-from mufinder.services.study_findings import FINGERPRINT_KEY, input_fingerprint, record_finding
+from mufinder.services.study_findings import (
+    FINGERPRINT_KEY,
+    SUBJECT_KEY,
+    input_fingerprint,
+    record_finding,
+)
 
 
 #: Result type of a dipolar-field calculation (commensurate field vectors or
@@ -312,6 +317,7 @@ def _field_calculated_record(
             ],
             "results": rows,
             "applied_field_T": to_jsonable(form_state.get("applied_field_T")),
+            SUBJECT_KEY: owner,
             FINGERPRINT_KEY: input_fingerprint(owner, rows),
         },
     )
