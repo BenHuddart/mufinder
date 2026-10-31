@@ -41,10 +41,17 @@ from __future__ import annotations
 from collections.abc import Callable, Iterator, Mapping
 from typing import Any
 
-from mufinder.domain.models import Result
+from mufinder.domain.enums import WorkflowStage
+from mufinder.domain.models import ProvenanceRecord, Result
 from mufinder.persistence.codec import to_jsonable
 from mufinder.science.polarisation import PolarisationError, PolarisationResult
 from mufinder.services.project_document import ProjectDocument
+from mufinder.services.study_findings import (
+    FINGERPRINT_KEY,
+    SUBJECT_KEY,
+    input_fingerprint,
+    record_finding,
+)
 
 
 #: Result type of a dipolar-field calculation (commensurate field vectors or
@@ -226,12 +233,16 @@ def store_magnetic_field_results(
     document: ProjectDocument,
     owner: str,
     form_state: Mapping[str, object],
+    *,
+    journal_title: str | None = None,
 ) -> dict[str, object]:
     """Record the results in ``form_state`` for ``owner`` and return the form without them.
 
     A result that changed replaces ``owner``'s record of that type with a new
     record; an unchanged result keeps its record; an empty or missing result
-    removes it.
+    removes it. With ``journal_title``, the title of the page the results were
+    calculated on, new dipolar-field values are also recorded as a finding; a
+    copy of results already calculated passes none.
     """
 
     for key, result_type, to_data, _ in _FORM_RESULTS:
@@ -248,7 +259,139 @@ def store_magnetic_field_results(
             del document.results[existing.id]
         record = Result(result_type=result_type, data=data)
         document.results[record.id] = record
+        # Only new values count: a source added to an older record is not a calculation.
+        if (
+            journal_title is not None
+            and result_type == MAGNETIC_FIELD_RESULT_TYPE
+            and (existing is None or existing.data.get("results") != data.get("results"))
+        ):
+            record_finding(
+                document, _field_calculated_record(owner, journal_title, data, form_state)
+            )
     return {key: value for key, value in form_state.items() if key not in FORM_RESULT_KEYS}
+
+
+#: The field terms a calculation reports, as the Journal names them.
+_FIELD_TERMS = (
+    ("dipolar", "dipolar"),
+    ("lorentz", "Lorentz"),
+    ("contact", "contact"),
+    ("demag", "demagnetizing"),
+    ("applied", "applied"),
+)
+
+
+def _field_calculated_record(
+    owner: str, title: str, data: Mapping[str, Any], form_state: Mapping[str, object]
+) -> ProvenanceRecord:
+    """Return the finding of a dipolar-field calculation, without its sample arrays.
+
+    The fingerprint holds the owner and the calculated values rather than the
+    inputs: the magnetic structure is not part of the form, and the values
+    change whenever any input does.
+    """
+
+    results = [result for result in data.get("results", []) if isinstance(result, Mapping)]
+    site = form_state.get("selected_muon_site")
+    site_label = str(site.get("label", "")).strip() if isinstance(site, Mapping) else ""
+    if not site_label and results:
+        site_label = str(results[0].get("site_label", "")).strip()
+    kind = str(data.get("kind", ""))
+    rows = [
+        _commensurate_row(result) if kind == "commensurate" else _distribution_row(result)
+        for result in results
+    ]
+    settings = _field_settings(results, site, form_state)
+    return ProvenanceRecord(
+        action="field_calculated",
+        workflow_stage=WorkflowStage.MAGNETIC_FIELD,
+        actor="user",
+        description=f"Calculated the magnetic field at {site_label} on '{title}'",
+        parameters={
+            "owner": owner,
+            "owner_title": title,
+            "kind": kind,
+            "site_label": site_label,
+            "estimate": is_unrelaxed_site_source(data.get("site_source")),
+            "terms": [
+                name for key, name in _FIELD_TERMS if any(row["terms"].get(key) for row in rows)
+            ],
+            "results": rows,
+            "applied_field_T": to_jsonable(form_state.get("applied_field_T")),
+            "settings": settings,
+            SUBJECT_KEY: owner,
+            FINGERPRINT_KEY: input_fingerprint(owner, rows, settings),
+        },
+    )
+
+
+def _field_settings(
+    results: list[Mapping[str, Any]], site: object, form_state: Mapping[str, object]
+) -> dict[str, object]:
+    """The settings of a calculation: what its results say they used, else what the form held."""
+
+    raw = results[0].get("calculation_parameters") if results else None
+    used = raw if isinstance(raw, Mapping) else {}
+    return {
+        "contact_coupling_per_A3": used.get("contact_coupling"),
+        "contact_neighbours": used.get("nnn"),
+        "contact_radius_A": used.get("rcont"),
+        "supercell": to_jsonable(used.get("supercell", form_state.get("supercell"))),
+        "equivalent_sites": form_state.get("include_equivalent_sites"),
+        "distortion_corrected": bool(
+            used.get("distortion_corrected")
+            or (isinstance(site, Mapping) and site.get("include_distortion"))
+        ),
+        "phase_samples": used.get("phase_sample_count"),
+        "phase_sampling": used.get("resolved_phase_sampling"),
+        "phase_sampling_seed": used.get("phase_sampling_seed"),
+    }
+
+
+def _is_nonzero(vector: object) -> bool:
+    return isinstance(vector, list) and any(
+        isinstance(value, (int, float)) and value != 0.0 for value in vector
+    )
+
+
+def _commensurate_row(result: Mapping[str, Any]) -> dict[str, Any]:
+    """One equivalent site's field: its size, its vector and the terms that contribute."""
+
+    return {
+        "site_label": result.get("site_label"),
+        "muon_position": result.get("muon_position"),
+        "magnitude_T": result.get("magnitude_T"),
+        "total_T": result.get("total_T"),
+        "terms": {
+            key: result.get(f"{key}_T")
+            for key, _name in _FIELD_TERMS
+            if _is_nonzero(result.get(f"{key}_T"))
+        },
+    }
+
+
+def _distribution_row(result: Mapping[str, Any]) -> dict[str, Any]:
+    """One site's field distribution: its RMS, its mean and each term's RMS."""
+
+    raw_terms = result.get("terms")
+    terms = raw_terms if isinstance(raw_terms, Mapping) else {}
+    checks = result.get("convergence")
+    return {
+        "site_label": result.get("site_label"),
+        "muon_position": result.get("muon_position"),
+        "total_rms_T": result.get("total_rms_T"),
+        "mean_T": result.get("mean_T"),
+        "terms": {
+            key: term.get("rms_T")
+            for key, term in terms.items()
+            if isinstance(term, Mapping) and term.get("rms_T")
+        },
+        "not_converged": [
+            str(check.get("message", ""))
+            for check in (checks if isinstance(checks, list) else [])
+            if isinstance(check, Mapping) and not check.get("converged", True)
+        ],
+    }
 
 
 def attach_magnetic_field_results(

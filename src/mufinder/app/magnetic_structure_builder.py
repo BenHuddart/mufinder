@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QMenu,
     QMessageBox,
     QPushButton,
     QSizePolicy,
@@ -33,10 +34,12 @@ from mufinder.app.magnetic_component_dialogs import (
     MagneticComponentDialog,
     MagneticComponentTable,
     MagneticPresetDialog,
+    component_kind_label,
     component_moment_label,
     component_q_label,
     create_q_basis_table,
     fill_q_basis_table,
+    inline_group,
     q_vector_text,
     selector_label,
 )
@@ -70,9 +73,10 @@ from mufinder.science.magnetic_structure import (
     is_texture_component,
     magnetic_builder_checklist,
     magnetic_model_for_host,
-    magnetic_model_from_legacy_structure,
+    magnetic_model_from_host_spins,
     moments_in_supercell,
     move_magnetic_components,
+    q_basis_placeholder,
     q_basis_slots,
     set_magnetic_components_enabled,
     set_q_basis_vector,
@@ -136,16 +140,25 @@ class MagneticStructureBuilderDialog(StructureViewerDialog):
         )
         self._q_basis_hint.setWordWrap(True)
         style_hint_text(self._q_basis_hint)
+        self._q_basis_group = QGroupBox("Propagation-Vector Basis")
+        self._q_basis_placeholder = QLabel("")
+        style_hint_text(self._q_basis_placeholder)
 
-        self._add_button = QPushButton("Add Component")
-        self._add_button.clicked.connect(self._add_component)
-        self._add_preset_button = QPushButton("Add Preset…")
-        self._add_preset_button.setToolTip(
+        self._add_menu_button = QPushButton("Add")
+        add_menu = QMenu(self._add_menu_button)
+        add_menu.setToolTipsVisible(True)
+        self._add_component_action = add_menu.addAction("Single moment or modulation…")
+        self._add_component_action.triggered.connect(self._add_component)
+        self._add_preset_action = add_menu.addAction("Helix, cycloid or SDW from a preset…")
+        self._add_preset_action.setToolTip(
             "Build a helix, conical, cycloid or spin-density wave from a propagation direction and crystal axes."
         )
-        self._add_preset_button.clicked.connect(self._add_preset)
-        self._add_texture_button = QPushButton("Add Texture…")
-        self._add_texture_button.clicked.connect(self._add_texture)
+        self._add_preset_action.triggered.connect(self._add_preset)
+        self._add_texture_action = add_menu.addAction("Multi-q texture…")
+        self._add_texture_action.triggered.connect(self._add_texture)
+        self._build_from_host_action = add_menu.addAction("From host spins")
+        self._build_from_host_action.triggered.connect(self._build_from_host_spins)
+        self._add_menu_button.setMenu(add_menu)
         self._edit_button = QPushButton("Edit…")
         self._edit_button.clicked.connect(self._edit_selected_component)
         self._duplicate_button = QPushButton("Duplicate")
@@ -159,12 +172,10 @@ class MagneticStructureBuilderDialog(StructureViewerDialog):
         self._move_up_button.clicked.connect(lambda: self._move_selected_components(-1))
         self._move_down_button = QPushButton("Move Down")
         self._move_down_button.clicked.connect(lambda: self._move_selected_components(1))
-        self._build_from_host_button = QPushButton("Build From Host Spins")
-        self._build_from_host_button.clicked.connect(self._build_from_host_spins)
 
-        self._repeat_a = self._repeat_spinbox()
-        self._repeat_b = self._repeat_spinbox()
-        self._repeat_c = self._repeat_spinbox()
+        self._repeat_a = self._repeat_spinbox("a")
+        self._repeat_b = self._repeat_spinbox("b")
+        self._repeat_c = self._repeat_spinbox("c")
         for spinbox in (self._repeat_a, self._repeat_b, self._repeat_c):
             spinbox.valueChanged.connect(lambda *_: self._refresh_preview())
 
@@ -181,6 +192,19 @@ class MagneticStructureBuilderDialog(StructureViewerDialog):
 
         self._viewer = self.hold_viewer(AtomicStructureViewer())
         self._viewer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self._viewer.add_control_widget(
+            inline_group(
+                (
+                    QLabel("Preview cells"),
+                    QLabel("a"),
+                    self._repeat_a,
+                    QLabel("b"),
+                    self._repeat_b,
+                    QLabel("c"),
+                    self._repeat_c,
+                )
+            )
+        )
         self.setStyleSheet(magnetic_structure_builder_stylesheet())
 
         self._build_layout()
@@ -191,28 +215,14 @@ class MagneticStructureBuilderDialog(StructureViewerDialog):
         layout.addWidget(self._title)
 
         action_row = QHBoxLayout()
-        action_row.addWidget(self._add_button)
-        action_row.addWidget(self._add_preset_button)
-        action_row.addWidget(self._add_texture_button)
+        action_row.addWidget(self._add_menu_button)
         action_row.addWidget(self._edit_button)
         action_row.addWidget(self._duplicate_button)
         action_row.addWidget(self._remove_button)
         action_row.addWidget(self._move_up_button)
         action_row.addWidget(self._move_down_button)
-        action_row.addWidget(self._build_from_host_button)
         action_row.addStretch(1)
         layout.addLayout(action_row)
-
-        supercell_group = QGroupBox("Preview Supercell")
-        supercell_layout = QHBoxLayout(supercell_group)
-        supercell_layout.addWidget(QLabel("a"))
-        supercell_layout.addWidget(self._repeat_a)
-        supercell_layout.addWidget(QLabel("b"))
-        supercell_layout.addWidget(self._repeat_b)
-        supercell_layout.addWidget(QLabel("c"))
-        supercell_layout.addWidget(self._repeat_c)
-        supercell_layout.addStretch(1)
-        layout.addWidget(supercell_group)
 
         info_panel = QWidget()
         info_layout = QVBoxLayout(info_panel)
@@ -220,11 +230,11 @@ class MagneticStructureBuilderDialog(StructureViewerDialog):
         info_layout.addWidget(self._preview_status)
         info_layout.addWidget(self._classification)
         info_layout.addWidget(self._component_table, 1)
-        q_basis_group = QGroupBox("Propagation-Vector Basis")
-        q_basis_layout = QVBoxLayout(q_basis_group)
+        q_basis_layout = QVBoxLayout(self._q_basis_group)
         q_basis_layout.addWidget(self._q_basis_table)
         q_basis_layout.addWidget(self._q_basis_hint)
-        info_layout.addWidget(q_basis_group)
+        info_layout.addWidget(self._q_basis_group)
+        info_layout.addWidget(self._q_basis_placeholder)
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.addWidget(info_panel)
@@ -289,8 +299,9 @@ class MagneticStructureBuilderDialog(StructureViewerDialog):
         return self._model
 
     @staticmethod
-    def _repeat_spinbox() -> QSpinBox:
+    def _repeat_spinbox(axis: str) -> QSpinBox:
         spinbox = QSpinBox()
+        spinbox.setAccessibleName(f"Preview cells along {axis}")
         spinbox.setRange(1, 12)
         spinbox.setValue(1)
         spinbox.setKeyboardTracking(False)
@@ -298,10 +309,7 @@ class MagneticStructureBuilderDialog(StructureViewerDialog):
 
     def _sync_enabled_state(self) -> None:
         has_host = self._host_structure is not None
-        self._add_button.setEnabled(has_host)
-        self._add_preset_button.setEnabled(has_host)
-        self._add_texture_button.setEnabled(has_host)
-        self._build_from_host_button.setEnabled(has_host)
+        self._add_menu_button.setEnabled(has_host)
         selected_ids = self._selected_component_ids() if has_host else ()
         selected_rows = self._selected_component_rows() if has_host else ()
         row_count = self._component_table.rowCount()
@@ -348,7 +356,7 @@ class MagneticStructureBuilderDialog(StructureViewerDialog):
             self._set_item(
                 row, self._LABEL_COLUMN, component.label, component.component_id, editable=True
             )
-            self._set_item(row, 2, component.kind.replace("_", " ").title())
+            self._set_item(row, 2, component_kind_label(component))
             self._set_item(row, 3, selector_label(component.selector, self._host_structure))
             self._set_item(row, 4, component_q_label(self._model, component))
             self._set_item(row, 5, component_moment_label(component))
@@ -360,6 +368,10 @@ class MagneticStructureBuilderDialog(StructureViewerDialog):
     def _populate_q_basis(self) -> None:
         """Show each stored q-basis row, the components that use it, and whether it can be edited here."""
 
+        placeholder = q_basis_placeholder(self._model)
+        self._q_basis_group.setVisible(placeholder is None)
+        self._q_basis_placeholder.setVisible(placeholder is not None)
+        self._q_basis_placeholder.setText(placeholder or "")
         table = self._q_basis_table
         fill_q_basis_table(table, self._model)
         for slot in q_basis_slots(self._model):
@@ -739,7 +751,7 @@ class MagneticStructureBuilderDialog(StructureViewerDialog):
             "Replace Components",
         ):
             return
-        model = magnetic_model_from_legacy_structure(self._host_structure)
+        model = magnetic_model_from_host_spins(self._host_structure)
         self._set_model(model)
 
     def _remove_selected_components(self) -> None:

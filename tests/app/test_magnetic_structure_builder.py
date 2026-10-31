@@ -16,6 +16,7 @@ from mufinder.app import theme as theme_module
 from mufinder.app import workflow_table_utils
 from mufinder.app.magnetic_component_dialogs import MagneticComponentDialog, MagneticPresetDialog
 from mufinder.app.magnetic_structure_builder import MagneticStructureBuilderDialog
+from mufinder.app.magnetic_texture_dialog import MagneticTextureDialog
 from mufinder.domain.models import Structure
 from mufinder.science.magnetic_structure import (
     AtomSelector,
@@ -25,6 +26,7 @@ from mufinder.science.magnetic_structure import (
     MagneticStructureError,
     MagneticStructureModel,
     build_collinear_component,
+    magnetic_model_from_host_spins,
 )
 from mufinder.services.project_service import ProjectService
 from tests.support.magnetic_field_sites import feo_host_structure
@@ -857,7 +859,7 @@ def test_magnetic_structure_builder_checklist_ticks_off_from_model_state(qapp, t
         "preview": "todo",
         "ready": "todo",
     }
-    assert "Add Preset" in dialog._checklist_labels["components"].text()
+    assert "menu" in dialog._checklist_labels["components"].text()
 
     dialog._set_model(two_row_helix_model())
     assert _checklist_states(dialog) == {
@@ -917,8 +919,8 @@ def test_magnetic_structure_builder_adds_a_preset_component(qapp, tmp_path, monk
         return QDialog.DialogCode.Accepted
 
     monkeypatch.setattr(MagneticPresetDialog, "exec", _accept_spin_density_wave)
-    assert dialog._add_preset_button.isEnabled()
-    dialog._add_preset_button.click()
+    assert dialog._add_menu_button.isEnabled()
+    dialog._add_preset_action.trigger()
 
     added = dialog.model().components[-1]
     assert added.kind == "spin_density_wave"
@@ -927,4 +929,144 @@ def test_magnetic_structure_builder_adds_a_preset_component(qapp, tmp_path, monk
     assert added.terms[0].q_coeff == (0.0, 1.0, 0.0)
     assert dialog.model().q_basis_rlu[1] == (0.2, 0.0, 0.0)
     assert np.allclose(added.terms[0].coefficient.real, (0.0, 1.0, 0.0))
+    dialog.close()
+
+
+def _accept(monkeypatch, dialog_class) -> None:
+    monkeypatch.setattr(dialog_class, "exec", lambda _self: QDialog.DialogCode.Accepted)
+
+
+def test_magnetic_structure_builder_add_menu_says_what_each_item_makes(qapp, tmp_path) -> None:
+    dialog = _builder_with_components(tmp_path)
+
+    assert dialog._add_menu_button.text() == "Add"
+    assert [action.text() for action in dialog._add_menu_button.menu().actions()] == [
+        "Single moment or modulation…",
+        "Helix, cycloid or SDW from a preset…",
+        "Multi-q texture…",
+        "From host spins",
+    ]
+    dialog.set_context(None, None)
+    assert not dialog._add_menu_button.isEnabled()
+    dialog.close()
+
+
+def test_magnetic_structure_builder_add_menu_creates_each_kind(qapp, tmp_path, monkeypatch) -> None:
+    dialog = _builder_with_components(tmp_path)
+    for dialog_class in (MagneticComponentDialog, MagneticPresetDialog, MagneticTextureDialog):
+        _accept(monkeypatch, dialog_class)
+
+    dialog._add_component_action.trigger()
+    dialog._add_preset_action.trigger()
+    dialog._add_texture_action.trigger()
+
+    assert [component.kind for component in dialog.model().components] == [
+        "collinear",
+        "helix",
+        "texture",
+    ]
+    assert dialog._component_table.rowCount() == 3
+
+    dialog._set_model(MagneticStructureModel())
+    dialog._build_from_host_action.trigger()
+    assert {component.kind for component in dialog.model().components} == {"legacy_moment"}
+    dialog.close()
+
+
+def test_magnetic_structure_builder_q_basis_panel_shows_only_when_used(qapp, tmp_path) -> None:
+    dialog = _builder_with_components(tmp_path)
+
+    def panel() -> tuple[bool, str | None]:
+        placeholder = dialog._q_basis_placeholder
+        assert dialog._q_basis_group.isHidden() != placeholder.isHidden()
+        return not dialog._q_basis_group.isHidden(), (
+            None if placeholder.isHidden() else placeholder.text()
+        )
+
+    assert panel() == (False, "No components yet")
+
+    # Fe: q = 0 throughout.
+    dialog._set_model(MagneticStructureModel(components=(z_moment_component("fe", "Fe", 0),)))
+    assert panel() == (False, "All components have q = 0")
+
+    # MnSi: a helix on a row of the basis.
+    dialog._set_model(two_row_helix_model())
+    assert panel() == (True, None)
+
+    # Disabling the only q != 0 component hides the panel, enabling it brings it back.
+    dialog._component_table.item(0, 0).setCheckState(Qt.CheckState.Unchecked)
+    assert panel() == (False, "All enabled components have q = 0")
+    dialog._component_table.item(0, 0).setCheckState(Qt.CheckState.Checked)
+    assert panel() == (True, None)
+    dialog.close()
+
+
+def test_magnetic_structure_builder_preset_with_a_typed_vector_fills_the_first_row(
+    qapp, tmp_path, monkeypatch
+) -> None:
+    dialog = _builder_with_components(tmp_path)
+
+    def _accept_typed_vector(preset_dialog):
+        select_combo_data(preset_dialog._propagation_combo, "vector")
+        for edit, value in zip(preset_dialog._typed_q, ("0.1", "0.1", "0.1"), strict=True):
+            edit.setText(value)
+        return QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(MagneticPresetDialog, "exec", _accept_typed_vector)
+    dialog._add_preset_action.trigger()
+
+    assert dialog.model().q_basis_rlu[0] == (0.1, 0.1, 0.1)
+    assert dialog.model().components[0].terms[0].q_coeff == (1.0, 0.0, 0.0)
+    assert not dialog._q_basis_group.isHidden()
+    assert _q_basis_texts(dialog, 2)[0] == "Helix along (0.1, 0.1, 0.1)"
+    dialog.close()
+
+
+def test_magnetic_structure_builder_q_basis_panel_stays_for_a_row_with_no_vector(
+    qapp, tmp_path
+) -> None:
+    """The checklist asks for this row to be filled in, so the panel must be there to do it."""
+
+    dialog = _builder_with_components(tmp_path)
+    model = two_row_helix_model()
+    dialog._set_model(replace(model, q_basis_rlu=((0.0, 0.0, 0.0),) * 3))
+
+    assert _checklist_states(dialog)["q_basis"] == "problem"
+    assert not dialog._q_basis_group.isHidden()
+    dialog.close()
+
+
+def test_magnetic_structure_builder_host_spin_components_display_moment(qapp, tmp_path) -> None:
+    dialog = _builder_with_components(tmp_path)
+
+    dialog._build_from_host_spins()
+
+    assert dialog._component_table.rowCount() == 2
+    assert [dialog._component_table.item(row, 2).text() for row in range(2)] == ["Moment"] * 2
+    dialog.close()
+
+
+def test_magnetic_structure_builder_saved_legacy_moment_loads_and_displays_moment(
+    qapp, tmp_path
+) -> None:
+    host_spin_model = magnetic_model_from_host_spins(feo_host_structure())
+    payload = host_spin_model.to_json()
+    assert {component["kind"] for component in payload["components"]} == {"legacy_moment"}
+
+    dialog = _builder_with_components(tmp_path)
+    dialog._set_model(MagneticStructureModel.from_json(payload))
+
+    assert dialog.model() == host_spin_model
+    assert dialog._component_table.item(0, 2).text() == "Moment"
+    dialog.close()
+
+
+def test_magnetic_structure_builder_preview_cells_sit_in_the_viewer_controls(
+    qapp, tmp_path
+) -> None:
+    dialog = _builder_with_components(tmp_path)
+
+    for axis, spinbox in zip("abc", (dialog._repeat_a, dialog._repeat_b, dialog._repeat_c)):
+        assert dialog._viewer.isAncestorOf(spinbox)
+        assert spinbox.accessibleName() == f"Preview cells along {axis}"
     dialog.close()

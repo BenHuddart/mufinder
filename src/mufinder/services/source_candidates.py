@@ -445,12 +445,19 @@ def quantum_source_relative_energies(
     relative to the lowest-energy source in its group.
     """
 
-    entries: dict[str, tuple[object, float | None]] = {}
-    for candidate in candidates:
-        composition = tuple(sorted(Counter(candidate.structure.species).items()))
-        group = (charge_state_for_job(candidate.job), composition)
-        entries[candidate.key] = (group, candidate.total_energy_eV)
-    return grouped_relative_energies(entries)
+    return grouped_relative_energies(
+        {
+            candidate.key: (quantum_source_energy_group(candidate), candidate.total_energy_eV)
+            for candidate in candidates
+        }
+    )
+
+
+def quantum_source_energy_group(candidate: QuantumSourceCandidate) -> object:
+    """Return what makes a relaxed source's energy comparable: its charge state and cell."""
+
+    composition = tuple(sorted(Counter(candidate.structure.species).items()))
+    return (charge_state_for_job(candidate.job), composition)
 
 
 def quantum_source_candidate_by_key(
@@ -1178,6 +1185,32 @@ def energy_barrier_neb_result_path_label(
 
     labels = energy_barrier_source_site_labels(document, source)
     return f"{labels[0]} → {labels[1]}" if labels is not None else candidate.job.label
+
+
+def neb_barrier_energies(
+    data: Mapping[str, object],
+) -> tuple[float | None, float | None, float | None]:
+    """Return a NEB payload's (forward barrier, reverse barrier, endpoint ΔE) in eV.
+
+    All three derive from the persisted per-image energies; a result without
+    ``image_energies_eV`` falls back to the stored forward barrier, with the
+    other two ``None``.
+    """
+
+    energies_payload = data.get("image_energies_eV")
+    energies: list[float] = []
+    if isinstance(energies_payload, (list, tuple)):
+        try:
+            energies = [float(value) for value in energies_payload]
+        except (TypeError, ValueError):
+            energies = []
+    if len(energies) >= 2:
+        peak = max(energies)
+        return peak - energies[0], peak - energies[-1], energies[-1] - energies[0]
+    try:
+        return float(data["barrier_height_eV"]), None, None  # type: ignore[arg-type]
+    except (KeyError, TypeError, ValueError):
+        return None, None, None
 
 
 # --- completed relaxations ----------------------------------------------------

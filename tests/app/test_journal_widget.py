@@ -675,7 +675,7 @@ def test_an_expanded_batch_card_shows_its_job_table(qapp) -> None:
     card.set_expanded(True)
 
     table = card.findChild(QTableWidget)
-    assert table.accessibleName()
+    assert table.accessibleName() == "Calculations in this batch"
     assert [table.horizontalHeaderItem(i).text() for i in range(table.columnCount())] == [
         "Calculation",
         "Status",
@@ -816,4 +816,70 @@ def test_open_in_is_hidden_without_a_route_checker_or_a_workflow(qapp) -> None:
 
     assert with_workflow.findChild(QPushButton).isHidden()
     assert without.findChild(QPushButton) is None
+    widget.close()
+
+
+_COMPARED_SITE = {
+    "site_label": "4c",
+    "relative_energy_eV": 0.0,
+    "zpe_eV": 0.68,
+    "corrected_energy_eV": 0.0,
+}
+
+
+@pytest.mark.parametrize(
+    ("action", "parameters", "name", "first_number_column"),
+    [
+        (
+            "uep_minima_found",
+            {
+                "job_label": "uep",
+                "minima": [
+                    {"size": 1, "fractional_position": [0, 0, 0], "minimum_energy_eV": -1.0}
+                ],
+            },
+            "Minima of this batch search",
+            2,
+        ),
+        (
+            "sites_grouped",
+            {"sites": [{"cluster_index": 1, "fractional_position": [0, 0, 0]}]},
+            "Distinct sites of this grouping",
+            2,
+        ),
+        (
+            "field_calculated",
+            {"kind": "commensurate", "owner_title": "AFM", "results": [{"magnitude_T": 0.1}]},
+            "Field at each site",
+            2,
+        ),
+        (
+            "quantum_corrected",
+            {"muon_zpe_total_eV": 0.68, "comparison": [_COMPARED_SITE, _COMPARED_SITE]},
+            "Sites compared with their zero-point energies",
+            1,
+        ),
+    ],
+    ids=["uep", "sites", "field", "quantum"],
+)
+def test_a_finding_table_says_what_it_holds_and_aligns_its_numbers_right(
+    qapp, action: str, parameters: dict, name: str, first_number_column: int
+) -> None:
+    record = ProvenanceRecord(
+        action=action, workflow_stage=WorkflowStage.SITE_ANALYSIS, parameters=parameters
+    )
+    widget = JournalWidget()
+    widget.show()
+    widget.set_records("Findings", [record])
+
+    card = _cards(widget)[0]
+    card.set_expanded(True)
+
+    table = card.findChild(QTableWidget)
+    assert table.accessibleName() == name
+    for column in range(table.columnCount()):
+        aligned_right = bool(table.item(0, column).textAlignment() & Qt.AlignmentFlag.AlignRight)
+        assert aligned_right == (column >= first_number_column), table.horizontalHeaderItem(
+            column
+        ).text()
     widget.close()

@@ -351,6 +351,11 @@ from mufinder.services.magnetic_field_results import (
     store_magnetic_field_results,
 )
 from mufinder.services.generation_runs import generation_run_groups
+from mufinder.domain.routes import (
+    MAGNETIC_FIELD_WORKSPACE_ROUTE_PREFIX,
+    magnetic_field_workspace_route,
+)
+from mufinder.services.study_findings import record_finding, record_uep_minima
 from mufinder.services.muon_sites_summary import (
     analysis_workspace_created_record,
     build_muon_sites_summary_snapshot,
@@ -548,7 +553,7 @@ class MainWindow(QMainWindow):
     _POLARISATION_FORM_KEY = "polarisation_form"
     _MAGNETIC_FIELD_WORKSPACES_KEY = "magnetic_field_workspaces"
     _HOME_STAGE_KEYS = frozenset(stage.key for stage in WORKFLOW_STAGES)
-    _MAGNETIC_FIELD_WORKSPACE_ROUTE_PREFIX = "magnetic_fields/workspace/"
+    _MAGNETIC_FIELD_WORKSPACE_ROUTE_PREFIX = MAGNETIC_FIELD_WORKSPACE_ROUTE_PREFIX
     _RELAXATION_ANALYSIS_WORKSPACE_ROUTE_PREFIX = "muon_analysis/workspace/"
     _LAST_CLUSTER_SUBMISSION_CONFIG_KEY = "last_cluster_submission_config"
     _WORKFLOW_COMPLETE_ROLE = int(Qt.ItemDataRole.UserRole) + 1
@@ -2317,7 +2322,7 @@ class MainWindow(QMainWindow):
         return [workspace for workspace in workspaces if isinstance(workspace, dict)]
 
     def _magnetic_field_workspace_route(self, workspace_id: str) -> str:
-        return f"{self._MAGNETIC_FIELD_WORKSPACE_ROUTE_PREFIX}{workspace_id}"
+        return magnetic_field_workspace_route(workspace_id)
 
     def _magnetic_field_workspace_id_from_route(self, route: object) -> str | None:
         if not isinstance(route, str) or not route.startswith(
@@ -7395,7 +7400,8 @@ class MainWindow(QMainWindow):
         record = relaxed_sites_grouped_record(workspace, self._workspace_host(workspace))
         if record is None:
             return
-        self._project_service.append_provenance(self._document, record)
+        # A repeat adds no record, but the grouping it applied is still saved.
+        record_finding(self._document, record)
         self._persist_document_ui_state(
             failure_message="The grouping was applied, but autosave failed."
         )
@@ -7554,7 +7560,7 @@ class MainWindow(QMainWindow):
         self,
         *,
         source_structure: Structure,
-        workflow_stage: WorkflowStage,
+        workflow_stage: WorkflowStage | None,
         initial_matrix: list[list[int]] | None = None,
         select_mode: bool = False,
     ) -> SupercellEditorDialog | None:
@@ -7581,18 +7587,16 @@ class MainWindow(QMainWindow):
 
     def _on_host_supercell_editor_requested(self) -> None:
         self._edit_supercell(
-            WorkflowStage.CONVERGENCE_CUTOFF,
-            initial_matrix=lambda document: document.project.supercell_matrix,
-            apply=lambda dialog: self._host_structure_view.set_project_supercell_matrix(
-                dialog.matrix()
-            ),
+            None,
+            initial_matrix=self._project_service.supercell_editor_seed_matrix,
+            apply=lambda _dialog: None,
             missing_source="Load a host structure before editing supercells.",
             select_mode=False,
         )
 
     def _edit_supercell(
         self,
-        workflow_stage: WorkflowStage,
+        workflow_stage: WorkflowStage | None,
         *,
         initial_matrix: Callable[[ProjectDocument], Sequence[Sequence[int]] | None],
         apply: Callable[[SupercellEditorDialog], None],
@@ -9860,6 +9864,11 @@ class MainWindow(QMainWindow):
         previous_state = updated.get(str(job_id), {})
         updated[str(job_id)] = serialized_state
         self._document.ui_state[self._UEP_ANALYSIS_STATES_KEY] = updated
+        job = self._document.jobs.get(job_id)
+        if job is not None and record_uep_minima(
+            self._document, job, previous_state, serialized_state
+        ):
+            self._refresh_journal_view()
         if self._uep_analysis_state_affects_muon_generation(previous_state, serialized_state):
             QTimer.singleShot(0, self._refresh_muon_generation_table)
         self._queue_raise_visible_uep_analysis_dialog(job_id)
@@ -9918,7 +9927,6 @@ class MainWindow(QMainWindow):
     def _refresh_host_structure_view(self) -> None:
         if self._document is None:
             self._host_structure_view.set_structure(None)
-            self._host_structure_view.set_project_supercell_matrix(None)
             self._host_structure_view.set_promotable_hosts([], None)
             self._refresh_magnetic_field_view()
             self._refresh_active_host_badges()
@@ -9926,9 +9934,6 @@ class MainWindow(QMainWindow):
 
         host_id = self._document.project.host_structure_id
         host: Structure | None = self._document.structures.get(host_id) if host_id else None
-        self._host_structure_view.set_project_supercell_matrix(
-            self._document.project.supercell_matrix
-        )
         promotable = self._project_service.list_promotable_host_structures(self._document)
         self._host_structure_view.set_promotable_hosts(promotable, host_id)
         self._host_structure_view.set_structure(host)
@@ -10136,16 +10141,6 @@ class MainWindow(QMainWindow):
             else:
                 self._document.project.magnetic_structure = None
 
-        raw_matrix = payload.get("supercell_matrix")
-        if (
-            isinstance(raw_matrix, list)
-            and len(raw_matrix) == 3
-            and all(isinstance(row, list) and len(row) == 3 for row in raw_matrix)
-        ):
-            self._document.project.supercell_matrix = [
-                [int(row[0]), int(row[1]), int(row[2])] for row in raw_matrix
-            ]
-
         self._refresh_magnetic_field_view()
         self._refresh_workflow_stage_icons()
 
@@ -10185,13 +10180,15 @@ class MainWindow(QMainWindow):
         self._persist_document_ui_state(
             failure_message="The polarisation simulation was kept, but autosave failed."
         )
+        self._refresh_journal_view()
 
     def _on_magnetic_field_form_state_changed(self, state: dict) -> None:
         if self._document is None or self._shutting_down:
             return
         self._document.ui_state[self._MAGNETIC_FIELD_FORM_KEY] = store_magnetic_field_results(
-            self._document, MAGNETIC_FIELD_PAGE_OWNER, state
+            self._document, MAGNETIC_FIELD_PAGE_OWNER, state, journal_title="Magnetic Fields"
         )
+        self._refresh_journal_view()
 
     def _normalize_magnetic_field_workspace_title(self, title: object) -> str:
         normalized = str(title).strip()
@@ -10230,15 +10227,30 @@ class MainWindow(QMainWindow):
     ) -> None:
         if self._document is None or self._shutting_down:
             return
-        if not any(
-            str(workspace.get("id", "")).strip() == workspace_id
-            for workspace in self._magnetic_field_workspaces_state()
-        ):
+        workspace = next(
+            (
+                workspace
+                for workspace in self._magnetic_field_workspaces_state()
+                if str(workspace.get("id", "")).strip() == workspace_id
+            ),
+            None,
+        )
+        if workspace is None:
             return
         self._replace_magnetic_field_workspace(
             workspace_id,
-            {"form": store_magnetic_field_results(self._document, workspace_id, state)},
+            {
+                "form": store_magnetic_field_results(
+                    self._document,
+                    workspace_id,
+                    state,
+                    journal_title=self._normalize_magnetic_field_workspace_title(
+                        workspace.get("title", "")
+                    ),
+                )
+            },
         )
+        self._refresh_journal_view()
 
     def _on_magnetic_field_workspace_title_changed(self, workspace_id: str, title: str) -> None:
         if self._document is None or self._shutting_down:

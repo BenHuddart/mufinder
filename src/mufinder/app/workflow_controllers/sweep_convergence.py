@@ -859,8 +859,8 @@ class SweepConvergenceController(WorkflowJobController):
     def supercell_initial_matrix(self) -> list[list[int]]:
         """Return the matrix the Supercell Editor opens on for this sweep.
 
-        That is the selected saved supercell's matrix, else the project's
-        supercell matrix, else the identity when no project is open.
+        That is the selected saved supercell's matrix, else the identity: a sweep
+        on the unit cell, or no open project.
         """
 
         document = self._context.document()
@@ -870,7 +870,7 @@ class SweepConvergenceController(WorkflowJobController):
         resolution = self._resolve_simulation_cell(document)
         if resolution.selected_asset is not None:
             return [list(row) for row in resolution.selected_asset.matrix]
-        return [list(row) for row in document.project.supercell_matrix]
+        return [list(row) for row in IDENTITY_SUPERCELL]
 
     def create_simulation_cell(self) -> None:
         """Pick or create the sweep's simulation cell in the Supercell Editor."""

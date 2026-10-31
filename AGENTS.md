@@ -70,7 +70,7 @@ duplication (`PINNED_DUPLICATED_WIDGET_METHODS`).
   controller is a duplication. Move it to the shared home instead of copying it.
 - Logic that computes, validates or mutates project state belongs in `services`,
   `workflow` or `science`, not in a widget or `MainWindow`.
-- Reusable styling goes in `theme.py`, not feature modules; plots use `plot_series_colours`.
+- Styling goes in `theme.py`; plots use `plot_series_colours`, layouts `page_margins()` and peers.
 - Physical constants live in `mufinder.domain.constants`, taken from `scipy.constants`
   with units in their names; never type one elsewhere. The harness checks this.
 
