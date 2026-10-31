@@ -57,10 +57,13 @@ def active_host_structure(document: ProjectDocument) -> Structure | None:
 
 
 def append_provenance(document: ProjectDocument, record: ProvenanceRecord) -> None:
-    """Append a provenance record in memory and to the project's stream on disk."""
+    """Append a provenance record to the project's stream on disk, then in memory.
 
-    document.provenance.append(record)
+    In that order, so a record that could not be written is not shown as if it had been.
+    """
+
     ProjectStore(document.project_root).append_provenance(to_jsonable(record))
+    document.provenance.append(record)
 
 
 def definitions_for_stage(

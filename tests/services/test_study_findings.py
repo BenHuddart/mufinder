@@ -147,6 +147,31 @@ def test_a_uep_state_without_a_new_grouping_records_nothing(document) -> None:
     assert not record_uep_minima(document, job, state, {**state, "current_tab": 2})
 
 
+def test_a_changed_uep_grouping_setting_is_new_even_with_the_same_clusters(document) -> None:
+    job = _uep_job(document)
+    state = _uep_state(-1.0)
+    regrouped = _uep_state(-1.0)
+    regrouped["batch_summary_data"]["threshold_ang"] = 0.3
+
+    assert record_uep_minima(document, job, {}, state)
+    assert record_uep_minima(document, job, state, regrouped)
+
+    thresholds = [
+        record.parameters["grouping"]["threshold_ang"]
+        for record in _actions(document, "uep_minima_found")
+    ]
+    assert thresholds == [0.2, 0.3]
+
+
+def test_a_uep_summary_saved_without_a_method_is_not_a_new_grouping_when_restored(document) -> None:
+    job = _uep_job(document)
+    state = _uep_state(-1.0)
+    saved = _uep_state(-1.0)
+    del saved["batch_summary_data"]["clustering_method"]
+
+    assert not record_uep_minima(document, job, saved, state)
+
+
 def test_repeating_a_uep_search_from_the_same_starts_records_it_once(document) -> None:
     job = _uep_job(document)
 
@@ -497,6 +522,11 @@ def test_a_finding_that_cannot_be_written_keeps_the_result(document, monkeypatch
     monkeypatch.setattr(ProjectStore, "append_provenance", refuse)
 
     assert record_finding(document, _finding("same")) is False
+    assert _actions(document, "a_finding") == []
+
+    # Nothing was written, so the same finding can still be recorded once the disk recovers.
+    monkeypatch.undo()
+    assert record_finding(document, _finding("same")) is True
 
 
 def test_a_failing_finding_does_not_undo_the_job_completion(document, service, monkeypatch) -> None:

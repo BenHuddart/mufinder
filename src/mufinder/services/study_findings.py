@@ -37,6 +37,9 @@ LOGGER = logging.getLogger(__name__)
 #: The ``parameters`` key of a finding's fingerprint.
 FINGERPRINT_KEY = "input_fingerprint"
 
+#: The method of a UEP grouping saved without one.
+_UEP_DISTANCE_GROUPING = "legacy_cartesian_hier"
+
 
 def input_fingerprint(*inputs: object) -> str:
     """Return a stable digest of what a result was calculated from."""
@@ -66,14 +69,27 @@ def record_finding(document: ProjectDocument, record: ProvenanceRecord) -> bool:
     return True
 
 
-def _uep_cluster_signature(state: object) -> list[tuple[object, object, object]] | None:
-    """What a UEP analysis state's grouping found, ignoring how it was saved."""
+def _uep_grouping_settings(summary: Mapping[str, Any]) -> dict[str, Any]:
+    """How a UEP search was grouped; a summary saved without a method used the distance one."""
+
+    settings = {
+        key: summary.get(key)
+        for key in ("threshold_ang", "clustering_hier_t", "clustering_kmeans_k")
+    }
+    return {
+        "clustering_method": summary.get("clustering_method", _UEP_DISTANCE_GROUPING),
+        **settings,
+    }
+
+
+def _uep_grouping_signature(state: object) -> list[object] | None:
+    """How a UEP analysis state's search was grouped and what that found."""
 
     summary = state.get("batch_summary_data") if isinstance(state, Mapping) else None
     clusters = summary.get("clusters") if isinstance(summary, Mapping) else None
     if not isinstance(clusters, list) or not clusters:
         return None
-    return [
+    found = [
         (
             cluster.get("size"),
             list(cluster.get("member_indexes") or []),
@@ -82,6 +98,7 @@ def _uep_cluster_signature(state: object) -> list[tuple[object, object, object]]
         for cluster in clusters
         if isinstance(cluster, Mapping)
     ]
+    return [_uep_grouping_settings(summary), found]
 
 
 def record_uep_minima(
@@ -100,8 +117,8 @@ def record_uep_minima(
     adding the ZPE changes the energies from the same starts.
     """
 
-    signature = _uep_cluster_signature(state)
-    if signature is None or signature == _uep_cluster_signature(previous_state):
+    signature = _uep_grouping_signature(state)
+    if signature is None or signature == _uep_grouping_signature(previous_state):
         return False
     summary = state["batch_summary_data"]
     raw_results = state.get("batch_results")
@@ -114,15 +131,7 @@ def record_uep_minima(
             item["cluster_index"],
         ),
     )
-    grouping = {
-        key: summary.get(key)
-        for key in (
-            "clustering_method",
-            "threshold_ang",
-            "clustering_hier_t",
-            "clustering_kmeans_k",
-        )
-    }
+    grouping = _uep_grouping_settings(summary)
     starts = [result.get("start_position_ang") for result in results if isinstance(result, Mapping)]
     return record_finding(
         document,
