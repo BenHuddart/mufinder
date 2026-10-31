@@ -95,7 +95,7 @@ Switching hosts
 ``Active host structure:`` lists every structure that can be the active host:
 first each imported structure (``Original — <label>``), by name, then the result
 of each completed, converged pristine relaxation (``Relaxed — <job label>
-(<date>)``), newest first (see :doc:`/user_guide/structural_relaxation_analysis`). Each
+(<date>)``), newest first (see :doc:`/user_guide/pristine_relaxation`). Each
 entry's tooltip says where it came from. Choosing another entry makes it the
 active host, and every stage that follows uses it.
 

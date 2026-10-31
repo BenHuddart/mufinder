@@ -387,7 +387,8 @@ Pristine relaxation
   relaxations against the active experimental host structure as a persisted
   subtab with editable title, a one-line tooltip on each metric, a link to the
   metric descriptions in the user guide and CSV export
-  (see :doc:`/user_guide/comparison_table`).
+  (see :doc:`/user_guide/pristine_relaxation` and
+  :doc:`/user_guide/comparison_table`).
 
 Muon site generation and relaxation
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
