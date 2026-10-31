@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import replace
 from pathlib import Path
 from uuid import uuid4
@@ -63,6 +64,7 @@ from mufinder.services.magnetic_field_results import (
     MAGNETIC_FIELD_RESULT_TYPE,
     magnetic_field_results,
 )
+from mufinder.persistence.json_store import ProjectStore
 from mufinder.services.project_service import ProjectService
 from mufinder.services.project_summary import StageStatus, summarize_project
 from mufinder.services.source_candidates import (
@@ -827,6 +829,197 @@ def test_main_window_close_tolerates_missing_relaxation_analysis_view(qapp) -> N
     window.close()
 
     assert window._shutting_down is True
+
+
+@pytest.fixture
+def visible_project_window(main_window: MainWindow, tmp_path: Path) -> Iterator[MainWindow]:
+    """A shown window with a project, so closing it asks whether to save."""
+
+    main_window._document = ProjectService().create_project(tmp_path / "close.mufinder", "Close")
+    main_window.show()
+    yield main_window
+    # The Qt clean-up closes every window once the conftest stubs are gone, so a test
+    # that failed with this window still open must not leave it a real prompt to show.
+    main_window.hide()
+
+
+def _fail_project_writes(monkeypatch: pytest.MonkeyPatch, exc: Exception) -> None:
+    def _raise(*_args, **_kwargs) -> None:
+        raise exc
+
+    monkeypatch.setattr(ProjectStore, "write_json", _raise)
+
+
+def _record_critical_messages(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str]]:
+    messages: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        main_window_module.QMessageBox,
+        "critical",
+        lambda _parent, title, text: messages.append((title, text)),
+    )
+    return messages
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        OSError(28, "No space left on device"),
+        PermissionError(13, "Permission denied"),
+        ValueError("Project integrity check failed"),
+    ],
+    ids=["full-disk", "read-only-folder", "integrity-check"],
+)
+def test_failed_save_on_close_keeps_the_window_open_and_asks_again(
+    visible_project_window: MainWindow,
+    monkeypatch: pytest.MonkeyPatch,
+    answered_choices: list[dict[str, object]],
+    error: Exception,
+) -> None:
+    window = visible_project_window
+    messages = _record_critical_messages(monkeypatch)
+    _fail_project_writes(monkeypatch, error)
+    window._request_dashboard_flush(failure_message="Job finished, but autosave failed")
+
+    assert window.close() is False
+
+    assert window.isVisible()
+    assert messages == [("Save blocked", str(error))]
+    assert len(answered_choices) == 1
+    # The window stays usable: nothing it runs was left stopped by the close.
+    assert window._shutting_down is False
+    assert window._job_watchdog_timer.isActive()
+    assert window._dashboard_flush_pending is False
+    assert window.statusBar().currentMessage() == "Job finished, but autosave failed"
+
+    # A later close asks again and, once the save works, saves and closes.
+    saved: list[object] = []
+    monkeypatch.setattr(
+        window._project_service, "save_project", lambda document: saved.append(document)
+    )
+
+    assert window.close() is True
+
+    assert len(answered_choices) == 2
+    assert saved == [window._document]
+    assert window._shutting_down is True
+
+
+def test_failed_save_on_close_leaves_uep_analysis_dialogs_open(
+    visible_project_window: MainWindow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = visible_project_window
+    _record_critical_messages(monkeypatch)
+    _fail_project_writes(monkeypatch, OSError(28, "No space left on device"))
+    closed: list[bool] = []
+    monkeypatch.setattr(window, "_close_open_uep_analysis_dialogs", lambda: closed.append(True))
+
+    assert window.close() is False
+    assert closed == []
+
+    monkeypatch.setattr(
+        main_window_module.workflow_table_utils, "confirm_choice", lambda *_a, **_k: "discard"
+    )
+    assert window.close() is True
+    assert closed == [True]
+
+
+def test_dont_save_closes_without_writing_the_project(
+    visible_project_window: MainWindow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = visible_project_window
+    messages = _record_critical_messages(monkeypatch)
+    _fail_project_writes(monkeypatch, OSError(28, "No space left on device"))
+    monkeypatch.setattr(
+        main_window_module.workflow_table_utils, "confirm_choice", lambda *_a, **_k: "discard"
+    )
+
+    assert window.close() is True
+
+    assert messages == []
+    assert window._shutting_down is True
+
+
+def test_cancelled_close_survives_a_failed_autosave(
+    visible_project_window: MainWindow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = visible_project_window
+    _fail_project_writes(monkeypatch, OSError(28, "No space left on device"))
+    window._request_dashboard_flush(failure_message="Job finished, but autosave failed")
+    answers: list[str] = []
+
+    def _cancel(*_args, **_kwargs) -> str:
+        answers.append("cancel")
+        return "cancel"
+
+    monkeypatch.setattr(main_window_module.workflow_table_utils, "confirm_choice", _cancel)
+
+    assert window.close() is False
+
+    assert window.isVisible()
+    assert window._shutting_down is False
+    assert window.statusBar().currentMessage() == "Job finished, but autosave failed"
+
+    assert window.close() is False
+    assert len(answers) == 2
+
+    monkeypatch.setattr(
+        main_window_module.workflow_table_utils, "confirm_choice", lambda *_a, **_k: "discard"
+    )
+    assert window.close() is True
+
+
+def test_close_without_a_prompt_survives_a_failed_autosave(
+    main_window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = main_window
+    window._document = ProjectService().create_project(tmp_path / "hidden.mufinder", "Hidden")
+    _fail_project_writes(monkeypatch, OSError(28, "No space left on device"))
+    window._request_dashboard_flush(failure_message="Job finished, but autosave failed")
+
+    window.close()
+
+    assert window._dashboard_flush_pending is False
+    assert window._shutting_down is True
+
+
+@pytest.mark.parametrize(
+    "error",
+    [OSError(28, "No space left on device"), ValueError("Project integrity check failed")],
+    ids=["os-error", "integrity-check"],
+)
+def test_failed_save_action_shows_the_failed_save_message(
+    main_window: MainWindow,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    error: Exception,
+) -> None:
+    window = main_window
+    window._document = ProjectService().create_project(tmp_path / "save.mufinder", "Save")
+    messages = _record_critical_messages(monkeypatch)
+    _fail_project_writes(monkeypatch, error)
+    window._request_dashboard_flush(failure_message="Job finished, but autosave failed")
+
+    window._save_project()
+
+    assert messages == [("Save blocked", str(error))]
+    assert window.statusBar().currentMessage() != "Project saved"
+    # The pending flush was not written, so it still runs later.
+    assert window._dashboard_flush_pending is True
+    assert window._dashboard_flush_timer.isActive()
+
+
+def test_save_action_subsumes_a_pending_dashboard_flush(
+    main_window: MainWindow, tmp_path: Path
+) -> None:
+    window = main_window
+    window._document = ProjectService().create_project(tmp_path / "save.mufinder", "Save")
+    window._request_dashboard_flush(failure_message="Job finished, but autosave failed")
+
+    window._save_project()
+
+    assert window.statusBar().currentMessage() == "Project saved"
+    assert window._dashboard_flush_pending is False
+    assert not window._dashboard_flush_timer.isActive()
 
 
 def test_main_window_materializes_one_quantum_phonon_job_from_relaxed_sources(
