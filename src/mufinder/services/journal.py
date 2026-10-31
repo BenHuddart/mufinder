@@ -127,6 +127,13 @@ _WORKFLOW_LABELS: dict[WorkflowStage, str] = {
     WorkflowStage.ENERGY_BARRIERS: "Energy Barriers",
 }
 
+
+def workflow_label(stage: WorkflowStage) -> str:
+    """Return the name users know the workflow ``stage`` by."""
+
+    return _WORKFLOW_LABELS[stage]
+
+
 _STAMP_LABELS = {
     "milestone": "Milestone",
     "success": "Completed",

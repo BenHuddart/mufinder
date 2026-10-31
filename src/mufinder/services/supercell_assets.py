@@ -465,6 +465,42 @@ def supercell_asset_references(
     return references
 
 
+def workflows_selecting_supercell_asset(
+    document: ProjectDocument,
+    *,
+    asset_structure_id: UUID,
+) -> list[WorkflowStage]:
+    """Return the workflow stages whose active selection is the asset, in workflow order."""
+
+    return [
+        stage
+        for stage in WorkflowStage
+        if get_workflow_supercell_selection(document, stage).structure_id == asset_structure_id
+    ]
+
+
+def distinct_supercell_asset_label(
+    document: ProjectDocument,
+    *,
+    host_structure_id: UUID,
+    label: str,
+) -> str:
+    """Return ``label``, with ``copy`` added when a saved asset of the host already has it."""
+
+    taken = {
+        asset.label.casefold()
+        for asset in list_workflow_supercell_assets(document, host_structure_id=host_structure_id)
+    }
+    if label.casefold() not in taken:
+        return label
+    candidate = f"{label} copy"
+    number = 2
+    while candidate.casefold() in taken:
+        candidate = f"{label} copy {number}"
+        number += 1
+    return candidate
+
+
 def supercell_asset_is_frozen(
     document: ProjectDocument,
     *,

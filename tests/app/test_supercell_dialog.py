@@ -340,7 +340,10 @@ def test_supercell_editor_use_selected_waits_for_a_changed_matrix_to_be_saved(
     dialog.close()
 
 
-def test_supercell_editor_warns_that_save_changes_a_shared_cell(qapp, tmp_path) -> None:
+def _editor_on_cell_three(tmp_path, monkeypatch, *, stages, workflow_stage=None):
+    """An editor on the saved cell ``Three``, which each of ``stages`` has selected."""
+
+    monkeypatch.setattr(workflow_table_utils, "confirm_destructive", _real_confirm_destructive)
     dialog_args = _project_with_saved_cells(tmp_path)
     doc, service = dialog_args["document"], dialog_args["project_service"]
     asset = service.latest_workflow_supercell_asset(
@@ -348,13 +351,188 @@ def test_supercell_editor_warns_that_save_changes_a_shared_cell(qapp, tmp_path) 
         host_structure_id=dialog_args["source_structure"].id,
         matrix=[[3, 0, 0], [0, 3, 0], [0, 0, 3]],
     )
-    service.use_workflow_supercell_asset(
-        doc, workflow_stage=WorkflowStage.UEP, asset_structure_id=asset.structure_id
+    for stage in stages:
+        service.use_workflow_supercell_asset(
+            doc, workflow_stage=stage, asset_structure_id=asset.structure_id
+        )
+    dialog = SupercellEditorDialog(
+        **dialog_args,
+        workflow_stage=workflow_stage,
+        initial_matrix=[[3, 0, 0], [0, 3, 0], [0, 0, 3]],
+    )
+    return dialog, doc.structures[asset.structure_id]
+
+
+def _stored_matrix(structure) -> list[list[int]]:
+    return structure.properties["supercell_asset"]["matrix"]
+
+
+_CUTOFF_AND_KPOINT = (WorkflowStage.CONVERGENCE_CUTOFF, WorkflowStage.CONVERGENCE_KPOINT)
+
+
+def test_supercell_editor_asks_before_changing_a_cell_other_workflows_select(
+    qapp, tmp_path, monkeypatch
+) -> None:
+    dialog, cell = _editor_on_cell_three(tmp_path, monkeypatch, stages=_CUTOFF_AND_KPOINT)
+    dialog._simple_nx.setValue(4)
+
+    seen = answer_next_message_box(click="Change supercell")
+    dialog._save_button.click()
+
+    assert sorted(seen["buttons"]) == ["Cancel", "Change supercell"]
+    assert seen["default"] == "Cancel"
+    assert seen["escape"] == "Cancel"
+    assert "Cutoff Convergence and K-Point Convergence" in seen["text"]
+    assert _stored_matrix(cell) == [[4, 0, 0], [0, 3, 0], [0, 0, 3]]
+    dialog.close()
+
+
+def test_supercell_editor_cancelling_the_question_keeps_the_cell_and_the_edit(
+    qapp, tmp_path, monkeypatch
+) -> None:
+    dialog, cell = _editor_on_cell_three(tmp_path, monkeypatch, stages=_CUTOFF_AND_KPOINT)
+    dialog._simple_nx.setValue(4)
+
+    answer_next_message_box(click="Cancel")
+    dialog._save_button.click()
+
+    assert _stored_matrix(cell) == [[3, 0, 0], [0, 3, 0], [0, 0, 3]]
+    assert dialog.matrix() == [[4, 0, 0], [0, 3, 0], [0, 0, 3]]
+    assert dialog._current_asset_id == cell.id
+    dialog.close()
+
+
+def test_supercell_editor_names_only_the_other_workflows(qapp, tmp_path, monkeypatch) -> None:
+    dialog, _cell = _editor_on_cell_three(
+        tmp_path,
+        monkeypatch,
+        stages=_CUTOFF_AND_KPOINT,
+        workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF,
+    )
+    dialog._simple_nx.setValue(4)
+
+    seen = answer_next_message_box(click="Change supercell")
+    dialog._save_button.click()
+
+    assert "K-Point Convergence" in seen["text"]
+    assert "Cutoff Convergence" not in seen["text"]
+    dialog.close()
+
+
+@pytest.mark.parametrize(
+    ("stages", "workflow_stage"),
+    [
+        ((), None),
+        ((WorkflowStage.CONVERGENCE_CUTOFF,), WorkflowStage.CONVERGENCE_CUTOFF),
+    ],
+)
+def test_supercell_editor_saves_a_cell_only_this_workflow_uses_without_asking(
+    qapp, tmp_path, monkeypatch, stages, workflow_stage
+) -> None:
+    dialog, cell = _editor_on_cell_three(
+        tmp_path, monkeypatch, stages=stages, workflow_stage=workflow_stage
+    )
+    dialog._simple_nx.setValue(4)
+    monkeypatch.setattr(
+        workflow_table_utils,
+        "confirm_destructive",
+        lambda *_args, **_kwargs: pytest.fail("no question expected"),
     )
 
-    dialog = SupercellEditorDialog(**dialog_args, initial_matrix=[[3, 0, 0], [0, 3, 0], [0, 0, 3]])
+    dialog._save_button.click()
 
-    assert "every workflow" in dialog._save_button.toolTip()
+    assert _stored_matrix(cell) == [[4, 0, 0], [0, 3, 0], [0, 0, 3]]
+    dialog.close()
+
+
+def test_supercell_editor_renaming_a_shared_cell_asks_nothing(qapp, tmp_path, monkeypatch) -> None:
+    dialog, cell = _editor_on_cell_three(tmp_path, monkeypatch, stages=_CUTOFF_AND_KPOINT)
+    dialog._name_edit.setText("Renamed")
+    monkeypatch.setattr(
+        workflow_table_utils,
+        "confirm_destructive",
+        lambda *_args, **_kwargs: pytest.fail("no question expected"),
+    )
+
+    dialog._save_button.click()
+
+    assert cell.label == "Renamed"
+    dialog.close()
+
+
+def _freeze(document, structure) -> None:
+    definition = CalculationDefinition(
+        workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF,
+        calc_type="castep_convergence_cutoff",
+        input_structure_ids=[structure.id],
+    )
+    document.calculations[definition.id] = definition
+
+
+def test_supercell_editor_frozen_save_names_a_distinct_copy_in_the_status_line(
+    qapp, tmp_path, monkeypatch
+) -> None:
+    dialog, cell = _editor_on_cell_three(tmp_path, monkeypatch, stages=_CUTOFF_AND_KPOINT)
+    _freeze(dialog._document, cell)
+    dialog._simple_nx.setValue(4)
+    monkeypatch.setattr(
+        workflow_table_utils,
+        "confirm_destructive",
+        lambda *_args, **_kwargs: pytest.fail("a copy changes no workflow"),
+    )
+
+    dialog._save_button.click()
+
+    assert cell.label == "Three"
+    assert _stored_matrix(cell) == [[3, 0, 0], [0, 3, 0], [0, 0, 3]]
+    assert dialog._name_edit.text() == "Three copy"
+    assert dialog._current_asset_id != cell.id
+    status = dialog._status_label.text()
+    assert "Saved copy 'Three copy'" in status
+    assert "'Three'" in status
+    assert not status.endswith(".")
+    table = dialog._asset_table
+    assert table.item(table.currentRow(), dialog._NAME_COLUMN).text() == "Three copy"
+    dialog.close()
+
+
+def test_supercell_editor_second_frozen_copy_gets_its_own_name(qapp, tmp_path, monkeypatch) -> None:
+    dialog, cell = _editor_on_cell_three(tmp_path, monkeypatch, stages=())
+    _freeze(dialog._document, cell)
+
+    names = []
+    for scale in (4, 5):
+        dialog._refresh_assets(select_id=cell.id)
+        dialog._name_edit.setText(cell.label)
+        dialog._apply_matrix([[scale, 0, 0], [0, 3, 0], [0, 0, 3]])
+        dialog._save_button.click()
+        names.append(dialog._name_edit.text())
+
+    assert names == ["Three copy", "Three copy 2"]
+    dialog.close()
+
+
+def test_supercell_editor_frozen_copy_keeps_a_name_the_user_typed(
+    qapp, tmp_path, monkeypatch
+) -> None:
+    dialog, cell = _editor_on_cell_three(tmp_path, monkeypatch, stages=())
+    _freeze(dialog._document, cell)
+    dialog._simple_nx.setValue(4)
+    dialog._name_edit.setText("Future cell")
+
+    dialog._save_button.click()
+
+    assert dialog._name_edit.text() == "Future cell"
+    assert "Saved copy 'Future cell'" in dialog._status_label.text()
+    dialog.close()
+
+
+def test_supercell_editor_save_tooltip_no_longer_warns_about_sharing(
+    qapp, tmp_path, monkeypatch
+) -> None:
+    dialog, _cell = _editor_on_cell_three(tmp_path, monkeypatch, stages=_CUTOFF_AND_KPOINT)
+
+    assert dialog._save_button.toolTip() == ""
     dialog.close()
 
 

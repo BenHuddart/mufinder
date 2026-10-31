@@ -36,9 +36,11 @@ from mufinder.app.theme import style_section_subtitle, style_section_title
 from mufinder.app.viewer_dialog import StructureViewerDialog
 from mufinder.app.workflow_table_utils import create_workflow_table
 from mufinder.domain.enums import WorkflowStage
+from mufinder.domain.text import plural
 from mufinder.domain.models import Structure
 from mufinder.science.supercell import build_supercell_structure
 from mufinder.science.supercell_suggestion import SupercellSuggestionError, suggest_supercell
+from mufinder.services.journal import workflow_label
 from mufinder.services.project_service import ProjectDocument, ProjectService
 from mufinder.services.supercell_assets import WorkflowSupercellAsset, supercell_asset
 
@@ -470,10 +472,6 @@ class SupercellEditorDialog(StructureViewerDialog):
                 "Creates a new copy when the selected supercell is already used by configured"
                 " calculations."
             )
-        elif self._project_service.supercell_asset_references(
-            self._document, asset_structure_id=self._current_asset_id
-        ):
-            save_tooltip = "Also changes it for every workflow that has it selected."
         else:
             save_tooltip = ""
         self._save_button.setToolTip(save_tooltip)
@@ -537,20 +535,26 @@ class SupercellEditorDialog(StructureViewerDialog):
         if asset is None:
             return self._save_as_asset()
 
+        frozen = self._project_service.supercell_asset_is_frozen(
+            self._document,
+            asset_structure_id=self._current_asset_id,
+        )
+        copied = frozen and matrix != asset.matrix
+        if matrix != asset.matrix and not copied and not self._confirm_shared_change(asset):
+            return None
+
         try:
-            if (
-                self._project_service.supercell_asset_is_frozen(
-                    self._document,
-                    asset_structure_id=self._current_asset_id,
-                )
-                and matrix != asset.matrix
-            ):
+            if copied:
                 saved = self._project_service.create_workflow_supercell_asset(
                     self._document,
                     workflow_stage=self._workflow_stage,
                     host_structure_id=self._source_structure.id,
                     matrix=matrix,
-                    label=label,
+                    label=self._project_service.distinct_supercell_asset_label(
+                        self._document,
+                        host_structure_id=self._source_structure.id,
+                        label=label,
+                    ),
                     source_asset_structure_id=self._current_asset_id,
                     reuse_existing=False,
                 )
@@ -576,8 +580,39 @@ class SupercellEditorDialog(StructureViewerDialog):
         self._current_asset_id = saved.id
         self._refresh_assets(select_id=saved.id)
         self._name_edit.setText(saved.label)
-        self._status_label.setText(f"Saved '{saved.label}' with {len(saved.species)} atoms.")
+        if copied:
+            self._status_label.setText(
+                f"Saved copy '{saved.label}' with {len(saved.species)} atoms; configured"
+                f" calculations use '{asset.label}', which was not changed"
+            )
+        else:
+            self._status_label.setText(f"Saved '{saved.label}' with {len(saved.species)} atoms.")
         return saved
+
+    def _confirm_shared_change(self, asset: WorkflowSupercellAsset) -> bool:
+        """Ask before a matrix change reaches workflows other than the one editing."""
+
+        others = [
+            workflow_label(stage)
+            for stage in self._project_service.workflows_selecting_supercell_asset(
+                self._document, asset_structure_id=asset.structure_id
+            )
+            if stage != self._workflow_stage
+        ]
+        if not others:
+            return True
+        names = " and ".join(filter(None, (", ".join(others[:-1]), others[-1])))
+        return workflow_table_utils.confirm_destructive(
+            self,
+            "Change shared supercell",
+            f"Change the matrix of '{asset.label}' for {names}?",
+            detail=(
+                f"{plural(len(others), 'workflow has', 'workflows have')} this supercell selected"
+                " and will use the new matrix for calculations configured from now on."
+                " 'Save As' keeps it and adds a new supercell instead."
+            ),
+            accept_label="Change supercell",
+        )
 
     def _delete_current(self) -> None:
         if self._current_asset_id is None:

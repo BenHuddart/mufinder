@@ -133,12 +133,17 @@ Editing saved supercells
 
 Selecting a saved supercell loads its name and matrix into the editor. Rename
 it by changing the name and choosing ``Save``. Change the matrix and choose
-``Save`` to regenerate the saved structure.
+``Save`` to regenerate the saved structure. If another workflow has the cell
+selected, MuFinder first asks, naming those workflows; ``Cancel`` keeps the saved
+cell and your edits, and ``Save As`` adds a new cell instead. A cell that no other
+workflow has selected is saved without asking.
 
 If a saved supercell is already frozen into a configured calculation, MuFinder
 does not rewrite that calculation's structure snapshot. Matrix edits create a
-new saved copy for future use instead. This keeps existing configured jobs and
-their generated input structures reproducible.
+new saved copy for future use instead, and the status line names the copy. The
+copy keeps a name you typed; if another saved cell has that name, as when you
+leave the name unchanged, ``copy`` is added to it. This keeps existing configured
+jobs and their generated input structures reproducible.
 
 Deleting saved supercells
 ~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -165,10 +170,11 @@ selection that calculation inputs read.
   ``Manage Supercells…``.
 - Saved supercells are project-wide and visible to every workflow for the same
   active host. Workflows that pick the same saved cell share it, so the library
-  keeps one entry per cell, whichever workflow or page it was saved from. Editing
-  the matrix of a shared cell that no configured calculation uses changes it for
-  every workflow that has it selected. UEP source jobs use the currently selected
-  UEP source structure as their supercell context.
+  keeps one entry per cell, whichever workflow or page it was saved from. Saving
+  a changed matrix on a shared cell that no configured calculation uses changes it
+  for every workflow that has it selected, after asking (see `Editing saved
+  supercells`_). UEP source jobs use the currently selected UEP source structure
+  as their supercell context.
 
 A configured calculation keeps the cell it was configured with: the cell is
 frozen when the job is defined, with its expanded lattice, positions and spins,

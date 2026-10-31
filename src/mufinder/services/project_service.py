@@ -847,6 +847,22 @@ class ProjectService:
         """Return the matrix the Supercell Editor opens on when no cell is in use."""
         return supercell_assets.supercell_editor_seed_matrix(document)
 
+    def workflows_selecting_supercell_asset(
+        self, document: ProjectDocument, *, asset_structure_id: UUID
+    ) -> list[WorkflowStage]:
+        """Return the workflow stages whose active selection is the asset."""
+        return supercell_assets.workflows_selecting_supercell_asset(
+            document, asset_structure_id=asset_structure_id
+        )
+
+    def distinct_supercell_asset_label(
+        self, document: ProjectDocument, *, host_structure_id: UUID, label: str
+    ) -> str:
+        """Return ``label``, with ``copy`` added when a saved asset of the host already has it."""
+        return supercell_assets.distinct_supercell_asset_label(
+            document, host_structure_id=host_structure_id, label=label
+        )
+
     def supercell_asset_references(
         self, document: ProjectDocument, *, asset_structure_id: UUID
     ) -> list[str]:

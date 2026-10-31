@@ -371,6 +371,54 @@ def test_spin_repair_keeps_the_asset_metadata(tmp_path: Path) -> None:
     assert saved.properties["supercell_asset"] == before
 
 
+def test_workflows_selecting_an_asset_are_listed_in_workflow_order(tmp_path: Path) -> None:
+    document, host = _document_with_host(tmp_path)
+    shared = supercell_assets.create_workflow_supercell_asset(
+        document, workflow_stage=None, host_structure_id=host.id, matrix=_DOUBLE_A
+    )
+    other = supercell_assets.create_workflow_supercell_asset(
+        document,
+        workflow_stage=None,
+        host_structure_id=host.id,
+        matrix=[[1, 0, 0], [0, 2, 0], [0, 0, 1]],
+    )
+    for stage in (WorkflowStage.CONVERGENCE_KPOINT, _STAGE):
+        supercell_assets.use_workflow_supercell_asset(
+            document, workflow_stage=stage, asset_structure_id=shared.id
+        )
+    supercell_assets.use_workflow_supercell_asset(
+        document, workflow_stage=WorkflowStage.UEP, asset_structure_id=other.id
+    )
+
+    assert supercell_assets.workflows_selecting_supercell_asset(
+        document, asset_structure_id=shared.id
+    ) == [_STAGE, WorkflowStage.CONVERGENCE_KPOINT]
+
+
+def test_distinct_label_adds_copy_only_when_the_name_is_taken(tmp_path: Path) -> None:
+    document, host = _document_with_host(tmp_path)
+    supercell_assets.create_workflow_supercell_asset(
+        document, workflow_stage=None, host_structure_id=host.id, matrix=_DOUBLE_A, label="Cell"
+    )
+
+    def distinct(label: str) -> str:
+        return supercell_assets.distinct_supercell_asset_label(
+            document, host_structure_id=host.id, label=label
+        )
+
+    assert distinct("Other") == "Other"
+    assert distinct("cell") == "cell copy"
+    assert distinct("Cell") == "Cell copy"
+    supercell_assets.create_workflow_supercell_asset(
+        document,
+        workflow_stage=None,
+        host_structure_id=host.id,
+        matrix=[[1, 0, 0], [0, 2, 0], [0, 0, 1]],
+        label="Cell copy",
+    )
+    assert distinct("Cell") == "Cell copy 2"
+
+
 def test_editor_seed_is_the_identity_for_a_new_project(tmp_path: Path) -> None:
     document, _host = _document_with_host(tmp_path)
 

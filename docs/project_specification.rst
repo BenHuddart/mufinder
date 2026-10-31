@@ -442,7 +442,8 @@ Host structure magnetic editing and the supercell editor
   magnetic pattern across the generated supercell, and lets the user save,
   name, edit, delete and select reusable project supercells. Editing the
   matrix of a saved supercell already frozen into a configured calculation
-  creates a future-use copy rather than rewriting the frozen structure (see
+  creates a future-use copy with its own name, reported in the status line, rather
+  than rewriting the frozen structure (see
   :doc:`/user_guide/supercells`).
 
 Workflow-scoped simulation cells and supercell assets
@@ -463,7 +464,8 @@ Workflow-scoped simulation cells and supercell assets
   reusable across workflows for the same host and have user-facing names
   editable in the Supercell Editor.
 - Workflows that select the same asset share it; selecting never copies, so the
-  library holds one entry per cell.
+  library holds one entry per cell. Saving a changed matrix on an asset that other
+  workflows select asks first and names them.
 - Convergence definition snapshots freeze the resolved simulation cell: the
   resolved structure id in ``CalculationDefinition.input_structure_ids[0]`` and
   lightweight provenance (``simulation_cell_mode``,
