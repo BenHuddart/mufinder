@@ -816,12 +816,7 @@ def _build_results(directory: Path, *, running_pristine: bool = False) -> Path:
     document.ui_state["magnetic_field_form"] = {"demag_shape": "none"}
     service.save_project(document)
 
-    # The muon relaxations run in the 2x2x2 supercell, so configuring them
-    # rescales the adopted unit-cell k-point grid and says so.
-    with (
-        opened(app, document.project_root) as window,
-        refuse_message_boxes(app, expected=("K-point grids adjusted",)),
-    ):
+    with opened(app, document.project_root) as window, refuse_message_boxes(app):
         document = window._document
         # Pristine relaxation: one variable-cell row, run as Run All Locally runs it.
         pristine = window._pristine_relaxation_view
@@ -1114,14 +1109,6 @@ def open_comparison_job_dialog(window: MainWindow) -> None:
     window._pristine_relaxation_view.generate_comparison_requested.emit()
 
 
-def tick_every_job(dialog: QWidget) -> None:
-    from PySide6.QtCore import Qt
-
-    for row in range(dialog._table.rowCount()):
-        dialog._table.item(row, dialog._CHECK_COLUMN).setCheckState(Qt.CheckState.Checked)
-    focus_default_button(dialog)
-
-
 def show_running_progress(window: MainWindow) -> QWidget:
     """Inspect the running pristine relaxation, as its dashboard Inspect button does.
 
@@ -1344,7 +1331,7 @@ SCENES: dict[str, Scene] = {
             open_comparison_job_dialog,
             kind="ComparisonJobDialog",
             size=(900, 380),
-            prepare=tick_every_job,
+            prepare=focus_default_button,
         ),
     ),
     "comparison_table": Scene(

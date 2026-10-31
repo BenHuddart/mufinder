@@ -1140,13 +1140,9 @@ class SupercellColumn:
         return ValueWithUnit(float(spacing), "1/ang")
 
     def kpoint_adjustment_text(self, row_id: int) -> str:
-        """Describe how the row's supercell changes the project grid ("" when it does not)."""
+        """Describe how the row's cell changes the project grid ("" when it does not)."""
 
-        if (
-            self.matrices.get(row_id) is None
-            or self.reference_grid is None
-            or self.host_lattice is None
-        ):
+        if self.reference_grid is None or self.host_lattice is None:
             return ""
         suggested = self.suggested_grid(row_id)
         if suggested is None or suggested == self.reference_grid:

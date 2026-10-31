@@ -7,7 +7,18 @@ import json
 import pytest
 from PySide6.QtCore import QItemSelectionModel, Qt
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QComboBox, QDialog, QHeaderView, QMessageBox, QPushButton, QToolButton
+from PySide6.QtWidgets import (
+    QApplication,
+    QCheckBox,
+    QComboBox,
+    QDialog,
+    QGroupBox,
+    QHeaderView,
+    QLabel,
+    QMessageBox,
+    QPushButton,
+    QToolButton,
+)
 
 from mufinder.app import workflow_row_widget as workflow_row_widget_module
 from mufinder.app import workflow_table_utils
@@ -17,6 +28,7 @@ from mufinder.app.param_dialog import ParameterDialog
 from mufinder.app.export_dialogs import CASTEP_CELL_FORMAT, CIF_FORMAT
 from mufinder.app.relaxation_adapter import expand_pristine_relaxation_jobs
 from mufinder.app.relaxation_widget import PristineRelaxationWidget
+from mufinder.app.theme import THEME_LIGHT, apply_theme
 from mufinder.app.workflow_parameters import kpoint_exclusive_hint
 from mufinder.app.relaxation_types import (
     PristineRelaxationConfig,
@@ -242,12 +254,251 @@ def test_relaxation_widget_supercell_selection_can_stay_on_current_row(
     assert widget.row_supercell_matrix(second_id) is None
 
 
-def test_relaxation_widget_table_uses_stretch_columns(qapp) -> None:
+def test_relaxation_widget_label_and_supercell_can_be_dragged_and_the_rest_fit_their_contents(
+    qapp,
+) -> None:
     widget = PristineRelaxationWidget()
-    header = widget._table.horizontalHeader()
+    table = widget._table
+    header = table.horizontalHeader()
 
-    assert header.sectionResizeMode(widget._LABEL_COLUMN) == QHeaderView.ResizeMode.Stretch
-    assert header.sectionResizeMode(widget._SUPERCELL_COLUMN) == QHeaderView.ResizeMode.Stretch
+    for column in (widget._LABEL_COLUMN, widget._SUPERCELL_COLUMN):
+        assert header.sectionResizeMode(column) == QHeaderView.ResizeMode.Interactive
+        assert 100 <= table.columnWidth(column) <= 200
+    for column in (
+        widget._FIX_CELL_COLUMN,
+        widget._STATUS_COLUMN,
+        widget._LATTICE_A_COLUMN,
+        widget._LATTICE_B_COLUMN,
+        widget._LATTICE_C_COLUMN,
+        widget._CONFIGURE_COLUMN,
+    ):
+        assert header.sectionResizeMode(column) == QHeaderView.ResizeMode.ResizeToContents
+    assert header.sectionResizeMode(widget._REMOVE_COLUMN) == QHeaderView.ResizeMode.Fixed
+
+
+def test_relaxation_widget_lattice_columns_fit_a_value_and_its_change(qapp) -> None:
+    widget = PristineRelaxationWidget()
+    widget._add_row()
+    label = widget._label_at_row(0)
+    widget.set_runtime_states(
+        {
+            label: RelaxationRunState(
+                status="completed",
+                lattice_a=4.7091,
+                lattice_b=4.7091,
+                lattice_c=3.1878,
+                host_lattice_lengths=(4.695, 4.695, 3.18),
+            )
+        }
+    )
+    widget.show()
+    table = widget._table
+    metrics = table.fontMetrics()
+
+    for column in (
+        widget._LATTICE_A_COLUMN,
+        widget._LATTICE_B_COLUMN,
+        widget._LATTICE_C_COLUMN,
+    ):
+        text = table.item(0, column).text()
+        assert table.columnWidth(column) >= metrics.horizontalAdvance(text) + 12
+    widget.close()
+
+
+def test_relaxation_widget_lattice_cells_show_the_change_against_the_host(qapp) -> None:
+    widget = PristineRelaxationWidget()
+    widget._add_row()
+    label = widget._label_at_row(0)
+
+    widget.set_runtime_states(
+        {
+            label: RelaxationRunState(
+                status="completed",
+                lattice_a=4.7091,
+                lattice_b=4.68,
+                lattice_c=3.18,
+                host_lattice_lengths=(4.695, 4.695, 3.18),
+            )
+        }
+    )
+
+    table = widget._table
+    assert table.item(0, widget._LATTICE_A_COLUMN).text() == "4.7091 (+0.30 %)"
+    assert table.item(0, widget._LATTICE_B_COLUMN).text() == "4.68 (-0.32 %)"
+    assert table.item(0, widget._LATTICE_C_COLUMN).text() == "3.18 (+0.00 %)"
+
+
+def test_relaxation_widget_lattice_cells_round_to_five_significant_figures(qapp) -> None:
+    widget = PristineRelaxationWidget()
+    widget._add_row()
+
+    widget.set_runtime_states(
+        {
+            widget._label_at_row(0): RelaxationRunState(
+                status="completed",
+                lattice_a=4.70908,
+                lattice_b=12.34567,
+                host_lattice_lengths=(4.695, 11.0, 3.18),
+            )
+        }
+    )
+
+    table = widget._table
+    assert table.item(0, widget._LATTICE_A_COLUMN).text() == "4.7091 (+0.30 %)"
+    assert table.item(0, widget._LATTICE_B_COLUMN).text() == "12.346 (+12.23 %)"
+
+
+#: The table's viewport at the 1280x864 default window with a vertical scrollbar.
+_DEFAULT_WINDOW_TABLE_WIDTH = 893
+
+
+def _pristine_page_with_rows(qapp, count: int) -> PristineRelaxationWidget:
+    apply_theme(qapp, THEME_LIGHT)
+    view = PristineRelaxationWidget()
+    view.resize(_DEFAULT_WINDOW_TABLE_WIDTH + 71, 600)
+    for _ in range(count):
+        view._add_row()
+    view.show()
+    return view
+
+
+def test_pristine_table_fits_the_default_window_in_its_worst_realistic_row(qapp) -> None:
+    view = _pristine_page_with_rows(qapp, 40)
+    view.set_runtime_states(
+        {
+            view._label_at_row(row): RelaxationRunState(
+                status="not converged",
+                lattice_a=12.3456,
+                lattice_b=12.3456,
+                lattice_c=23.4567,
+                host_lattice_lengths=(11.0, 11.0, 20.9),
+            )
+            for row in range(view._table.rowCount())
+        }
+    )
+    QApplication.processEvents()
+    table = view._table
+
+    assert table.item(0, view._LATTICE_C_COLUMN).text() == "23.457 (+12.23 %)"
+    assert table.horizontalHeader().length() <= _DEFAULT_WINDOW_TABLE_WIDTH
+    assert table.verticalScrollBar().maximum() > 0
+    assert table.horizontalScrollBar().maximum() == 0
+    view.close()
+
+
+def test_supercell_combo_shows_a_long_name_in_full_at_the_default_width(qapp) -> None:
+    view = _pristine_page_with_rows(qapp, 1)
+    view.set_supercell_options(
+        [{"label": "YBa2Cu3O7 2x2x1", "matrix": [[2, 0, 0], [0, 2, 0], [0, 0, 1]]}]
+    )
+    view.set_row_supercell(view._row_id_at(0), ((2, 0, 0), (0, 2, 0), (0, 0, 1)))
+    QApplication.processEvents()
+    combo = view._table.cellWidget(0, view._SUPERCELL_COLUMN)
+
+    assert combo.currentText() == "YBa2Cu3O7 2x2x1"
+    assert combo.displayed_text() == "YBa2Cu3O7 2x2x1"
+    assert combo.toolTip().splitlines()[0] == "YBa2Cu3O7 2x2x1"
+    view.close()
+
+
+def test_relaxation_widget_lattice_cells_show_the_value_alone_without_a_reference(qapp) -> None:
+    widget = PristineRelaxationWidget()
+    widget._add_row()
+    label = widget._label_at_row(0)
+
+    widget.set_runtime_states(
+        {label: RelaxationRunState(status="completed", lattice_a=4.7091, lattice_b=None)}
+    )
+
+    table = widget._table
+    assert table.item(0, widget._LATTICE_A_COLUMN).text() == "4.7091"
+    assert table.item(0, widget._LATTICE_B_COLUMN).text() == ""
+
+
+def test_relaxation_widget_says_what_the_stage_is_for(qapp) -> None:
+    widget = PristineRelaxationWidget()
+
+    assert any(
+        label.text()
+        == (
+            "Relax the host without a muon, to check the settings against experiment "
+            "and give the later stages a reference structure."
+        )
+        for label in widget.findChildren(QLabel)
+    )
+
+
+def test_relaxation_widget_empty_state_stands_in_for_an_empty_table(qapp) -> None:
+    widget = PristineRelaxationWidget()
+    widget.show()
+    hint = widget._empty_rows_label
+
+    assert hint.text() == "Add a job to relax the host unit cell or a saved supercell."
+    assert hint.objectName() == "overviewPlaceholder"
+    assert hint.isVisible()
+    assert not widget._table.isVisible()
+
+    widget._add_row()
+    assert not hint.isVisible()
+    assert widget._table.isVisible()
+
+    widget._table.selectRow(0)
+    widget._remove_rows_by_id(widget._selected_row_ids())
+    assert hint.isVisible()
+    assert not widget._table.isVisible()
+    widget.close()
+
+
+def test_relaxation_widget_restored_rows_replace_the_empty_state(qapp) -> None:
+    widget = PristineRelaxationWidget()
+    widget.show()
+
+    widget.set_form_state({"rows": [{"label": "restored", "fix_all_cell": True}]})
+    assert widget._table.isVisible()
+    assert not widget._empty_rows_label.isVisible()
+
+    widget.set_form_state({"rows": []})
+    assert not widget._table.isVisible()
+    assert widget._empty_rows_label.isVisible()
+    widget.close()
+
+
+def test_relaxation_widget_comparison_button_sits_with_the_table_controls(qapp) -> None:
+    widget = PristineRelaxationWidget()
+    button = widget._generate_comparison_button
+
+    groups = {group.title(): group for group in widget.findChildren(QGroupBox)}
+    assert groups["Relaxation Jobs"].isAncestorOf(button)
+    assert not groups["Run Jobs"].isAncestorOf(button)
+
+    requests: list[bool] = []
+    widget.generate_comparison_requested.connect(lambda: requests.append(True))
+    button.click()
+    assert requests == [True]
+
+
+def test_relaxation_widget_supercell_tooltip_names_the_rescaled_grid(qapp) -> None:
+    widget = PristineRelaxationWidget()
+    host_lattice = [[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]]
+    widget.set_host_lattice(host_lattice)
+    widget.set_project_defaults(
+        cutoff_energy=None, kpoint_grid=(4, 4, 4), kpoint_reference_lattice=host_lattice
+    )
+    widget._add_row()
+    row_id = widget._row_id_at(0)
+    combo = widget._table.cellWidget(0, widget._SUPERCELL_COLUMN)
+
+    assert combo.toolTip() == "Unit cell"
+
+    widget.set_row_supercell(row_id, ((2, 0, 0), (0, 1, 0), (0, 0, 1)))
+    assert combo.toolTip() == (
+        f"{combo.currentText()}\nK-point grid adjusted from 4x4x4 to 2x4x4 for equivalent density."
+    )
+
+    # A row that pins its own k-points does not take the rescaled grid.
+    widget._row_parameter_values[row_id] = {"kpoint_mp_grid": (3, 3, 3)}
+    widget._refresh_all_rows()
+    assert combo.toolTip() == combo.currentText()
 
 
 def test_relaxation_widget_omits_separate_kpoint_column(qapp) -> None:
@@ -265,9 +516,10 @@ def test_relaxation_widget_defaults_fix_cell_to_relax(qapp) -> None:
     widget = PristineRelaxationWidget()
     widget._add_row()
 
-    combo = widget._table.cellWidget(0, widget._FIX_CELL_COLUMN)
-    assert isinstance(combo, QComboBox)
-    assert combo.currentData() is False
+    check = widget._table.cellWidget(0, widget._FIX_CELL_COLUMN)
+    assert isinstance(check, QCheckBox)
+    assert check.text() == ""
+    assert not check.isChecked()
 
 
 def test_relaxation_widget_delete_shortcut_removes_selected_jobs(qapp) -> None:
@@ -1228,10 +1480,10 @@ def test_relaxation_fix_cell_applies_to_selected_rows(qapp, monkeypatch) -> None
     widget.form_state_changed.connect(states.append)
 
     _select_relaxation_rows(widget, (0, 1))
-    combo = widget._table.cellWidget(0, widget._FIX_CELL_COLUMN)
-    assert isinstance(combo, QComboBox)
-    combo.selection_snapshot_rows = (0, 1)
-    combo.setCurrentIndex(combo.findData(True))
+    check = widget._table.cellWidget(0, widget._FIX_CELL_COLUMN)
+    assert isinstance(check, QCheckBox)
+    check.selection_snapshot_rows = (0, 1)
+    check.setChecked(True)
 
     assert widget._fix_all_cell_at_row(0) is True
     assert widget._fix_all_cell_at_row(1) is True
@@ -1251,9 +1503,9 @@ def test_relaxation_fix_cell_this_row_only(qapp, monkeypatch) -> None:
     )
 
     _select_relaxation_rows(widget, (0, 1))
-    combo = widget._table.cellWidget(0, widget._FIX_CELL_COLUMN)
-    combo.selection_snapshot_rows = (0, 1)
-    combo.setCurrentIndex(combo.findData(True))
+    check = widget._table.cellWidget(0, widget._FIX_CELL_COLUMN)
+    check.selection_snapshot_rows = (0, 1)
+    check.setChecked(True)
 
     assert widget._fix_all_cell_at_row(0) is True
     assert widget._fix_all_cell_at_row(1) is False
@@ -1270,11 +1522,11 @@ def test_relaxation_fix_cell_cancel_restores_previous_value(qapp, monkeypatch) -
     widget.form_state_changed.connect(states.append)
 
     _select_relaxation_rows(widget, (0, 1))
-    combo = widget._table.cellWidget(0, widget._FIX_CELL_COLUMN)
-    # Emulate the press: the combo records the value the user started from.
-    combo.pre_interaction_index = combo.currentIndex()
-    combo.selection_snapshot_rows = (0, 1)
-    combo.setCurrentIndex(combo.findData(True))
+    check = widget._table.cellWidget(0, widget._FIX_CELL_COLUMN)
+    # Emulate the press: the box records the state the user started from.
+    check.pre_interaction_checked = check.isChecked()
+    check.selection_snapshot_rows = (0, 1)
+    check.setChecked(True)
 
     assert widget._fix_all_cell_at_row(0) is False
     assert widget._fix_all_cell_at_row(1) is False
@@ -1295,9 +1547,9 @@ def test_relaxation_fix_cell_skips_locked_rows(qapp, monkeypatch) -> None:
     )
 
     _select_relaxation_rows(widget, (0, 1, 2))
-    combo = widget._table.cellWidget(0, widget._FIX_CELL_COLUMN)
-    combo.selection_snapshot_rows = (0, 1, 2)
-    combo.setCurrentIndex(combo.findData(True))
+    check = widget._table.cellWidget(0, widget._FIX_CELL_COLUMN)
+    check.selection_snapshot_rows = (0, 1, 2)
+    check.setChecked(True)
 
     assert bodies == [
         "Set this cell constraint on 2 of 3 selected rows? 1 is not eligible and will be skipped."
@@ -1675,7 +1927,7 @@ def test_relaxation_widget_row_controls_are_named_after_their_row(qapp) -> None:
     )
     assert (
         widget._table.cellWidget(0, widget._FIX_CELL_COLUMN).accessibleName()
-        == f"Fix Cell for {label}"
+        == f"Fix cell for {label}"
     )
 
     widget._table.item(0, widget._LABEL_COLUMN).setText("Host Relax")

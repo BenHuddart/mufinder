@@ -27,11 +27,11 @@ Running the workflow
 
 1. **Open the page.** Select ``Pristine Relaxation`` in the navigator.
 2. **Start the comparison.** Click ``Generate Comparison Table…``.
-3. **Choose the relaxations.** In the ``Generate Comparison Table`` dialog, tick
-   ``Include`` for one or more completed pristine-relaxation jobs. Each row
-   shows the job's ``Label``, ``Supercell``, ``Status``, ``Total Energy (eV)``,
-   and relaxed ``a (Ang)``, ``b (Ang)`` and ``c (Ang)`` lengths. Ticking nothing
-   is refused.
+3. **Choose the relaxations.** The ``Generate Comparison Table`` dialog lists
+   the completed pristine-relaxation jobs with ``Include`` ticked for each; clear
+   any you want to leave out. Each row shows the job's ``Label``, ``Supercell``,
+   ``Status``, ``Total Energy (eV)``, and relaxed ``a (Ang)``, ``b (Ang)`` and
+   ``c (Ang)`` lengths. Leaving nothing ticked is refused.
 4. **Name the table.** Edit the ``Comparison table label`` if needed (it
    defaults to ``Comparison <N>``) and click ``OK``.
 

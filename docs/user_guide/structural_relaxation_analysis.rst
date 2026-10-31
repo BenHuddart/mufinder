@@ -40,9 +40,9 @@ Running the workflow
 3. **Choose the cell.** In the row's ``Supercell`` drop-down, pick ``Unit
    cell`` or a saved supercell, or choose ``Manage Supercells…`` to open the
    :doc:`/user_guide/supercells`.
-4. **Decide whether the cell may change.** The ``Fix Cell`` drop-down reads
-   ``No (relax)`` by default, so the lattice relaxes as well as the atoms.
-   Choose ``Yes (fixed)`` to relax the atomic positions in the starting cell.
+4. **Decide whether the cell may change.** The ``Fix cell`` checkbox is clear
+   by default, so the lattice relaxes as well as the atoms. Tick it to relax the
+   atomic positions in the starting cell.
 5. **Check the parameters.** Click the row's ``Configure…`` button, or select
    rows and click ``Configure Selected Parameters…``. The shared parameter
    dialog lists ``Basis Precision`` / ``Cutoff Energy``, ``SCF Energy
@@ -53,7 +53,8 @@ Running the workflow
    Cluster``. Follow the jobs in the ``Status`` column and in the job
    dashboard (see :doc:`/getting_started/running_jobs`).
 7. **Read the relaxed lattice.** When a job completes, its ``a (Ang)``,
-   ``b (Ang)`` and ``c (Ang)`` cells fill in. A job whose CASTEP output
+   ``b (Ang)`` and ``c (Ang)`` cells show each relaxed length and its change
+   against the host, for example ``4.7091 (+0.30 %)``. A job whose CASTEP output
    reports incomplete geometry convergence is marked failed.
 8. **Compare with experiment.** Click ``Generate Comparison Table…`` (see
    :doc:`/user_guide/comparison_table`), or use a completed relaxation as the
@@ -63,28 +64,39 @@ The Pristine Relaxation page
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. figure:: ../_generated/screenshots/pristine_relaxation_page.webp
-   :alt: The Pristine Relaxation page with one completed variable-cell relaxation and
-         its relaxed lattice lengths.
+   :alt: The Pristine Relaxation page with one completed variable-cell relaxation,
+         its relaxed lattice lengths and their changes against the host.
 
    A pristine relaxation of CoF₂, from a synthetic CASTEP output
    (:doc:`/user_guide/examples/cof2`).
 
-The ``Relaxation Jobs`` table has one row per job:
+In a new project the ``Relaxation Jobs`` group holds a hint to add a job. Once
+there is a job, its table has one row per job. Drag the edge of the ``Label`` or
+``Supercell`` header to widen the column; the other columns fit their contents.
 
 ``Label``
    The job's name.
 ``Supercell``
-   ``Unit cell`` or a saved supercell, plus ``Manage Supercells…``.
-``Fix Cell``
-   ``Yes (fixed)`` or ``No (relax)``. MuFinder writes a fixed cell as
-   ``FIX_ALL_CELL``.
+   ``Unit cell`` or a saved supercell, plus ``Manage Supercells…``. A name too
+   long for the column ends in ``…``. The drop-down's tooltip gives the full name
+   and, when the row's cell changes the project k-point grid, the grid the project
+   default gives the row.
+``Fix cell``
+   Ticked, the cell stays fixed; clear, it relaxes. MuFinder writes a fixed cell
+   as ``FIX_ALL_CELL``.
 ``Status``
    The job's status, starting at ``ready``.
 ``a (Ang)``, ``b (Ang)``, ``c (Ang)``
-   The relaxed lattice lengths, once the job has completed.
+   The relaxed lattice lengths once the job has completed, to five significant
+   figures, each with its percent change against the host. The host is the structure the row relaxed from; a
+   supercell row compares against the host tiled to the row's cell, so its
+   lengths are those of the whole supercell. If that structure has since been
+   removed from the project, the cell shows the length alone.
 ``Parameters``
    ``Configure…``, which opens the shared CASTEP parameter dialog for the
    row.
+
+``Generate Comparison Table…`` sits beside ``Add Job`` under the table.
 
 Generated jobs take the project default XC functional, cutoff energy and
 k-point grid. For a supercell row MuFinder rescales the grid to keep the
@@ -92,7 +104,8 @@ reciprocal-space sampling density of the reference lattice the grid was
 converged on: each component scales with the change in the matching reciprocal
 axis and always rounds up, so the cell is never undersampled. For example, a
 ``4x4x4`` default becomes ``2x2x2`` for diagonal ``2x2x2`` and ``2x2x3``
-supercells.
+supercells. When you run such rows the status bar adds how many of them were
+rescaled to its report of the submission, ``K-point grid rescaled for 4 rows``.
 
 ``Generate Symmetry`` is on by default, so the ``.cell`` file carries
 ``SYMMETRY_GENERATE``. Unchecking it in the parameter dialog leaves the keyword

@@ -105,6 +105,7 @@ def _cutoff_context_and_deps(
         request_dashboard_flush=lambda **_: None,
         persist_ui_state=lambda **_: None,
         status_message=lambda _m: None,
+        set_submitted_rows=lambda _keys: None,
         definition_output_directory=lambda d: (
             document.project_root / "files" / "convergence_cutoff"
         ),

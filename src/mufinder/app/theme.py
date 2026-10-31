@@ -1964,6 +1964,12 @@ def _button_styles(p: MuFinderPalette) -> str:
     QComboBox[multiRowTarget="true"] {{
         padding: 3px 27px 3px 7px;
     }}
+    QCheckBox#rowCheckBox {{
+        margin-left: 16px;
+    }}
+    QCheckBox#rowCheckBox[multiRowTarget="true"]::indicator {{
+        border: 2px solid {p.text_primary};
+    }}
     QPushButton#overviewActionButton {{
         border-color: {p.accent};
         background: {p.bg_surface};

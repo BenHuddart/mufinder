@@ -381,7 +381,8 @@ Pristine relaxation
 - Completion handling retrieves and parses both ``.castep`` and ``-out.cell``.
   A run whose geometry optimization did not converge is not treated as
   successful. Parsed relaxed lattices expose ``a``, ``b`` and ``c`` in the
-  workflow table and the result payload.
+  workflow table, each with its change against the host, and in the result
+  payload.
 - A ``Generate Comparison Table`` feature compares one or more completed DFT
   relaxations against the active experimental host structure as a persisted
   subtab with editable title, a one-line tooltip on each metric, a link to the

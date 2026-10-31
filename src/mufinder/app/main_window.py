@@ -6,7 +6,6 @@ from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import replace
 from datetime import UTC, datetime
 from functools import partial
-import html
 import logging
 from pathlib import Path
 import posixpath
@@ -98,7 +97,6 @@ from mufinder.app.comparison_table_widget import ComparisonTablesPage
 from mufinder.app.blocking_call import run_blocking_call
 from mufinder.app.cluster_ui_utils import (
     format_cluster_connection_error,
-    make_message_box_resizable,
     prompt_for_cluster_credentials,
     prompt_to_trust_host_key,
     show_detailed_warning,
@@ -145,8 +143,9 @@ from mufinder.app.relaxation_adapter import (
 from mufinder.app.adapter_common import (
     IDENTITY_SUPERCELL,
     AdapterExpansion,
+    KpointAdjustment,
     coerce_supercell_matrix,
-    summarize_kpoint_adjustments,
+    kpoint_adjustment_status,
 )
 from mufinder.app.relaxation_types import (
     MuonRelaxationConfig,
@@ -559,6 +558,8 @@ class MainWindow(QMainWindow):
         super().__init__()
         self._project_service = ProjectService()
         self._document: ProjectDocument | None = None
+        self._kpoint_adjustments: tuple[KpointAdjustment, ...] = ()
+        self._kpoint_status_note = ""
         # Tracks whether the job dashboard is actually visible to the user.
         # Driven by jobs_dock.visibilityChanged, which (unlike isHidden())
         # also reports False on window minimize / tabbed-dock obscuring.
@@ -4521,7 +4522,7 @@ class MainWindow(QMainWindow):
                 if success_message is not None
                 else f"Submitted {plural(outcome.submitted_count, 'local job')}"
             )
-            self.statusBar().showMessage(message)
+            self.statusBar().showMessage(self._with_kpoint_status_note(message))
 
     def _submit_jobs_on_cluster(
         self,
@@ -4791,7 +4792,7 @@ class MainWindow(QMainWindow):
                 if success_message is not None
                 else f"Submitted {plural(submitted, 'cluster job')} on {cluster_name}"
             )
-            self.statusBar().showMessage(message)
+            self.statusBar().showMessage(self._with_kpoint_status_note(message))
 
     def _connect_for_cluster_submission(
         self, cluster: ClusterConfig, dialog_credentials: SSHCredentials | None
@@ -5764,6 +5765,7 @@ class MainWindow(QMainWindow):
             request_dashboard_flush=lambda **kwargs: self._request_dashboard_flush(**kwargs),
             persist_ui_state=lambda **kwargs: self._persist_document_ui_state(**kwargs),
             status_message=lambda message: self.statusBar().showMessage(message),
+            set_submitted_rows=lambda keys: self._set_submitted_rows(keys),
             definition_output_directory=lambda definition: definition_output_directory(
                 self._document, definition
             ),
@@ -9217,32 +9219,24 @@ class MainWindow(QMainWindow):
             missing_source="Load a host structure before configuring muon-relaxation supercells.",
         )
 
-    def _notify_kpoint_adjustments(self, expansion: AdapterExpansion) -> None:
-        """Summarise the rows whose project k-point grid was rescaled.
+    def _note_kpoint_adjustments(self, expansion: AdapterExpansion) -> None:
+        """Keep the rows whose project k-point grid was rescaled for the coming submission."""
 
-        Rows with the same cell and grid change share one summary line, so the
-        dialog stays short however many rows are submitted; the per-row list
-        sits behind Show Details. Shown as a dialog so the note is not
-        overwritten by the trailing ``statusBar`` confirmation on the
-        configure path.
-        """
+        self._kpoint_adjustments = expansion.kpoint_adjustments
 
-        summary = summarize_kpoint_adjustments(expansion.kpoint_adjustments)
-        if summary is None:
-            return
-        box = make_message_box_resizable(QMessageBox(self))
-        box.setIcon(QMessageBox.Icon.Information)
-        box.setWindowTitle("K-point grids adjusted")
-        box.setText(summary.headline)
-        # Keep each grouped line whole: the box widens to fit rather than wrapping.
-        box.setInformativeText(
-            "<br>".join(f"<nobr>{html.escape(line)}</nobr>" for line in summary.body.splitlines())
+    def _set_submitted_rows(self, keys: Sequence[object]) -> None:
+        """Word the rescaled-grid note for the rows being submitted; ``()`` ends the note."""
+
+        submitted = {str(key) for key in keys}
+        self._kpoint_status_note = kpoint_adjustment_status(
+            [item for item in self._kpoint_adjustments if item.row_key in submitted]
         )
-        if len(expansion.kpoint_adjustments) > 1:
-            box.setDetailedText(summary.details)
-        box.setStandardButtons(QMessageBox.StandardButton.Ok)
-        box.setDefaultButton(QMessageBox.StandardButton.Ok)
-        box.exec()
+        self._kpoint_adjustments = ()
+
+    def _with_kpoint_status_note(self, message: str) -> str:
+        """Return a submission's status ``message`` with the rescaled-grid note, if any."""
+
+        return f"{message}; {self._kpoint_status_note}" if self._kpoint_status_note else message
 
     def _on_pristine_relaxation_configured(self, config: PristineRelaxationConfig) -> None:
         if self._document is None:
@@ -9270,7 +9264,7 @@ class MainWindow(QMainWindow):
         except (ValueError, StructureBridgeError) as exc:
             QMessageBox.warning(self, "Pristine relaxation setup invalid", str(exc))
             return
-        self._notify_kpoint_adjustments(expansion)
+        self._note_kpoint_adjustments(expansion)
 
         output_root = self._document.project_root / "files" / "pristine_relaxation"
         definition = self._project_service.register_pristine_relaxation_definition(
@@ -9314,7 +9308,7 @@ class MainWindow(QMainWindow):
         except (ValueError, StructureBridgeError) as exc:
             QMessageBox.warning(self, "Muon relaxation setup invalid", str(exc))
             return
-        self._notify_kpoint_adjustments(expansion)
+        self._note_kpoint_adjustments(expansion)
         output_root = self._document.project_root / "files" / "muon_relaxation"
         definition = self._project_service.register_muon_relaxation_definition(
             self._document,
@@ -9641,7 +9635,7 @@ class MainWindow(QMainWindow):
         except (ValueError, StructureBridgeError) as exc:
             QMessageBox.warning(self, "UEP setup invalid", str(exc))
             return
-        self._notify_kpoint_adjustments(expansion)
+        self._note_kpoint_adjustments(expansion)
 
         output_root = self._document.project_root / "files" / "uep"
         definition = self._project_service.register_uep_definition(

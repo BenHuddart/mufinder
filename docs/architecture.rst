@@ -202,10 +202,9 @@ into workflow-layer ``expand_*`` calls. Their shared machinery lives in
   shape for every adapter's public ``expand_*`` function: ``jobs`` plus
   ``kpoint_adjustments``, one
   :class:`~mufinder.app.adapter_common.KpointAdjustment` per row whose grid
-  was rescaled. :func:`~mufinder.app.adapter_common.summarize_kpoint_adjustments`
-  groups them by cell and grid change into a short summary plus a per-row
-  detail text; ``main_window`` shows both in one dialog from the configure
-  path, so the dialog's height does not grow with the number of rows.
+  was rescaled. :func:`~mufinder.app.adapter_common.kpoint_adjustment_status`
+  words them for the status bar, where ``main_window`` adds the rows being
+  submitted to the submission's message.
 - The supercell adapters (pristine relaxation, muon relaxation, UEP) share one
   expansion prologue. :func:`~mufinder.app.adapter_common.seed_workflow_defaults`
   layers the project exchange-correlation functional and cut-off energy over

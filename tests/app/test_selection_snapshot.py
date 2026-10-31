@@ -3,13 +3,21 @@
 from __future__ import annotations
 
 import pytest
-from PySide6.QtCore import QItemSelectionModel, Qt
+from PySide6.QtCore import QItemSelection, QItemSelectionModel, Qt
 from PySide6.QtGui import QMouseEvent
-from PySide6.QtWidgets import QMessageBox, QPushButton, QTableWidget, QTableWidgetItem
+from PySide6.QtTest import QTest
+from PySide6.QtWidgets import (
+    QAbstractItemView,
+    QMessageBox,
+    QPushButton,
+    QTableWidget,
+    QTableWidgetItem,
+)
 
 from mufinder.app import selection_snapshot
 from mufinder.app.selection_snapshot import (
     SelectionScope,
+    SelectionSnapshotCheckBox,
     SelectionSnapshotComboBox,
     SelectionSnapshotPushButton,
     SelectionSnapshotToolButton,
@@ -609,3 +617,48 @@ def test_resolve_does_not_ask_confirm_unprompted_after_the_scope_prompt(qapp, mo
     )
 
     assert asked == []
+
+
+def test_snapshot_check_box_captures_the_selection_and_its_state_on_press(qapp):
+    table = QTableWidget(3, 2)
+    for row in range(3):
+        table.setItem(row, 0, QTableWidgetItem(str(row)))
+    check = SelectionSnapshotCheckBox(table)
+    table.setCellWidget(0, 1, check)
+    table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+    table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+    selection = QItemSelection()
+    for row in (0, 1):
+        selection.select(table.model().index(row, 0), table.model().index(row, 0))
+    table.selectionModel().select(
+        selection,
+        QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows,
+    )
+
+    QTest.keyPress(check, Qt.Key.Key_Space)
+
+    assert check.selection_snapshot_rows == (0, 1)
+    assert check.pre_interaction_checked is False
+
+
+def test_snapshot_check_box_restores_its_state_without_signals(qapp):
+    check = SelectionSnapshotCheckBox()
+    check.pre_interaction_checked = False
+    check.setChecked(True)
+    toggled: list[bool] = []
+    check.toggled.connect(toggled.append)
+
+    check.restore_pre_interaction_state()
+
+    assert not check.isChecked()
+    assert toggled == []
+
+
+def test_snapshot_combo_ends_text_too_wide_for_it_in_an_ellipsis(qapp):
+    combo = SelectionSnapshotComboBox()
+    combo.addItem("YBa2Cu3O7 2x2x1 with a long name")
+    combo.resize(90, 30)
+    assert combo.displayed_text().endswith("…")
+
+    combo.resize(600, 30)
+    assert combo.displayed_text() == "YBa2Cu3O7 2x2x1 with a long name"

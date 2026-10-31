@@ -94,6 +94,9 @@ class WorkflowControllerContext:
     request_dashboard_flush: Callable[..., None]
     persist_ui_state: Callable[..., None]
     status_message: Callable[[str], None]
+    #: Names the rows the submission in progress covers, ``()`` once it is over,
+    #: so the backends' status message can report what applies to those rows.
+    set_submitted_rows: Callable[[Sequence[object]], None]
 
     # Cross-workflow job/definition readers. These belong here (not in any Deps
     # class) because they read durable job/definition state the same way for
@@ -427,14 +430,18 @@ class WorkflowJobController:
         )
         groups = self.submission_groups(list(plan.jobs))
         skipped = self.skipped_row_count(plan)
-        for index, (group, extras) in enumerate(groups):
-            # The backends report what they submitted in the status bar. When
-            # the selection also held rows that were not ready, the last
-            # group's message says how many were left out, so a "Run All" or a
-            # mixed selection never looks as if it covered every row.
-            if skipped and index == len(groups) - 1 and "success_message" not in extras:
-                extras = {**extras, "success_message": _success_message(target, skipped)}
-            backend(group, **extras)
+        self._context.set_submitted_rows(plan.ready_values)
+        try:
+            for index, (group, extras) in enumerate(groups):
+                # The backends report what they submitted in the status bar. When
+                # the selection also held rows that were not ready, the last
+                # group's message says how many were left out, so a "Run All" or a
+                # mixed selection never looks as if it covered every row.
+                if skipped and index == len(groups) - 1 and "success_message" not in extras:
+                    extras = {**extras, "success_message": _success_message(target, skipped)}
+                backend(group, **extras)
+        finally:
+            self._context.set_submitted_rows(())
 
     @staticmethod
     def skipped_row_count(plan: WorkflowSubmissionPlan) -> int:

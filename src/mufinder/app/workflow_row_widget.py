@@ -38,7 +38,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QModelIndex, QPersistentModelIndex, QSize, Qt, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -50,6 +50,8 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QSizePolicy,
+    QStyledItemDelegate,
+    QStyleOptionViewItem,
     QTableWidget,
     QTableWidgetItem,
     QToolButton,
@@ -67,6 +69,7 @@ from mufinder.app.selection_snapshot import (
     resolve_target_keys,
 )
 from mufinder.app.theme import (
+    make_empty_state_label,
     status_brush,
     style_hint_text,
     style_section_subtitle,
@@ -108,6 +111,18 @@ from mufinder.services.structure_export import NOT_COMPLETED_REASON, RelaxedStru
 
 _LOCKED_LABEL_TOOLTIP = "Job label is locked once this row has been queued for execution."
 
+#: Room a content-sized column keeps beside its widest cell.
+_CELL_PADDING = 10
+
+
+class _PaddedCellDelegate(QStyledItemDelegate):
+    """Widens every cell's size hint, so a content-sized column does not crowd its text."""
+
+    def sizeHint(  # noqa: N802 - Qt API naming.
+        self, option: QStyleOptionViewItem, index: QModelIndex | QPersistentModelIndex
+    ) -> QSize:
+        return super().sizeHint(option, index) + QSize(_CELL_PADDING, 0)
+
 
 @dataclass(frozen=True)
 class RowEntry:
@@ -134,7 +149,9 @@ class RowTableWidget(QWidget):
     - ``_EMPTY_STATUS`` for a row with no job, ``_CONFIGURE_NOUN``,
       ``_ROW_LABEL_TEMPLATE``, ``_NAME_PREFIX_DEFAULT`` (``None``: no job-name
       prefix field), ``_ADD_ROW_TEXT`` (``None``: no Add button),
-      ``_NO_ROWS_MESSAGE``, ``_TABLE_TOOLTIP`` and ``_READ_ONLY_ROW_TOOLTIP``.
+      ``_NO_ROWS_MESSAGE``, ``_EMPTY_ROWS_TEXT`` (``None``: an empty table stays
+      on show; otherwise this hint takes its place), ``_TABLE_TOOLTIP`` and
+      ``_READ_ONLY_ROW_TOOLTIP``.
 
     A subclass implements :meth:`create_row_cells`, :meth:`refresh_row_cells`,
     :meth:`config_for_rows`, ``collect_state`` and ``set_form_state``, plus the
@@ -157,6 +174,10 @@ class RowTableWidget(QWidget):
 
     _LABEL_COLUMN = 0
     _SUPERCELL_COLUMN = 1
+    #: Starting widths of the label and supercell columns; the user can drag them.
+    #: The supercell width shows a name like ``YBa2Cu3O7 2x2x1`` in full.
+    _LABEL_COLUMN_WIDTH = 130
+    _SUPERCELL_COLUMN_WIDTH = 164
     _STATUS_COLUMN: int
     _CONFIGURE_COLUMN: int
     _REMOVE_COLUMN: int
@@ -174,6 +195,7 @@ class RowTableWidget(QWidget):
     _NAME_PREFIX_DEFAULT: str | None = None
     _ADD_ROW_TEXT: str | None = "Add Job"
     _NO_ROWS_MESSAGE = "Add one or more rows first."
+    _EMPTY_ROWS_TEXT: str | None = None
     _TABLE_TOOLTIP = (
         "Right-click selected rows to run, cancel, inspect, reset, configure, or remove them."
     )
@@ -340,9 +362,9 @@ class RowTableWidget(QWidget):
     ) -> QTableWidget:
         """Return an editable job table with the workflow's columns.
 
-        Label and supercell stretch, the remove column is a fixed 34 px, and
-        every other column fits its contents. ``header_factory`` installs a
-        custom horizontal header.
+        Label and supercell start at a set width the user can drag, the remove
+        column is a fixed 34 px, and every other column fits its contents with
+        some padding. ``header_factory`` installs a custom horizontal header.
         """
 
         headers = self._COLUMN_HEADERS
@@ -354,6 +376,7 @@ class RowTableWidget(QWidget):
         # editable table overrides): extended multi-select, in-place editing,
         # a fixed row height, per-column resize modes, and a non-stretching
         # last (Remove) column.
+        table.setItemDelegate(_PaddedCellDelegate(table))
         table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         table.setEditTriggers(
             QAbstractItemView.EditTrigger.DoubleClicked
@@ -364,13 +387,13 @@ class RowTableWidget(QWidget):
         header = table.horizontalHeader()
         header.setStretchLastSection(False)
         for column in range(len(headers)):
-            stretch = column in (self._LABEL_COLUMN, self._SUPERCELL_COLUMN)
-            header.setSectionResizeMode(
-                column,
-                QHeaderView.ResizeMode.Stretch
-                if stretch
-                else QHeaderView.ResizeMode.ResizeToContents,
-            )
+            header.setSectionResizeMode(column, QHeaderView.ResizeMode.ResizeToContents)
+        for column, width in (
+            (self._LABEL_COLUMN, self._LABEL_COLUMN_WIDTH),
+            (self._SUPERCELL_COLUMN, self._SUPERCELL_COLUMN_WIDTH),
+        ):
+            header.setSectionResizeMode(column, QHeaderView.ResizeMode.Interactive)
+            table.setColumnWidth(column, width)
         header.setSectionResizeMode(self._REMOVE_COLUMN, QHeaderView.ResizeMode.Fixed)
         table.setColumnWidth(self._REMOVE_COLUMN, 34)
         return table
@@ -392,16 +415,16 @@ class RowTableWidget(QWidget):
         preamble: Sequence[QWidget] = (),
         table_view: QWidget | None = None,
         control_leading: QWidget | None = None,
-        run_extras: Sequence[QWidget] = (),
+        control_extras: Sequence[QWidget] = (),
         separate_run_group: bool = True,
     ) -> None:
         """Lay out the page: header, ``preamble``, job table with controls, run row.
 
         The controls row holds ``control_leading`` (default: the Add button),
-        the selection count, Remove Selected and Configure Selected
-        Parameters. The run row holds the job-name prefix (when the widget has
-        one), the run buttons and ``run_extras``, in its own "Run Jobs" group
-        unless ``separate_run_group`` is false.
+        ``control_extras``, the selection count, Remove Selected and Configure
+        Selected Parameters. The run row holds the job-name prefix (when the
+        widget has one) and the run buttons, in its own "Run Jobs" group unless
+        ``separate_run_group`` is false.
         """
 
         layout = QVBoxLayout(self)
@@ -433,11 +456,18 @@ class RowTableWidget(QWidget):
         table_layout = QVBoxLayout(table_group)
         table_layout.setContentsMargins(10, 8, 10, 8)
         table_layout.addWidget(table_view if table_view is not None else self._table)
+        self._empty_rows_label: QLabel | None = None
+        if self._EMPTY_ROWS_TEXT is not None:
+            self._empty_rows_label = make_empty_state_label(self._EMPTY_ROWS_TEXT)
+            table_layout.addWidget(self._empty_rows_label, 1)
+            self._refresh_empty_rows_state()
 
         control_row = QHBoxLayout()
         leading = control_leading if control_leading is not None else self._add_row_button
         if leading is not None:
             control_row.addWidget(leading)
+        for widget in control_extras:
+            control_row.addWidget(widget)
         control_row.addStretch(1)
         control_row.addWidget(self._selection_count_label)
         control_row.addWidget(self._remove_selected_button)
@@ -454,8 +484,6 @@ class RowTableWidget(QWidget):
             run_row.addStretch(1)
         run_row.addWidget(self._run_local_button)
         run_row.addWidget(self._run_cluster_button)
-        for widget in run_extras:
-            run_row.addWidget(widget)
 
         if separate_run_group:
             layout.addWidget(table_group, 1)
@@ -783,6 +811,13 @@ class RowTableWidget(QWidget):
         if isinstance(supercell_combo, QComboBox):
             supercell_combo.setEnabled(not locked)
             name_row_control(supercell_combo, "Supercell for", row_label)
+            supercell_combo.setToolTip(
+                "\n".join(
+                    text
+                    for text in (supercell_combo.currentText(), self._kpoint_tooltip(row_id))
+                    if text
+                )
+            )
         remove_button = target.cellWidget(row, self._REMOVE_COLUMN)
         if isinstance(remove_button, QToolButton):
             name_row_control(remove_button, "Remove", row_label)
@@ -803,6 +838,18 @@ class RowTableWidget(QWidget):
                 noun=self._CONFIGURE_NOUN,
                 used=True,
             )
+
+    def _kpoint_tooltip(self, row_id: int) -> str:
+        """Name the grid the project's k-point default gives a row, when it is rescaled."""
+
+        row_values = self._row_parameter_values.get(row_id, {})
+        if (
+            self._row_is_read_only(row_id)
+            or "kpoint_mp_grid" in row_values
+            or "kpoint_mp_spacing" in row_values
+        ):
+            return ""
+        return self._supercells.kpoint_adjustment_text(row_id)
 
     def _refresh_all_rows(self) -> None:
         for table in self._all_tables():
@@ -836,7 +883,15 @@ class RowTableWidget(QWidget):
         rows = selected_table_rows(table) or tuple(range(table.rowCount()))
         return self._submission_keys_at_rows(rows, table=table)
 
+    def _refresh_empty_rows_state(self) -> None:
+        if self._empty_rows_label is None:
+            return
+        has_rows = self._table.rowCount() > 0
+        self._table.setVisible(has_rows)
+        self._empty_rows_label.setVisible(not has_rows)
+
     def _refresh_batch_button_state(self) -> None:
+        self._refresh_empty_rows_state()
         self._batch_configure_button.setEnabled(bool(self._selected_row_ids()))
         for feedback in self._selection_feedbacks:
             feedback.refresh()

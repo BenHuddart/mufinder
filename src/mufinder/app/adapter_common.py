@@ -57,43 +57,20 @@ STRUCTURE_CONTROLLED_CELL_KEYWORDS = frozenset(
 )
 
 
-def format_grid(grid: tuple[int, int, int]) -> str:
-    """Return a k-point grid as ``AxBxC``."""
-
-    return f"{grid[0]}x{grid[1]}x{grid[2]}"
-
-
 @dataclass(frozen=True, slots=True)
 class KpointAdjustment:
     """One row whose project k-point grid was rescaled to its own cell.
 
-    ``cell_label`` names the row's cell (``unit cell``, ``2x2x2`` or a
-    spelled-out custom matrix); ``project_grid`` is the project default and
-    ``adjusted_grid`` the grid at equivalent reciprocal-space density.
+    ``row_key`` is the key the row is submitted under, ``cell_label`` names its
+    cell (``unit cell``, ``2x2x2`` or a spelled-out custom matrix);
+    ``project_grid`` is the project default and ``adjusted_grid`` the grid at
+    equivalent reciprocal-space density.
     """
 
-    row_label: str
+    row_key: str
     cell_label: str
     project_grid: tuple[int, int, int]
     adjusted_grid: tuple[int, int, int]
-
-    @property
-    def cell_description(self) -> str:
-        """Return ``unit cell`` or ``<cell_label> supercell``."""
-
-        return self.cell_label if self.cell_label == "unit cell" else f"{self.cell_label} supercell"
-
-    @property
-    def change(self) -> str:
-        """Return the grid change as ``AxBxC → DxExF``."""
-
-        return f"{format_grid(self.project_grid)} → {format_grid(self.adjusted_grid)}"
-
-    @property
-    def message(self) -> str:
-        """Describe this row's adjustment on one short line."""
-
-        return f"{self.row_label}: {self.change} ({self.cell_description})"
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,67 +79,20 @@ class AdapterExpansion:
 
     Every app-layer ``expand_*`` function returns this shape.
     ``kpoint_adjustments`` holds one record per row whose project k-point grid
-    was rescaled; the UI summarises them with
-    :func:`summarize_kpoint_adjustments`. It is empty when nothing changed.
+    was rescaled; the UI reports them with :func:`kpoint_adjustment_status`. It
+    is empty when nothing changed.
     """
 
     jobs: tuple[JobSpec, ...]
     kpoint_adjustments: tuple[KpointAdjustment, ...] = ()
 
 
-#: Most distinct adjustments listed in a k-point summary before the rest are
-#: left to the details.
-KPOINT_SUMMARY_MAX_GROUPS = 5
+def kpoint_adjustment_status(adjustments: Sequence[KpointAdjustment]) -> str:
+    """The status-bar note for ``adjustments``, empty when nothing was rescaled."""
 
-
-@dataclass(frozen=True, slots=True)
-class KpointAdjustmentSummary:
-    """A k-point adjustment report sized for a message box.
-
-    ``headline`` is one short sentence, ``body`` the grouped changes and
-    ``details`` one line per row.
-    """
-
-    headline: str
-    body: str
-    details: str
-
-
-def summarize_kpoint_adjustments(
-    adjustments: Iterable[KpointAdjustment],
-    *,
-    max_groups: int = KPOINT_SUMMARY_MAX_GROUPS,
-) -> KpointAdjustmentSummary | None:
-    """Summarise ``adjustments`` for display, or return ``None`` when there are none.
-
-    Rows with the same cell and the same grid change share one body line with a
-    row count, so the body grows with the number of distinct cells, not the
-    number of rows. At most ``max_groups`` lines are listed, the most common
-    first; a final line counts the rest. ``details`` lists every row.
-    """
-
-    records = list(adjustments)
-    if not records:
-        return None
-    groups: dict[tuple[str, str], int] = {}
-    for record in records:
-        key = (record.cell_description, record.change)
-        groups[key] = groups.get(key, 0) + 1
-    ordered = sorted(groups.items(), key=lambda item: -item[1])
-
-    lines = ["Each grid keeps the project's reciprocal-space density.", ""]
-    for (cell, change), count in ordered[:max_groups]:
-        lines.append(f"• {cell}: {change} ({plural(count, 'row')})")
-    hidden = len(ordered) - max_groups
-    if hidden > 0:
-        lines.append(
-            f"• and {hidden} more {'change' if hidden == 1 else 'changes'}; see Show Details."
-        )
-    return KpointAdjustmentSummary(
-        headline=f"K-point grid rescaled for {plural(len(records), 'row')}.",
-        body="\n".join(lines),
-        details="\n".join(record.message for record in records),
-    )
+    if not adjustments:
+        return ""
+    return f"K-point grid rescaled for {plural(len(adjustments), 'row')}"
 
 
 def find_keyword_spec(name: str):
@@ -681,7 +611,7 @@ def prepare_row(
             and kpoint_grid != project_kpoint_grid
         ):
             adjustment = KpointAdjustment(
-                row_label=label,
+                row_key=label,
                 cell_label=supercell_label(
                     supercell_matrix, unit_cell="unit cell", spell_out_custom=True
                 ),
