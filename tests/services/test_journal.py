@@ -14,6 +14,7 @@ from mufinder.services import site_generation_service
 from mufinder.services.project_document import ProjectDocument
 from tests.support.symmetry_hosts import cof2_host
 from tests.support.journal import generation_record
+from mufinder.services.magnetic_field_settings import phase_sampling_label
 from mufinder.services.journal import (
     build_journal,
     entry_details,
@@ -1734,3 +1735,428 @@ def test_exports_stay_the_short_summary(tmp_path: Path) -> None:
         assert "Supercell" not in text
         assert "meV" not in text
         assert "processes" not in text
+
+
+# --- findings ------------------------------------------------------------------
+
+
+def _finding_entry(action: str, stage: WorkflowStage, **parameters: object):
+    record = ProvenanceRecord(action=action, workflow_stage=stage, parameters=parameters)
+    entries = build_journal("Study", [record]).days[0].entries
+    assert len(entries) == 1
+    return entries[0]
+
+
+def test_a_uep_minima_entry_gives_the_count_and_the_lowest_position() -> None:
+    entry = _finding_entry(
+        "uep_minima_found",
+        WorkflowStage.UEP,
+        job_label="uep_source",
+        start_count=20,
+        includes_zpe=True,
+        grouping={"clustering_method": "legacy_cartesian_hier", "threshold_ang": 0.2},
+        minima=[
+            {"size": 12, "fractional_position": [0, 0.5, 0], "minimum_energy_eV": -1.5},
+            {"size": 5, "fractional_position": [0.5, 0, 0.25], "minimum_energy_eV": -1.388},
+            {"size": 3, "fractional_position": [0.1, 0.2, 0.3], "minimum_energy_eV": None},
+        ],
+    )
+
+    assert entry.title == "UEP minima found"
+    assert entry.stamp_kind == "success"
+    assert entry.body == "UEP: 3 distinct minima; lowest at (0.000, 0.500, 0.000)"
+    assert entry.open_label == "Open in UEP"
+    details = entry_details(entry)
+    assert details.lines == (
+        "Batch search of uep_source",
+        "20 optimised starts grouped",
+        "Grouped within 0.2 Å",
+        "Energies include the zero-point energy",
+    )
+    assert details.job_table.headers == ("Minimum", "Position", "Starts", "ΔE (meV)")
+    assert details.job_table.rows == (
+        ("1", "(0.000, 0.500, 0.000)", "12", "0.0"),
+        ("2", "(0.500, 0.000, 0.250)", "5", "112.0"),
+        ("3", "(0.100, 0.200, 0.300)", "3", "—"),
+    )
+
+
+def test_one_uep_minimum_is_singular_and_an_unknown_method_is_not_shown() -> None:
+    entry = _finding_entry(
+        "uep_minima_found",
+        WorkflowStage.UEP,
+        job_label="uep_source",
+        grouping={"clustering_method": "a_future_method"},
+        minima=[{"size": 1, "fractional_position": [0, 0, 0], "minimum_energy_eV": -1.0}],
+    )
+
+    assert entry.body == "UEP: 1 distinct minimum; lowest at (0.000, 0.000, 0.000)"
+    assert entry_details(entry).lines == ("Batch search of uep_source",)
+
+
+def test_a_sites_grouped_entry_names_the_lowest_two_sites() -> None:
+    entry = _finding_entry(
+        "sites_grouped",
+        WorkflowStage.SITE_ANALYSIS,
+        workspace_name="Mu+ sites",
+        site_count=10,
+        distinct_site_count=4,
+        charge_state_label="positive muon",
+        grouping_summary="Connected components within 0.25 Å",
+        sites=[
+            {
+                "cluster_index": 2,
+                "wyckoff_label": "4c",
+                "fractional_position": [0, 0.5, 0],
+                "relative_energy_ev": 0.0,
+            },
+            {
+                "cluster_index": 1,
+                "wyckoff_label": "",
+                "fractional_position": [0.25, 0.25, 0.25],
+                "relative_energy_ev": 0.112,
+            },
+        ],
+    )
+
+    assert entry.title == "Relaxed sites grouped"
+    assert entry.body == "Positive muon: 4 distinct sites; lowest 4c, next cluster 1 +112 meV"
+    details = entry_details(entry)
+    assert details.lines == (
+        "Grouped 10 relaxed sites in 'Mu+ sites'",
+        "Connected components within 0.25 Å",
+    )
+    assert details.job_table.rows == (
+        ("4c", "(0.000, 0.500, 0.000)", "0.0"),
+        ("cluster 1", "(0.250, 0.250, 0.250)", "112.0"),
+    )
+
+
+def test_a_sites_grouped_entry_with_one_site_and_no_charge_state() -> None:
+    entry = _finding_entry(
+        "sites_grouped",
+        WorkflowStage.SITE_ANALYSIS,
+        distinct_site_count=1,
+        sites=[{"cluster_index": 1, "wyckoff_label": "2a", "fractional_position": [0, 0, 0]}],
+    )
+
+    assert entry.body == "1 distinct site; lowest 2a"
+
+
+def test_a_field_entry_gives_the_size_terms_and_table() -> None:
+    entry = _finding_entry(
+        "field_calculated",
+        WorkflowStage.MAGNETIC_FIELD,
+        kind="commensurate",
+        site_label="4c",
+        owner_title="Magnetic Fields",
+        terms=["dipolar", "contact"],
+        estimate=False,
+        applied_field_T=[0.0, 0.0, 0.1],
+        results=[
+            {
+                "site_label": "Mu 1",
+                "muon_position": [0, 0.5, 0],
+                "magnitude_T": 0.42,
+                "total_T": [0.0, 0.0, 0.42],
+            }
+        ],
+    )
+
+    assert entry.title == "Magnetic field calculated"
+    assert entry.body == "Field at 4c: 0.42 T (dipolar + contact)"
+    details = entry_details(entry)
+    assert details.lines == ("On 'Magnetic Fields'", "Applied field (0, 0, 0.1) T")
+    assert details.job_table.headers == ("Site", "Position", "|B| (T)", "Field (T)")
+    assert details.job_table.rows == (("Mu 1", "(0.000, 0.500, 0.000)", "0.42", "(0, 0, 0.42)"),)
+
+
+def test_a_field_entry_shows_the_settings_it_recorded() -> None:
+    entry = _finding_entry(
+        "field_calculated",
+        WorkflowStage.MAGNETIC_FIELD,
+        kind="distribution",
+        site_label="4c",
+        owner_title="Helix",
+        results=[{"site_label": "Mu 1", "total_rms_T": 0.1}],
+        settings={
+            "contact_coupling_per_A3": 1.2,
+            "contact_neighbours": 2,
+            "contact_radius_A": 4.0,
+            "supercell": [20, 20, 20],
+            "equivalent_sites": True,
+            "distortion_corrected": True,
+            "phase_samples": 1000,
+            "phase_sampling": "montecarlo",
+            "phase_sampling_seed": 7,
+        },
+    )
+
+    assert entry_details(entry).lines == (
+        "On 'Helix'",
+        "Contact coupling 1.2 Å⁻³, shell of 2 nearest magnetic ions within 4 Å",
+        "Supercell 20×20×20 · equivalent sites included · distortion corrected · "
+        f"1000 phase samples ({phase_sampling_label('montecarlo')}) · seed 7",
+    )
+
+
+def test_a_field_entry_without_a_contact_coupling_does_not_mention_one() -> None:
+    entry = _finding_entry(
+        "field_calculated",
+        WorkflowStage.MAGNETIC_FIELD,
+        kind="commensurate",
+        site_label="4c",
+        owner_title="AFM",
+        results=[{"site_label": "Mu 1", "magnitude_T": 0.1}],
+        settings={"contact_coupling_per_A3": 0.0, "contact_neighbours": 2, "contact_radius_A": 4.0},
+    )
+
+    assert entry_details(entry).lines == ("On 'AFM'",)
+
+
+def test_a_field_entry_gives_the_range_over_equivalent_sites_and_marks_an_estimate() -> None:
+    entry = _finding_entry(
+        "field_calculated",
+        WorkflowStage.MAGNETIC_FIELD,
+        kind="commensurate",
+        site_label="UEP 1",
+        owner_title="AFM",
+        terms=["dipolar"],
+        estimate=True,
+        results=[{"magnitude_T": 0.12}, {"magnitude_T": 0.42}],
+    )
+
+    assert (
+        entry.body == "Field at UEP 1: 0.12 to 0.42 T (dipolar); estimate at an unrelaxed UEP site"
+    )
+
+
+def test_rounding_noise_in_a_field_vector_reads_as_zero() -> None:
+    entry = _finding_entry(
+        "field_calculated",
+        WorkflowStage.MAGNETIC_FIELD,
+        kind="distribution",
+        site_label="4c",
+        owner_title="Helix",
+        results=[{"site_label": "Mu 1", "total_rms_T": 0.1, "mean_T": [-4e-17, 0.02, 7.9e-17]}],
+    )
+
+    assert entry_details(entry).job_table.rows[0][3] == "(0, 0.02, 0)"
+
+
+def test_a_distribution_entry_gives_the_rms_and_any_convergence_warning() -> None:
+    entry = _finding_entry(
+        "field_calculated",
+        WorkflowStage.MAGNETIC_FIELD,
+        kind="distribution",
+        site_label="4c",
+        owner_title="Helix",
+        terms=["dipolar"],
+        results=[
+            {
+                "site_label": "Mu 1",
+                "total_rms_T": 0.1,
+                "mean_T": [0.0, 0.0, 0.0],
+                "not_converged": ["Too few samples."],
+            }
+        ],
+    )
+
+    assert entry.body == "RMS field at 4c: 0.1 T (dipolar)"
+    details = entry_details(entry)
+    assert "Too few samples." in details.lines
+    assert details.job_table.headers[2:] == ("RMS (T)", "Mean field (T)")
+
+
+def test_a_polarisation_entry_names_the_geometry_sample_and_settings() -> None:
+    entry = _finding_entry(
+        "polarisation_simulated",
+        WorkflowStage.MAGNETIC_FIELD,
+        title="Simulation 1",
+        site_count=2,
+        estimate=False,
+        warnings=["A warning."],
+        sources=[{"title": "Magnetic Fields", "weight": 1.0}],
+        settings={
+            "geometry": "zero_field",
+            "polycrystalline": True,
+            "end_time_us": 10.0,
+            "sigma_per_us": 0.2,
+            "added_applied_field_T": [0.0, 0.0, 0.01],
+        },
+    )
+
+    assert entry.title == "Polarisation simulated"
+    assert entry.body == "ZF polycrystal simulation from 2 sites"
+    assert entry.workflow_label == "Polarisation"
+    assert entry.route == "polarisation"
+    assert entry.open_label == "Open in Polarisation"
+    assert entry_details(entry).lines == (
+        "Simulation 'Simulation 1'",
+        "Fields from 'Magnetic Fields' (weight 1)",
+        "End time 10 µs · added field (0, 0, 0.01) T · σ 0.2 µs⁻¹",
+        "A warning.",
+    )
+
+
+def test_a_simulation_with_nuclear_widths_shows_them_in_place_of_sigma() -> None:
+    entry = _finding_entry(
+        "polarisation_simulated",
+        WorkflowStage.MAGNETIC_FIELD,
+        title="Simulation 3",
+        site_count=1,
+        settings={"geometry": "zero_field", "sigma_per_us": 0.5, "sigma_from_nuclear_widths": True},
+    )
+
+    assert entry_details(entry).lines[-1] == "σ from nuclear widths"
+
+
+def test_a_field_from_a_workspace_opens_that_workspace() -> None:
+    entry = _finding_entry(
+        "field_calculated",
+        WorkflowStage.MAGNETIC_FIELD,
+        kind="commensurate",
+        owner="abc",
+        owner_title="Helix",
+        results=[{"magnitude_T": 0.1}],
+    )
+
+    assert entry.route == "magnetic_fields/workspace/abc"
+    assert entry.open_label == "Open in 'Helix'"
+
+
+def test_a_single_crystal_field_simulation_says_so() -> None:
+    entry = _finding_entry(
+        "polarisation_simulated",
+        WorkflowStage.MAGNETIC_FIELD,
+        title="Simulation 2",
+        site_count=1,
+        settings={"geometry": "transverse", "polycrystalline": False},
+    )
+
+    assert entry.body == "TF single-crystal simulation from 1 site"
+
+
+@pytest.mark.parametrize(
+    ("changed", "suffix"),
+    [(False, "; ordering unchanged"), (True, "; ordering changed"), (None, "")],
+)
+def test_a_quantum_entry_gives_the_zpe_and_the_ordering(changed, suffix: str) -> None:
+    entry = _finding_entry(
+        "quantum_corrected",
+        WorkflowStage.QUANTUM_CORRECTIONS,
+        site_label="4c",
+        charge_state_label="positive muon",
+        muon_zpe_total_eV=0.68,
+        mode_frequencies_cm=[3100.4, 1200.0],
+        mode_widths_A=[0.18, 0.3],
+        w1=-0.008,
+        warnings=[],
+        ordering_changed=changed,
+        comparison=[
+            {
+                "site_label": "4c",
+                "relative_energy_eV": 0.0,
+                "zpe_eV": 0.68,
+                "corrected_energy_eV": 0.0,
+            },
+            {
+                "site_label": "T_A",
+                "relative_energy_eV": 0.112,
+                "zpe_eV": 0.7,
+                "corrected_energy_eV": 0.132,
+            },
+        ],
+    )
+
+    assert entry.title == "Zero-point energy calculated"
+    assert entry.stamp_kind == "success"
+    assert entry.body == f"ZPE at 4c: 0.680 eV{suffix}"
+    details = entry_details(entry)
+    assert details.lines == (
+        "Positive muon",
+        "Muon modes 3100, 1200 cm⁻¹",
+        "Zero-point widths 0.18, 0.30 Å",
+        "w1 -0.008",
+    )
+    assert details.job_table.rows == (
+        ("4c", "0.000", "0.680", "0.000"),
+        ("T_A", "0.112", "0.700", "0.132"),
+    )
+
+
+def test_a_quantum_entry_with_a_warning_asks_for_attention_and_one_site_has_no_table() -> None:
+    entry = _finding_entry(
+        "quantum_corrected",
+        WorkflowStage.QUANTUM_CORRECTIONS,
+        site_label="4c",
+        muon_zpe_total_eV=0.68,
+        warnings=["Check the muon mass."],
+        comparison=[
+            {
+                "site_label": "4c",
+                "relative_energy_eV": 0.0,
+                "zpe_eV": 0.68,
+                "corrected_energy_eV": 0.0,
+            }
+        ],
+    )
+
+    assert entry.stamp_kind == "warning"
+    details = entry_details(entry)
+    assert details.lines == ("Check the muon mass.",)
+    assert details.job_table is None
+
+
+def test_a_barrier_entry_gives_the_path_and_its_numbers() -> None:
+    entry = _finding_entry(
+        "barrier_calculated",
+        WorkflowStage.ENERGY_BARRIERS,
+        job_label="barrier_neb",
+        start_label="4c",
+        end_label="T_A",
+        charge_state_label="positive muon",
+        forward_barrier_eV=0.31,
+        reverse_barrier_eV=0.21,
+        endpoint_delta_eV=0.1,
+        num_images=11,
+        path_length_ang=2.5,
+    )
+
+    assert entry.title == "Energy barrier calculated"
+    assert entry.body == "Barrier 4c → T_A: 0.310 eV"
+    assert entry_details(entry).lines == (
+        "Positive muon · reverse barrier 0.210 eV · endpoint ΔE +0.100 eV · 11 images · "
+        "path length 2.5 Å",
+    )
+
+
+def test_a_barrier_entry_with_no_sites_uses_the_job_name() -> None:
+    entry = _finding_entry(
+        "barrier_calculated",
+        WorkflowStage.ENERGY_BARRIERS,
+        job_label="barrier_neb",
+        forward_barrier_eV=0.31,
+    )
+
+    assert entry.body == "Barrier barrier_neb: 0.310 eV"
+    assert entry_details(entry).lines == ()
+
+
+def test_findings_export_as_their_summary_line() -> None:
+    record = ProvenanceRecord(
+        action="barrier_calculated",
+        workflow_stage=WorkflowStage.ENERGY_BARRIERS,
+        parameters={
+            "job_label": "b",
+            "start_label": "4c",
+            "end_label": "T_A",
+            "forward_barrier_eV": 0.31,
+            "reverse_barrier_eV": 0.21,
+        },
+    )
+
+    text = render_journal_text(build_journal("Study", [record]))
+
+    assert "Barrier 4c → T_A: 0.310 eV" in text
+    assert "reverse barrier" not in text

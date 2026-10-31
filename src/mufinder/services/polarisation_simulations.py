@@ -39,7 +39,8 @@ from datetime import datetime
 from typing import Any
 from uuid import uuid4
 
-from mufinder.domain.models import Result, Structure
+from mufinder.domain.enums import WorkflowStage
+from mufinder.domain.models import ProvenanceRecord, Result, Structure
 from mufinder.science.magnetic_fields import (
     MagneticFieldDistributionResult,
     MagneticFieldResult,
@@ -66,6 +67,12 @@ from mufinder.services.magnetic_field_results import (
 )
 from mufinder.services.project_document import ProjectDocument, active_host_structure
 from mufinder.services.project_summary import magnetic_field_workspaces
+from mufinder.services.study_findings import (
+    FINGERPRINT_KEY,
+    SUBJECT_KEY,
+    input_fingerprint,
+    record_finding,
+)
 
 #: Title of the Magnetic Fields page as a source.
 MAGNETIC_FIELD_PAGE_TITLE = "Magnetic Fields"
@@ -372,7 +379,10 @@ def run_prepared_polarisation_simulation(
 def store_polarisation_simulation(
     document: ProjectDocument, record: PolarisationSimulationRecord
 ) -> Result:
-    """Store ``record``, replacing the simulation of the same id, and return the record."""
+    """Store ``record``, replacing the simulation of the same id, and return the record.
+
+    A simulation that gives different data is also recorded as a finding.
+    """
 
     existing = _simulation_result(document, record.simulation_id)
     # The static trace is "result", where polarisation_result reads it.
@@ -396,7 +406,35 @@ def store_polarisation_simulation(
     if existing is not None:
         result.created_at = existing.created_at
     document.results[result.id] = result
+    record_finding(document, _polarisation_simulated_record(record))
     return result
+
+
+def _polarisation_simulated_record(record: PolarisationSimulationRecord) -> ProvenanceRecord:
+    """Return the finding of a stored simulation: what was asked for, and from what."""
+
+    settings = record.settings.to_json()
+    sources = [source.to_json() for source in record.sources]
+    return ProvenanceRecord(
+        action="polarisation_simulated",
+        workflow_stage=WorkflowStage.MAGNETIC_FIELD,
+        actor="user",
+        description=f"Simulated the muon polarisation '{record.title}'",
+        parameters={
+            "simulation_id": record.simulation_id,
+            "title": record.title,
+            "settings": settings,
+            "sources": sources,
+            "site_count": len(record.simulation.static.site_labels),
+            "estimate": record.estimate,
+            "warnings": list(record.simulation.warnings),
+            SUBJECT_KEY: record.simulation_id,
+            FINGERPRINT_KEY: input_fingerprint(
+                settings,
+                [(source["record_id"], source["weight"]) for source in sources],
+            ),
+        },
+    )
 
 
 def polarisation_simulations(document: ProjectDocument) -> list[PolarisationSimulationRecord]:

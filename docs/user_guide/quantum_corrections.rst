@@ -406,6 +406,9 @@ The ZPE is a harmonic, Gamma-point estimate for a local defect, not a full
 anharmonic many-body treatment; compare it between sites computed with the
 same settings rather than reading it as an absolute value.
 
+Each completed phonon job adds a ``Zero-point energy calculated`` entry to the
+:doc:`/user_guide/journal`.
+
 Phonon analysis window
 ----------------------
 

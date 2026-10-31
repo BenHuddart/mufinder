@@ -397,6 +397,9 @@ The Energy Barriers stage counts as complete in the workflow navigator and on
 the project home once the project holds at least one NEB result. Until then its
 summary counts the stage's jobs, or reads ``No barrier calculations yet``.
 
+Each completed NEB job adds an ``Energy barrier calculated`` entry to the
+:doc:`/user_guide/journal`.
+
 Current scope and limitations
 -----------------------------
 

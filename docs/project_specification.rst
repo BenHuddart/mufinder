@@ -272,8 +272,9 @@ from the persisted ``provenance.jsonl`` records rather than inferred job
 history. Entries are grouped by local calendar day with human-readable date
 headers, one compact card each with the local time. The default presentation is
 curated and narrative-focused: it includes major workflow actions, submission
-milestones, comparison-table creation and terminal calculation outcomes, and
-omits intermediate runtime states such as queued, running and retrieving. A card
+milestones, comparison-table creation, terminal calculation outcomes and the
+findings that conclude a study (UEP minima, grouped sites, magnetic fields,
+polarisation simulations, zero-point energies and barriers), and omits intermediate runtime states such as queued, running and retrieving. A card
 expands to the details logged for it and the exact time, and links to its
 workflow page. The Journal follows MuFinder branding as a notebook-style
 expedition record using the existing palette and typography tokens; a stamp

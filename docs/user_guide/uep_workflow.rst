@@ -208,6 +208,10 @@ basins. MuFinder follows the same high-level idea:
 - larger clusters usually indicate minima with larger attraction basins and are
   often the most physically relevant first-pass candidates.
 
+Grouping a batch search adds a ``UEP minima found`` entry to the
+:doc:`/user_guide/journal`.
+
+
 Using UEP clusters for relaxation starts
 ----------------------------------------
 

@@ -356,14 +356,30 @@ def test_workspace_creation_and_grouping_records_carry_the_parameters(project) -
     assert created.parameters["relaxation_count"] == 2
     assert created.parameters["charge_state_label"] == "positive muon"
     assert grouped is not None
-    assert grouped.action == "group_relaxed_sites"
+    assert grouped.action == "sites_grouped"
     assert grouped.parameters["site_count"] == 3
     assert grouped.parameters["distinct_site_count"] == 2
+    assert grouped.parameters["charge_state_label"] == "positive muon"
+    energies = [site["relative_energy_ev"] for site in grouped.parameters["sites"]]
+    assert energies == sorted(energies)
+    assert len(energies) == 2
+    assert (
+        grouped.parameters["input_fingerprint"]
+        == (relaxed_sites_grouped_record(workspace, host).parameters["input_fingerprint"])
+    )
     assert grouped.parameters["grouping_summary"] == (
         "Connected components within 0.25 Å, Wyckoff tolerance 0.2 Å, "
         "P4₂/mnm (16 ops), tolerance 0.001 Å"
     )
     assert relaxed_sites_grouped_record({"name": "Empty"}, host) is None
+
+    # A relaxation run again changes the sites, so the same grouping is a new finding.
+    cluster = workspace["clustering"]["result"]["clusters"][-1]
+    cluster["minimum_relative_energy_ev"] = 0.123
+    assert (
+        relaxed_sites_grouped_record(workspace, host).parameters["input_fingerprint"]
+        != (grouped.parameters["input_fingerprint"])
+    )
 
 
 def test_a_grouping_recorded_when_applied_is_kept_when_the_host_changes_later(project) -> None:

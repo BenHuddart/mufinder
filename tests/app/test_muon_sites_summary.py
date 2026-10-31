@@ -740,10 +740,18 @@ def test_applying_a_grouping_writes_a_journal_record(qapp, tmp_path: Path) -> No
         window._relaxation_analysis_view.grouping_applied.emit(str(workspace["id"]))
 
         record = doc.provenance[-1]
-        assert record.action == "group_relaxed_sites"
+        assert record.action == "sites_grouped"
         assert record.parameters["distinct_site_count"] == 2
         assert record.parameters["grouping_summary"].startswith(
             "Connected components within 0.25 Å"
         )
+
+        # Applying the same grouping again the same day adds no record, but it is saved.
+        count = len(doc.provenance)
+        saved: list[str] = []
+        window._persist_document_ui_state = lambda **kwargs: saved.append(kwargs["failure_message"])
+        window._relaxation_analysis_view.grouping_applied.emit(str(workspace["id"]))
+        assert len(doc.provenance) == count
+        assert saved == ["The grouping was applied, but autosave failed."]
     finally:
         window.close()

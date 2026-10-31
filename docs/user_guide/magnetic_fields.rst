@@ -99,6 +99,9 @@ field-distribution summaries, or the finite field list of their commensurate
 approximant when that option is on. ``muesr``/``muLFC`` environment errors are
 reported in the page status area rather than during application startup.
 
+A calculation that gives new values adds a ``Magnetic field calculated`` entry to
+the :doc:`/user_guide/journal`.
+
 Define the magnetic structure
 -----------------------------
 
