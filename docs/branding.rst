@@ -120,6 +120,7 @@ A default or smaller desktop font gives the sizes above, so the smallest step is
 never under 11 px. The scale is fixed when a theme is applied, so a change of
 desktop font takes effect at the next start or change of appearance. Painted
 text and a page's own stylesheet keep their pixel sizes until the page is rebuilt.
+A width cap on a control that holds text goes through ``scaled_to_text()``.
 
 Layouts take ``page_margins()``, ``card_margins()`` and ``form_spacing()``, or a
 ``SPACING`` step. A page moves to these when it is next rebuilt; the harness

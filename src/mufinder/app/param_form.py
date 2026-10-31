@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 
 from mufinder.app.help_dialog import ParameterHelpDialog
 from mufinder.app.param_widgets import ParamEditorBase, create_param_editor
+from mufinder.app.theme import scaled_to_text
 from mufinder.castep_io.gui_metadata import (
     gui_flag_is_unset,
     gui_value_is_active,
@@ -92,7 +93,7 @@ class CastepParamForm(QWidget):
             row_layout.addWidget(editor)
 
             info_button = QPushButton("Info")
-            info_button.setMaximumWidth(48)
+            info_button.setMaximumWidth(scaled_to_text(48))
             info_button.clicked.connect(
                 lambda _checked=False, row_spec=spec: self._show_help(row_spec)
             )

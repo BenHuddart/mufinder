@@ -233,6 +233,12 @@ def type_scale() -> TypeScale:
     return _CURRENT_TYPE_SCALE
 
 
+def scaled_to_text(pixels: int) -> int:
+    """Return a width set for the designed text size, at the type scale in use."""
+
+    return round(pixels * type_scale().caption / TYPE_SCALE.caption)
+
+
 def _scaled_type_scale(factor: float) -> TypeScale:
     return TypeScale(
         caption=round(TYPE_SCALE.caption * factor),

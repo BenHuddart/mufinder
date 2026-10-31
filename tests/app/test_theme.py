@@ -1195,3 +1195,13 @@ def test_text_scale_is_one_without_a_gui_application(monkeypatch) -> None:
     monkeypatch.setattr(QCoreApplication, "instance", lambda: object())
 
     assert theme_module.text_scale() == 1.0
+
+
+def test_scaled_to_text_follows_the_type_scale(qapp, desktop_font) -> None:
+    desktop_font(_system_font(pixels=12))
+    theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)
+    assert theme_module.scaled_to_text(58) == 58
+
+    desktop_font(_system_font(pixels=200))
+    theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)
+    assert theme_module.scaled_to_text(58) == 116
