@@ -7552,7 +7552,7 @@ class MainWindow(QMainWindow):
         self,
         *,
         source_structure: Structure,
-        workflow_stage: WorkflowStage,
+        workflow_stage: WorkflowStage | None,
         initial_matrix: list[list[int]] | None = None,
         select_mode: bool = False,
     ) -> SupercellEditorDialog | None:
@@ -7579,18 +7579,16 @@ class MainWindow(QMainWindow):
 
     def _on_host_supercell_editor_requested(self) -> None:
         self._edit_supercell(
-            WorkflowStage.CONVERGENCE_CUTOFF,
-            initial_matrix=lambda document: document.project.supercell_matrix,
-            apply=lambda dialog: self._host_structure_view.set_project_supercell_matrix(
-                dialog.matrix()
-            ),
+            None,
+            initial_matrix=self._project_service.supercell_editor_seed_matrix,
+            apply=lambda _dialog: None,
             missing_source="Load a host structure before editing supercells.",
             select_mode=False,
         )
 
     def _edit_supercell(
         self,
-        workflow_stage: WorkflowStage,
+        workflow_stage: WorkflowStage | None,
         *,
         initial_matrix: Callable[[ProjectDocument], Sequence[Sequence[int]] | None],
         apply: Callable[[SupercellEditorDialog], None],
@@ -9921,7 +9919,6 @@ class MainWindow(QMainWindow):
     def _refresh_host_structure_view(self) -> None:
         if self._document is None:
             self._host_structure_view.set_structure(None)
-            self._host_structure_view.set_project_supercell_matrix(None)
             self._host_structure_view.set_promotable_hosts([], None)
             self._refresh_magnetic_field_view()
             self._refresh_active_host_badges()
@@ -9929,9 +9926,6 @@ class MainWindow(QMainWindow):
 
         host_id = self._document.project.host_structure_id
         host: Structure | None = self._document.structures.get(host_id) if host_id else None
-        self._host_structure_view.set_project_supercell_matrix(
-            self._document.project.supercell_matrix
-        )
         promotable = self._project_service.list_promotable_host_structures(self._document)
         self._host_structure_view.set_promotable_hosts(promotable, host_id)
         self._host_structure_view.set_structure(host)
@@ -10138,16 +10132,6 @@ class MainWindow(QMainWindow):
                 }
             else:
                 self._document.project.magnetic_structure = None
-
-        raw_matrix = payload.get("supercell_matrix")
-        if (
-            isinstance(raw_matrix, list)
-            and len(raw_matrix) == 3
-            and all(isinstance(row, list) and len(row) == 3 for row in raw_matrix)
-        ):
-            self._document.project.supercell_matrix = [
-                [int(row[0]), int(row[1]), int(row[2])] for row in raw_matrix
-            ]
 
         self._refresh_magnetic_field_view()
         self._refresh_workflow_stage_icons()
