@@ -12,18 +12,27 @@ import pytest
 
 from PySide6.QtCore import QCoreApplication, QEvent, QPoint, QSettings, Qt
 from PySide6.QtGui import QColor, QFont, QFontDatabase
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
+    QComboBox,
     QDialog,
     QDialogButtonBox,
+    QDoubleSpinBox,
     QFrame,
     QGroupBox,
     QLabel,
+    QLineEdit,
+    QListWidget,
     QMessageBox,
+    QPlainTextEdit,
     QProxyStyle,
     QPushButton,
+    QRadioButton,
+    QSpinBox,
     QStyle,
+    QTabBar,
     QTableWidget,
     QToolButton,
     QTreeWidget,
@@ -1242,3 +1251,419 @@ def test_a_row_button_fits_a_table_row_with_a_pixel_to_spare(qapp, desktop_font)
     assert table.rowHeight(0) >= 29
     assert table.cellWidget(0, 0).height() == table.rowHeight(0) - 1
     table.close()
+
+
+def _focusable_tool_button() -> QToolButton:
+    button = QToolButton()
+    button.setText("Home")
+    button.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+    return button
+
+
+def _combo_box() -> QComboBox:
+    combo = QComboBox()
+    combo.addItems(["One", "Two"])
+    return combo
+
+
+def _checked(button):
+    button.setChecked(True)
+    return button
+
+
+def _tab_bar() -> QTabBar:
+    bar = QTabBar()
+    bar.addTab("First")
+    bar.addTab("Second")
+    return bar
+
+
+def _table() -> QTableWidget:
+    table = QTableWidget(2, 2)
+    table.setTabKeyNavigation(False)
+    table.setMinimumHeight(120)
+    return table
+
+
+def _tree() -> QTreeWidget:
+    tree = QTreeWidget()
+    tree.setTabKeyNavigation(False)
+    QTreeWidgetItem(tree, ["row"])
+    return tree
+
+
+def _list_widget() -> QListWidget:
+    widget = QListWidget()
+    widget.addItem("row")
+    return widget
+
+
+_FOCUS_RING_KINDS = {
+    "push button": lambda: QPushButton("Run"),
+    "tool button": _focusable_tool_button,
+    "combo box": _combo_box,
+    "line edit": lambda: QLineEdit("3.5"),
+    "spin box": QSpinBox,
+    "double spin box": QDoubleSpinBox,
+    "checkbox": lambda: QCheckBox("Cell"),
+    "checked checkbox": lambda: _checked(QCheckBox("Cell")),
+    "radio button": lambda: QRadioButton("Cell"),
+    "checked radio button": lambda: _checked(QRadioButton("Cell")),
+    "tab bar": _tab_bar,
+    "table": _table,
+    "tree": _tree,
+    "list": _list_widget,
+    "text edit": lambda: QPlainTextEdit("notes"),
+}
+
+
+class _FocusScene:
+    """A shown window with a leading button, the control under test and a neighbour."""
+
+    def __init__(self, control: QWidget) -> None:
+        self.window = QWidget()
+        layout = QVBoxLayout(self.window)
+        self.leading = QPushButton("Before")
+        self.control = control
+        self.trailing = QPushButton("After")
+        for widget in (self.leading, control, self.trailing):
+            layout.addWidget(widget)
+        self.window.resize(360, 320)
+        self.window.show()
+        self.window.activateWindow()
+        assert QTest.qWaitForWindowActive(self.window)
+        self.leading.setFocus()
+        QApplication.processEvents()
+
+    def tab_to_control(self) -> None:
+        QTest.keyClick(self.leading, Qt.Key.Key_Tab)
+        QApplication.processEvents()
+        assert self.control.hasFocus()
+
+    def ring(self) -> QWidget | None:
+        rings = [
+            ring
+            for ring in self.window.findChildren(QWidget, "mufinderFocusRing")
+            if ring.isVisible()
+        ]
+        assert len(rings) <= 1
+        return rings[0] if rings else None
+
+    def close(self) -> None:
+        self.window.close()
+        self.window.deleteLater()
+        QApplication.processEvents()
+
+
+@pytest.fixture
+def focus_scene(qapp):
+    scenes: list[_FocusScene] = []
+
+    def build(control: QWidget, mode: str = theme_module.THEME_LIGHT) -> _FocusScene:
+        # A fresh tracker, so an earlier test's keyboard use does not carry over.
+        theme_module.cleanup_theme_runtime(qapp)
+        theme_module.apply_theme(qapp, mode)
+        scenes.append(_FocusScene(control))
+        return scenes[-1]
+
+    yield build
+    for scene in scenes:
+        scene.close()
+    theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)
+
+
+@pytest.mark.parametrize("mode", [theme_module.THEME_LIGHT, theme_module.THEME_DARK])
+@pytest.mark.parametrize("kind", _FOCUS_RING_KINDS)
+def test_keyboard_focus_draws_an_accent_ring_without_moving_anything(
+    focus_scene, kind: str, mode: str
+) -> None:
+    scene = focus_scene(_FOCUS_RING_KINDS[kind](), mode)
+    control = scene.control
+    before = control.grab().toImage()
+    geometry = [w.geometry() for w in (scene.leading, control, scene.trailing)]
+    size_hint = control.sizeHint()
+
+    scene.tab_to_control()
+
+    image = control.grab().toImage()
+    assert image != before
+    ring = scene.ring()
+    assert ring is not None
+    assert control.rect().contains(ring.geometry())
+    # The ring stays clear of the layout: no control moved or changed its size.
+    assert [w.geometry() for w in (scene.leading, control, scene.trailing)] == geometry
+    assert control.sizeHint() == size_hint
+    # Two pixels of solid accent on the ring's left edge, at half height.
+    ratio = control.devicePixelRatioF()
+    box = ring.geometry()
+    y = int((box.top() + box.height() // 2) * ratio)
+    accent = QColor(theme_module.current_palette().accent)
+    for x in (box.left(), box.left() + 1):
+        colour = image.pixelColor(int(x * ratio), y)
+        # A round indicator's edge is antialiased, so allow a small blend.
+        assert abs(colour.redF() - accent.redF()) < 0.05
+        assert abs(colour.greenF() - accent.greenF()) < 0.05
+        assert abs(colour.blueF() - accent.blueF()) < 0.05
+
+
+@pytest.mark.parametrize("kind", ["push button", "tool button", "combo box", "line edit"])
+def test_mouse_focus_leaves_no_ring(focus_scene, kind: str) -> None:
+    scene = focus_scene(_FOCUS_RING_KINDS[kind]())
+
+    QTest.mouseClick(scene.control, Qt.MouseButton.LeftButton)
+    QApplication.processEvents()
+    if isinstance(scene.control, QComboBox):
+        scene.control.hidePopup()
+        QApplication.processEvents()
+
+    assert scene.control.hasFocus()
+    assert scene.ring() is None
+
+
+@pytest.mark.parametrize("kind", ["push button", "combo box", "checkbox", "radio button"])
+def test_ring_replaces_the_base_style_focus_tint(focus_scene, kind: str) -> None:
+    scene = focus_scene(_FOCUS_RING_KINDS[kind]())
+    before = scene.control.grab().toImage()
+
+    scene.tab_to_control()
+    ring = scene.ring()
+    ring.hide()
+    QApplication.processEvents()
+
+    assert scene.control.grab().toImage() == before
+
+
+@pytest.mark.parametrize(
+    ("kind", "click_target"),
+    [
+        ("push button", lambda control: control),
+        ("line edit", lambda control: control),
+        ("table", lambda control: control.viewport()),
+        ("tree", lambda control: control.viewport()),
+        ("text edit", lambda control: control.viewport()),
+        ("spin box", lambda control: control.lineEdit()),
+    ],
+)
+def test_clicking_the_control_that_has_the_ring_removes_it(
+    focus_scene, kind: str, click_target
+) -> None:
+    scene = focus_scene(_FOCUS_RING_KINDS[kind]())
+    scene.tab_to_control()
+    assert scene.ring() is not None
+
+    QTest.mouseClick(click_target(scene.control), Qt.MouseButton.LeftButton)
+    QApplication.processEvents()
+
+    assert scene.control.hasFocus()
+    assert scene.ring() is None
+
+
+def test_focus_returning_from_a_dialog_keeps_the_ring(focus_scene) -> None:
+    scene = focus_scene(QPushButton("Remove"))
+    scene.tab_to_control()
+
+    dialog = QDialog(scene.window)
+    QVBoxLayout(dialog).addWidget(QPushButton("OK", dialog))
+    dialog.show()
+    dialog.activateWindow()
+    assert QTest.qWaitForWindowActive(dialog)
+    dialog.close()
+    scene.window.activateWindow()
+    assert QTest.qWaitForWindowActive(scene.window)
+    QApplication.processEvents()
+
+    assert scene.control.hasFocus()
+    assert scene.ring() is not None
+
+
+def test_a_mouse_click_ends_keyboard_use_across_later_focus_changes(focus_scene) -> None:
+    scene = focus_scene(QPushButton("Run"))
+    scene.tab_to_control()
+
+    QTest.mouseClick(scene.trailing, Qt.MouseButton.LeftButton)
+    scene.control.setFocus()
+    QApplication.processEvents()
+
+    assert scene.control.hasFocus()
+    assert scene.ring() is None
+
+
+def test_open_combo_list_gets_no_ring(focus_scene) -> None:
+    scene = focus_scene(_combo_box())
+    scene.tab_to_control()
+
+    scene.control.showPopup()
+    QApplication.processEvents()
+    popup_rings = [
+        ring
+        for ring in scene.control.view().findChildren(QWidget, "mufinderFocusRing")
+        if ring.isVisible()
+    ]
+    scene.control.hidePopup()
+    QApplication.processEvents()
+
+    assert popup_rings == []
+    assert scene.ring() is not None
+
+
+def test_ring_follows_tabs_that_move_without_a_new_current_tab(focus_scene) -> None:
+    scene = focus_scene(_tab_bar())
+    scene.tab_to_control()
+    bar = scene.control
+
+    bar.insertTab(0, "A new first tab with a long title")
+    QApplication.processEvents()
+    scene.window.repaint()
+    QApplication.processEvents()
+
+    assert scene.ring().geometry() == bar.tabRect(bar.currentIndex())
+
+
+def test_ring_moves_with_focus_and_leaves_the_previous_control_unmarked(focus_scene) -> None:
+    scene = focus_scene(QPushButton("Run"))
+    unfocused = scene.trailing.grab().toImage()
+
+    scene.tab_to_control()
+    QTest.keyClick(scene.control, Qt.Key.Key_Tab)
+    QApplication.processEvents()
+
+    assert scene.trailing.hasFocus()
+    assert scene.ring().parentWidget() is scene.trailing
+    assert scene.trailing.grab().toImage() != unfocused
+
+    QTest.keyClick(scene.trailing, Qt.Key.Key_Backtab)
+    QApplication.processEvents()
+    assert scene.ring().parentWidget() is scene.control
+    assert scene.trailing.grab().toImage() == unfocused
+
+
+def test_ring_follows_the_current_tab(focus_scene) -> None:
+    scene = focus_scene(_tab_bar())
+    scene.tab_to_control()
+    assert scene.ring().geometry() == scene.control.tabRect(0)
+
+    QTest.keyClick(scene.control, Qt.Key.Key_Right)
+    QApplication.processEvents()
+
+    assert scene.control.currentIndex() == 1
+    assert scene.ring().geometry() == scene.control.tabRect(1)
+
+
+def test_ring_follows_a_resized_control(focus_scene) -> None:
+    scene = focus_scene(QPushButton("Run"))
+    scene.tab_to_control()
+
+    scene.window.resize(520, 360)
+    QApplication.processEvents()
+
+    assert scene.ring().geometry() == scene.control.rect()
+
+
+def test_indicator_ring_surrounds_the_indicator_not_the_label(focus_scene) -> None:
+    scene = focus_scene(QCheckBox("A long label beside the indicator"))
+    scene.tab_to_control()
+
+    ring = scene.ring()
+
+    assert ring.width() == ring.height()
+    assert ring.width() < scene.control.width() / 2
+
+
+def test_radio_ring_is_a_whole_circle(focus_scene) -> None:
+    scene = focus_scene(QRadioButton("Cell"))
+    scene.tab_to_control()
+
+    box = scene.ring().geometry()
+    radius = (box.width() - theme_module._FOCUS_RING_WIDTH) / 2
+    image = scene.control.grab().toImage()
+    ratio = scene.control.devicePixelRatioF()
+    accent = QColor(theme_module.current_palette().accent)
+    offset = radius * math.cos(math.pi / 4)
+    for sign_x, sign_y in itertools.product((-1, 1), repeat=2):
+        colour = image.pixelColor(
+            int((box.center().x() + 0.5 + sign_x * offset) * ratio),
+            int((box.center().y() + 0.5 + sign_y * offset) * ratio),
+        )
+        assert abs(colour.redF() - accent.redF()) < 0.2
+        assert abs(colour.greenF() - accent.greenF()) < 0.2
+
+
+def test_item_view_contents_do_not_shift_on_keyboard_focus(focus_scene) -> None:
+    table = _table()
+    table.horizontalHeader().setStretchLastSection(True)
+    scene = focus_scene(table)
+    viewport = table.viewport().geometry()
+    columns = [table.columnWidth(column) for column in range(table.columnCount())]
+
+    scene.tab_to_control()
+
+    assert table.viewport().geometry() == viewport
+    assert [table.columnWidth(column) for column in range(table.columnCount())] == columns
+
+
+@pytest.mark.parametrize("mode", [theme_module.THEME_LIGHT, theme_module.THEME_DARK])
+def test_ring_on_a_row_button_is_whole_inside_its_table_row(focus_scene, mode: str) -> None:
+    table = QTableWidget(3, 1)
+    table.setTabKeyNavigation(False)
+    table.horizontalHeader().setStretchLastSection(True)
+    row_button = QPushButton("Configured...")
+    table.setCellWidget(1, 0, row_button)
+    scene = focus_scene(table, mode)
+    table.setRowHeight(1, row_button.sizeHint().height() + 1)
+    QApplication.processEvents()
+    geometry = row_button.geometry()
+
+    table.setFocus()
+    QTest.keyClick(table, Qt.Key.Key_Tab)
+    QApplication.processEvents()
+    assert row_button.hasFocus()
+
+    assert row_button.geometry() == geometry
+    assert table.rowHeight(1) == row_button.sizeHint().height() + 1
+    ring = scene.ring()
+    assert ring.parentWidget() is row_button
+    assert ring.geometry() == row_button.rect()
+    # The ring's top and bottom edges reach the screen: nothing in the row clips them.
+    image = table.viewport().grab().toImage()
+    ratio = table.viewport().devicePixelRatioF()
+    accent = QColor(theme_module.current_palette().accent)
+    x = int(geometry.center().x() * ratio)
+    for y in (geometry.top(), geometry.top() + 1, geometry.bottom() - 1, geometry.bottom()):
+        assert image.pixelColor(x, int(y * ratio)) == accent
+
+
+def test_ring_takes_the_new_accent_after_a_theme_change(qapp, focus_scene) -> None:
+    scene = focus_scene(QPushButton("Run"))
+    scene.tab_to_control()
+
+    theme_module.apply_theme(qapp, theme_module.THEME_DARK)
+    QApplication.processEvents()
+
+    image = scene.control.grab().toImage()
+    ratio = scene.control.devicePixelRatioF()
+    y = int(scene.control.height() / 2 * ratio)
+    assert image.pixelColor(0, y) == QColor(theme_module.dark_palette().accent)
+
+
+def test_cleanup_stops_the_focus_ring_and_apply_theme_restores_it(qapp, focus_scene) -> None:
+    scene = focus_scene(QPushButton("Run"))
+
+    theme_module.cleanup_theme_runtime(qapp)
+    scene.tab_to_control()
+    assert scene.ring() is None
+
+    theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)
+    scene.leading.setFocus()
+    QApplication.processEvents()
+    scene.tab_to_control()
+    assert scene.ring() is not None
+
+
+def test_cleanup_removes_a_ring_that_is_showing(qapp, focus_scene) -> None:
+    scene = focus_scene(QPushButton("Run"))
+    scene.tab_to_control()
+    assert scene.ring() is not None
+
+    theme_module.cleanup_theme_runtime(qapp)
+
+    assert scene.ring() is None

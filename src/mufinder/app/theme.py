@@ -11,14 +11,38 @@ import sys
 import tempfile
 from typing import TYPE_CHECKING, Any
 
-from PySide6.QtCore import QEvent, QMargins, QObject, QSettings, Qt
-from PySide6.QtGui import QColor, QBrush, QFont, QFontDatabase, QGuiApplication, QIcon, QPalette
+from PySide6.QtCore import QEvent, QMargins, QObject, QRect, QRectF, QSettings, Qt
+from PySide6.QtGui import (
+    QColor,
+    QBrush,
+    QFont,
+    QFontDatabase,
+    QGuiApplication,
+    QIcon,
+    QPainter,
+    QPalette,
+    QPen,
+    QRegion,
+)
 from PySide6.QtWidgets import (
+    QAbstractButton,
+    QAbstractItemView,
+    QAbstractScrollArea,
+    QAbstractSpinBox,
     QApplication,
+    QCheckBox,
+    QComboBox,
     QLabel,
+    QLineEdit,
+    QPlainTextEdit,
+    QRadioButton,
     QScrollBar,
+    QStyle,
+    QStyleOptionButton,
+    QTabBar,
     QTableWidget,
     QTabWidget,
+    QTextEdit,
     QToolButton,
     QTreeWidget,
     QWidget,
@@ -201,6 +225,8 @@ _SPIN_ARROW_GUTTER = 30
 # A standard push button's height in pixels, so its click target does not depend
 # on the padding step. Larger text grows it past this.
 _STANDARD_BUTTON_HEIGHT = 28
+_FOCUS_RING_WIDTH = 2
+_FOCUS_RING_NAME = "mufinderFocusRing"
 
 # The general font each platform's desktop ships with, in pixels: 13 pt at
 # 72 dpi on macOS, 9 pt at 96 dpi on Windows, and 11 pt at 96 dpi on GNOME, the
@@ -447,6 +473,7 @@ def dark_palette() -> MuFinderPalette:
 
 _CURRENT_PALETTE: MuFinderPalette = light_palette()
 _TABLE_CORNER_STYLER: "_TableCornerStyler | None" = None
+_FOCUS_RING_TRACKER: "_FocusRingTracker | None" = None
 _BASE_STYLE_APP: "QApplication | None" = None
 _FONTS_LOADED: bool = False
 
@@ -649,6 +676,188 @@ def _ensure_table_corner_styler(app: QApplication) -> None:
     _TABLE_CORNER_STYLER.attach_existing_tables()
 
 
+# The control kinds that show the keyboard focus ring.
+_FOCUS_RING_CONTROLS = (
+    QAbstractButton,
+    QAbstractItemView,
+    QAbstractSpinBox,
+    QComboBox,
+    QLineEdit,
+    QPlainTextEdit,
+    QTabBar,
+    QTextEdit,
+)
+# Events on a ringed control that can change where its ring belongs.
+_FOCUS_RING_LAYOUT_EVENTS = {
+    QEvent.Type.Resize,
+    QEvent.Type.StyleChange,
+    QEvent.Type.FontChange,
+    QEvent.Type.LayoutDirectionChange,
+}
+
+
+class _FocusRing(QWidget):
+    """The accent ring painted over the control that has keyboard focus.
+
+    A child widget that the layout does not know about, drawn inside its control's
+    bounds on top of the control's own border. It therefore cannot change a size,
+    move a neighbour or be clipped by a table row, and no stylesheet, including a
+    feature-local one, can override it. The colour is read at paint time, so the
+    ring follows a theme change.
+    """
+
+    def __init__(self, control: QWidget, tracker: "_FocusRingTracker") -> None:
+        super().__init__(control)
+        self._tracker = tracker
+        self.setObjectName(_FOCUS_RING_NAME)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        # The ring is an event filter only while it exists, and only on its own
+        # control, so this costs nothing on any other widget. A click usually lands
+        # on a child: a view's viewport or a spin box's line edit.
+        control.installEventFilter(self)
+        for child in control.findChildren(
+            QWidget, options=Qt.FindChildOption.FindDirectChildrenOnly
+        ):
+            if child is not self:
+                child.installEventFilter(self)
+        if isinstance(control, QTabBar):
+            control.currentChanged.connect(self._follow_control)
+        self._follow_control()
+        self.show()
+
+    def _indicator_rect(self, control: QCheckBox | QRadioButton) -> QRect:
+        element = (
+            QStyle.SubElement.SE_RadioButtonIndicator
+            if isinstance(control, QRadioButton)
+            else QStyle.SubElement.SE_CheckBoxIndicator
+        )
+        option = QStyleOptionButton()
+        option.initFrom(control)
+        return control.style().subElementRect(element, option, control)
+
+    def _follow_control(self, *_args: object) -> None:
+        control = self.parentWidget()
+        if isinstance(control, (QCheckBox, QRadioButton)):
+            rect = self._indicator_rect(control)
+        elif isinstance(control, QTabBar):
+            rect = control.tabRect(control.currentIndex())
+        else:
+            rect = control.rect()
+        if rect == self.geometry():
+            return
+        self.setGeometry(rect)
+        self.raise_()
+        if isinstance(control, QAbstractScrollArea):
+            # Mask to the ring's band, so the ring does not overlap the whole of a
+            # scrolling viewport and cost it Qt's scrolling optimisation.
+            whole = QRect(0, 0, rect.width(), rect.height())
+            band = _FOCUS_RING_WIDTH + 1  # The rounded corners reach a pixel further in.
+            self.setMask(QRegion(whole) - QRegion(whole.adjusted(band, band, -band, -band)))
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        event_type = event.type()
+        if event_type == QEvent.Type.MouseButtonPress:
+            # A click on the control that already has focus is not keyboard use.
+            self._tracker.note_mouse_use()
+            self.hide()
+        elif event_type in _FOCUS_RING_LAYOUT_EVENTS:
+            if watched is self.parentWidget():
+                self._follow_control()
+        elif event_type == QEvent.Type.Paint and isinstance(watched, QTabBar):
+            # A tab bar has no signal for its tabs moving: a new tab, a longer
+            # title, a scroll. It repaints for all of them.
+            self._follow_control()
+        return False
+
+    def paintEvent(self, _event: object) -> None:
+        control = self.parentWidget()
+        palette = current_palette()
+        inset = _FOCUS_RING_WIDTH / 2
+        ring = QRectF(self.rect()).adjusted(inset, inset, -inset, -inset)
+        round_shape = isinstance(control, QRadioButton)
+        radius = ring.width() / 2 if round_shape else max(0.0, RADIUS.control - inset)
+
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        if isinstance(control, (QCheckBox, QRadioButton)):
+            # A checked indicator is filled with the accent colour, so a surface-
+            # coloured line keeps the ring distinct from the fill.
+            gap = inset + 0.5
+            inner = ring.adjusted(gap, gap, -gap, -gap)
+            inner_radius = inner.width() / 2 if round_shape else radius
+            painter.setPen(QPen(QColor(palette.bg_surface), 1))
+            painter.drawRoundedRect(inner, inner_radius, inner_radius)
+        painter.setPen(QPen(QColor(palette.accent), _FOCUS_RING_WIDTH))
+        painter.drawRoundedRect(ring, radius, radius)
+        painter.end()
+
+
+def _remove_focus_ring(control: QWidget) -> None:
+    for ring in control.findChildren(_FocusRing, options=Qt.FindChildOption.FindDirectChildrenOnly):
+        ring.hide()
+        ring.deleteLater()
+
+
+class _FocusRingTracker(QObject):
+    """Put a ``_FocusRing`` on a control when focus reaches it during keyboard use.
+
+    Qt marks a window with ``WA_KeyboardFocusChange`` when focus moves by Tab or a
+    shortcut and clears the mark on a mouse press and when the window is deactivated.
+    The tracker remembers the last input kind across that second case, so focus that
+    returns from a dialog or popup, or that a handler moves after a key press, still
+    shows. Listening to ``focusChanged`` needs no application-wide Python event filter
+    (see ``_TableCornerStyler``), and the tracker keeps no references to widgets: the
+    ring lives on its control.
+    """
+
+    def __init__(self, app: QApplication) -> None:
+        super().__init__(app)
+        self._keyboard_in_use = False
+        app.focusChanged.connect(self._on_focus_changed)
+
+    def note_mouse_use(self) -> None:
+        self._keyboard_in_use = False
+
+    def _on_focus_changed(self, old: QWidget | None, now: QWidget | None) -> None:
+        try:
+            if old is not None:
+                _remove_focus_ring(old)
+            if now is None:
+                return
+            window = now.window()
+            if window.testAttribute(Qt.WidgetAttribute.WA_KeyboardFocusChange):
+                self._keyboard_in_use = True
+            elif QGuiApplication.mouseButtons() != Qt.MouseButton.NoButton:
+                self._keyboard_in_use = False
+            if (
+                self._keyboard_in_use
+                and isinstance(now, _FOCUS_RING_CONTROLS)
+                # A combo box's open list, whose current row already shows.
+                and window.windowType() != Qt.WindowType.Popup
+            ):
+                _FocusRing(now, self)
+        except (RuntimeError, SystemError):
+            return
+
+    def shutdown(self, app: QApplication) -> None:
+        try:
+            app.focusChanged.disconnect(self._on_focus_changed)
+            focused = app.focusWidget()
+            if focused is not None:
+                _remove_focus_ring(focused)
+        except (RuntimeError, SystemError, TypeError):
+            pass
+
+
+def _ensure_focus_ring_tracker(app: QApplication) -> None:
+    global _FOCUS_RING_TRACKER
+
+    if _FOCUS_RING_TRACKER is None or _FOCUS_RING_TRACKER.parent() is not app:
+        _FOCUS_RING_TRACKER = _FocusRingTracker(app)
+
+
 def track_item_view_corners(view: QTableWidget | QTreeWidget) -> None:
     """Keep ``view``'s corner-styling properties in step with its scroll bar and header.
 
@@ -667,10 +876,21 @@ def track_item_view_corners(view: QTableWidget | QTreeWidget) -> None:
 def cleanup_theme_runtime(app: QApplication | None = None) -> None:
     """Detach long-lived Qt hooks so test/process shutdown is deterministic."""
 
-    global _TABLE_CORNER_STYLER, _BASE_STYLE_APP, _FONTS_LOADED
+    global _TABLE_CORNER_STYLER, _FOCUS_RING_TRACKER, _BASE_STYLE_APP, _FONTS_LOADED
 
     _BASE_STYLE_APP = None
     _FONTS_LOADED = False
+
+    tracker = _FOCUS_RING_TRACKER
+    if tracker is not None:
+        _FOCUS_RING_TRACKER = None
+        try:
+            tracker_app = tracker.parent()
+            if isinstance(tracker_app, QApplication):
+                tracker.shutdown(tracker_app)
+            tracker.deleteLater()
+        except (RuntimeError, SystemError):
+            pass
 
     styler = _TABLE_CORNER_STYLER
     if styler is None:
@@ -2049,6 +2269,12 @@ def _button_styles(p: MuFinderPalette) -> str:
     QDialogButtonBox {{
         dialogbuttonbox-buttons-have-icons: 0;
     }}
+    /* The focus ring (_FocusRing) marks these controls, so Fusion's own faint
+       focus frame is not drawn as well. Item views keep theirs: it marks the
+       current cell or row inside the ring. */
+    QPushButton, QCheckBox, QRadioButton, QComboBox {{
+        outline: none;
+    }}
     QToolButton#plotPopOutButton {{
         background: {p.bg_surface};
         border: 1px solid {p.border};
@@ -2611,6 +2837,7 @@ def apply_theme(app: QApplication, mode: str) -> str:
     app.setPalette(_build_palette(_CURRENT_PALETTE))
     app.setStyleSheet(_build_stylesheet(_CURRENT_PALETTE))
     _ensure_table_corner_styler(app)
+    _ensure_focus_ring_tracker(app)
 
     font = QFont(body_font_family())
     # Pixel size, not point size: the stylesheet declares every label size in
