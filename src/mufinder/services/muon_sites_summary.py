@@ -30,6 +30,7 @@ from mufinder.domain.text import space_group_text
 from mufinder.persistence.codec import to_jsonable, uuid_or_none
 from mufinder.science.spglib_compat import SYMMETRY_TOLERANCE_ANG, host_symmetry
 from mufinder.services.project_document import ProjectDocument
+from mufinder.services.study_findings import FINGERPRINT_KEY, input_fingerprint
 from mufinder.services.project_summary import (
     MUON_SITES_SUMMARY_SNAPSHOTS_KEY,
     relaxation_analysis_workspaces,
@@ -259,7 +260,12 @@ def analysis_workspace_created_record(workspace: Mapping[str, object]) -> Proven
 def relaxed_sites_grouped_record(
     workspace: Mapping[str, object], host_structure: Structure | None
 ) -> ProvenanceRecord | None:
-    """Return the provenance record of a grouping applied to a workspace, or ``None`` without one."""
+    """Return the finding of a grouping applied to a workspace, or ``None`` without one.
+
+    The record lists the distinct sites in energy order, with what the Journal's
+    card shows for each. Its fingerprint is the relaxations grouped, how, and the
+    sites they gave, so regrouping after a relaxation was run again is a new finding.
+    """
 
     clustering = workspace.get("clustering")
     result = clustering.get("result") if isinstance(clustering, Mapping) else None
@@ -269,8 +275,11 @@ def relaxed_sites_grouped_record(
         return None
     name = str(workspace.get("name", "")).strip() or "Analysis workspace"
     grouping = relaxed_site_grouping(clustering, host_structure)
+    job_ids = _workspace_job_ids(workspace)
+    charge_state = canonical_charge_state(workspace.get("charge_state"))
+    sites = _ranked_sites(result)
     return ProvenanceRecord(
-        action="group_relaxed_sites",
+        action="sites_grouped",
         workflow_stage=WorkflowStage.SITE_ANALYSIS,
         actor="user",
         description=f"Grouped the relaxed sites of analysis workspace '{name}'",
@@ -279,10 +288,16 @@ def relaxed_sites_grouped_record(
             "workspace_name": name,
             "site_count": len(labels) if isinstance(labels, list) else None,
             "distinct_site_count": len(clusters),
+            "charge_state": charge_state,
+            "charge_state_label": muon_charge_state_label(charge_state) if charge_state else None,
+            "sites": sites,
             "grouping": grouping,
             "grouping_summary": grouping_summary(grouping),
+            FINGERPRINT_KEY: input_fingerprint(
+                str(workspace.get("id", "")), sorted(job_ids, key=str), grouping, sites
+            ),
         },
-        input_entity_ids=_workspace_job_ids(workspace),
+        input_entity_ids=job_ids,
     )
 
 
@@ -302,35 +317,16 @@ def summary_export_header_lines(snapshot: Mapping[str, object]) -> list[str]:
     return lines
 
 
-def build_muon_sites_summary_snapshot(
-    workspace: Mapping[str, object], host_structure: Structure | None = None
-) -> dict[str, object] | None:
-    """Return the snapshot "Pin to Summary" stores for a clustered workspace.
+def _ranked_sites(result: Mapping[str, object]) -> list[dict[str, object]]:
+    """Return a clustering result's distinct sites, lowest energy first.
 
-    Each site records its cluster index, representative fractional position,
-    relative energy, Wyckoff label and the representative relaxation's job id,
-    which is what resolves the site to a relaxed muon site downstream. Sites are
-    ranked by relative energy (sites without one last, cluster index breaking
-    ties). The snapshot also keeps how the sites were grouped
-    (:func:`relaxed_site_grouping`, with the space group of ``host_structure``,
-    the workspace's host). Returns ``None`` when the workspace has no host or no
-    clusters.
+    Sites without a relative energy come last, and the cluster index breaks ties.
     """
 
-    # Key the snapshot to the workspace's own host, not the active project host:
-    # the cluster positions are fractional coordinates in that host's cell, so
-    # validation must hide the pin whenever another host is active.
-    host_structure_id = str(workspace.get("host_structure_id", "")).strip()
-    if not host_structure_id:
-        return None
-    clustering = workspace.get("clustering")
-    result = clustering.get("result") if isinstance(clustering, Mapping) else None
-    clusters = result.get("clusters") if isinstance(result, Mapping) else None
-    if not isinstance(result, Mapping) or not isinstance(clusters, list) or not clusters:
-        return None
+    clusters = result.get("clusters")
     wyckoff_labels = muon_site_wyckoff_labels(result)
     sites: list[dict[str, object]] = []
-    for cluster in clusters:
+    for cluster in clusters if isinstance(clusters, list) else []:
         if not isinstance(cluster, Mapping):
             continue
         try:
@@ -359,8 +355,6 @@ def build_muon_sites_summary_snapshot(
                 "representative_job_id": None if representative is None else str(representative),
             }
         )
-    if not sites:
-        return None
     sites.sort(
         key=lambda site: (
             site["relative_energy_ev"] is None,
@@ -368,6 +362,38 @@ def build_muon_sites_summary_snapshot(
             site["cluster_index"],
         )
     )
+    return sites
+
+
+def build_muon_sites_summary_snapshot(
+    workspace: Mapping[str, object], host_structure: Structure | None = None
+) -> dict[str, object] | None:
+    """Return the snapshot "Pin to Summary" stores for a clustered workspace.
+
+    Each site records its cluster index, representative fractional position,
+    relative energy, Wyckoff label and the representative relaxation's job id,
+    which is what resolves the site to a relaxed muon site downstream. Sites are
+    ranked by relative energy (sites without one last, cluster index breaking
+    ties). The snapshot also keeps how the sites were grouped
+    (:func:`relaxed_site_grouping`, with the space group of ``host_structure``,
+    the workspace's host). Returns ``None`` when the workspace has no host or no
+    clusters.
+    """
+
+    # Key the snapshot to the workspace's own host, not the active project host:
+    # the cluster positions are fractional coordinates in that host's cell, so
+    # validation must hide the pin whenever another host is active.
+    host_structure_id = str(workspace.get("host_structure_id", "")).strip()
+    if not host_structure_id:
+        return None
+    clustering = workspace.get("clustering")
+    result = clustering.get("result") if isinstance(clustering, Mapping) else None
+    clusters = result.get("clusters") if isinstance(result, Mapping) else None
+    if not isinstance(result, Mapping) or not isinstance(clusters, list) or not clusters:
+        return None
+    sites = _ranked_sites(result)
+    if not sites:
+        return None
     charge_state = (
         canonical_charge_state(workspace.get("charge_state")) or POSITIVE_MUON_CHARGE_STATE
     )

@@ -655,6 +655,14 @@ defined by two of these modules, and a pinned count may only fall.
        is recorded on the site and owns its link and its bare site-id source
        key, and only a relaxation in that charge state links the site, even
        after that relaxation is reset.
+   * - ``mufinder.services.study_findings``
+     - Findings, the provenance records of results that conclude a study:
+       ``input_fingerprint``, and ``record_finding``, which skips a repeat of the
+       same local day. Each finding is built by the service that holds its result:
+       ``muon_sites_summary`` for grouped sites, ``magnetic_field_results`` for
+       fields, ``polarisation_simulations`` for simulations, this module for UEP
+       minima, and ``mufinder.services.job_findings`` for zero-point energies and
+       barriers, which ``JobExecutionController`` records as a job completes.
    * - ``mufinder.services.muon_sites_summary``
      - The pinned Muon Sites summary: building, storing and validating the
        per-charge-state snapshots (``build_muon_sites_summary_snapshot``,

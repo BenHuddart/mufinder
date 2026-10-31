@@ -303,6 +303,13 @@ Compatibility ledger
        from the key when no grid result is supplied.
      - Keep until the next saved-project schema version bump, whose migration
        can move the key into a ``uep_potential_grid`` result and drop it.
+   * - ``group_relaxed_sites`` provenance action
+     - ``provenance.jsonl``; read by ``mufinder.services.journal``
+     - A grouping applied to an analysis workspace is recorded as
+       ``sites_grouped``, with its sites. Records written as
+       ``group_relaxed_sites`` keep their own Journal entry.
+     - Provenance is append-only and never rewritten, so the reader stays for as
+       long as a project may hold such a record.
    * - Top-level ``isosurface_mesh`` key in UEP analysis UI state
      - ``uep_analysis_states`` UI state; read by
        ``UepAnalysisDialog._restore_initial_state``

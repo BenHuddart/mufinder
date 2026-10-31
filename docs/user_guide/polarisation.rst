@@ -50,6 +50,9 @@ selected simulation after asking. ``Export Data…`` writes it to a text file
 (see `Exported data`_). A long calculation shows a busy dialog that can cancel
 it.
 
+A simulation that gives new traces adds a ``Polarisation simulated`` entry to the
+:doc:`/user_guide/journal`.
+
 Settings
 --------
 

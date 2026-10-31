@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, fields
 from datetime import datetime
@@ -19,8 +20,11 @@ from mufinder.services.failure_diagnosis import (
     find_failure_log_files,
 )
 from mufinder.services.job_artifacts import RetrievalFlags
+from mufinder.services.job_findings import record_job_finding
 from mufinder.services.job_monitoring import is_cluster_job
 from mufinder.services.project_service import ProjectDocument, ProjectService
+
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -576,6 +580,12 @@ class JobExecutionController:
 
         self._active_run_by_job.pop(job.id, None)
         self._record_terminal_event("job_completed", job, result=result)
+        document = self._document_getter()
+        if document is not None:
+            try:
+                record_job_finding(document, job, result)
+            except Exception:  # noqa: BLE001 - the job has completed; the Journal must not undo that
+                LOGGER.exception("Could not record the finding of job %s", job.id)
         return True
 
     def fail_job(

@@ -52,6 +52,7 @@ from mufinder.services.relaxed_structure_spins import (
 # re-exported: callers import them from this module.
 from mufinder.services.project_document import (
     ProjectDocument,
+    append_provenance,
     active_definition as active_definition,
     active_host_structure,
     definitions_for_stage as definitions_for_stage,
@@ -469,9 +470,7 @@ class ProjectService:
 
     def append_provenance(self, document: ProjectDocument, record: ProvenanceRecord) -> None:
         """Append a provenance record in-memory and to disk."""
-        document.provenance.append(record)
-        store = ProjectStore(document.project_root)
-        store.append_provenance(to_jsonable(record))
+        append_provenance(document, record)
 
     def add_structure(self, document: ProjectDocument, structure: Structure) -> None:
         """Add a structure and update host structure if currently unset."""

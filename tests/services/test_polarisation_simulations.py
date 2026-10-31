@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -430,3 +431,47 @@ def test_preparing_a_simulation_refuses_what_it_cannot_run(document) -> None:
             settings=SETTINGS,
             sources=[SimulationSource(MAGNETIC_FIELD_PAGE_OWNER, "", "", weight=-1.0)],
         )
+
+
+def _stored_finding_count(document) -> int:
+    return sum(record.action == "polarisation_simulated" for record in document.provenance)
+
+
+def test_each_distinct_simulation_records_one_finding(document) -> None:
+    _store_fields(document, MAGNETIC_FIELD_PAGE_OWNER, _commensurate(_field((0.0, 0.0, 0.1))))
+    source = SimulationSource(MAGNETIC_FIELD_PAGE_OWNER, "", "Magnetic Fields")
+    settings = PolarisationSettings(polycrystalline=True, sphere_points=8, time_points=11)
+
+    def simulate(simulation_settings: PolarisationSettings, simulation_id: str | None = None):
+        return store_and_return(
+            document,
+            run_polarisation_simulation(
+                document,
+                title="Simulation 1",
+                settings=simulation_settings,
+                sources=[source],
+                simulation_id=simulation_id,
+            ),
+        )
+
+    first = simulate(settings)
+    simulate(settings, first.simulation_id)
+    assert _stored_finding_count(document) == 1
+
+    finding = next(r for r in document.provenance if r.action == "polarisation_simulated")
+    assert finding.parameters["settings"]["geometry"] == "zero_field"
+    assert finding.parameters["settings"]["polycrystalline"] is True
+    assert finding.parameters["site_count"] == 1
+    assert finding.parameters["sources"][0]["title"] == "Magnetic Fields"
+
+    # The same inputs under a new simulation are a repeat too.
+    simulate(settings)
+    assert _stored_finding_count(document) == 1
+
+    simulate(replace(settings, end_time_us=5.0), first.simulation_id)
+    assert _stored_finding_count(document) == 2
+
+
+def store_and_return(document, record):
+    store_polarisation_simulation(document, record)
+    return record
