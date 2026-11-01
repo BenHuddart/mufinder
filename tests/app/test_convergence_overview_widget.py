@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from matplotlib.colors import to_hex
-from PySide6.QtCore import QSize
+from PySide6.QtCore import QSize, Qt
 from PySide6.QtWidgets import QLabel, QScrollArea
 import pytest
 
@@ -542,3 +542,11 @@ def test_convergence_overview_keeps_plot_text_clear_of_the_pop_out_button(
 
     assert _plot_texts_under_pop_out_button(card._plot) == []
     widget.close()
+
+
+def test_overview_stays_a_tab_stop_for_the_summaries_below_its_buttons(qapp) -> None:
+    widget = ConvergenceOverviewWidget()
+
+    assert widget._scroll.focusPolicy() & Qt.FocusPolicy.TabFocus
+
+    widget.deleteLater()

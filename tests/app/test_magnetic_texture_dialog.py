@@ -445,3 +445,11 @@ def test_magnetic_texture_preview_paints_its_canvas_colours(qapp, canvas) -> Non
         colors.plot_background
     )
     preview.close()
+
+
+def test_controls_scroll_area_is_not_a_tab_stop(qapp) -> None:
+    dialog = MagneticTextureDialog(coo_structure())
+
+    assert not dialog._controls_scroll.focusPolicy() & Qt.FocusPolicy.TabFocus
+
+    dialog.deleteLater()

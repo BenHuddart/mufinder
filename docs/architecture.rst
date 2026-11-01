@@ -478,7 +478,9 @@ defined by two of these modules, and a pinned count may only fall.
    * - ``mufinder.app.theme``
      - Reusable styling, palettes and status brushes. Sizes come from the type,
        spacing and radius scales, and layouts from ``page_margins``,
-       ``card_margins`` and ``form_spacing`` (see :doc:`/branding`). Item-view
+       ``card_margins`` and ``form_spacing`` (see :doc:`/branding`). Scroll
+       areas come from ``controls_scroll_area`` and ``reading_scroll_area``
+       (see Cross-platform appearance). Item-view
        corner styling
        follows each view's vertical scroll bar and header through
        ``track_item_view_corners``; the shared table helpers call it, and any
@@ -2019,6 +2021,17 @@ each platform's native look:
   buttons. Sliders keep Fusion's focus highlight. Controls that draw their own
   focus state, such as the project home chart and journal entry cards, do not get
   the ring.
+- Every scroll area comes from one of two helpers in ``mufinder.app.theme``.
+  ``controls_scroll_area`` holds content the keyboard reaches through its controls:
+  it is not a Tab stop, though a click still takes focus so a line edit commits. Its
+  content scrolls as a control takes focus. ``reading_scroll_area`` holds content the
+  keyboard cannot reach that way, because it is read-only or the controls in it sit
+  above what they leave out of view: the Journal, the Convergence Testing overview, the
+  quantum analysis help and a read-only Parameter Dialog. It stays a Tab stop, so the
+  arrow and page keys can scroll, shows the ring, and keeps a fixed gutter around its
+  viewport so that the ring covers no content. Whenever focus moves during keyboard
+  use, every scroll area around the focused widget scrolls to show it; a click scrolls
+  nothing.
 - The project home (``mufinder.app.project_home_trail``) is painted from data,
   not artwork: waypoint positions are fractions of the chart area and label,
   node and region sizes follow the widget's size within fixed bounds, so the

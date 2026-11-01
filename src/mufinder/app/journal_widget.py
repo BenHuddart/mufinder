@@ -19,7 +19,6 @@ from PySide6.QtWidgets import (
     QLabel,
     QMessageBox,
     QPushButton,
-    QScrollArea,
     QSizePolicy,
     QTableWidget,
     QVBoxLayout,
@@ -27,7 +26,12 @@ from PySide6.QtWidgets import (
 )
 
 from mufinder.app.eliding_label import ElidingLabel
-from mufinder.app.theme import make_empty_state_label, style_hint_text, style_section_title
+from mufinder.app.theme import (
+    make_empty_state_label,
+    reading_scroll_area,
+    style_hint_text,
+    style_section_title,
+)
 from mufinder.app.workflow_table_utils import create_workflow_table, fill_workflow_table
 from mufinder.services.journal import (
     JournalDetails,
@@ -312,9 +316,7 @@ class JournalWidget(QWidget):
         controls.addWidget(self._export_button)
         layout.addLayout(controls)
 
-        self._scroll = QScrollArea(self)
-        self._scroll.setWidgetResizable(True)
-        self._scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        self._scroll = reading_scroll_area(self)
         self._scroll.setObjectName("journalScrollArea")
         layout.addWidget(self._scroll, 1)
 

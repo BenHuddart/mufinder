@@ -28,7 +28,6 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QLabel,
     QPushButton,
-    QScrollArea,
     QSizePolicy,
     QTableWidgetItem,
     QVBoxLayout,
@@ -44,6 +43,7 @@ from mufinder.app.export_dialogs import (
     report_export_saved,
 )
 from mufinder.app.theme import (
+    controls_scroll_area,
     make_empty_state_label,
     style_hint_text,
     style_section_subtitle,
@@ -501,9 +501,7 @@ class MuonSitesSummaryWidget(QWidget):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self._scroll = QScrollArea(self)
-        self._scroll.setWidgetResizable(True)
-        self._scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self._scroll = controls_scroll_area(self)
 
         self._content = QWidget(self._scroll)
         self._content.setObjectName("muonSitesSummaryContent")

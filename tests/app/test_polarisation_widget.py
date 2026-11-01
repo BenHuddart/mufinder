@@ -14,6 +14,7 @@ import pytest
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
+    QScrollArea,
     QCheckBox,
     QComboBox,
     QDoubleSpinBox,
@@ -652,3 +653,9 @@ def test_each_vector_component_is_named_after_its_row(page) -> None:
     names = [edit.accessibleName() for edit in _vector(page, "Initial Polarisation").edits]
 
     assert names == ["Initial Polarisation x", "Initial Polarisation y", "Initial Polarisation z"]
+
+
+def test_settings_scroll_area_is_not_a_tab_stop(page) -> None:
+    scroll = page.findChild(QScrollArea)
+
+    assert not scroll.focusPolicy() & Qt.FocusPolicy.TabFocus

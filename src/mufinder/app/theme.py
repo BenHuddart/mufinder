@@ -35,6 +35,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QRadioButton,
+    QScrollArea,
     QScrollBar,
     QStyle,
     QStyleOptionButton,
@@ -226,6 +227,8 @@ _STANDARD_BUTTON_HEIGHT = 28
 _FOCUS_RING_WIDTH = 2
 _FOCUS_RING_NAME = "mufinderFocusRing"
 _FOCUS_RING_KEYLINE = 1
+# How far a ring reaches into a scroll area, whose rounded corners go a pixel further in.
+_FOCUS_RING_BAND = _FOCUS_RING_WIDTH + _FOCUS_RING_KEYLINE + 1
 _TAB_GAP = 4
 _GAPPED_TAB_WIDGETS = (
     "mufinderTabs",
@@ -737,10 +740,11 @@ class _FocusRing(QWidget):
         # control, so this costs nothing on any other widget. A click usually lands
         # on a child: a view's viewport or a spin box's line edit.
         control.installEventFilter(self)
-        for child in control.findChildren(
-            QWidget, options=Qt.FindChildOption.FindDirectChildrenOnly
-        ):
-            if child is not self:
+        # children(), not findChildren(): findChildren also ties each child's Python
+        # wrapper to the control's, and the collector can then delete a child that Qt
+        # owns, such as a tab bar's scroll button.
+        for child in control.children():
+            if isinstance(child, QWidget) and child is not self:
                 child.installEventFilter(self)
         if isinstance(control, QTabBar):
             control.currentChanged.connect(self._follow_control)
@@ -777,8 +781,7 @@ class _FocusRing(QWidget):
             # Mask to the ring's band, so the ring does not overlap the whole of a
             # scrolling viewport and cost it Qt's scrolling optimisation.
             whole = QRect(0, 0, rect.width(), rect.height())
-            # The rounded corners reach a pixel further in.
-            band = _FOCUS_RING_WIDTH + _FOCUS_RING_KEYLINE + 1
+            band = _FOCUS_RING_BAND
             self.setMask(QRegion(whole) - QRegion(whole.adjusted(band, band, -band, -band)))
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
@@ -833,6 +836,69 @@ def _remove_focus_ring(control: QWidget) -> None:
         ring.deleteLater()
 
 
+def _is_scroll_area_without_a_tab_stop(control: QWidget) -> bool:
+    return isinstance(control, QScrollArea) and not (
+        control.focusPolicy() & Qt.FocusPolicy.TabFocus
+    )
+
+
+def _reveal_in_scroll_areas(widget: QWidget) -> None:
+    """Scroll every scroll area around ``widget`` so that it shows, innermost first.
+
+    ``QScrollArea`` does this itself only when Tab starts inside the area. Focus
+    arriving from outside it, or by a shortcut, would otherwise land out of sight.
+    """
+
+    ancestor = widget
+    while not ancestor.isWindow():
+        ancestor = ancestor.parentWidget()
+        if isinstance(ancestor, QScrollArea):
+            ancestor.ensureWidgetVisible(widget)
+
+
+def _new_scroll_area(area: QScrollArea, *, framed: bool) -> QScrollArea:
+    area.setWidgetResizable(True)
+    if not framed:
+        area.setFrameShape(QScrollArea.Shape.NoFrame)
+    return area
+
+
+def controls_scroll_area(parent: QWidget | None = None, *, framed: bool = False) -> QScrollArea:
+    """A scroll area whose content the keyboard reaches through the controls in it.
+
+    It is not a Tab stop: Tab goes straight to the first control, and the focus tracker
+    scrolls each control into view as it takes focus. A click still takes focus, so
+    clicking its empty space commits a line edit as it does anywhere else in a window.
+    """
+
+    area = _new_scroll_area(QScrollArea(parent), framed=framed)
+    area.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
+    return area
+
+
+class _ReadingScrollArea(QScrollArea):
+    """A scroll area with a gutter around its viewport for the focus ring.
+
+    The gutter is there whether or not the area has focus, so focus moves nothing, and
+    the ring covers no content at any scroll position.
+    """
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        band = _FOCUS_RING_BAND
+        self.setViewportMargins(band, band, band, band)
+
+
+def reading_scroll_area(parent: QWidget | None = None, *, framed: bool = False) -> QScrollArea:
+    """A scroll area for content with no controls to carry the keyboard through it.
+
+    It stays a Tab stop, because only with focus on the area can the arrow and page keys
+    scroll read-only content.
+    """
+
+    return _new_scroll_area(_ReadingScrollArea(parent), framed=framed)
+
+
 class _FocusRingTracker(QObject):
     """Put a ``_FocusRing`` on a control when focus reaches it during keyboard use.
 
@@ -864,11 +930,15 @@ class _FocusRingTracker(QObject):
                 self._keyboard_in_use = True
             elif QGuiApplication.mouseButtons() != Qt.MouseButton.NoButton:
                 self._keyboard_in_use = False
+            if not self._keyboard_in_use:
+                return
+            _reveal_in_scroll_areas(now)
             if (
-                self._keyboard_in_use
-                and isinstance(now, _FOCUS_RING_CONTROLS)
+                isinstance(now, _FOCUS_RING_CONTROLS)
                 # A combo box's open list, whose current row already shows.
                 and window.windowType() != Qt.WindowType.Popup
+                # A controls_scroll_area that a click focused, with focus back on it.
+                and not _is_scroll_area_without_a_tab_stop(now)
             ):
                 _FocusRing(now, self)
         except (RuntimeError, SystemError):

@@ -6,6 +6,8 @@ import dataclasses
 import itertools
 import math
 import re
+import subprocess
+import sys
 
 from matplotlib.figure import Figure
 import pytest
@@ -1295,7 +1297,7 @@ def _tree() -> QTreeWidget:
 
 
 def _scroll_area() -> QScrollArea:
-    area = QScrollArea()
+    area = theme_module.reading_scroll_area(framed=True)
     area.setWidget(QLabel("contents"))
     return area
 
@@ -1804,3 +1806,307 @@ def test_cleanup_removes_a_ring_that_is_showing(qapp, focus_scene) -> None:
     theme_module.cleanup_theme_runtime(qapp)
 
     assert scene.ring() is None
+
+
+def _scroll_dialog(area: QScrollArea, *, rows: int = 30) -> tuple[QDialog, list[QLineEdit]]:
+    """A dialog too short for its scroll area's rows, with a button either side of the area."""
+
+    dialog = QDialog()
+    layout = QVBoxLayout(dialog)
+    dialog.before = QPushButton("Before")
+    dialog.after = QPushButton("After")
+    content = QWidget()
+    grid = QVBoxLayout(content)
+    edits = []
+    for row in range(rows):
+        edits.append(QLineEdit(str(row)))
+        grid.addWidget(edits[-1])
+    area.setWidget(content)
+    for widget in (dialog.before, area, dialog.after):
+        layout.addWidget(widget)
+    dialog.resize(320, 240)
+    dialog.show()
+    dialog.activateWindow()
+    assert QTest.qWaitForWindowActive(dialog)
+    QApplication.processEvents()
+    assert area.verticalScrollBar().maximum() > 0
+    return dialog, edits
+
+
+def _press_tab(dialog: QDialog, *, backwards: bool = False) -> None:
+    if backwards:
+        QTest.keyClick(dialog.windowHandle(), Qt.Key.Key_Backtab, Qt.KeyboardModifier.ShiftModifier)
+    else:
+        QTest.keyClick(dialog.windowHandle(), Qt.Key.Key_Tab)
+    QApplication.processEvents()
+
+
+def _shown_rings(window: QWidget) -> list[QWidget]:
+    return [ring for ring in window.findChildren(QWidget, "mufinderFocusRing") if ring.isVisible()]
+
+
+def _is_fully_in_view(area: QScrollArea, widget: QWidget) -> bool:
+    viewport = area.viewport()
+    return viewport.rect().contains(widget.rect().translated(widget.mapTo(viewport, QPoint(0, 0))))
+
+
+def test_controls_scroll_area_is_not_a_tab_stop_and_shows_no_ring(fresh_focus_tracker) -> None:
+    area = theme_module.controls_scroll_area()
+    dialog, edits = _scroll_dialog(area)
+    dialog.before.setFocus()
+
+    _press_tab(dialog)
+
+    assert edits[0].hasFocus()
+    assert [ring.parentWidget() for ring in _shown_rings(dialog)] == [edits[0]]
+    dialog.close()
+
+
+def test_tabbing_through_a_controls_scroll_area_keeps_each_control_in_view(
+    fresh_focus_tracker,
+) -> None:
+    area = theme_module.controls_scroll_area()
+    dialog, edits = _scroll_dialog(area)
+    dialog.before.setFocus()
+
+    for edit in edits:
+        _press_tab(dialog)
+        assert edit.hasFocus()
+        assert _is_fully_in_view(area, edit), edit.text()
+
+    _press_tab(dialog)
+    assert dialog.after.hasFocus()
+    dialog.close()
+
+
+def test_tab_from_outside_scrolls_the_first_control_back_into_view(fresh_focus_tracker) -> None:
+    area = theme_module.controls_scroll_area()
+    dialog, edits = _scroll_dialog(area)
+    dialog.before.setFocus()
+    area.verticalScrollBar().setValue(area.verticalScrollBar().maximum())
+
+    _press_tab(dialog)
+
+    assert edits[0].hasFocus()
+    assert _is_fully_in_view(area, edits[0])
+    dialog.close()
+
+
+def test_shift_tab_from_outside_scrolls_the_last_control_into_view(fresh_focus_tracker) -> None:
+    area = theme_module.controls_scroll_area()
+    dialog, edits = _scroll_dialog(area)
+    dialog.after.setFocus()
+
+    _press_tab(dialog, backwards=True)
+
+    assert edits[-1].hasFocus()
+    assert _is_fully_in_view(area, edits[-1])
+    dialog.close()
+
+
+def test_a_click_does_not_scroll_a_scroll_area(fresh_focus_tracker) -> None:
+    area = theme_module.controls_scroll_area()
+    dialog, edits = _scroll_dialog(area)
+    dialog.before.setFocus()
+    _press_tab(dialog)
+    partly_shown = next(edit for edit in edits if not _is_fully_in_view(area, edit))
+
+    QTest.mouseClick(partly_shown, Qt.MouseButton.LeftButton, pos=QPoint(4, 1))
+    QApplication.processEvents()
+
+    assert partly_shown.hasFocus()
+    assert area.verticalScrollBar().value() == 0
+    dialog.close()
+
+
+def test_clicking_the_empty_part_of_a_controls_scroll_area_commits_a_line_edit(
+    fresh_focus_tracker,
+) -> None:
+    window = QWidget()
+    area = theme_module.controls_scroll_area(window)
+    content = QWidget()
+    edit = QLineEdit("3.5", content)
+    QVBoxLayout(content).addWidget(edit, 0, Qt.AlignmentFlag.AlignTop)
+    area.setWidget(content)
+    QVBoxLayout(window).addWidget(area)
+    window.resize(320, 240)
+    window.show()
+    window.activateWindow()
+    assert QTest.qWaitForWindowActive(window)
+    edit.setFocus()
+    QTest.keyClicks(edit, "1")
+    committed: list[bool] = []
+    edit.editingFinished.connect(lambda: committed.append(True))
+
+    QTest.mouseClick(content, Qt.MouseButton.LeftButton, pos=QPoint(100, 200))
+    QApplication.processEvents()
+
+    assert area.hasFocus()
+    assert committed == [True]
+    assert not _shown_rings(window)
+    window.close()
+
+
+def test_focus_returning_to_a_clicked_controls_scroll_area_shows_no_ring(
+    fresh_focus_tracker,
+) -> None:
+    area = theme_module.controls_scroll_area()
+    dialog, edits = _scroll_dialog(area)
+    dialog.before.setFocus()
+    _press_tab(dialog)
+    area.setFocus()
+    QApplication.processEvents()
+
+    assert area.hasFocus()
+    assert not _shown_rings(dialog)
+    dialog.close()
+
+
+def test_focus_moved_during_keyboard_use_scrolls_every_area_around_it(
+    fresh_focus_tracker,
+) -> None:
+    inner = theme_module.controls_scroll_area()
+    inner.setMinimumHeight(120)
+    content = QWidget()
+    grid = QVBoxLayout(content)
+    edits = [QLineEdit(str(row)) for row in range(30)]
+    for edit in edits:
+        grid.addWidget(edit)
+    inner.setWidget(content)
+    host = QWidget()
+    host_layout = QVBoxLayout(host)
+    host_layout.addSpacing(600)
+    host_layout.addWidget(inner)
+    host_layout.addSpacing(600)
+    outer = theme_module.controls_scroll_area()
+    outer.setWidget(host)
+    dialog = QDialog()
+    dialog.before = QPushButton("Before")
+    layout = QVBoxLayout(dialog)
+    layout.addWidget(dialog.before)
+    layout.addWidget(outer)
+    dialog.resize(320, 240)
+    dialog.show()
+    dialog.activateWindow()
+    assert QTest.qWaitForWindowActive(dialog)
+    dialog.before.setFocus()
+    _press_tab(dialog)
+
+    edits[-1].setFocus(Qt.FocusReason.ShortcutFocusReason)
+    QApplication.processEvents()
+
+    assert _is_fully_in_view(inner, edits[-1])
+    assert _is_fully_in_view(outer, edits[-1])
+    dialog.close()
+
+
+@pytest.mark.parametrize("mode", [theme_module.THEME_LIGHT, theme_module.THEME_DARK])
+@pytest.mark.parametrize("framed", [False, True])
+def test_reading_scroll_area_keeps_its_stop_and_its_ring_covers_no_content(
+    qapp, mode: str, framed: bool
+) -> None:
+    theme_module.cleanup_theme_runtime(qapp)
+    theme_module.apply_theme(qapp, mode)
+    area = theme_module.reading_scroll_area(framed=framed)
+    dialog, _edits = _scroll_dialog(area)
+    dialog.before.setFocus()
+    viewport_before = area.viewport().geometry()
+    pixels_before = area.viewport().grab().toImage()
+
+    _press_tab(dialog)
+
+    rings = _shown_rings(dialog)
+    assert area.hasFocus()
+    assert [ring.parentWidget() for ring in rings] == [area]
+    assert area.viewport().geometry() == viewport_before
+    assert not rings[0].mask().intersects(viewport_before)
+    assert area.viewport().grab().toImage() == pixels_before
+    accent = QColor(theme_module.current_palette().accent)
+    assert area.grab().toImage().pixelColor(0, area.height() // 2) == accent
+    dialog.close()
+    theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)
+
+
+def test_reading_scroll_area_scrolls_from_the_keyboard(fresh_focus_tracker) -> None:
+    area = theme_module.reading_scroll_area()
+    window = QWidget()
+    QVBoxLayout(window).addWidget(area)
+    label = QLabel("A long read-only page.")
+    label.setMinimumHeight(1000)
+    area.setWidget(label)
+    window.resize(320, 240)
+    window.show()
+    window.activateWindow()
+    assert QTest.qWaitForWindowActive(window)
+    area.setFocus()
+
+    QTest.keyClick(area, Qt.Key.Key_PageDown)
+
+    assert area.verticalScrollBar().value() > 0
+    window.close()
+
+
+# Runs in its own interpreter, because the failure takes the interpreter down.
+_FOCUS_CHAIN_WALK_SCRIPT = """
+import gc
+
+from PySide6.QtCore import Qt
+from PySide6.QtTest import QTest
+from PySide6.QtWidgets import (
+    QApplication, QLabel, QPushButton, QTableWidget, QTabWidget, QVBoxLayout, QWidget,
+)
+
+from mufinder.app import theme
+
+app = QApplication([])
+theme.apply_theme(app, theme.THEME_LIGHT)
+window = QWidget()
+layout = QVBoxLayout(window)
+lead = QPushButton("Before")
+tabs = QTabWidget()
+tabs.addTab(QLabel("first"), "First")
+tabs.addTab(QLabel("second"), "Second")
+table = QTableWidget(2, 2)
+for widget in (lead, tabs, table):
+    layout.addWidget(widget)
+window.resize(400, 300)
+window.show()
+window.activateWindow()
+assert QTest.qWaitForWindowActive(window)
+lead.setFocus()
+
+
+def walk_to_the_tab_bar_and_tab_past_it():
+    previous = table.previousInFocusChain()
+    while not (previous.isVisible() and previous.focusPolicy() & Qt.FocusPolicy.TabFocus):
+        previous = previous.previousInFocusChain()
+    previous.setFocus(Qt.FocusReason.OtherFocusReason)
+    QTest.qWait(10)
+    QTest.keyClick(window.windowHandle(), Qt.Key.Key_Tab)
+    QTest.qWait(10)
+
+
+for _ in range(2):
+    walk_to_the_tab_bar_and_tab_past_it()
+QApplication.sendPostedEvents(None, 52)
+gc.collect()
+
+bar = tabs.tabBar()
+assert sum(c.metaObject().className() == "QToolButton" for c in bar.children()) == 2
+# The bar lays out its scroll buttons here, so a deleted button crashes it.
+tabs.addTab(QLabel("third"), "Third")
+tabs.resize(80, 200)
+app.setStyleSheet("QTabBar::tab { padding: 9px; }")
+app.processEvents()
+"""
+
+
+def test_ring_leaves_qt_owned_children_to_qt_through_a_garbage_collection() -> None:
+    finished = subprocess.run(
+        [sys.executable, "-c", _FOCUS_CHAIN_WALK_SCRIPT],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+
+    assert finished.returncode == 0, finished.stderr[-2000:]

@@ -34,7 +34,6 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QPushButton,
     QRadioButton,
-    QScrollArea,
     QSlider,
     QSplitter,
     QSpinBox,
@@ -56,6 +55,7 @@ from mufinder.app.screen_utils import clamped_size
 from mufinder.app.theme import (
     adjust_font_size,
     body_font_family,
+    controls_scroll_area,
     current_palette,
     style_hint_text,
     style_section_subtitle,
@@ -2251,9 +2251,7 @@ class UepAnalysisDialog(QDialog):
 
         viewer_layout.addWidget(self._isosurface_legend_card, 0, Qt.AlignmentFlag.AlignTop)
 
-        self._isosurface_controls_scroll = QScrollArea(tab)
-        self._isosurface_controls_scroll.setWidgetResizable(True)
-        self._isosurface_controls_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self._isosurface_controls_scroll = controls_scroll_area(tab)
         self._isosurface_controls_scroll.setWidget(controls)
 
         layout.addWidget(self._isosurface_controls_scroll)
@@ -2446,9 +2444,7 @@ class UepAnalysisDialog(QDialog):
         side_layout.addWidget(self._slice_manage_muons_button, 0, Qt.AlignmentFlag.AlignRight)
         viewer_layout.addWidget(side_card, 0, Qt.AlignmentFlag.AlignTop)
 
-        self._slice_controls_scroll = QScrollArea(tab)
-        self._slice_controls_scroll.setWidgetResizable(True)
-        self._slice_controls_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self._slice_controls_scroll = controls_scroll_area(tab)
         self._slice_controls_scroll.setWidget(controls)
 
         layout.addWidget(self._slice_controls_scroll)

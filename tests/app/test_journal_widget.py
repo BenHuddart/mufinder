@@ -883,3 +883,11 @@ def test_a_finding_table_says_what_it_holds_and_aligns_its_numbers_right(
             column
         ).text()
     widget.close()
+
+
+def test_the_journal_stays_a_tab_stop_so_the_keyboard_can_scroll_it(qapp) -> None:
+    widget = JournalWidget()
+
+    assert widget._scroll.focusPolicy() & Qt.FocusPolicy.TabFocus
+
+    widget.deleteLater()

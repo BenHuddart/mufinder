@@ -21,7 +21,6 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QRadioButton,
-    QScrollArea,
     QStyle,
     QStyledItemDelegate,
     QStyleOptionViewItem,
@@ -47,7 +46,12 @@ from mufinder.castep_io.gui_metadata import (
     validate_gui_values,
 )
 from mufinder.app.keyword_catalog_notice import CATALOG_SETUP_HINT
-from mufinder.app.theme import scaled_to_text, track_item_view_corners
+from mufinder.app.theme import (
+    controls_scroll_area,
+    reading_scroll_area,
+    scaled_to_text,
+    track_item_view_corners,
+)
 from mufinder.castep_io.schema import KeywordSpec, keyword_catalog_status
 
 _ALWAYS_VISIBLE_ADVANCED_NAMES = ("spin_polarized",)
@@ -398,8 +402,9 @@ class ParameterDialog(QDialog):
         search_row.addWidget(self._search_input, 1)
         root.addLayout(search_row)
 
-        self._scroll_area = QScrollArea(self)
-        self._scroll_area.setWidgetResizable(True)
+        # A read-only dialog's editors are disabled, so nothing else can carry the keyboard.
+        make_scroll_area = reading_scroll_area if self._read_only else controls_scroll_area
+        self._scroll_area = make_scroll_area(self, framed=True)
         self._table_widget = QWidget(self._scroll_area)
         self._table_layout = QGridLayout(self._table_widget)
         self._table_layout.setContentsMargins(0, 0, 0, 0)

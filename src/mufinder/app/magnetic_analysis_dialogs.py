@@ -21,7 +21,6 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QPushButton,
     QRadioButton,
-    QScrollArea,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -33,6 +32,7 @@ from mufinder.app.decimal_input import DecimalLineEdit
 from mufinder.app.magnetic_component_dialogs import selector_label
 from mufinder.app.result_notes import unrelaxed_results_note
 from mufinder.app.theme import (
+    controls_scroll_area,
     style_hint_text,
     style_inline_group,
     style_section_title,
@@ -464,8 +464,7 @@ class DipolarTensorDialog(QDialog):
         self._result_unit_combo.currentIndexChanged.connect(self._refresh_result_units)
 
         self._estimate_note = unrelaxed_results_note(self)
-        self._result_scroll = QScrollArea(self)
-        self._result_scroll.setWidgetResizable(True)
+        self._result_scroll = controls_scroll_area(self, framed=True)
         self._result_content = QWidget(self._result_scroll)
         self._result_content_layout = QVBoxLayout(self._result_content)
         self._result_content_layout.setSpacing(14)

@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
-from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QDialogButtonBox, QLabel, QPushButton, QStyle
+from PySide6.QtCore import QPoint, Qt
+from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QApplication, QDialogButtonBox, QLabel, QPushButton, QStyle
 
 import mufinder.app.param_dialog as param_dialog_module
 from mufinder.app.param_widgets import HubbardUParamEditor
@@ -1497,4 +1499,74 @@ def test_neb_dialog_search_filters_the_rows_without_a_keyword(qapp) -> None:
     dialog._search_input.clear()
     assert farms_row.value.isVisible() is True
     assert note_row.value.isVisible() is True
+    dialog.close()
+
+
+def _tall_parameter_dialog(*, read_only: bool) -> ParameterDialog:
+    """A dialog too short for its rows, shown and active."""
+
+    specs = _dialog_specs()
+    xc_functional = next(spec for spec in specs if spec.name == "xc_functional")
+    dialog = ParameterDialog(
+        specs=[
+            *specs,
+            *(replace(xc_functional, name=f"xc_copy_{index}") for index in range(20)),
+        ],
+        workflow_stage="convergence_kpoint",
+        read_only=read_only,
+    )
+    dialog.resize(dialog.width(), 320)
+    dialog.show()
+    dialog.activateWindow()
+    assert QTest.qWaitForWindowActive(dialog)
+    QApplication.processEvents()
+    assert dialog._scroll_area.verticalScrollBar().maximum() > 0
+    return dialog
+
+
+def test_tab_reaches_every_row_in_view_without_stopping_on_the_scroll_area(
+    fresh_focus_tracker,
+) -> None:
+    dialog = _tall_parameter_dialog(read_only=False)
+    area = dialog._scroll_area
+    viewport = area.viewport()
+    dialog._search_input.setFocus()
+    area.verticalScrollBar().setValue(area.verticalScrollBar().maximum())
+
+    stops_in_area = 0
+    furthest = 0
+    for _ in range(80):
+        QTest.keyClick(dialog.windowHandle(), Qt.Key.Key_Tab)
+        QApplication.processEvents()
+        focused = QApplication.focusWidget()
+        assert focused is not area
+        if focused is dialog._search_input:
+            break
+        if area.isAncestorOf(focused):
+            stops_in_area += 1
+            furthest = max(furthest, area.verticalScrollBar().value())
+            top_left = focused.mapTo(viewport, QPoint(0, 0))
+            assert viewport.rect().contains(focused.rect().translated(top_left)), focused
+
+    assert focused is dialog._search_input
+    assert stops_in_area >= 20
+    assert furthest == area.verticalScrollBar().maximum()
+    dialog.close()
+
+
+def test_read_only_dialog_keeps_the_stop_its_disabled_rows_need_and_covers_no_label(
+    fresh_focus_tracker,
+) -> None:
+    dialog = _tall_parameter_dialog(read_only=True)
+    area = dialog._scroll_area
+    dialog._search_input.setFocus()
+    pixels_before = area.viewport().grab().toImage()
+
+    QTest.keyClick(dialog.windowHandle(), Qt.Key.Key_Tab)
+    QApplication.processEvents()
+
+    assert area.hasFocus()
+    assert area.viewport().grab().toImage() == pixels_before
+    QTest.keyClick(area, Qt.Key.Key_PageDown)
+    assert area.verticalScrollBar().value() > 0
     dialog.close()
