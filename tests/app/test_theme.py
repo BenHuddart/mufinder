@@ -1646,11 +1646,11 @@ def test_ring_stands_out_on_a_row_button_in_a_selected_row(focus_scene, mode: st
 @pytest.mark.parametrize("mode", [theme_module.THEME_LIGHT, theme_module.THEME_DARK])
 def test_ring_stands_out_on_a_checked_accent_filled_button(focus_scene, mode: str) -> None:
     button = QPushButton("Cluster")
-    button.setObjectName("uepClusteringToolbarButton")
+    button.setObjectName("clusteringToolbarButton")
     button.setCheckable(True)
     button.setChecked(True)
     scene = focus_scene(button, mode)
-    button.setStyleSheet(theme_module.uep_clustering_toolbar_stylesheet())
+    button.setStyleSheet(theme_module.clustering_toolbar_stylesheet())
     QApplication.processEvents()
     scene.tab_to_control()
 
