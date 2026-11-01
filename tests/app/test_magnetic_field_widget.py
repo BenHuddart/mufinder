@@ -27,6 +27,7 @@ from mufinder.app.magnetic_field_widget import (
 from mufinder.app.magnetic_site_dialog import MuonSiteSelectionDialog
 from mufinder.app.magnetic_texture_dialog import MagneticTextureDialog
 from mufinder.domain.models import Structure
+from mufinder.persistence.codec import to_jsonable
 from mufinder.science.demagnetization import DemagnetizingSample, PlatePhoto
 from mufinder.science.magnetic_fields import MagneticFieldError, contact_coupling_to_angstrom_minus3
 from mufinder.science.magnetic_structure import (
@@ -51,15 +52,20 @@ from mufinder.services.magnetic_field_settings import (
 from mufinder.services.magnetic_field_sites import (
     MagneticMuonSiteOption,
     relaxation_cluster_muon_site_options,
+    same_muon_site,
+    site_cartesian_position,
+    uep_cluster_muon_site_options,
 )
 from mufinder.services.project_service import ProjectService
 from tests.support.codata import BOHR_MAGNETON_J_PER_T, MU0_OVER_4PI_T_M_PER_A
 from tests.support.magnetic_field_sites import (
     add_uep_cluster,
+    cof2_host,
     displaced_iron_supercell,
     feo_host_structure,
     relaxation_cluster_document,
     uep_cluster_document,
+    uep_search_document,
 )
 from tests.support.magnetic_fields import (
     coo_structure,
@@ -213,6 +219,77 @@ def test_magnetic_field_widget_opens_a_host_only_project_with_no_muon_site(qapp,
     assert widget._calculate_button.toolTip() == (
         "Enable at least one magnetic-structure component first."
     )
+    widget.close()
+
+
+def _saved_uep_selection(site: MagneticMuonSiteOption, position, **fields) -> dict[str, object]:
+    """A selection as a project saved it, at ``position`` in the job cell."""
+
+    return to_jsonable(
+        {
+            "source": site.source,
+            "label": site.label,
+            "fractional_position": position,
+            "cartesian_position": site.properties["representative"]["optimized_position_ang"],
+            "cluster_label": site.cluster_label,
+            "source_label": site.source_label,
+            "properties": site.properties,
+            **fields,
+        }
+    )
+
+
+@pytest.mark.parametrize("label", ["UEP site 1", "UEP cluster 1"])
+def test_a_saved_supercell_uep_selection_reopens_in_the_host_cell(qapp, tmp_path, label) -> None:
+    host = cof2_host()
+    document = uep_search_document(tmp_path, host, (0.75, 1.0, 0.75), supercell=(2, 1, 1))
+    (site,) = uep_cluster_muon_site_options(document, host)
+    widget = MagneticFieldWidget()
+    widget.set_document(document)
+    stored = {"kind": "commensurate", "results": [{"magnitude": 1.057}]}
+
+    widget.set_form_state(
+        {
+            "selected_muon_site": _saved_uep_selection(site, [0.75, 1.0, 0.75], label=label),
+            "magnetic_field_results": stored,
+        }
+    )
+
+    selected = widget.selected_muon_site()
+    assert selected.label == label
+    assert selected.fractional_position == pytest.approx((0.5, 0.0, 0.75))
+    assert selected.cartesian_position == pytest.approx(
+        site_cartesian_position((0.5, 0.0, 0.75), host)
+    )
+    assert "(0.5000, 0.0000, 0.7500)" in widget._site_summary.text()
+    assert widget._field_results_state == stored
+    dialog = MuonSiteSelectionDialog(document, host, selected)
+    assert same_muon_site(dialog.selected_muon_site(), site)
+    assert dialog._site_table.currentRow() == 0
+    dialog.close()
+    widget.close()
+
+
+def test_a_saved_uep_selection_without_its_result_keeps_its_position(qapp, tmp_path) -> None:
+    """A generated site, or one saved before options carried their result, has nothing to convert."""
+
+    host = cof2_host()
+    document = uep_search_document(tmp_path, host, (0.5, 0.0, 0.75))
+    widget = MagneticFieldWidget()
+    widget.set_document(document)
+
+    widget.set_form_state(
+        {
+            "selected_muon_site": {
+                "source": "uep_clustering",
+                "label": "UEP Site 1",
+                "fractional_position": [0.0, 0.5, 0.25],
+                "properties": {"cluster_index": 1},
+            }
+        }
+    )
+
+    assert widget.selected_muon_site().fractional_position == (0.0, 0.5, 0.25)
     widget.close()
 
 

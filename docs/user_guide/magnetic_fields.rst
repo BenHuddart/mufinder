@@ -604,7 +604,11 @@ distorted-structure reference. The available sources are:
 - ``UEP sites (unrelaxed estimate)``, using each site of a UEP batch search, at
   its lowest-energy start as the optimizer found it, as ``UEP site <n>`` with its
   group in the ``Group`` column, and the sites generated from them with the ``UEP
-  clusters`` method.
+  clusters`` method. The start's position is read in one cell, whatever supercell the
+  job ran on, and wrapped into it: the structure the search was configured on, or the
+  host when that structure is not one host cell. A supercell job and a unit-cell job so
+  give the same field for the same image. Results already calculated keep their numbers
+  until they are calculated again.
   A stored site whose generation method is ``uep_batch_cluster`` is not
   listed; it stays in the project and in the other workflows (see
   :doc:`/compatibility_policy`);

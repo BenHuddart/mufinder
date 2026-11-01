@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QDialog, QMessageBox
@@ -38,7 +39,7 @@ def test_muon_site_selection_dialog_lists_uep_cluster_muon_sites(qapp, tmp_path)
     assert selected.cluster_label == "Site 2"
     assert dialog._site_table.item(0, 2).text() == "Site 2"
     assert dialog._site_table.horizontalHeaderItem(2).text() == "Group"
-    assert selected.fractional_position == (0.1, 0.2, 0.3)
+    assert selected.fractional_position == pytest.approx((0.1, 0.2, 0.3))
     assert not dialog._distortion_checkbox.isEnabled()
     dialog.close()
 

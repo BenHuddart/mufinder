@@ -8,13 +8,8 @@ from uuid import uuid4
 import numpy as np
 import pytest
 
-from mufinder.domain.models import MuonSite, Structure
+from mufinder.domain.models import MuonSite
 from mufinder.science.magnetic_fields import MagneticFieldOptions, calculate_commensurate_fields
-from mufinder.science.magnetic_structure import (
-    AtomSelector,
-    MagneticStructureModel,
-    build_collinear_component,
-)
 from mufinder.services.magnetic_field_sites import (
     CUSTOM_SITE_SOURCE,
     RELAXATION_SITE_SOURCE,
@@ -35,13 +30,18 @@ from mufinder.services.muon_sites_summary import (
 )
 from mufinder.services.project_summary import RELAXATION_ANALYSIS_WORKSPACES_KEY
 from mufinder.services.project_survey import UEP_ANALYSIS_STATES_KEY
+from mufinder.services.site_generation_service import generate_candidate_sites
 from tests.support.magnetic_field_sites import (
     RELAXATION_WORKSPACE_NAME,
     RELAXED_SITE,
+    cof2_antiferromagnet,
+    cof2_ferromagnet,
+    cof2_host,
     displaced_iron_supercell,
     feo_host_structure,
     relaxation_cluster_document,
     uep_cluster_document,
+    uep_search_document,
 )
 
 
@@ -54,8 +54,8 @@ def test_uep_batch_cluster_is_offered_at_its_optimised_position(tmp_path) -> Non
     assert option.label == "UEP site 2"
     assert option.source_label == "UEP batch"
     assert option.cluster_label == "Site 2"
-    assert option.fractional_position == (0.1, 0.2, 0.3)
-    assert option.cartesian_position == (0.3, 0.6, 0.9)
+    assert option.fractional_position == pytest.approx((0.1, 0.2, 0.3))
+    assert option.cartesian_position == pytest.approx((0.3, 0.6, 0.9))
     assert option.distortion_structure_id is None
     assert option.properties is not None
     assert option.properties["cluster"]["cluster_index"] == 2
@@ -75,20 +75,8 @@ def test_a_uep_group_gives_the_field_of_its_lowest_member_as_found(
 ) -> None:
     """The group's image in the asymmetric unit, which Generation uses, changes no field."""
 
-    a, c, x = 4.695, 3.180, 0.306
-    host = Structure(
-        label="CoF2",
-        lattice_vectors=[[a, 0.0, 0.0], [0.0, a, 0.0], [0.0, 0.0, c]],
-        species=["Co", "Co", "F", "F", "F", "F"],
-        fractional_positions=[
-            [0.0, 0.0, 0.0],
-            [0.5, 0.5, 0.5],
-            [x, x, 0.0],
-            [1 - x, 1 - x, 0.0],
-            [0.5 + x, 0.5 - x, 0.5],
-            [0.5 - x, 0.5 + x, 0.5],
-        ],
-    )
+    host = cof2_host()
+    a, c = 4.695, 3.180
     document = uep_cluster_document(tmp_path)
     (state,) = document.ui_state[UEP_ANALYSIS_STATES_KEY].values()
     state["batch_results"] = [
@@ -104,47 +92,158 @@ def test_a_uep_group_gives_the_field_of_its_lowest_member_as_found(
 
     (option,) = uep_cluster_muon_site_options(document, host)
 
-    assert option.fractional_position == member
+    assert option.fractional_position == pytest.approx(member)
     assert option.cartesian_position == pytest.approx((member[0] * a, member[1] * a, member[2] * c))
-    antiferromagnet = MagneticStructureModel(
-        components=(
-            build_collinear_component(
-                label="Corner",
-                selector=AtomSelector.indices([0]),
-                q_coeff=(0.0, 0.0, 0.0),
-                moment=(0.0, 0.0, 2.64),
-                component_id="corner",
-            ),
-            build_collinear_component(
-                label="Centre",
-                selector=AtomSelector.indices([1]),
-                q_coeff=(0.0, 0.0, 0.0),
-                moment=(0.0, 0.0, -2.64),
-                component_id="centre",
-            ),
-        ),
-    )
-    ferromagnet = MagneticStructureModel(
-        components=(
-            build_collinear_component(
-                label="Ferromagnet",
-                selector=AtomSelector.species("Co"),
-                q_coeff=(0.0, 0.0, 0.0),
-                moment=(2.64, 0.0, 0.0),
-                component_id="ferromagnet",
-            ),
-        ),
-    )
     options = MagneticFieldOptions()
     (afm,) = calculate_commensurate_fields(
-        host, antiferromagnet, [option.fractional_position], options=options
+        host, cof2_antiferromagnet(), [option.fractional_position], options=options
     )
     (fm,) = calculate_commensurate_fields(
-        host, ferromagnet, [option.fractional_position], options=options
+        host, cof2_ferromagnet(), [option.fractional_position], options=options
     )
     field, magnitude = _COF2_MEMBERS[member]
     assert [float(value) for value in afm.total] == pytest.approx(field, abs=5e-5)
     assert float(fm.magnitude) == pytest.approx(magnitude, abs=5e-5)
+
+
+def _field(host, model, site) -> tuple[list[float], float]:
+    (result,) = calculate_commensurate_fields(
+        host, model, [site.fractional_position], options=MagneticFieldOptions()
+    )
+    return [float(value) for value in result.total], float(result.magnitude)
+
+
+@pytest.mark.parametrize(
+    ("job_position", "host_position"),
+    [
+        # The site that read 1.057 T on a 2x1x1 job, from the job-cell fractional.
+        ((0.75, 1.0, 0.75), (0.5, 0.0, 0.75)),
+        # A general position, one host cell along the doubled axis.
+        ((0.5408165, 0.611304, 0.299606), (0.081633, 0.611304, 0.299606)),
+    ],
+)
+@pytest.mark.parametrize("model", [cof2_antiferromagnet, cof2_ferromagnet])
+def test_supercell_and_unit_cell_jobs_give_one_field_for_one_site(
+    real_muesr, tmp_path, job_position, host_position, model
+) -> None:
+    host = cof2_host()
+    (supercell,) = uep_cluster_muon_site_options(
+        uep_search_document(tmp_path / "super", host, job_position, supercell=(2, 1, 1)), host
+    )
+    (unit_cell,) = uep_cluster_muon_site_options(
+        uep_search_document(tmp_path / "unit", host, host_position), host
+    )
+
+    assert supercell.fractional_position == pytest.approx(host_position)
+    assert unit_cell.fractional_position == pytest.approx(host_position)
+    assert supercell.cartesian_position == pytest.approx(
+        site_cartesian_position(host_position, host)
+    )
+    supercell_field, supercell_magnitude = _field(host, model(), supercell)
+    unit_cell_field, unit_cell_magnitude = _field(host, model(), unit_cell)
+    assert supercell_field == pytest.approx(unit_cell_field, abs=1e-6)
+    assert supercell_magnitude == pytest.approx(unit_cell_magnitude, abs=1e-6)
+
+
+def test_a_position_outside_the_cell_folds_into_it_and_keeps_its_field(
+    real_muesr, tmp_path
+) -> None:
+    host = cof2_host()
+    (outside,) = uep_cluster_muon_site_options(
+        uep_search_document(tmp_path / "outside", host, (1.0, 0.5, -0.25)), host
+    )
+
+    assert outside.fractional_position == pytest.approx((0.0, 0.5, 0.75))
+    _field_vector, magnitude = _field(host, cof2_antiferromagnet(), outside)
+    assert magnitude == pytest.approx(0.0, abs=1e-6)
+
+
+def test_a_site_from_generation_and_the_uep_option_agree(real_muesr, tmp_path) -> None:
+    """The site the 2x1x1 job found: 1.057 T from the job-cell fractional, 0 T through Generation."""
+
+    host = cof2_host()
+    document = uep_search_document(tmp_path, host, (0.75, 1.0, 0.75), supercell=(2, 1, 1))
+    (option,) = uep_cluster_muon_site_options(document, host)
+    ((raw_job_id, state),) = document.ui_state[UEP_ANALYSIS_STATES_KEY].items()
+    (cluster,) = state["batch_summary_data"]["clusters"]
+    generate_candidate_sites(
+        document,
+        method="uep_clusters",
+        parameters={
+            "selections": [
+                {
+                    "source_key": f"{raw_job_id}:cluster:1",
+                    "fractional_position": cluster["representative_fractional_position"],
+                    "cartesian_position": cluster["representative_position_ang"],
+                    "generation_method": "uep_cluster",
+                    "label": "UEP Site 1",
+                    "properties": {"cluster_index": 1},
+                }
+            ]
+        },
+    )
+
+    by_label = {site.label: site for site in uep_cluster_muon_site_options(document, host)}
+
+    assert set(by_label) == {"UEP Site 1", "UEP site 1"}
+    for model in (cof2_antiferromagnet(), cof2_ferromagnet()):
+        _generated_field, generated = _field(host, model, by_label["UEP Site 1"])
+        _option_field, offered = _field(host, model, option)
+        # They are two images of one site, whose fields differ by the sum's scatter, 6e-5 T.
+        assert offered == pytest.approx(generated, abs=1e-4)
+    assert _field(host, cof2_antiferromagnet(), option)[1] == pytest.approx(0.0, abs=1e-6)
+
+
+def test_a_position_is_read_in_the_source_structures_cell_not_the_hosts(tmp_path) -> None:
+    """A search on a relaxed copy of the host keeps its fractional, as Generation does."""
+
+    host = cof2_host()
+    relaxed = replace(
+        host, id=uuid4(), lattice_vectors=[[4.8, 0.0, 0.0], [0.0, 4.8, 0.0], [0.0, 0.0, 3.2]]
+    )
+    (option,) = uep_cluster_muon_site_options(
+        uep_search_document(tmp_path, host, (0.75, 1.0, 0.75), supercell=(2, 1, 1), source=relaxed),
+        host,
+    )
+
+    assert option.fractional_position == pytest.approx((0.5, 0.0, 0.75))
+    assert option.cartesian_position == pytest.approx(
+        site_cartesian_position((0.5, 0.0, 0.75), host)
+    )
+
+
+def test_a_search_on_a_relaxed_supercell_is_read_in_the_host_cell(tmp_path) -> None:
+    host = cof2_host()
+    relaxed = replace(
+        host, id=uuid4(), lattice_vectors=[[9.39, 0.0, 0.0], [0.0, 4.695, 0.0], [0.0, 0.0, 3.18]]
+    )
+    (option,) = uep_cluster_muon_site_options(
+        uep_search_document(tmp_path, host, (0.75, 1.0, 0.75), source=relaxed), host
+    )
+
+    assert option.fractional_position == pytest.approx((0.5, 0.0, 0.75))
+
+
+def test_a_position_just_below_a_cell_face_reads_as_on_the_face(tmp_path) -> None:
+    host = cof2_host()
+    (option,) = uep_cluster_muon_site_options(
+        uep_search_document(tmp_path, host, (1.0 - 1e-9, 0.5, -1e-9)), host
+    )
+
+    assert option.fractional_position == pytest.approx((0.0, 0.5, 0.0))
+
+
+def test_a_lattice_that_cannot_be_inverted_does_not_stop_the_site_list(tmp_path) -> None:
+    host = cof2_host()
+    document = uep_search_document(tmp_path, host, (0.5, 0.0, 0.75))
+    host.lattice_vectors = [[0.0, 0.0, 0.0]] * 3
+    (state,) = document.ui_state[UEP_ANALYSIS_STATES_KEY].values()
+
+    (option,) = uep_cluster_muon_site_options(document, host)
+
+    assert option.fractional_position == pytest.approx(
+        state["batch_summary_data"]["clusters"][0]["representative_fractional_position"]
+    )
 
 
 def test_uep_cluster_without_an_optimised_position_uses_the_representative(tmp_path) -> None:
