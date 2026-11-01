@@ -8,7 +8,15 @@ from math import pi
 import numpy as np
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import QGroupBox, QLabel, QTabWidget, QToolButton, QWidget
+from PySide6.QtWidgets import (
+    QApplication,
+    QGroupBox,
+    QLabel,
+    QScrollArea,
+    QTabWidget,
+    QToolButton,
+    QWidget,
+)
 
 import mufinder.app.quantum_analysis_dialog as quantum_analysis_dialog_module
 from mufinder.app.math_label import MathLabel
@@ -474,3 +482,21 @@ def test_quantum_analysis_dialog_banners_a_hydrogen_mass_muon(qapp, tmp_path: Pa
     assert banner.wordWrap() is True
     assert banner.objectName() == "warningText"
     dialog.close()
+
+
+def test_quantum_analysis_help_is_a_tab_stop_only_when_it_overflows(qapp) -> None:
+    dialog = QuantumAnalysisHelpDialog({"title": "Help", "paragraphs": ("Context.",)})
+    dialog.show()
+    QApplication.processEvents()
+    scroll = dialog.findChild(QScrollArea)
+
+    assert not scroll.focusPolicy() & Qt.FocusPolicy.TabFocus
+
+    dialog.resize(dialog.width(), 80)
+    scroll.widget().setMinimumHeight(1000)
+    QApplication.processEvents()
+
+    assert scroll.focusPolicy() & Qt.FocusPolicy.TabFocus
+
+    dialog.close()
+    dialog.deleteLater()

@@ -142,6 +142,8 @@ def test_uep_analysis_dialog_shrinks_for_small_screens(qapp) -> None:
     assert dialog._isosurface_controls_scroll.widgetResizable()
     assert isinstance(dialog._slice_controls_scroll, QScrollArea)
     assert dialog._slice_controls_scroll.widgetResizable()
+    for scroll in (dialog._isosurface_controls_scroll, dialog._slice_controls_scroll):
+        assert not scroll.focusPolicy() & Qt.FocusPolicy.TabFocus
 
     assert dialog._isosurface_slider.minimumWidth() == 400
     assert dialog._isosurface_viewer.minimumHeight() == 320

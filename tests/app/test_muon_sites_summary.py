@@ -6,6 +6,7 @@ from functools import partial
 from pathlib import Path
 from uuid import uuid4
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QPushButton
 
 from mufinder.app.atomic_structure_viewer import AtomicStructureViewer
@@ -755,3 +756,11 @@ def test_applying_a_grouping_writes_a_journal_record(qapp, tmp_path: Path) -> No
         assert saved == ["The grouping was applied, but autosave failed."]
     finally:
         window.close()
+
+
+def test_summary_scroll_area_is_not_a_tab_stop(qapp) -> None:
+    widget = MuonSitesSummaryWidget()
+
+    assert not widget._scroll.focusPolicy() & Qt.FocusPolicy.TabFocus
+
+    widget.deleteLater()

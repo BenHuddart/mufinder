@@ -28,7 +28,6 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QRadioButton,
-    QScrollArea,
     QSpinBox,
     QSplitter,
     QStackedWidget,
@@ -56,6 +55,7 @@ from mufinder.app.magnetic_component_dialogs import (
 from mufinder.app.plot_canvas import PlotFrame, create_plot_canvas
 from mufinder.app.theme import (
     TexturePreviewColors,
+    controls_scroll_area,
     current_palette,
     feature_dialog_stylesheet,
     set_option_card_state,
@@ -757,9 +757,7 @@ class MagneticTextureDialog(AtomTargetCardsMixin, QDialog):
         controls_layout.addWidget(target_group)
         controls_layout.addStretch(1)
 
-        self._controls_scroll = QScrollArea(self)
-        self._controls_scroll.setWidgetResizable(True)
-        self._controls_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self._controls_scroll = controls_scroll_area(self)
         self._controls_scroll.setWidget(controls)
 
         preview_panel = QWidget(self)

@@ -15,7 +15,7 @@ from PySide6.QtWidgets import QApplication
 
 import mufinder.castep_io.schema as _schema_module
 from mufinder.app.gui_garbage_collector import GuiGarbageCollector, install_gui_garbage_collector
-from mufinder.app.theme import cleanup_theme_runtime
+from mufinder.app.theme import THEME_LIGHT, apply_theme, cleanup_theme_runtime
 
 
 # Process-wide CASTEP keyword-schema state. Several tests rebuild it (refresh_keyword_catalog,
@@ -215,6 +215,18 @@ def qapp() -> Generator[QApplication, None, None]:
     _session_garbage_collector.stop()
     _session_garbage_collector = None
     _cleanup_qt_application(app, quit_app=True)
+
+
+@pytest.fixture
+def fresh_focus_tracker(qapp: QApplication) -> None:
+    """The application's theme with a new focus tracker, as ``main`` starts one.
+
+    The tracker is what scrolls a control into view and rings it, and a new one has not
+    seen an earlier test's keyboard use.
+    """
+
+    cleanup_theme_runtime(qapp)
+    apply_theme(qapp, THEME_LIGHT)
 
 
 @pytest.fixture

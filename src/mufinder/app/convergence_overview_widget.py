@@ -12,7 +12,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
-    QScrollArea,
     QSizePolicy,
     QVBoxLayout,
     QWidget,
@@ -23,6 +22,7 @@ from mufinder.app.plot_canvas import PlotFrame, create_plot_canvas
 from mufinder.app.theme import (
     current_palette,
     make_empty_state_label,
+    reading_scroll_area,
     style_hint_text,
     style_section_subtitle,
     style_section_title,
@@ -222,9 +222,8 @@ class ConvergenceOverviewWidget(QWidget):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self._scroll = QScrollArea(self)
-        self._scroll.setWidgetResizable(True)
-        self._scroll.setFrameShape(QFrame.Shape.NoFrame)
+        # The cards' buttons sit above their summaries and plots, which only this stop can scroll to.
+        self._scroll = reading_scroll_area(self)
 
         self._content = QWidget(self._scroll)
         self._content.setObjectName("convergenceOverviewContent")

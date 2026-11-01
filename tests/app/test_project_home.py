@@ -220,3 +220,11 @@ def test_chart_labels_stay_inside_the_chart_at_its_minimum_width(qapp, tmp_path:
         rect = chart._label_rect(key, chart.node_center(key))
         assert rect.left() >= 0.0
         assert rect.right() <= chart.width()
+
+
+def test_project_home_scroll_area_is_not_a_tab_stop(qapp) -> None:
+    home = ProjectHomeWidget()
+
+    assert not home._scroll.focusPolicy() & Qt.FocusPolicy.TabFocus
+
+    home.deleteLater()

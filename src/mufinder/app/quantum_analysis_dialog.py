@@ -24,7 +24,6 @@ from PySide6.QtWidgets import (
     QLabel,
     QPushButton,
     QSizePolicy,
-    QScrollArea,
     QSplitter,
     QTableWidget,
     QTableWidgetItem,
@@ -40,6 +39,7 @@ from mufinder.app.screen_utils import clamped_size
 from mufinder.app.theme import (
     STRUCTURE_OVERLAY_COLOURS,
     current_palette,
+    reading_scroll_area,
     style_hint_text,
     style_section_title,
     style_warning_text,
@@ -622,9 +622,7 @@ class QuantumAnalysisHelpDialog(QDialog):
         style_section_title(title_label)
         layout.addWidget(title_label)
 
-        scroll = QScrollArea(self)
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        scroll = reading_scroll_area(self)
 
         content = QWidget(scroll)
         content.setObjectName("quantumAnalysisHelpContent")

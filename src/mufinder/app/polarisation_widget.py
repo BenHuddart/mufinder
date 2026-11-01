@@ -22,7 +22,6 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QPushButton,
-    QScrollArea,
     QSpinBox,
     QTableWidgetItem,
     QVBoxLayout,
@@ -42,6 +41,7 @@ from mufinder.app.result_notes import unrelaxed_results_note
 from mufinder.app.plot_canvas import PlotFrame, create_plot_canvas
 from mufinder.app.theme import (
     categorical_colour,
+    controls_scroll_area,
     current_palette,
     plot_series_colours,
     style_hint_text,
@@ -592,9 +592,7 @@ class PolarisationWidget(QWidget):
         left_layout.addWidget(sources_group)
         left_layout.addWidget(settings_group)
         left_layout.addStretch(1)
-        left_scroll = QScrollArea(self)
-        left_scroll.setWidgetResizable(True)
-        left_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        left_scroll = controls_scroll_area(self)
         left_scroll.setWidget(left)
         left_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         left_scroll.setMinimumWidth(left.minimumSizeHint().width() + 4)

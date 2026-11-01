@@ -37,7 +37,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
-    QScrollArea,
     QSizePolicy,
     QToolTip,
     QVBoxLayout,
@@ -47,6 +46,7 @@ from PySide6.QtWidgets import (
 from mufinder.app.cell_survey_widget import CellSurveyWidget
 from mufinder.app.theme import (
     body_font_family,
+    controls_scroll_area,
     current_palette,
     heading_font_family,
     style_hint_text,
@@ -645,9 +645,7 @@ class ProjectHomeWidget(QWidget):
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
-        self._scroll = QScrollArea(self)
-        self._scroll.setWidgetResizable(True)
-        self._scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self._scroll = controls_scroll_area(self)
         outer.addWidget(self._scroll)
         content = QWidget(self._scroll)
         content.setObjectName("projectHomeContent")

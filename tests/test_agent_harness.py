@@ -941,3 +941,19 @@ def test_ui_text_follows_the_style_page() -> None:
         for line, problem in _ui_text_violations(path.read_text(encoding="utf-8"))
     ]
     assert not violations, "UI text breaks docs/ui_text.rst:\n" + "\n".join(violations)
+
+
+def test_scroll_areas_come_from_the_shared_helpers() -> None:
+    """Whether a scroll area is a Tab stop is chosen once, in ``theme.py``.
+
+    ``controls_scroll_area`` is not a stop and ``reading_scroll_area`` is; the second also
+    leaves the focus ring room. ``docs/architecture.rst``, Cross-platform appearance.
+    """
+
+    pattern = re.compile(r"\bQScrollArea\(")
+    offenders = [
+        path.relative_to(SOURCE_ROOT).as_posix()
+        for path in sorted((SOURCE_ROOT / "app").rglob("*.py"))
+        if path.name != "theme.py" and pattern.search(path.read_text(encoding="utf-8"))
+    ]
+    assert not offenders, f"Use theme.controls_scroll_area or reading_scroll_area: {offenders}"

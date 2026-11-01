@@ -6,6 +6,7 @@ from dataclasses import replace
 
 import numpy as np
 import pytest
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QGroupBox
 
 from mufinder.app.blocking_call import BlockingCallCancelled
@@ -518,3 +519,16 @@ def test_cancelling_a_first_calculation_says_only_that_it_was_cancelled(qapp) ->
     assert dialog._status.text() == "Calculation cancelled"
     assert dialog.results_state() == {}
     dialog.close()
+
+
+def test_dipolar_tensor_result_scroll_area_is_not_a_tab_stop(qapp) -> None:
+    dialog = DipolarTensorDialog(
+        feo_host_structure(),
+        MagneticStructureModel(components=(z_moment_component("one", "One", 0),)),
+        custom_muon_site((0.25, 0.25, 0.25)),
+        include_equivalent_sites=False,
+    )
+
+    assert not dialog._result_scroll.focusPolicy() & Qt.FocusPolicy.TabFocus
+
+    dialog.deleteLater()
