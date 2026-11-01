@@ -787,6 +787,30 @@ def test_texture_preview_canvas_colours_follow_the_canvas_not_the_theme(qapp) ->
         qapp.setStyleSheet(previous_sheet)
 
 
+@pytest.mark.parametrize("palette", [theme_module.light_palette(), theme_module.dark_palette()])
+def test_themed_progress_bar_text_reads_in_every_state(palette) -> None:
+    colours = theme_module.progress_bar_colours(palette)
+
+    # A running bar's text lies over the filled part and the empty track.
+    assert _contrast_ratio(colours["active"].text, colours["active"].chunk) >= 4.5
+    assert _contrast_ratio(colours["active"].text, palette.bg_surface_alt) >= 4.5
+    for state in ("complete", "warning"):
+        assert _contrast_ratio(colours[state].text, colours[state].chunk) >= 4.5
+    assert colours["complete"].chunk == palette.success
+    assert colours["warning"].chunk == palette.warning
+
+
+@pytest.mark.parametrize("palette", [theme_module.light_palette(), theme_module.dark_palette()])
+def test_the_themed_progress_bar_rules_use_those_colours(palette) -> None:
+    sheet = theme_module._build_stylesheet(palette)
+    colours = theme_module.progress_bar_colours(palette)
+
+    for state, pair in colours.items():
+        assert f'QProgressBar#uepBatchProgress[generationState="{state}"]' in sheet
+        assert pair.chunk in sheet
+        assert pair.text in sheet
+
+
 def _contrast_ratio(foreground: str, background: str) -> float:
     def luminance(colour: str) -> float:
         channels = [int(colour.lstrip("#")[index : index + 2], 16) / 255 for index in (0, 2, 4)]

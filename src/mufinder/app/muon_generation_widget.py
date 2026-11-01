@@ -43,7 +43,7 @@ from mufinder.app.workflow_table_utils import bind_delete_shortcuts
 from mufinder.app.theme import (
     STRUCTURE_OVERLAY_COLOURS,
     refresh_widget_style,
-    set_progress_bar_complete,
+    set_progress_bar_state,
     style_section_subtitle,
     style_section_title,
 )
@@ -584,7 +584,7 @@ class MuonGenerationWidget(QWidget):
         self.set_random_muon_muon_distance(spacing)
 
     def _apply_generation_progress_style(self, *, completed: bool) -> None:
-        set_progress_bar_complete(self._generation_progress, completed)
+        set_progress_bar_state(self._generation_progress, "complete" if completed else "active")
 
     def changeEvent(self, event: QEvent) -> None:
         super().changeEvent(event)

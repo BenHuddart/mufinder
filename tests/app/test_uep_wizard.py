@@ -15,6 +15,7 @@ from PySide6.QtGui import QColor
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QDialog, QFrame, QPushButton, QSizePolicy, QWidget
 
+from mufinder.app import theme as theme_module
 from mufinder.app.theme import cluster_color_map, current_palette
 from mufinder.app.uep_wizard import (
     UepAnalysisDialog,
@@ -24,6 +25,7 @@ from mufinder.app.uep_wizard import (
 )
 from mufinder.app.atomic_structure_viewer import MUON_VIEWER_RADIUS_ANG, _CameraState
 from mufinder.domain.models import Structure
+from mufinder.domain.text import plural
 from mufinder.science.site_generation import generate_random_sites, symmetry_equivalent_positions
 from mufinder.science.uep import (
     DEFAULT_FORCE_TOLERANCE_EV_PER_ANG,
@@ -3569,4 +3571,135 @@ def test_the_force_tolerance_field_shows_its_smallest_value(qapp) -> None:
 
     assert dialog._batch_force_tolerance.hasAcceptableInput()
     assert dialog._batch_force_tolerance.value() == pytest.approx(5e-7)
+    dialog.close()
+
+
+def test_the_log_alone_reproduces_a_search(qapp, monkeypatch) -> None:
+    _run_batch_search_inline(monkeypatch)
+    dialog = _si2_dialog()
+    dialog._batch_min_muon_atom.setValue(1.3)
+    dialog._batch_max_attempts.setValue(4000)
+
+    dialog._batch_run.click()
+
+    log = dialog._batch_summary.toPlainText()
+    assert "Min muon-muon distance (Å): 0.800" in log
+    assert "Min muon-atom distance (Å): 1.300" in log
+    assert "Max attempts: 4000" in log
+    assert "Force tolerance (eV/Å): 1e-05" in log
+    assert "Optimizer max steps: 300" in log
+    dialog.close()
+
+
+def test_the_force_tolerance_tooltip_states_its_unit_on_the_label_and_the_field(qapp) -> None:
+    dialog = _si2_dialog()
+    field = dialog._batch_force_tolerance
+
+    assert "eV/Å" in field.toolTip()
+    assert dialog._batch_form.labelForField(field).toolTip() == field.toolTip()
+    dialog.close()
+
+
+@pytest.mark.parametrize("checked", [False, True])
+def test_the_advanced_toggle_draws_nothing_behind_its_text(qapp, checked: bool) -> None:
+    previous_sheet = qapp.styleSheet()
+    theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)
+    dialog = _si2_dialog()
+    try:
+        dialog.show()
+        qapp.processEvents()
+        toggle = dialog._batch_advanced_toggle
+        toggle.setChecked(checked)
+        qapp.processEvents()
+        image = dialog._batch_controls_card.grab().toImage()
+        ratio = image.width() / dialog._batch_controls_card.width()
+        corner = toggle.mapTo(dialog._batch_controls_card, toggle.rect().topLeft())
+        background = image.pixelColor(int((corner.x() - 2) * ratio), int(corner.y() * ratio))
+
+        for point in (toggle.rect().topLeft(), toggle.rect().bottomRight()):
+            inside = toggle.mapTo(dialog._batch_controls_card, point)
+            assert image.pixelColor(int(inside.x() * ratio), int(inside.y() * ratio)) == background
+    finally:
+        dialog.close()
+        theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)
+        qapp.setStyleSheet(previous_sheet)
+
+
+def test_a_search_with_no_minima_does_not_read_as_a_success(qapp, monkeypatch) -> None:
+    host = _no_symmetry_host()
+    endpoints = [replace(entry, success=False) for entry in _two_nearby_sites(host)]
+    dialog = _dialog_with_endpoints(monkeypatch, endpoints, host)
+
+    dialog._batch_run.click()
+
+    assert dialog._batch_progress.format() == "No minima found"
+    assert dialog._batch_progress.property("generationState") == "warning"
+    snapshot = dialog.state_snapshot()
+    dialog.close()
+
+    restored = _si2_dialog(initial_state=snapshot)
+    assert restored._batch_progress.property("generationState") == "warning"
+    restored.close()
+
+
+def test_a_search_over_no_sites_replaces_them_without_asking(qapp, monkeypatch) -> None:
+    host = _no_symmetry_host()
+    failed = [replace(entry, success=False) for entry in _two_nearby_sites(host)]
+    dialog = _dialog_with_endpoints(monkeypatch, [*failed, *failed], host)
+    asked = _answer_confirmations(monkeypatch, answer=False)
+    dialog._batch_count.setValue(2)
+    dialog._batch_run.click()
+    assert dialog._batch_table.topLevelItemCount() == 0
+
+    dialog._batch_run.click()
+
+    assert asked == []
+    dialog.close()
+
+
+def test_the_discard_question_counts_what_exists_and_names_muons_only_when_there_are_some(
+    qapp, monkeypatch
+) -> None:
+    _run_batch_search_inline(monkeypatch)
+    details: list[str] = []
+
+    def _confirm(_parent, _title, _text, detail, *_args, **_kwargs) -> bool:
+        details.append(detail)
+        return False
+
+    monkeypatch.setattr("mufinder.app.workflow_table_utils.confirm_destructive", _confirm)
+    dialog = _si2_dialog()
+    dialog._batch_run.click()
+    sites = len(dialog._latest_batch_summary.clusters)
+    starts = len(dialog._latest_batch_results)
+
+    dialog._batch_run.click()
+
+    assert details[-1] == f"This discards {plural(sites, 'site')} from {plural(starts, 'start')}."
+
+    candidate = dialog._clustered_muon_candidates()[0]
+    dialog._add_candidate_muons_to_viewer("slice", [candidate.key], False)
+    dialog._batch_run.click()
+
+    assert details[-1] == (
+        f"This discards {plural(sites, 'site')} from {plural(starts, 'start')} "
+        "and removes 1 muon from the viewers."
+    )
+    dialog.close()
+
+
+def test_the_log_shows_how_a_search_ended_when_it_is_too_long_to_fit(qapp, monkeypatch) -> None:
+    _run_batch_search_inline(monkeypatch)
+    dialog = _si2_dialog()
+    dialog.resize(dialog.minimumSize())
+    dialog.show()
+    qapp.processEvents()
+
+    dialog._batch_run.click()
+    qapp.processEvents()
+
+    log = dialog._batch_summary
+    assert log.verticalScrollBar().maximum() > 0
+    assert log.textCursor().atEnd()
+    assert 0 <= log.cursorRect().top() and log.cursorRect().bottom() <= log.viewport().height()
     dialog.close()

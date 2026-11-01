@@ -15,7 +15,7 @@ from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
 import numpy as np
 from PySide6.QtCore import QItemSelectionModel, QPointF, QRectF, QSize, Qt, QThread, QTimer, Signal
-from PySide6.QtGui import QColor, QPainter, QPen
+from PySide6.QtGui import QColor, QPainter, QPen, QTextCursor
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QButtonGroup,
@@ -60,7 +60,7 @@ from mufinder.app.theme import (
     controls_scroll_area,
     current_palette,
     form_spacing,
-    set_progress_bar_complete,
+    set_progress_bar_state,
     style_hint_text,
     style_section_subtitle,
     style_section_title,
@@ -140,8 +140,8 @@ _SAVED_WITHOUT_ZPE_TEXT = (
     "This search was saved without zero-point energies. Run the search again to compute them."
 )
 _BATCH_FORCE_TOLERANCE_TOOLTIP = (
-    "Force threshold for each start: the optimizer stops when the norm of the potential's "
-    "gradient falls below this value."
+    "Force threshold for each start, in eV/Å: the optimizer stops when the norm of the "
+    "potential's gradient falls below this value."
 )
 _VIEWER_SPIN_DISPLAY_THRESHOLD = 0.1
 
@@ -1578,6 +1578,8 @@ class _BatchSearchThread(QThread):
                 f"Requested random starts: {self._requested_starts}",
                 f"Initial starts generated: {len(starts)}",
                 f"Min muon-muon distance (Å): {self._min_muon_muon:.3f}",
+                f"Min muon-atom distance (Å): {self._min_muon_atom:.3f}",
+                f"Max attempts: {self._max_attempts}",
                 f"Force tolerance (eV/Å): {self._force_tolerance_ev_per_ang:.4g}",
                 f"Optimizer max steps: {self._max_steps}",
             ]
@@ -1831,7 +1833,7 @@ class UepAnalysisDialog(QDialog):
             button.setDefault(False)
 
     def _apply_batch_progress_style(self, *, completed: bool) -> None:
-        set_progress_bar_complete(self._batch_progress, completed)
+        set_progress_bar_state(self._batch_progress, "complete" if completed else "active")
 
     @staticmethod
     def _normalized_visible_tab_index(raw_index: object) -> int:
@@ -2442,12 +2444,12 @@ class UepAnalysisDialog(QDialog):
         search_form.addRow("Min muon-atom distance (Å)", self._batch_min_muon_atom)
 
         self._batch_advanced_toggle = QToolButton(controls_card)
+        self._batch_advanced_toggle.setObjectName("sectionToggleButton")
         self._batch_advanced_toggle.setText("Advanced")
         self._batch_advanced_toggle.setAccessibleName("Advanced search settings")
         self._batch_advanced_toggle.setCheckable(True)
         self._batch_advanced_toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self._batch_advanced_toggle.setArrowType(Qt.ArrowType.RightArrow)
-        self._batch_advanced_toggle.setAutoRaise(True)
         self._batch_advanced_toggle.toggled.connect(self._on_batch_advanced_toggled)
         search_form.addRow(self._batch_advanced_toggle)
 
@@ -2465,6 +2467,9 @@ class UepAnalysisDialog(QDialog):
         search_form.addRow("Max attempts", self._batch_max_attempts)
         search_form.addRow("Force tolerance (eV/Å)", self._batch_force_tolerance)
         search_form.addRow("Optimizer max steps", self._batch_max_steps)
+        search_form.labelForField(self._batch_force_tolerance).setToolTip(
+            _BATCH_FORCE_TOLERANCE_TOOLTIP
+        )
         card_layout.addLayout(search_form)
         self._on_batch_advanced_toggled(False)
 
@@ -5550,9 +5555,11 @@ class UepAnalysisDialog(QDialog):
             cluster_item.setExpanded(cluster_key in expanded_keys)
         if summary_text is not None:
             self._batch_summary.setPlainText(summary_text)
+            # The end of the log says how the search went.
+            self._batch_summary.moveCursor(QTextCursor.MoveOperation.End)
         self._batch_progress.setRange(0, max(len(results), 1))
         self._batch_progress.setValue(max(len(results), 1))
-        self._apply_batch_progress_style(completed=True)
+        set_progress_bar_state(self._batch_progress, "complete" if summary.clusters else "warning")
         self._batch_progress.setFormat(
             "Batch search complete" if summary.clusters else "No minima found"
         )
@@ -6232,17 +6239,24 @@ class UepAnalysisDialog(QDialog):
         self._set_batch_controls_enabled(True)
 
     def _confirm_discard_batch_results(self, title: str, text: str, accept_label: str) -> bool:
-        """Ask before an action discards the search results; true when there are none."""
+        """Ask before an action discards sites the table lists; true when it lists none."""
 
-        if not self._latest_batch_results:
+        summary = self._latest_batch_summary
+        if summary is None or not summary.clusters:
             return True
+        detail = (
+            f"This discards {plural(len(summary.clusters), 'site')} "
+            f"from {plural(len(self._latest_batch_results), 'start')}"
+        )
+        muons = sum(
+            entry.source_kind == "clustered"
+            for kind in ("isosurface", "slice")
+            for entry in self._viewer_muons_for(kind)
+        )
+        if muons:
+            detail += f" and removes {plural(muons, 'muon')} from the viewers"
         return workflow_table_utils.confirm_destructive(
-            self,
-            title,
-            text,
-            f"The results of {plural(len(self._latest_batch_results), 'start')} are discarded, "
-            "and the muons they added to the viewers are removed.",
-            accept_label,
+            self, title, text, f"{detail}.", accept_label
         )
 
     def _run_batch_search(self) -> None:

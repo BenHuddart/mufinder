@@ -117,7 +117,7 @@ The window offers:
 - full-cell 3D potential grids (``Calculate Cell Potential Grid``) shared
   between the isosurface and slice views, with a ``Gaussian width factor``
   control (changing it discards a search's results, after a confirmation whose
-  default is ``Cancel``), zero-minimum shifting (``Set minimum potential to zero``) and XSF
+  default is ``Cancel`` if the search listed sites), zero-minimum shifting (``Set minimum potential to zero``) and XSF
   export (``Export XSF…``);
 - responsive isosurface visualization from the cached full-cell potential grid;
 - interactive 2D slice planes (``Add Plane``) defined from one selected atom
@@ -138,7 +138,7 @@ The window offers:
   which a start counts as converged, and ``Optimizer max steps`` (default 300).
   ``Advanced`` is open when a saved window holds other values for these, and a
   saved window keeps its values. ``Run Batch Search`` relaxes the starts, with one progress bar, and fills the
-  table when they finish. Over existing results it asks first, and ``Cancel``, the
+  table when they finish. Over sites already listed it asks first, and ``Cancel``, the
   default, keeps them. The ``Search Log`` gives the starts requested and generated,
   how many ended on minima and on other stationary points, how many failed to
   converge, and the sites found;
@@ -189,8 +189,10 @@ type in ``Add / Remove Muons`` is in the job's cell, as that dialog says.
 
 Grouping, ordering and the choice of representative all use the classical energy,
 so the zero-point energy changes none of them, and a lower ``Total energy`` further
-down the table is a real difference between the sites. ``Generation`` and the viewers
-take the representative's ``ZPE`` and ``Total energy`` from its row. A search saved
+down the table is a real difference between the sites. ``Generation`` takes the
+representative's ``ZPE`` and ``Total energy``. In ``Add / Remove Muons`` a ``Site`` row
+is a heading with no values, and each ``Start`` row and the muon made from it carry
+that start's own. A search saved
 without zero-point energies shows those two columns blank, and the ``Search Log``
 says to run it again.
 
