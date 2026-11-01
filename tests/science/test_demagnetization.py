@@ -646,15 +646,34 @@ def test_sample_fourier_box_matches_the_calculation_and_checks_its_size() -> Non
     plate = DemagnetizingSample.image_plate(np.ones((30, 20), dtype=bool), (6.0, 4.0), 0.5)
 
     assert sample_fourier_box(plate) == fourier_demagnetizing_result(plate).box_shape
-    with pytest.raises(DemagnetizationError, match="million voxels"):
+    with pytest.raises(DemagnetizationError, match="too thin"):
         sample_fourier_box(replace(plate, plate_thickness=1e-5))
     with pytest.raises(DemagnetizationError, match="closed-form"):
         sample_fourier_box(DemagnetizingSample(shape="sphere"))
 
 
 def test_voxel_tensor_rejects_a_box_too_large_to_hold() -> None:
-    with pytest.raises(DemagnetizationError, match="million voxels"):
+    with pytest.raises(DemagnetizationError, match=r"\(limit 268\.4 million\); use coarser voxels"):
         voxel_demagnetizing_tensor(np.ones((64, 64, 1), dtype=bool), (1.0, 1.0, 1e-3))
+
+
+@pytest.mark.parametrize("transform", ["rfftn", "rfft2"])
+def test_running_out_of_memory_is_a_refusal_rather_than_a_crash(
+    transform: str, monkeypatch
+) -> None:
+    def no_memory(*_args: object, **_kwargs: object) -> None:
+        raise MemoryError
+
+    monkeypatch.setattr(demagnetization.scipy_fft, transform, no_memory)
+
+    with pytest.raises(DemagnetizationError, match="not enough memory"):
+        if transform == "rfftn":
+            voxel_demagnetizing_tensor(np.ones((4, 4, 4), dtype=bool), 1.0)
+        else:
+            # A shape no other test uses, so a cached tensor is not reused.
+            fourier_demagnetizing_result(
+                DemagnetizingSample.image_plate(np.ones((8, 8), dtype=bool), (3.1, 2.9), 0.17)
+            )
 
 
 # Voxel-grid and image-plate samples
@@ -698,11 +717,14 @@ def test_photo_plate_of_a_thin_square_is_within_half_a_percent_of_aharoni() -> N
 
     exact = demagnetizing_factors_rectangular_prism((5.0, 5.0, 0.1))
     assert exact[2] == pytest.approx(0.94086, abs=1e-5)
-    np.testing.assert_allclose(result.tensor[2, 2], exact[2], rtol=0.005)
+    # The issue asked for 0.5 %; 256 voxels along the edge give 0.01 %.
+    np.testing.assert_allclose(result.tensor[2, 2], exact[2], rtol=0.0005)
     assert result.trace == pytest.approx(1.0, abs=1e-12)
 
 
-@pytest.mark.parametrize("thickness", [0.004, 0.02, 0.05, 0.2, 0.5, 1.0], ids=str)
+@pytest.mark.parametrize(
+    "thickness", [0.001, 0.004, 0.02, 0.05, 0.2, 0.5, 1.0, 1.5, 10.0, 100.0], ids=str
+)
 def test_photo_plates_of_any_proportions_match_their_closed_forms(thickness: float) -> None:
     square = principal_demagnetizing_tensor(
         DemagnetizingSample.image_plate(np.ones((128, 128), dtype=bool), (1.0, 1.0), thickness)
@@ -715,10 +737,72 @@ def test_photo_plates_of_any_proportions_match_their_closed_forms(thickness: flo
         np.diag(square),
         demagnetizing_factors_rectangular_prism((1.0, 1.0, thickness)),
         rtol=0.0,
-        atol=0.0025,
+        atol=0.002,
     )
-    assert disc[2, 2] == pytest.approx(_cylinder_axial_factor(thickness), rel=0.005)
+    axial = _cylinder_axial_factor(thickness)
+    np.testing.assert_allclose(
+        np.diag(disc), (0.5 * (1.0 - axial), 0.5 * (1.0 - axial), axial), rtol=0.0, atol=0.002
+    )
     assert np.trace(disc) == pytest.approx(1.0, abs=1e-12)
+
+
+def _odd_outline() -> np.ndarray:
+    # An L, which has an off-diagonal element in the plane.
+    outline = np.zeros((40, 30), dtype=bool)
+    outline[3:37, 2:10] = True
+    outline[3:9, 2:28] = True
+    return outline
+
+
+@pytest.mark.parametrize(
+    ("outline", "size", "thickness"),
+    [
+        (np.ones((64, 64), dtype=bool), (1.0, 1.0), 0.004),
+        (np.ones((64, 64), dtype=bool), (1.0, 1.0), 0.1),
+        (np.ones((64, 64), dtype=bool), (1.0, 0.6), 0.2),
+        (_disc(64), (1.0, 1.0), 0.1),
+        (_disc(64), (1.0, 1.0), 0.8),
+        (_odd_outline(), (1.0, 0.75), 0.05),
+    ],
+    ids=["one-layer", "layers", "rectangle", "disc", "thick", "asymmetric"],
+)
+def test_photo_plate_sum_is_the_fft_of_the_whole_box(
+    outline: np.ndarray, size: tuple[float, float], thickness: float, monkeypatch
+) -> None:
+    # A coarser grid, so that the whole box fits in a test.
+    monkeypatch.setattr(demagnetization, "PLATE_FOURIER_GRID", 48)
+    plate = DemagnetizingSample.image_plate(outline, size, thickness)
+
+    two_dimensional = demagnetization._cached_fourier_result(plate)
+    model = plate.voxel_model()
+    whole_box = voxel_demagnetizing_tensor(model.mask, model.spacing)
+    demagnetization._cached_fourier_result.cache_clear()
+
+    assert two_dimensional.box_shape == whole_box.box_shape
+    assert two_dimensional.voxel_count == whole_box.voxel_count
+    np.testing.assert_allclose(two_dimensional.tensor, whole_box.tensor, rtol=0.0, atol=1e-13)
+
+
+def test_photo_plate_needs_no_more_memory_than_its_outline(monkeypatch) -> None:
+    transforms = []
+    transform = demagnetization.scipy_fft.rfft2
+    monkeypatch.setattr(
+        demagnetization.scipy_fft,
+        "rfft2",
+        lambda data, **kw: transforms.append(data.shape) or transform(data, **kw),
+    )
+
+    def no_whole_box(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("the plate took the FFT of the whole box")
+
+    monkeypatch.setattr(demagnetization.scipy_fft, "rfftn", no_whole_box)
+
+    result = fourier_demagnetizing_result(
+        DemagnetizingSample.image_plate(np.ones((64, 64), dtype=bool), (1.0, 1.0), 1.0 / 2345.0)
+    )
+
+    assert transforms == [(640, 640)]
+    assert result.box_shape[2] > 5000
 
 
 def test_voxel_cylinder_matches_its_exact_factors() -> None:
@@ -749,29 +833,31 @@ def test_voxel_ellipsoid_converges_to_osborn() -> None:
 
 
 @pytest.mark.parametrize(
-    ("size", "thickness", "layers"),
+    ("size", "thickness", "voxels"),
     [
-        ((5.0, 5.0), 0.1, 1),
-        ((5.0, 5.0), 0.001 * 5.0, 1),
-        ((5.0, 5.0), 0.5, 6),
-        ((5.0, 5.0), 5.0, 64),
-        ((2.0, 8.0), 1.0, 8),
+        ((5.0, 5.0), 0.1, (256, 256, 5)),
+        ((5.0, 5.0), 0.005, (256, 256, 1)),
+        ((5.0, 5.0), 0.5, (256, 256, 26)),
+        ((5.0, 5.0), 5.0, (256, 256, 256)),
+        ((2.0, 8.0), 1.0, (64, 256, 32)),
+        ((1.0, 1.0), 10.0, (26, 26, 256)),
+        ((1.0, 1.0), 100.0, (3, 3, 256)),
     ],
-    ids=["thin", "foil", "tenth", "cube", "elongated"],
+    ids=["thin", "foil", "tenth", "cube", "elongated", "rod", "long-rod"],
 )
-def test_photo_plate_layers_follow_the_thickness(
-    size: tuple[float, float], thickness: float, layers: int
+def test_photo_plate_has_256_voxels_along_its_longest_edge(
+    size: tuple[float, float], thickness: float, voxels: tuple[int, int, int]
 ) -> None:
     model = DemagnetizingSample.image_plate(
         np.ones((64, 64), dtype=bool), size, thickness
     ).voxel_model()
 
-    assert max(model.mask.shape[:2]) == PLATE_FOURIER_GRID
-    assert model.mask.shape[2] == layers
+    assert model.mask.shape == voxels
+    assert max(voxels) == PLATE_FOURIER_GRID
     assert model.lengths == pytest.approx((*size, thickness))
-    if layers > 1:
-        # round(x) stays within a factor 1.5 of x for x >= 1.5.
-        assert 2.0 / 3.0 <= model.spacing[2] / max(model.spacing[:2]) <= 1.5
+    # Rounding moves an edge by half a voxel at most, so voxels are near cubes once it spans 2.
+    if min(voxels) > 1:
+        assert max(model.spacing) / min(model.spacing) <= 1.5
 
 
 def test_photo_plate_outline_model_draws_one_layer_through_the_thickness() -> None:
@@ -779,39 +865,71 @@ def test_photo_plate_outline_model_draws_one_layer_through_the_thickness() -> No
 
     model = plate.plate_outline_model()
 
-    assert model.mask.shape == (64, 64, 1)
+    assert model.mask.shape == (256, 256, 1)
     assert model.lengths == pytest.approx((5.0, 5.0, 2.0))
 
 
 @pytest.mark.parametrize(
-    "thickness",
-    [1.0 / 300.0, 2.0, 2e4, 1e6, 1e9, 1e18, 1e308],
-    ids=["thin", "thick", "box-wraps-int64", "spin-box-top", "1e9", "beyond-int64", "inf-layers"],
+    ("size", "cells"),
+    [((1.0, 1.0), 256), ((1.0, 0.03), 8), ((1.0, 0.02), 5), ((1.0, 0.001), 1)],
+    ids=["square", "eight", "five", "one"],
 )
-def test_photo_plate_too_thin_or_thick_is_refused_before_any_voxels_are_built(
-    thickness: float, monkeypatch
+def test_photo_plate_reports_how_many_voxels_its_narrow_side_spans(
+    size: tuple[float, float], cells: int
+) -> None:
+    plate = DemagnetizingSample.image_plate(np.ones((64, 64), dtype=bool), size, 0.001)
+
+    assert plate.plate_cells_across() == cells
+
+
+@pytest.mark.parametrize("thickness", [0.99e-4, 1e-5, 1e-9], ids=str)
+def test_photo_plate_too_thin_is_refused_naming_the_infinite_plate(thickness: float) -> None:
+    plate = DemagnetizingSample.image_plate(np.ones((64, 64), dtype=bool), (1.0, 1.0), thickness)
+
+    with pytest.raises(DemagnetizationError, match="Choose Infinite plate.*within 0.0006"):
+        sample_fourier_box(plate)
+    with pytest.raises(DemagnetizationError, match="Choose Infinite plate"):
+        fourier_demagnetizing_result(plate)
+
+
+def test_infinite_plate_is_within_the_refusal_s_figure_at_the_thin_limit() -> None:
+    exact = demagnetizing_factors_rectangular_prism((1.0, 1.0, 1e-4))
+
+    assert 1.0 - exact[2] < 0.0007
+
+
+@pytest.mark.parametrize(
+    ("size", "thickness"),
+    [
+        ((1.0, 1.0), 2e4),
+        ((1.0, 1.0), 1e6),
+        ((1.0, 1.0), 1e18),
+        ((1.0, 1.0), 1e308),
+        ((1.0, 5e-4), 5e-4),
+    ],
+    ids=["rod", "spin-box-top", "beyond-int64", "huge", "needle"],
+)
+def test_photo_needle_too_long_is_refused_naming_the_prism_before_any_voxels_are_built(
+    size: tuple[float, float], thickness: float, monkeypatch
 ) -> None:
     def no_extrusion(*_args: object) -> None:
         raise AssertionError("the plate was extruded")
 
     monkeypatch.setattr(demagnetization, "extrude_plate", no_extrusion)
-    plate = DemagnetizingSample.image_plate(np.ones((64, 64), dtype=bool), (1.0, 1.0), thickness)
+    plate = DemagnetizingSample.image_plate(np.ones((64, 64), dtype=bool), size, thickness)
 
-    with pytest.raises(
-        DemagnetizationError, match="at most about 250 times its thickness|too thick"
-    ):
+    with pytest.raises(DemagnetizationError, match="Rectangular prism"):
         sample_fourier_box(plate)
-    with pytest.raises(
-        DemagnetizationError, match="at most about 250 times its thickness|too thick"
-    ):
+    with pytest.raises(DemagnetizationError, match="Rectangular prism"):
         fourier_demagnetizing_result(plate)
 
 
-def test_photo_plate_proportions_named_in_the_refusal_fit_the_box() -> None:
+def test_photo_plate_limits_are_the_ones_the_refusal_names() -> None:
     outline = np.ones((64, 64), dtype=bool)
 
-    assert sample_fourier_box(DemagnetizingSample.image_plate(outline, (1.0, 1.0), 1.0 / 250.0))
-    assert sample_fourier_box(DemagnetizingSample.image_plate(outline, (1.0, 1.0), 1.6))
+    assert sample_fourier_box(DemagnetizingSample.image_plate(outline, (1.0, 1.0), 1e-4))
+    # There is no limit on thickness as such: a rod from an end-on photo works.
+    assert sample_fourier_box(DemagnetizingSample.image_plate(outline, (1.0, 1.0), 1000.0))
 
 
 def test_fourier_tensor_whose_trace_is_off_by_over_a_percent_raises(monkeypatch) -> None:
@@ -822,6 +940,18 @@ def test_fourier_tensor_whose_trace_is_off_by_over_a_percent_raises(monkeypatch)
 
     with pytest.raises(DemagnetizationError, match=r"trace 0\.9801 rather than 1"):
         voxel_demagnetizing_tensor(np.ones((4, 4, 4), dtype=bool), 1.0)
+
+
+def test_photo_plate_whose_trace_is_off_by_over_a_percent_raises(monkeypatch) -> None:
+    transform = demagnetization.scipy_fft.rfft2
+    monkeypatch.setattr(
+        demagnetization.scipy_fft, "rfft2", lambda *args, **kw: 0.99 * transform(*args, **kw)
+    )
+    # A shape no other test uses, so a cached tensor is not reused.
+    plate = DemagnetizingSample.image_plate(np.ones((8, 8), dtype=bool), (3.3, 2.1), 0.19)
+
+    with pytest.raises(DemagnetizationError, match=r"trace 0\.9801 rather than 1"):
+        fourier_demagnetizing_result(plate)
 
 
 def test_fourier_tensor_whose_trace_is_not_a_number_raises(monkeypatch) -> None:
@@ -893,8 +1023,8 @@ def test_image_plate_voxels_follow_the_grid_and_thickness() -> None:
     sample = DemagnetizingSample.image_plate(np.ones((40, 20), dtype=bool), (8.0, 4.0), 0.3)
     model = sample.voxel_model()
 
-    assert model.mask.shape == (64, 32, 2)
-    np.testing.assert_allclose(model.spacing, (0.125, 0.125, 0.15))
+    assert model.mask.shape == (256, 128, 10)
+    np.testing.assert_allclose(model.spacing, (0.03125, 0.03125, 0.03))
     np.testing.assert_allclose(model.lengths, (8.0, 4.0, 0.3))
 
 

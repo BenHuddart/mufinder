@@ -85,6 +85,15 @@ def test_photo_dialog_segments_a_dark_plate_and_matches_its_aspect(qapp, tmp_pat
     dialog.close()
 
 
+def test_photo_dialog_names_the_controls_without_a_form_label(qapp) -> None:
+    dialog = SamplePhotoDialog()
+
+    assert dialog._path.accessibleName() == "Photo path"
+    assert dialog._threshold_slider.accessibleName() == "Threshold"
+    assert dialog._height.accessibleName() == "Height (along b)"
+    dialog.close()
+
+
 def test_photo_dialog_offers_no_resolution_settings(qapp) -> None:
     dialog = SamplePhotoDialog()
 
@@ -253,25 +262,45 @@ def test_photo_dialog_choose_cancelled_changes_nothing(qapp, monkeypatch) -> Non
     dialog.close()
 
 
-def test_photo_dialog_reports_the_fft_box_and_refuses_one_too_large(qapp, tmp_path) -> None:
+def test_photo_dialog_refuses_a_plate_too_thin_naming_the_infinite_plate(qapp, tmp_path) -> None:
     dialog = SamplePhotoDialog()
     dialog.load_photo(_plate_photo(tmp_path))
     dialog._width.setValue(6.0)
     dialog._match_photo_aspect()
     dialog._thickness.setValue(0.1)
 
-    assert dialog._box_status.text().startswith("The FFT box is 160 x 160 x 150,")
+    assert dialog._box_status.text() == ""
     assert dialog._use_button.isEnabled()
 
     dialog._thickness.setValue(0.0001)
 
-    assert "Cannot calculate: the FFT box would hold" in dialog._box_status.text()
-    assert "at most about 250 times its thickness" in dialog._box_status.text()
+    assert dialog._box_status.text().startswith("Cannot calculate: the plate is too thin")
+    assert "Infinite plate" in dialog._box_status.text()
     assert not dialog._use_button.isEnabled()
 
-    dialog._thickness.setValue(0.5)
-    assert dialog._box_status.text().startswith("The FFT box is")
+    # A rod from an end-on photo is not refused.
+    dialog._thickness.setValue(500.0)
     assert dialog._use_button.isEnabled()
+    dialog.close()
+
+
+def test_photo_dialog_warns_when_the_outline_is_few_voxels_across(qapp, tmp_path) -> None:
+    dialog = SamplePhotoDialog()
+    dialog.load_photo(_plate_photo(tmp_path))
+    dialog._width.setValue(1.0)
+    dialog._height.setValue(0.03)
+    dialog._thickness.setValue(0.003)
+    assert dialog._box_status.text() == ""
+
+    dialog._height.setValue(0.02)
+
+    assert dialog._box_status.text().startswith("The outline is only 5 voxels across")
+    assert "off by up to 0.05" in dialog._box_status.text()
+    # It is a warning: the plate can still be used.
+    assert dialog._use_button.isEnabled()
+
+    dialog._height.setValue(0.004)
+    assert dialog._box_status.text().startswith("The outline is only 1 voxel across")
     dialog.close()
 
 

@@ -1356,9 +1356,9 @@ def test_demag_field_of_a_photographed_plate_uses_its_fourier_tensor(monkeypatch
 
 
 def test_demag_field_is_refused_when_the_plate_tensor_has_a_bad_trace(monkeypatch) -> None:
-    transform = demagnetization_module.scipy_fft.rfftn
+    transform = demagnetization_module.scipy_fft.rfft2
     monkeypatch.setattr(
-        demagnetization_module.scipy_fft, "rfftn", lambda *a, **kw: 0.9 * transform(*a, **kw)
+        demagnetization_module.scipy_fft, "rfft2", lambda *a, **kw: 0.9 * transform(*a, **kw)
     )
     # A shape no other test uses, so the cached tensor of a good run is not reused.
     plate = DemagnetizingSample.image_plate(np.ones((8, 8), dtype=bool), (3.0, 2.7), 0.123)

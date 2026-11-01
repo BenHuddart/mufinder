@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import threading
 
 import numpy as np
 import pytest
@@ -10,6 +11,7 @@ from PySide6.QtCore import QEvent, Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QDialog, QWidget
 
+from mufinder.app.blocking_call import BlockingCallCancelled
 import mufinder.app.demagnetizing_dialogs as demagnetizing_dialogs_module
 from mufinder.app.sample_photo_dialog import PREVIEW_DEBOUNCE_MS
 from mufinder.app import theme as theme_module
@@ -102,6 +104,74 @@ def test_demagnetizing_dialog_shuts_its_canvas_once_however_it_is_closed(
     assert shutdowns == [1]
     dialog.close()
     assert shutdowns == [1]
+
+
+def test_demagnetizing_dialog_stays_narrow_when_the_tensor_is_refused(qapp, monkeypatch) -> None:
+    plate = DemagnetizingSample.image_plate(np.ones((64, 64), dtype=bool), (5.0, 5.0), 1e-5)
+    dialog = _demag_dialog(monkeypatch, sample=plate)
+
+    assert dialog._tensor_label.text().startswith("Tensor unavailable:")
+    assert not dialog._use_button.isEnabled()
+    assert dialog._tensor_label.wordWrap()
+    assert dialog.minimumSizeHint().width() < 1000
+    assert dialog.sizeHint().width() < 1000
+    dialog.close()
+
+
+def test_demagnetizing_dialog_calculates_a_fourier_shape_off_the_gui_thread(
+    qapp, monkeypatch
+) -> None:
+    threads = []
+    tensor = demagnetizing_dialogs_module.principal_demagnetizing_tensor
+    monkeypatch.setattr(
+        demagnetizing_dialogs_module,
+        "principal_demagnetizing_tensor",
+        lambda shape: threads.append(threading.current_thread()) or tensor(shape),
+    )
+
+    dialog = _demag_dialog(monkeypatch, sample=photo_plate_sample())
+
+    assert threads and threads[0] is not threading.main_thread()
+    assert dialog._use_button.isEnabled()
+    assert "Tr N = 1.00000" in dialog._tensor_label.text()
+    # Changing only the orientation reuses it.
+    threads.clear()
+    dialog._sync()
+    assert threads == []
+    dialog.close()
+
+
+def test_demagnetizing_dialog_reports_a_cancelled_tensor(qapp, monkeypatch) -> None:
+    def cancelled(*_args: object, **kwargs: object) -> None:
+        assert kwargs["cancellable"]
+        raise BlockingCallCancelled("cancelled")
+
+    monkeypatch.setattr(demagnetizing_dialogs_module, "run_blocking_call", cancelled)
+
+    dialog = _demag_dialog(monkeypatch, sample=photo_plate_sample())
+
+    assert dialog._tensor_label.text() == "Tensor unavailable: its calculation was cancelled"
+    assert not dialog._use_button.isEnabled()
+    dialog.close()
+
+
+def test_demagnetizing_dialog_warns_about_a_narrow_saved_outline(qapp, monkeypatch) -> None:
+    plate = DemagnetizingSample.image_plate(np.ones((64, 64), dtype=bool), (1.0, 0.02), 0.002)
+
+    dialog = _demag_dialog(monkeypatch, sample=plate)
+
+    assert "The outline is only 5 voxels across" in dialog._tensor_label.text()
+    assert dialog._use_button.isEnabled()
+    dialog.close()
+
+
+def test_demagnetizing_dialog_names_its_six_index_fields(qapp, monkeypatch) -> None:
+    dialog = _demag_dialog(monkeypatch)
+
+    names = [edit.accessibleName() for edit in (*dialog._normal_inputs, *dialog._in_plane_inputs)]
+
+    assert names == ["Normal h", "Normal k", "Normal l", "In-plane u", "In-plane v", "In-plane w"]
+    dialog.close()
 
 
 def test_demagnetizing_advanced_dialog_needs_an_outline_for_a_plate(qapp, monkeypatch) -> None:

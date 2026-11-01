@@ -174,9 +174,10 @@ Compatibility ledger
      - A sample stored its Fourier resolution and Gaussian filter before they
        were fixed. The keys are read and ignored, so a saved plate or voxel grid
        loads and takes the fixed resolution and no filter when it is next
-       calculated, or is reported as too large if its proportions do not fit the
-       FFT box; new saves write none of them. A result already stored keeps the
-       values it was calculated with, in the sample summary it records.
+       calculated, or is refused if its proportions are too extreme; new saves
+       write none of them. A result already stored keeps its numbers. An
+       incommensurate distribution also records the sample's summary, with these
+       keys if it had them; a commensurate result records no sample.
      - Read-side repair. Ignoring an unknown key needs no code; keep this entry
        until a saved-project schema version bump includes a migration that drops
        the keys from stored forms.

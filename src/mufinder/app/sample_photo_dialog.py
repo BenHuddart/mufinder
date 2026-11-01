@@ -31,7 +31,9 @@ from mufinder.app.theme import (
     style_section_subtitle,
     style_section_title,
 )
+from mufinder.domain.text import plural
 from mufinder.science.demagnetization import (
+    PLATE_NARROW_OUTLINE_CELLS,
     DemagnetizationError,
     DemagnetizingSample,
     PlatePhoto,
@@ -90,6 +92,18 @@ def demag_length_input(value: float, *, step: float = 0.25) -> QDoubleSpinBox:
     return spinbox
 
 
+def narrow_outline_warning(sample: DemagnetizingSample) -> str:
+    """Return a warning for a plate outline too few voxels across to trust, or an empty string."""
+
+    cells = sample.plate_cells_across()
+    if cells >= PLATE_NARROW_OUTLINE_CELLS:
+        return ""
+    return (
+        f"The outline is only {plural(cells, 'voxel')} across, so a factor can be off by up to "
+        "0.05. A Rectangular prism is exact for a rectangular sample."
+    )
+
+
 def _grey_qimage(grey: np.ndarray) -> QImage:
     data = np.ascontiguousarray(grey, dtype=np.uint8)
     height, width = data.shape
@@ -142,6 +156,7 @@ class SamplePhotoDialog(QDialog):
         self._path = QLineEdit(self)
         self._path.setReadOnly(True)
         self._path.setPlaceholderText("No photo chosen")
+        self._path.setAccessibleName("Photo path")
         self._choose_button = QPushButton("Choose…", self)
         self._choose_button.clicked.connect(self._choose_photo)
 
@@ -154,6 +169,7 @@ class SamplePhotoDialog(QDialog):
 
         self._threshold_slider = QSlider(Qt.Orientation.Horizontal, self)
         self._threshold_slider.setRange(0, 255)
+        self._threshold_slider.setAccessibleName("Threshold")
         self._threshold_value = QLabel("", self)
         self._threshold_value.setMinimumWidth(80)
         self._auto_button = QPushButton("Auto", self)
@@ -171,6 +187,7 @@ class SamplePhotoDialog(QDialog):
         defaults = seed or DemagnetizingSample(shape="image_plate")
         self._width = demag_length_input(defaults.plate_size[0], step=0.1)
         self._height = demag_length_input(defaults.plate_size[1], step=0.1)
+        self._height.setAccessibleName("Height (along b)")
         self._match_button = QPushButton("Match photo", self)
         self._match_button.setToolTip(
             "Set the height from the width and the outline's aspect ratio in the photo."
@@ -385,22 +402,20 @@ class SamplePhotoDialog(QDialog):
         self._check_box()
 
     def _check_box(self, *_args: object) -> None:
-        """Report the FFT box the plate needs; ``Use Outline`` needs an outline and a box that fits."""
+        """Report a plate that cannot be calculated or is coarse; ``Use Outline`` needs one that can."""
 
         if self._outline_mask is None:
             self._box_status.setText("")
             self._use_button.setEnabled(False)
             return
+        sample = self.selected_sample()
         try:
-            box = sample_fourier_box(self.selected_sample())
+            sample_fourier_box(sample)
         except DemagnetizationError as exc:
             self._box_status.setText(f"Cannot calculate: {exc}.")
             self._use_button.setEnabled(False)
             return
-        size = " x ".join(str(n) for n in box)
-        self._box_status.setText(
-            f"The FFT box is {size}, {float(np.prod(box)) / 1e6:.1f} million voxels."
-        )
+        self._box_status.setText(narrow_outline_warning(sample))
         self._use_button.setEnabled(True)
 
     def _set_slider(self, level: float) -> None:

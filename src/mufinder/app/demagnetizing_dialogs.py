@@ -28,11 +28,13 @@ from mufinder.app.atomic_structure_viewer import (
     _pyvista_modules,
     _shutdown_pyvista_widget,
 )
+from mufinder.app.blocking_call import BlockingCallCancelled, run_blocking_call
 from mufinder.app.magnetic_component_dialogs import DecimalTriple, direction_group, direction_inputs
 from mufinder.app.sample_photo_dialog import (
     PREVIEW_DEBOUNCE_MS,
     SamplePhotoDialog,
     demag_length_input,
+    narrow_outline_warning,
 )
 from mufinder.app.theme import (
     current_palette,
@@ -424,11 +426,18 @@ class DemagnetizingFieldAdvancedDialog(StructureViewerDialog):
         self._in_plane_inputs = direction_inputs(
             sample.in_plane_uvw or (1.0, 0.0, 0.0), placeholders="uvw"
         )
+        for edit, name in zip(
+            (*self._normal_inputs, *self._in_plane_inputs),
+            ("Normal h", "Normal k", "Normal l", "In-plane u", "In-plane v", "In-plane w"),
+            strict=True,
+        ):
+            edit.setAccessibleName(name)
         self._orientation_hint = QLabel("", self)
         self._orientation_hint.setWordWrap(True)
         style_hint_text(self._orientation_hint)
 
         self._tensor_label = QLabel("", self)
+        self._tensor_label.setWordWrap(True)
         self._tensor_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         style_hint_text(self._tensor_label)
 
@@ -668,7 +677,20 @@ class DemagnetizingFieldAdvancedDialog(StructureViewerDialog):
 
         shape = replace(sample, rotation=None, normal_hkl=None, in_plane_uvw=None)
         if self._principal is None or self._principal[0] != shape:
-            self._principal = (shape, principal_demagnetizing_tensor(shape))
+            # A plate far thinner than it is wide takes seconds, so a Fourier shape runs off
+            # the GUI thread, with a busy dialog once it takes noticeably long.
+            tensor = (
+                run_blocking_call(
+                    self,
+                    lambda: principal_demagnetizing_tensor(shape),
+                    title="Advanced Demagnetizing Field",
+                    description="Calculating the demagnetizing tensor…",
+                    cancellable=True,
+                )
+                if shape.uses_fourier_method
+                else principal_demagnetizing_tensor(shape)
+            )
+            self._principal = (shape, tensor)
         return self._principal[1]
 
     def _sync(self, *_args: object) -> None:
@@ -691,6 +713,9 @@ class DemagnetizingFieldAdvancedDialog(StructureViewerDialog):
             return
         try:
             tensor = sample.rotate(self._principal_tensor(sample))
+        except BlockingCallCancelled:
+            self._tensor_label.setText("Tensor unavailable: its calculation was cancelled")
+            self._use_button.setEnabled(False)
         except DemagnetizationError as exc:
             self._tensor_label.setText(f"Tensor unavailable: {exc}")
             self._use_button.setEnabled(False)
@@ -710,6 +735,10 @@ class DemagnetizingFieldAdvancedDialog(StructureViewerDialog):
                     f"\nTr N = {result.trace:.5f} from {result.voxel_count} voxels in a "
                     f"{box} FFT box."
                 )
+                if shape == "image_plate":
+                    warning = narrow_outline_warning(sample)
+                    if warning:
+                        text += f"\n{warning}"
             self._tensor_label.setText(text)
             self._use_button.setEnabled(True)
         self._schedule_preview(sample)

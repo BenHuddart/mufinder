@@ -928,6 +928,54 @@ def test_magnetic_field_widget_restores_advanced_demag_state(qapp, tmp_path) -> 
     widget.close()
 
 
+def test_refused_calculation_saves_that_the_old_results_are_gone(
+    qapp, tmp_path, monkeypatch
+) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "refused.mufinder", "Refused")
+    service.add_structure(document, feo_host_structure())
+
+    class _Result:
+        site_label = "Mu1"
+        total = (0.1, 0.0, 0.0)
+        magnitude = 0.1
+        distortion = None
+
+    calculated: list[object] = [(_Result(),)]
+
+    def _calculate(*_args, **_kwargs):
+        if isinstance(calculated[0], Exception):
+            raise calculated[0]
+        return calculated[0]
+
+    monkeypatch.setattr(
+        magnetic_field_calculation_module,
+        "classify_magnetic_model",
+        lambda *_args, **_kwargs: "commensurate",
+    )
+    monkeypatch.setattr(
+        magnetic_field_calculation_module, "calculate_commensurate_fields", _calculate
+    )
+    widget = MagneticFieldWidget()
+    widget.set_document(document)
+    widget.set_model(MagneticStructureModel(components=(z_moment_component("one", "One", 0),)))
+    widget._selected_muon_site = custom_muon_site((0.25, 0.5, 0.75))
+    widget._sync_enabled_state()
+    saved: list[dict] = []
+    widget.form_state_changed.connect(saved.append)
+    widget.calculate_fields()
+    assert saved[-1]["magnetic_field_results"] is not None
+
+    calculated[0] = ValueError("the plate is too thin")
+    widget.calculate_fields()
+
+    assert widget._calculation_status.text() == "Calculation failed: the plate is too thin"
+    assert widget._result_table.rowCount() == 0
+    # The cleared results are saved, so the earlier ones do not come back on reopening.
+    assert saved[-1]["magnetic_field_results"] is None
+    widget.close()
+
+
 def test_magnetic_field_form_saved_with_the_retired_plate_settings_loads(qapp, tmp_path) -> None:
     service = ProjectService()
     document = service.create_project(tmp_path / "retired-plate.mufinder", "Retired Plate")

@@ -908,9 +908,9 @@ outline from the photo:
    bounding box and the ``Thickness (along c)``. Choosing a photo sets the
    height from the width and the outline's aspect ratio; ``Match photo`` does
    so again after the width changes.
-   The line under the fields gives the FFT box the plate needs (see `How the
-   Fourier method works`_), or says the box is too large to calculate, in which
-   case ``Use Outline`` stays disabled.
+   The line under the fields warns when the outline is fewer than 8 voxels
+   across, and says when the plate cannot be calculated, in which case ``Use
+   Outline`` stays disabled (see `How the Fourier method works`_).
 6. Click ``Use Outline``, then ``Use Shape``.
 
 The photo's ``x`` axis is the sample ``a`` axis, its ``y`` axis, up the photo,
@@ -930,12 +930,13 @@ under the fields, and ``Use Outline`` stays disabled until the threshold or
 
 .. figure:: ../_generated/screenshots/fe_photographed_plate.webp
    :alt: The Advanced Demagnetizing Field window with Plate from photo chosen,
-         the tensor of the platelet with N along c of 0.92469 and its trace 1,
+         the tensor of the platelet with N along c of 0.92620 and its trace 1,
          and the voxelised platelet in the preview.
 
    The same platelet as a ``Plate from photo`` of bcc iron, aligned with the
    crystal axes. The line under the tensor gives its trace, the number of
-   voxels and the FFT box.
+   voxels and the FFT box. The window calculates off the main thread and shows a
+   busy dialog with a ``Cancel`` button if this takes noticeably long.
 
 MuFinder saves the outline with the project, at up to 256 pixels along its
 longer side, with the photo's path and the segmentation settings. The tensor
@@ -1160,29 +1161,89 @@ Padding
    own images. The box spans 2.5 times the longest sample edge along every
    axis, not along each axis separately: a thin plate padded only through its
    thickness would sit in a stack of plates one thickness apart and behave like
-   bulk. Voxelised prisms from 20 x 20 x 1 plates to 1 x 1 x 20 needles, with 1
-   to 64 voxels along an edge, give every factor within 0.002 of the prism's
-   closed form.
+   bulk.
 Voxels of a plate from a photo
-   64 voxels span the longer in-plane edge. The number of layers through the
-   thickness is the thickness divided by that voxel edge, rounded and at least
-   1, so the voxels are close to cubes and a plate thinner than one voxel edge
-   is one layer thick. Square plates from thickness 1/250 to 1.5 times the edge
-   give every factor within 0.0025 of the prism's closed form, and circular
-   plates the factor along ``c`` within 0.6 % of the cylinder's. A thin factor is
-   a small number, so this can be a large share of it: 13 % of the in-plane
-   factor of a plate 1/250 of its edge thick. An outline only a few voxels wide
-   is coarser: a 1 x 0.1 x 0.01 plate, 6 voxels wide, is within 0.009.
+   256 voxels span the sample's longest edge, thickness included, and the other
+   edges take the same voxel edge, rounded and at least 1 voxel, so the voxels
+   are close to cubes. The layers of a plate are identical, so its shape
+   amplitude is the outline's times that of a column of layers, and the sum
+   takes one 2-D FFT and a loop along :math:`k_z`. It is the same number as the
+   FFT of the whole box, to rounding, in a fraction of the time and memory.
 
 The trace is a check on the calculation: a tensor whose ``Tr N`` differs from 1
 by more than 1 % is refused rather than used.
 
-A box of more than 16.8 million voxels is refused. A thin plate needs many
-voxels through the box: a 5 x 4 x 0.1 plate, one voxel thick, needs 125 voxels
-along ``c`` to span 12.5. That limits a plate from a photo: its longer edge can
-be at most about 250 times its thickness, and its thickness at most about 1.6
-times that edge. An ``Infinite plate`` or a ``Rectangular prism``, which have
-closed forms, describe a thinner sample.
+These plates, against their closed forms, show what to expect. Compact plates
+are limited by the padding, and thin ones by their single flat layer:
+
+.. list-table::
+   :header-rows: 1
+
+   * - Thickness / longest in-plane edge
+     - Square plate, largest error in a factor
+     - Circular plate, largest error in a factor
+   * - 1/10000
+     - 0.00019
+     - 0.00004
+   * - 1/1000
+     - 0.00052
+     - 0.00038
+   * - 1/50
+     - 0.00009
+     - 0.00011
+   * - 1/10
+     - 0.00058
+     - 0.00030
+   * - 1/2
+     - 0.00184
+     - 0.00096
+   * - 1
+     - 0.00000
+     - 0.00095
+   * - 3/2
+     - 0.00152
+     - 0.00148
+   * - 10
+     - 0.00006
+     - 0.00025
+
+An outline a few voxels across is coarser, since 256 voxels along the longest
+edge leave few across a narrow side. Over rectangles 1 x b, from b to b/20 thick,
+the largest error in a factor is:
+
+.. list-table::
+   :header-rows: 1
+
+   * - Voxels across b
+     - 1
+     - 2
+     - 3
+     - 4
+     - 5
+     - 8
+     - 10
+     - 13
+     - 26
+   * - Largest error
+     - 0.054
+     - 0.033
+     - 0.022
+     - 0.016
+     - 0.013
+     - 0.008
+     - 0.006
+     - 0.003
+     - 0.001
+
+The window warns below 8 voxels. A ``Rectangular prism`` has a closed form and
+is exact for a rectangular sample.
+
+A plate's longest edge can be at most about 10000 times its thickness. By then
+an ``Infinite plate`` is within 0.0006 of the factor along the normal, and the
+refusal says so. The same limit on the time taken refuses a needle or rod whose
+length is more than about 1600 times its width. A ``Voxel grid`` from the Python
+API takes the FFT of the whole box, which holds at most 268 million voxels; a
+larger box, or one the machine has no memory for, is refused.
 
 .. _magnetic-fields-distortion-corrections:
 

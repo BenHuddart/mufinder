@@ -1089,6 +1089,8 @@ class MagneticFieldWidget(QWidget):
         def refuse(status: str) -> None:
             self._clear_results(clear_state=True)
             self._calculation_status.setText(status)
+            # The earlier results are gone; save that so they do not come back on reopening.
+            self._emit_form_state_changed()
 
         if self._host_structure is None:
             refuse("Results: load a host structure first.")
@@ -1149,8 +1151,6 @@ class MagneticFieldWidget(QWidget):
             return
         except NonFiniteFieldError as exc:
             refuse(f"Calculation failed: {exc}")
-            # The earlier results were cleared; save that so they do not come back.
-            self._emit_form_state_changed()
             return
         except Exception as exc:  # noqa: BLE001 - muesr and muLFC raise untyped errors
             refuse(f"Calculation failed: {exc}")
