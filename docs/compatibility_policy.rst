@@ -412,6 +412,25 @@ Compatibility ledger
        ``SiteGenerationError`` around these conversions move to
        ``mufinder.science.lattice`` and ``LatticeError``; then drop both
        wrappers.
+   * - ``radius`` / ``convergence_rtol`` keys
+     - ``nuclear_relaxation_options`` in the Magnetic Fields form state, read by
+       ``NuclearRelaxationDialog``
+     - Saved options of projects written when the nuclear sum had a user-set
+       radius and tolerance. The dialog ignores both keys and writes options
+       without them, and ``NuclearRelaxationOptions`` has no such fields: every
+       width uses the fixed sum radius and the analytic tail. Saved results
+       keep the numbers they were calculated with until recalculated.
+     - Read-side tolerance, no code to remove while the dialog reads named keys
+       only. Drop the keys in a migration if a later schema version rewrites
+       this form state.
+   * - ``convergence_radius_a``
+     - ``NuclearRelaxationResult``, ``NuclearWidthTensors`` and their saved
+       ``nuclear_relaxation`` results
+     - Persisted name kept as it is: it holds the radius of the explicit sum.
+       The Magnetic Fields dialog
+       labels it ``Explicit sum radius (Å)``.
+     - Current project data, not deprecated. Rename only with a schema
+       migration.
    * - ``structure_to_atoms``
      - ``mufinder.science.nuclear_relaxation``
      - Thin wrapper over ``mufinder.science.ase_bridge.structure_to_ase_atoms``
@@ -796,6 +815,12 @@ Each public import alias below was removed after its documented replacement had
 shipped for at least one minor release. None was persisted, so projects need no
 migration; code that imported one switches to the replacement named.
 
+- ``radius`` and ``convergence_rtol`` of ``NuclearRelaxationOptions`` and
+  ``calculate_nuclear_width_tensors`` (``mufinder.science.nuclear_relaxation``):
+  drop the argument. Every width sums to ``NUCLEAR_SUM_RADIUS_A`` with the
+  analytic tail, so there is no radius or tolerance to choose. These keywords had
+  no replacement release, as the sum they tuned no longer exists; the saved
+  option keys are covered in the ledger above.
 - ``ConvergenceWorkflow`` (``mufinder.workflow.convergence``, re-exported from
   ``mufinder.workflow``): call ``expand_convergence_sweep_jobs``.
 - ``MuonSiteWorkflow`` (``mufinder.workflow.muon_site``, re-exported from

@@ -22,6 +22,7 @@ from mufinder.domain.models import MuonSite, Structure
 from mufinder.science.ase_bridge import reduced_formula
 from mufinder.science.lattice import (
     MUON_FRACTIONAL_SNAP_TOLERANCE,
+    lattice_plane_heights,
     nearest_image_distance,
     reduced_lattice,
     wrap_fractional,
@@ -993,19 +994,12 @@ def _cached_host_contact_ions(
     fractional = np.asarray(fractional_rows, dtype=float)
     muon = np.asarray(muon_fractional, dtype=float)
     atoms = np.flatnonzero(np.asarray(magnetic, dtype=bool))
-    volume = abs(float(np.linalg.det(lattice)))
-    spacings = np.array(
-        [
-            volume
-            / float(np.linalg.norm(np.cross(lattice[(axis + 1) % 3], lattice[(axis + 2) % 3])))
-            for axis in range(3)
-        ]
-    )
     empty = _HostContactIons(
         np.zeros(0, dtype=int), np.zeros((0, 3), dtype=int), np.zeros((0, 3), dtype=float)
     )
     if not atoms.size or int(nnn) < 1:
         return empty
+    spacings = lattice_plane_heights(lattice)
     radius = min(float(rcont), 2.0 * float(np.max(spacings)))
     while True:
         low = np.floor(muon - radius / spacings).astype(int) - 1
@@ -1234,13 +1228,7 @@ def _shared_contact_coefficients(
 def contact_shell_reach_limit(supercell_lattice: np.ndarray) -> float:
     """Return the radius of the largest sphere about the muon that the wrapped relaxed supercell holds."""
 
-    lattice = np.asarray(supercell_lattice, dtype=float)
-    volume = abs(float(np.linalg.det(lattice)))
-    heights = [
-        volume / float(np.linalg.norm(np.cross(lattice[(axis + 1) % 3], lattice[(axis + 2) % 3])))
-        for axis in range(3)
-    ]
-    return 0.5 * min(heights)
+    return 0.5 * float(np.min(lattice_plane_heights(supercell_lattice)))
 
 
 def _lookup_row_phases_turns(

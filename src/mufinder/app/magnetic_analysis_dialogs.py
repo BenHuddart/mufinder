@@ -108,17 +108,6 @@ class NuclearRelaxationDialog(QDialog):
         )
         for edit in (self._direction_x, self._direction_y, self._direction_z):
             edit.setObjectName("nuclearDirectionInput")
-        self._radius = DecimalLineEdit(
-            text="", minimum=0.0, maximum=1_000_000.0, decimals=12, placeholder="auto"
-        )
-        self._rtol = DecimalLineEdit(text="1e-6", minimum=0.0, maximum=1_000_000.0, decimals=12)
-        for edit in (
-            self._direction_x,
-            self._direction_y,
-            self._direction_z,
-            self._radius,
-            self._rtol,
-        ):
             edit.setMinimumWidth(92)
         self._element_checks = {
             str(element): QCheckBox(str(element), self) for element in dict.fromkeys(elements)
@@ -172,8 +161,6 @@ class NuclearRelaxationDialog(QDialog):
 
     def options(self) -> NuclearRelaxationOptions:
         mode = f"{self._regime_combo.currentData()}_{self._sample_combo.currentData()}"
-        radius_text = self._radius.text().strip()
-        radius = None if not radius_text else float(radius_text)
         return NuclearRelaxationOptions(
             mode=mode,  # type: ignore[arg-type]
             elements=self._selected_elements(),
@@ -183,8 +170,6 @@ class NuclearRelaxationDialog(QDialog):
                 float(self._direction_z.text() or "1"),
             ),
             include_quadrupolar=self._quadrupolar.isChecked(),
-            radius=radius,
-            convergence_rtol=float(self._rtol.text() or "1e-6"),
             use_distortion_correction=self._distortion.isChecked(),
         )
 
@@ -214,8 +199,6 @@ class NuclearRelaxationDialog(QDialog):
         direction_layout.addWidget(QLabel("z"))
         direction_layout.addWidget(self._direction_z)
         mode_form.addRow("Crystal-axis direction", direction_group)
-        mode_form.addRow("Radius (Å)", self._radius)
-        mode_form.addRow("Convergence rtol", self._rtol)
         if self._element_checks:
             elements_group = QWidget(mode_group)
             style_inline_group(elements_group)
@@ -304,10 +287,6 @@ class NuclearRelaxationDialog(QDialog):
             self._direction_x.setText(f"{direction[0]:.8g}")
             self._direction_y.setText(f"{direction[1]:.8g}")
             self._direction_z.setText(f"{direction[2]:.8g}")
-        if state.get("radius") not in {None, ""}:
-            self._radius.setText(str(state.get("radius")))
-        if state.get("convergence_rtol") not in {None, ""}:
-            self._rtol.setText(str(state.get("convergence_rtol")))
         saved_elements = state.get("elements")
         if isinstance(saved_elements, (list, tuple)):
             saved = tuple(str(value) for value in saved_elements)
@@ -343,7 +322,7 @@ class NuclearRelaxationDialog(QDialog):
             ("σ² (μs⁻²)", _format_float(result.get("sigma_squared"))),
             ("M₂ (μs⁻²)", _format_float(result.get("m2"))),
             ("Δ field (T)", _format_float(result.get("delta_field_t"))),
-            ("Convergence radius (Å)", _format_float(result.get("convergence_radius_a"))),
+            ("Explicit sum radius (Å)", _format_float(result.get("convergence_radius_a"))),
             ("Nuclei summed", str(result.get("n_nuclei_summed", ""))),
             ("Elements", _nuclear_elements_text(result.get("elements"))),
         ]

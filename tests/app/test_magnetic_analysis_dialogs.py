@@ -102,6 +102,26 @@ def _tensor_dialog(site, results_state=()) -> DipolarTensorDialog:
     )
 
 
+def test_nuclear_relaxation_dialog_loads_saved_options_with_the_retired_keys(qapp) -> None:
+    dialog = NuclearRelaxationDialog(
+        muon_site=None,
+        distortion_available=False,
+        options_state={
+            "mode": "tf_single_crystal",
+            "direction": [0.0, 1.0, 0.0],
+            "radius": 12.0,
+            "convergence_rtol": 1e-5,
+        },
+    )
+
+    state = dialog.options_state()
+
+    assert state["mode"] == "tf_single_crystal"
+    assert state["direction"] == [0.0, 1.0, 0.0]
+    assert not {"radius", "convergence_rtol"} & set(state)
+    dialog.close()
+
+
 def _nuclear_dialog(site, results_state=None) -> NuclearRelaxationDialog:
     return NuclearRelaxationDialog(
         muon_site=site,
