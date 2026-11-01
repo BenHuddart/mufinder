@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QEvent, QObject, Qt, Signal
-from PySide6.QtGui import QKeyEvent
+import sys
+
+from PySide6.QtCore import QEvent, QObject, QPoint, Qt, Signal
+from PySide6.QtGui import QContextMenuEvent, QKeyEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import (
     QApplication,
@@ -197,3 +199,79 @@ def test_install_puts_no_event_filter_on_the_application(qapp, monkeypatch) -> N
     QApplication.sendEvent(focused, QEvent(QEvent.Type.User))
     QApplication.sendEvent(later, QEvent(QEvent.Type.User))
     assert shortcut_filter.seen == [later]
+
+
+def _inline_completer_edit() -> QLineEdit:
+    edit = QLineEdit()
+    completer = QCompleter(["Mn", "MnSi"], edit)
+    completer.setCompletionMode(QCompleter.CompletionMode.InlineCompletion)
+    edit.setCompleter(completer)
+    return edit
+
+
+@pytest.mark.parametrize("factory", [_editable_combo, _inline_completer_edit])
+def test_filter_moves_off_a_widget_whose_completer_has_no_popup(qapp, factory) -> None:
+    # Inline completion, the default of an editable combo box, has no popup.
+    widget = factory()
+    assert widget.completer().popup() is None
+    next_field = QLineEdit()
+    shortcut_filter = _CountingFilter()
+
+    shortcut_filter.follow_focus(None, widget)
+    QApplication.sendEvent(widget, QEvent(QEvent.Type.User))
+    assert shortcut_filter.seen == [widget]
+
+    shortcut_filter.seen.clear()
+    shortcut_filter.follow_focus(widget, next_field)
+    QApplication.sendEvent(widget, QEvent(QEvent.Type.User))
+    QApplication.sendEvent(next_field, QEvent(QEvent.Type.User))
+    assert shortcut_filter.seen == [next_field]
+
+
+def test_shortcuts_work_while_a_combo_completer_popup_has_the_keys(qapp) -> None:
+    install_text_editing_shortcuts(qapp)
+    combo = _editable_combo()
+    combo.addItems(["Mn", "MnSi"])
+    combo.lineEdit().clear()
+    combo.completer().setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
+    _focus(qapp, combo)
+    combo.completer().complete()
+    qapp.processEvents()
+    popup = combo.completer().popup()
+    assert popup.isVisible()
+    QApplication.clipboard().setText("CoF2")
+
+    QTest.keyClick(popup, Qt.Key.Key_V, Qt.KeyboardModifier.MetaModifier)
+    assert combo.currentText() == "CoF2"
+
+    combo.lineEdit().selectAll()
+    QApplication.clipboard().setText("")
+    QTest.keyClick(popup, Qt.Key.Key_C, Qt.KeyboardModifier.ControlModifier)
+    assert QApplication.clipboard().text() == "CoF2"
+    popup.hide()
+
+
+def test_editable_combo_keeps_copy_and_its_context_menu(qapp, monkeypatch) -> None:
+    slot_errors: list[BaseException] = []
+    monkeypatch.setattr(sys, "excepthook", lambda _type, value, _tb: slot_errors.append(value))
+    install_text_editing_shortcuts(qapp)
+    combo = _editable_combo()
+    _focus(qapp, combo)
+    line_edit = combo.lineEdit()
+    line_edit.setText("MnSi")
+    line_edit.selectAll()
+
+    QTest.keyClick(combo, Qt.Key.Key_C, Qt.KeyboardModifier.ControlModifier)
+    assert QApplication.clipboard().text() == "MnSi"
+
+    # The menu is built, not shown: showing a popup on the offscreen platform
+    # can crash inside Qt once earlier test windows are gone.
+    context_event = QContextMenuEvent(QContextMenuEvent.Reason.Mouse, QPoint(2, 2), QPoint(2, 2))
+    shortcut_filter = getattr(qapp, "_mufinder_text_editing_shortcut_filter")
+    assert shortcut_filter.eventFilter(combo, context_event) is False
+    menu = line_edit.createStandardContextMenu()
+    QApplication.clipboard().setText("CoF2")
+    next(action for action in menu.actions() if "Paste" in action.text()).trigger()
+
+    assert combo.currentText() == "CoF2"
+    assert slot_errors == []

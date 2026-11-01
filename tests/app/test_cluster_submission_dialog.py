@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import sys
 
 import pytest
-from PySide6.QtWidgets import QLabel
+from PySide6.QtCore import Qt
+from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QApplication, QLabel
 
 import mufinder.app.cluster_submission_dialog as dialog_module
 import mufinder.services.keychain as keychain_module
 from mufinder.app.cluster_submission_dialog import ClusterSubmissionConfig, ClusterSubmissionDialog
+from mufinder.app.text_editing import install_text_editing_shortcuts
 from mufinder.domain.cluster import ClusterConfig
 from mufinder.services.ssh_client import SSHCredentials
 
@@ -1024,4 +1028,36 @@ def test_cluster_submission_dialog_does_not_restore_the_placeholder_username(qap
     assert config.username == ""
     assert config.working_directory == ""
     assert config.num_processes == 48
+    dialog.close()
+
+
+def test_paste_shortcut_follows_tab_and_click_through_the_queue_combo(qapp, monkeypatch) -> None:
+    # An exception raised in the focusChanged slot only reaches sys.excepthook,
+    # so a test has to capture it there to see it.
+    slot_errors: list[BaseException] = []
+    monkeypatch.setattr(sys, "excepthook", lambda _type, value, _tb: slot_errors.append(value))
+    install_text_editing_shortcuts(qapp)
+    dialog = ClusterSubmissionDialog(job_labels=["job_a"], cluster_configs=_configs())
+    dialog.show()
+    dialog.activateWindow()
+    dialog._cluster_combo.setFocus()
+    qapp.processEvents()
+    QApplication.clipboard().setText("pasted")
+
+    QTest.keyClick(qapp.focusWidget(), Qt.Key.Key_Tab)
+    assert qapp.focusWidget() is dialog._queue_combo
+    dialog._queue_combo.lineEdit().clear()
+    QTest.keyClick(dialog._queue_combo, Qt.Key.Key_V, Qt.KeyboardModifier.MetaModifier)
+    assert dialog._queue_combo.currentText() == "pasted"
+
+    QTest.keyClick(dialog._queue_combo, Qt.Key.Key_Tab)
+    next_field = dialog._working_directory_edit
+    assert qapp.focusWidget() is next_field
+    next_field.clear()
+    QTest.keyClick(next_field, Qt.Key.Key_V, Qt.KeyboardModifier.MetaModifier)
+    assert next_field.text() == "pasted"
+
+    QTest.mouseClick(dialog._queue_combo.lineEdit(), Qt.MouseButton.LeftButton)
+    assert qapp.focusWidget() is dialog._queue_combo
+    assert slot_errors == []
     dialog.close()
