@@ -206,7 +206,7 @@ search that finds none adds no entry: the table stays empty, the progress bar re
 A tolerance outside 0.001 to 10 Å is set to the nearest limit when you leave the
 field, and a blank field goes back to the tolerance in use.
 
-The ``UEP clustering`` source of the Magnetic Fields page takes each site's
+The ``UEP sites`` source of the Magnetic Fields page takes each site's
 lowest-energy start as the optimizer found it, not the image in the asymmetric unit:
 in a magnetic host, symmetry images need not have the same field.
 

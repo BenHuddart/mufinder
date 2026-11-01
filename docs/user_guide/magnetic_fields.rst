@@ -12,7 +12,7 @@ Before you start
 
 - Load a host structure. Without one, the editing and calculation buttons on
   the page are disabled.
-- For a muon site beyond a custom position, finish UEP clustering or
+- For a muon site beyond a custom position, finish a UEP batch search or
   structural-relaxation clustering first, because those results supply the
   sites you choose from (see `Choose the muon site`_).
 - The calculations need the optional ``muesr`` and ``muLFC`` backends (see
@@ -601,8 +601,10 @@ The selected site is normalized into one internal option containing a label,
 source, fractional coordinate, optional Cartesian coordinate, and optional
 distorted-structure reference. The available sources are:
 
-- ``UEP clustering (unrelaxed estimate)``, using representative clustered UEP
-  minima and the sites generated from them with the ``UEP clusters`` method.
+- ``UEP sites (unrelaxed estimate)``, using each site of a UEP batch search, at
+  its lowest-energy start as the optimizer found it, as ``UEP site <n>`` with its
+  group in the ``Group`` column, and the sites generated from them with the ``UEP
+  clusters`` method.
   A stored site whose generation method is ``uep_batch_cluster`` is not
   listed; it stays in the project and in the other workflows (see
   :doc:`/compatibility_policy`);
@@ -657,7 +659,7 @@ reads ``Choose a muon site.``, and ``Calculate Dipolar Field``,
 tooltips saying a site is needed. With no site chosen, the dialog
 opens on ``Structural relaxation clustering`` when that source lists a site
 (a pinned site, or any cluster with ``Show every relaxed site`` ticked), and on
-UEP clustering otherwise.
+UEP sites otherwise.
 
 UEP sites are estimates
 ~~~~~~~~~~~~~~~~~~~~~~~
@@ -1459,7 +1461,7 @@ the workspace, and deleting a workspace deletes its results. The page's form
 settings stay in the project's UI state and do not repeat the results.
 
 Every result also remembers which source supplied its muon site (UEP
-clustering, relaxation clustering or a custom position). A UEP source
+sites, relaxation clustering or a custom position). A UEP source
 marks the result as an unrelaxed estimate (see `UEP sites are estimates`_). A
 result saved without a source takes the source of the form's selected site,
 except dipolar-tensor and nuclear-relaxation results: those are kept when a

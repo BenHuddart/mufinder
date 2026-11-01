@@ -475,7 +475,9 @@ Compatibility ledger
        index, member index and clustering settings they recorded, and those are
        history, so they are not regrouped. Their methods sentence and Journal entry
        still name the old method, and an old Journal record's ``includes_zpe`` is
-       still read. Such a site also keeps its ``UEP Cluster <n>`` label, where a
+       still read. A Magnetic Fields selection saved as ``UEP cluster <n>`` keeps
+       that text until it is chosen again, and still matches today's ``UEP site <n>``
+       (``same_muon_site``); ``site_source`` stays ``uep_clustering``. Such a site also keeps its ``UEP Cluster <n>`` label, where a
        new one reads ``UEP Site <n>``, and the field names ``cluster_index``,
        ``cluster_size``, ``clusters``, ``uep_cluster`` and ``uep_source_key`` stay
        as they are in new records.
@@ -1061,7 +1063,7 @@ The Magnetic Fields page no longer offers a stored muon site whose
 version of the UEP workflow wrote and that nothing writes now. Such a site
 stays in the project: it loads unchanged, the duplicate-site check of site
 generation still reads it, and the project survey and the muon generation
-table still label it as a UEP site. It is left off the ``UEP clustering`` source of
+table still label it as a UEP site. It is left off the ``UEP sites`` source of
 ``Select Muon Site`` (``UEP_CLUSTER_SITE_METHODS`` in
 ``mufinder.services.magnetic_field_sites``), so no shim or schema migration is
 needed; a field calculation for that position uses a custom site, or a site

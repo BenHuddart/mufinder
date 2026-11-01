@@ -617,6 +617,7 @@ def test_magnetic_field_widget_defaults_to_a_relaxation_cluster_once_one_exists(
     uep_widget.set_document(uep_cluster_document(tmp_path / "uep"))
     assert uep_widget.selected_muon_site().source == "uep_clustering"
     assert "unrelaxed" in uep_widget._site_summary.text()
+    assert uep_widget._site_summary.text().startswith("Muon site: UEP site 2 from UEP batch at ")
     uep_widget.close()
 
     document = relaxation_cluster_document(tmp_path, displaced_iron_supercell())

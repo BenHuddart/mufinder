@@ -31,9 +31,11 @@ def test_muon_site_selection_dialog_lists_uep_cluster_muon_sites(qapp, tmp_path)
     selected = dialog.selected_muon_site()
     assert selected is not None
     assert selected.source == "uep_clustering"
-    assert selected.label == "UEP cluster 2"
+    assert selected.label == "UEP site 2"
     assert selected.source_label == "UEP batch"
-    assert selected.cluster_label == "Cluster 2"
+    assert selected.cluster_label == "Site 2"
+    assert dialog._site_table.item(0, 2).text() == "Site 2"
+    assert dialog._site_table.horizontalHeaderItem(2).text() == "Group"
     assert selected.fractional_position == (0.1, 0.2, 0.3)
     assert not dialog._distortion_checkbox.isEnabled()
     dialog.close()
@@ -136,7 +138,7 @@ def test_muon_site_selection_dialog_labels_uep_sites_as_unrelaxed_estimates(qapp
     dialog = MuonSiteSelectionDialog(document, feo_host_structure())
 
     _set_site_source(dialog, "uep_clustering")
-    assert dialog._site_source_combo.currentText() == "UEP clustering (unrelaxed estimate)"
+    assert dialog._site_source_combo.currentText() == "UEP sites (unrelaxed estimate)"
     assert not dialog._estimate_note.isHidden()
     assert "estimates" in dialog._estimate_note.text()
 
@@ -164,3 +166,25 @@ def test_muon_site_selection_dialog_offers_relaxation_clusters_first_once_they_e
     assert both._site_source_combo.currentData() == "relaxation_clustering"
     assert both.selected_muon_site().source == "relaxation_clustering"
     both.close()
+
+
+def test_the_group_column_is_the_cluster_column_again_for_relaxed_sites(qapp, tmp_path) -> None:
+    document = uep_cluster_document(tmp_path)
+    dialog = MuonSiteSelectionDialog(document, feo_host_structure())
+    assert dialog._site_table.horizontalHeaderItem(2).text() == "Group"
+
+    _set_site_source(dialog, "relaxation_clustering")
+
+    assert dialog._site_table.horizontalHeaderItem(2).text() == "Cluster"
+    dialog.close()
+
+
+def test_a_project_without_uep_sites_says_so_in_plain_words(qapp, tmp_path) -> None:
+    document = uep_cluster_document(tmp_path)
+    document.ui_state.clear()
+
+    dialog = MuonSiteSelectionDialog(document, feo_host_structure())
+    _set_site_source(dialog, "uep_clustering")
+
+    assert dialog._site_status.text() == "Muon site: no UEP sites available."
+    dialog.close()

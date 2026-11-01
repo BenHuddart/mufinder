@@ -37,12 +37,15 @@ RELAXATION_SITE_SOURCE = "relaxation_clustering"
 #: The source of a fractional position typed in by the user.
 CUSTOM_SITE_SOURCE = "custom"
 
+#: How the label of a UEP option saved before options read ``UEP site N`` starts.
+_SAVED_UEP_LABEL_PREFIX = "UEP cluster "
+
 #: Generation methods of the stored UEP cluster sites the page offers. A site that
 #: an older project stored as ``uep_batch_cluster`` is not offered.
 UEP_CLUSTER_SITE_METHODS = frozenset({"uep_cluster", "uep_cluster_member"})
 
 _SOURCE_LABELS = {
-    UEP_SITE_SOURCE: "UEP clustering (unrelaxed estimate)",
+    UEP_SITE_SOURCE: "UEP sites (unrelaxed estimate)",
     RELAXATION_SITE_SOURCE: "Structural relaxation clustering",
     CUSTOM_SITE_SOURCE: "Custom",
 }
@@ -69,12 +72,20 @@ def site_source_label(source: str) -> str:
     return _SOURCE_LABELS.get(source, source.replace("_", " ").title())
 
 
+def _site_name(option: MagneticMuonSiteOption) -> str:
+    """An option's label, a site saved as ``UEP cluster N`` naming today's ``UEP site N``."""
+
+    if option.source == UEP_SITE_SOURCE and option.label.startswith(_SAVED_UEP_LABEL_PREFIX):
+        return f"UEP site {option.label.removeprefix(_SAVED_UEP_LABEL_PREFIX)}"
+    return option.label
+
+
 def same_muon_site(left: MagneticMuonSiteOption, right: MagneticMuonSiteOption) -> bool:
     """Whether two options name the same site: same source and label, and the same position."""
 
     return (
         left.source == right.source
-        and left.label == right.label
+        and _site_name(left) == _site_name(right)
         and np.allclose(left.fractional_position, right.fractional_position, atol=1e-8)
     )
 
@@ -160,7 +171,7 @@ def uep_cluster_muon_site_options(
         options.append(
             MagneticMuonSiteOption(
                 source=UEP_SITE_SOURCE,
-                label=site.label or "UEP cluster site",
+                label=site.label or "UEP site",
                 source_label="Generated UEP site",
                 cluster_label=_cluster_label_from_properties(site.properties),
                 fractional_position=float_triplet(site.initial_fractional_position),
@@ -210,9 +221,9 @@ def uep_cluster_muon_site_options(
                 options.append(
                     MagneticMuonSiteOption(
                         source=UEP_SITE_SOURCE,
-                        label=f"UEP cluster {cluster_index if cluster_index is not None else len(options) + 1}",
+                        label=f"UEP site {cluster_index if cluster_index is not None else len(options) + 1}",
                         source_label=str(source_job_label),
-                        cluster_label="-" if cluster_index is None else f"Cluster {cluster_index}",
+                        cluster_label="-" if cluster_index is None else f"Site {cluster_index}",
                         fractional_position=fractional,
                         cartesian_position=cartesian,
                         properties={
@@ -303,7 +314,12 @@ def _cluster_label_from_properties(properties: dict[str, object]) -> str | None:
     cluster = properties.get("cluster_index")
     if cluster is None:
         return None
-    return f"Cluster {cluster}"
+    # A site made from a retired clustering keeps reading as what it was made from.
+    return (
+        f"Site {cluster}"
+        if properties.get("clustering_method") == "symmetry_distance"
+        else f"Cluster {cluster}"
+    )
 
 
 def _distorted_structure_id_for_job(document: ProjectDocument, job_id: UUID | None) -> UUID | None:

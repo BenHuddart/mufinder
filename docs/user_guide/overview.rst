@@ -277,7 +277,7 @@ zero-moment and unpreviewed incommensurate structures. It calculates:
   crystals and polycrystals, from bundled natural-abundance isotope data, with
   an optional muon-induced distortion correction.
 
-Muon sites come from relaxation clustering, UEP clustering or a custom
+Muon sites come from relaxation clustering, UEP sites or a custom
 fractional position; relaxation clusters are offered first once they exist,
 and fields, dipolar tensors and nuclear relaxation computed at an unrelaxed
 UEP site are labelled as estimates. Settings are saved as named workspaces, and

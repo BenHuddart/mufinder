@@ -51,9 +51,9 @@ def test_uep_batch_cluster_is_offered_at_its_optimised_position(tmp_path) -> Non
     (option,) = uep_cluster_muon_site_options(document, feo_host_structure())
 
     assert option.source == UEP_SITE_SOURCE
-    assert option.label == "UEP cluster 2"
+    assert option.label == "UEP site 2"
     assert option.source_label == "UEP batch"
-    assert option.cluster_label == "Cluster 2"
+    assert option.cluster_label == "Site 2"
     assert option.fractional_position == (0.1, 0.2, 0.3)
     assert option.cartesian_position == (0.3, 0.6, 0.9)
     assert option.distortion_structure_id is None
@@ -327,7 +327,7 @@ def test_same_muon_site_compares_source_label_and_position() -> None:
 
 
 def test_site_source_labels() -> None:
-    assert site_source_label(UEP_SITE_SOURCE) == "UEP clustering (unrelaxed estimate)"
+    assert site_source_label(UEP_SITE_SOURCE) == "UEP sites (unrelaxed estimate)"
     assert site_source_label(RELAXATION_SITE_SOURCE) == "Structural relaxation clustering"
     assert site_source_label(CUSTOM_SITE_SOURCE) == "Custom"
     assert site_source_label("pristine_relaxation") == "Pristine Relaxation"
@@ -354,3 +354,37 @@ def test_relaxation_cluster_uses_its_workspace_name_or_a_default(tmp_path) -> No
     assert option.label == "Relaxation analysis cluster 1"
     assert option.cluster_label == "-"
     assert option.distortion_structure_id is None
+
+
+def test_a_generated_uep_site_reads_as_what_it_was_made_from(tmp_path) -> None:
+    document = uep_cluster_document(tmp_path)
+    for label, method, index in (
+        ("UEP Site 1", "symmetry_distance", 1),
+        ("UEP Cluster 3", "hier", 3),
+    ):
+        site = MuonSite(
+            label=label,
+            generation_method="uep_cluster",
+            initial_fractional_position=[0.25, 0.25, 0.25],
+            initial_cartesian_position=[0.75, 0.75, 0.75],
+            properties={"cluster_index": index, "clustering_method": method},
+        )
+        document.sites[site.id] = site
+
+    options = {
+        option.label: option.cluster_label
+        for option in uep_cluster_muon_site_options(document, feo_host_structure())
+    }
+
+    assert options["UEP Site 1"] == "Site 1"
+    assert options["UEP Cluster 3"] == "Cluster 3"
+
+
+def test_a_saved_uep_cluster_selection_is_the_same_site_as_its_uep_site_option(tmp_path) -> None:
+    document = uep_cluster_document(tmp_path)
+    (option,) = uep_cluster_muon_site_options(document, feo_host_structure())
+
+    saved = replace(option, label="UEP cluster 2", cluster_label="Cluster 2")
+
+    assert same_muon_site(saved, option)
+    assert not same_muon_site(replace(saved, label="UEP cluster 3"), option)

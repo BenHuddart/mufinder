@@ -1007,7 +1007,12 @@ class MagneticFieldWidget(QWidget):
             return
         site = self._selected_muon_site
         source = site.source_label or site_source_label(site.source)
-        cluster = f" ({site.cluster_label})" if site.cluster_label else ""
+        # ``UEP site 2`` already says what ``Site 2`` would add.
+        cluster = (
+            f" ({site.cluster_label})"
+            if site.cluster_label and not site.cluster_label.startswith("Site ")
+            else ""
+        )
         distortion = (
             " Local field corrected for muon-induced displacements."
             if site.include_distortion
