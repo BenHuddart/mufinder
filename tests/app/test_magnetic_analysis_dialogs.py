@@ -82,6 +82,30 @@ def test_nuclear_relaxation_dialog_reports_a_failed_calculation(qapp) -> None:
     dialog.close()
 
 
+@pytest.mark.parametrize(("radius", "shown"), [(30.093759, "30.1"), (20.0, "20"), (219.96, "220")])
+def test_explicit_sum_radius_reads_short_and_explains_itself(
+    qapp, radius: float, shown: str
+) -> None:
+    dialog = NuclearRelaxationDialog(
+        muon_site=None,
+        distortion_available=False,
+        results_state={"mode": "zf_polycrystal", "convergence_radius_a": radius},
+    )
+    table = dialog._summary_table
+    row = next(
+        index
+        for index in range(table.rowCount())
+        if table.item(index, 0).text() == "Explicit sum radius (Å)"
+    )
+
+    assert table.item(row, 1).text() == shown
+    assert "each element" in table.item(row, 0).toolTip().lower()
+    assert "largest" in table.item(row, 0).toolTip().lower()
+    # Only the display is rounded.
+    assert dialog.results_state()["convergence_radius_a"] == radius
+    dialog.close()
+
+
 def _site_from(source: str) -> MagneticMuonSiteOption:
     return replace(custom_muon_site((0.25, 0.25, 0.25)), source=source, label=f"{source} site")
 
@@ -100,6 +124,26 @@ def _tensor_dialog(site, results_state=()) -> DipolarTensorDialog:
         results_state=results_state,
         calculate_callback=lambda _dialog: (tensor,),
     )
+
+
+def test_nuclear_relaxation_dialog_loads_saved_options_with_the_retired_keys(qapp) -> None:
+    dialog = NuclearRelaxationDialog(
+        muon_site=None,
+        distortion_available=False,
+        options_state={
+            "mode": "tf_single_crystal",
+            "direction": [0.0, 1.0, 0.0],
+            "radius": 12.0,
+            "convergence_rtol": 1e-5,
+        },
+    )
+
+    state = dialog.options_state()
+
+    assert state["mode"] == "tf_single_crystal"
+    assert state["direction"] == [0.0, 1.0, 0.0]
+    assert not {"radius", "convergence_rtol"} & set(state)
+    dialog.close()
 
 
 def _nuclear_dialog(site, results_state=None) -> NuclearRelaxationDialog:

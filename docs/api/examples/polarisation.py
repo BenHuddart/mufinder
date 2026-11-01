@@ -46,7 +46,7 @@ fields = calculate_commensurate_fields(
 )
 
 # The nuclear width along each site's field, from one lattice sum per site.
-widths = [calculate_nuclear_width_tensors(host, site, radius=12.0) for site in sites]
+widths = [calculate_nuclear_width_tensors(host, site) for site in sites]
 
 # Zero field, a polycrystal: 1/3 + 2/3 cos(gamma |B| t) per site, damped by the nuclei.
 times = np.linspace(0.0, 2.0, 2001)

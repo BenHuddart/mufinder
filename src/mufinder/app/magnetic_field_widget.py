@@ -132,6 +132,7 @@ from mufinder.services.magnetic_field_sites import (
     distortion_structure,
     site_cartesian_position,
     site_source_label,
+    uep_site_in_host_cell,
 )
 from mufinder.services.project_document import active_host_structure
 from mufinder.services.project_service import ProjectDocument
@@ -1514,7 +1515,7 @@ class MagneticFieldWidget(QWidget):
         distortion_structure_id = uuid_or_none(value.get("distortion_structure_id"))
 
         properties = value.get("properties")
-        return MagneticMuonSiteOption(
+        site = MagneticMuonSiteOption(
             source=str(value.get("source", CUSTOM_SITE_SOURCE)).strip() or CUSTOM_SITE_SOURCE,
             label=str(value.get("label", "Custom site")).strip() or "Custom site",
             fractional_position=fractional_position,
@@ -1526,6 +1527,9 @@ class MagneticFieldWidget(QWidget):
             include_distortion=bool(value.get("include_distortion", False))
             and distortion_structure_id is not None,
         )
+        if self._document is None or self._host_structure is None:
+            return site
+        return uep_site_in_host_cell(self._document, self._host_structure, site)
 
     def _clear_results(self, *, clear_state: bool = False) -> None:
         self._distribution_results = []
