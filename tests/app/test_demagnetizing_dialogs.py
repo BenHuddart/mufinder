@@ -142,8 +142,11 @@ def test_demagnetizing_dialog_calculates_a_fourier_shape_off_the_gui_thread(
 
 
 def test_demagnetizing_dialog_reports_a_cancelled_tensor(qapp, monkeypatch) -> None:
+    calls = []
+
     def cancelled(*_args: object, **kwargs: object) -> None:
         assert kwargs["cancellable"]
+        calls.append(1)
         raise BlockingCallCancelled("cancelled")
 
     monkeypatch.setattr(demagnetizing_dialogs_module, "run_blocking_call", cancelled)
@@ -152,6 +155,10 @@ def test_demagnetizing_dialog_reports_a_cancelled_tensor(qapp, monkeypatch) -> N
 
     assert dialog._tensor_label.text() == "Tensor unavailable: its calculation was cancelled"
     assert not dialog._use_button.isEnabled()
+    # Editing the orientation does not start it again.
+    dialog._sync()
+    assert calls == [1]
+    assert dialog._tensor_label.text() == "Tensor unavailable: its calculation was cancelled"
     dialog.close()
 
 

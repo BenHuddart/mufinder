@@ -1235,15 +1235,20 @@ the largest error in a factor is:
      - 0.003
      - 0.001
 
-The window warns below 8 voxels. A ``Rectangular prism`` has a closed form and
-is exact for a rectangular sample.
+The window warns when the narrow side of the outline's bounding box is below 8
+voxels; it does not look for slender features inside the box, such as a thin
+ring. A ``Rectangular prism`` has a closed form and is exact for a rectangular
+sample.
 
-A plate's longest edge can be at most about 10000 times its thickness. By then
-an ``Infinite plate`` is within 0.0006 of the factor along the normal, and the
-refusal says so. The same limit on the time taken refuses a needle or rod whose
-length is more than about 1600 times its width. A ``Voxel grid`` from the Python
-API takes the FFT of the whole box, which holds at most 268 million voxels; a
-larger box, or one the machine has no memory for, is refused.
+A plate's longest edge can be at most 10000 times its thickness. By then an
+``Infinite plate`` is within 0.0006 of a square plate's factor along the normal,
+and the refusal gives the figure for the plate in hand. The quick ``Infinite
+plate`` has its normal along ``c``, so for a plate oriented otherwise choose a
+``Rectangular prism``, which keeps the orientation. The limit on the time taken
+also refuses a needle or rod whose length is more than about 2000 times its
+width. A ``Voxel grid`` from the Python API takes the FFT of the whole box, which
+holds at most 268 million voxels and about 4 GB; a larger box, or an allocation
+that fails, is refused.
 
 .. _magnetic-fields-distortion-corrections:
 

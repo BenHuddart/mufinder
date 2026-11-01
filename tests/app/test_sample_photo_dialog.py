@@ -295,12 +295,13 @@ def test_photo_dialog_warns_when_the_outline_is_few_voxels_across(qapp, tmp_path
     dialog._height.setValue(0.02)
 
     assert dialog._box_status.text().startswith("The outline is only 5 voxels across")
-    assert "off by up to 0.05" in dialog._box_status.text()
+    assert "off by up to about 0.01" in dialog._box_status.text()
     # It is a warning: the plate can still be used.
     assert dialog._use_button.isEnabled()
 
     dialog._height.setValue(0.004)
     assert dialog._box_status.text().startswith("The outline is only 1 voxel across")
+    assert "off by up to about 0.05" in dialog._box_status.text()
     dialog.close()
 
 

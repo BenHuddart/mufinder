@@ -976,6 +976,38 @@ def test_refused_calculation_saves_that_the_old_results_are_gone(
     widget.close()
 
 
+def test_calculation_failing_after_a_reload_leaves_the_reloaded_results_alone(
+    qapp, tmp_path, monkeypatch
+) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "reloaded.mufinder", "Reloaded")
+    service.add_structure(document, feo_host_structure())
+    widget = MagneticFieldWidget()
+    widget.set_document(document)
+    widget.set_model(MagneticStructureModel(components=(z_moment_component("one", "One", 0),)))
+    widget._selected_muon_site = custom_muon_site((0.25, 0.5, 0.75))
+    widget._sync_enabled_state()
+
+    def _reload_then_fail(*_args, **_kwargs):
+        widget._page_reloads += 1
+        raise ValueError("the plate is too thin")
+
+    monkeypatch.setattr(
+        magnetic_field_widget_module, "run_prepared_magnetic_field_calculation", _reload_then_fail
+    )
+    cleared: list[bool] = []
+    monkeypatch.setattr(widget, "_clear_results", lambda **_kw: cleared.append(True))
+    saved: list[dict] = []
+    widget.form_state_changed.connect(saved.append)
+
+    widget.calculate_fields()
+
+    assert cleared == []
+    assert saved == []
+    assert "reloaded during the calculation" in widget._calculation_status.text()
+    widget.close()
+
+
 def test_magnetic_field_form_saved_with_the_retired_plate_settings_loads(qapp, tmp_path) -> None:
     service = ProjectService()
     document = service.create_project(tmp_path / "retired-plate.mufinder", "Retired Plate")

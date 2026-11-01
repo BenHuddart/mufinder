@@ -55,6 +55,8 @@ PHOTO_FILE_FILTER = "Images (*.png *.jpg *.jpeg *.tif *.tiff *.bmp);;All files (
 _PREVIEW_SIZE = (440, 330)
 #: How long a preview waits after the last edit before it redraws, in milliseconds.
 PREVIEW_DEBOUNCE_MS = 150
+# The largest error in a factor measured on rectangles this many voxels across, to one figure.
+_NARROW_OUTLINE_ERROR = {1: 0.05, 2: 0.03, 3: 0.02, 4: 0.02}
 
 
 def load_greyscale_image(path: str | Path, *, max_edge: int = PHOTO_WORKING_EDGE) -> np.ndarray:
@@ -100,7 +102,8 @@ def narrow_outline_warning(sample: DemagnetizingSample) -> str:
         return ""
     return (
         f"The outline is only {plural(cells, 'voxel')} across, so a factor can be off by up to "
-        "0.05. A Rectangular prism is exact for a rectangular sample."
+        f"about {_NARROW_OUTLINE_ERROR.get(cells, 0.01):g}. A Rectangular prism is exact for a "
+        "rectangular sample."
     )
 
 

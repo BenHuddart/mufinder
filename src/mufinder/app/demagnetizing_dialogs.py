@@ -408,6 +408,7 @@ class DemagnetizingFieldAdvancedDialog(StructureViewerDialog):
         # rotation saved without crystal directions, or directions with no host.
         self._seed = sample
         self._principal: tuple[DemagnetizingSample, np.ndarray] | None = None
+        self._cancelled_shape: DemagnetizingSample | None = None
         self._orientation_mode = QComboBox(self)
         for key, label in DEMAG_ORIENTATION_OPTIONS:
             self._orientation_mode.addItem(label, key)
@@ -676,20 +677,27 @@ class DemagnetizingFieldAdvancedDialog(StructureViewerDialog):
         """Return the shape's principal tensor, reused while only the orientation changes."""
 
         shape = replace(sample, rotation=None, normal_hkl=None, in_plane_uvw=None)
+        if shape == self._cancelled_shape:
+            # Editing the orientation does not start again what the user cancelled.
+            raise BlockingCallCancelled("the tensor of this shape was cancelled")
         if self._principal is None or self._principal[0] != shape:
             # A plate far thinner than it is wide takes seconds, so a Fourier shape runs off
             # the GUI thread, with a busy dialog once it takes noticeably long.
-            tensor = (
-                run_blocking_call(
-                    self,
-                    lambda: principal_demagnetizing_tensor(shape),
-                    title="Advanced Demagnetizing Field",
-                    description="Calculating the demagnetizing tensor…",
-                    cancellable=True,
+            try:
+                tensor = (
+                    run_blocking_call(
+                        self,
+                        lambda: principal_demagnetizing_tensor(shape),
+                        title="Advanced Demagnetizing Field",
+                        description="Calculating the demagnetizing tensor…",
+                        cancellable=True,
+                    )
+                    if shape.uses_fourier_method
+                    else principal_demagnetizing_tensor(shape)
                 )
-                if shape.uses_fourier_method
-                else principal_demagnetizing_tensor(shape)
-            )
+            except BlockingCallCancelled:
+                self._cancelled_shape = shape
+                raise
             self._principal = (shape, tensor)
         return self._principal[1]
 

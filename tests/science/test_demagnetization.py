@@ -55,6 +55,14 @@ def _prism(shape: str) -> DemagnetizingSample:
     return DemagnetizingSample(shape=shape, prism_lengths=(1.0, 1.0, 2.0))
 
 
+@pytest.fixture(autouse=True)
+def _fresh_tensor_cache():
+    # Its key does not include a patched grid, and a bad-trace test must really calculate.
+    demagnetization._cached_fourier_result.cache_clear()
+    yield
+    demagnetization._cached_fourier_result.cache_clear()
+
+
 # demagnetizing_tensor: shape dispatch
 
 
@@ -670,7 +678,6 @@ def test_running_out_of_memory_is_a_refusal_rather_than_a_crash(
         if transform == "rfftn":
             voxel_demagnetizing_tensor(np.ones((4, 4, 4), dtype=bool), 1.0)
         else:
-            # A shape no other test uses, so a cached tensor is not reused.
             fourier_demagnetizing_result(
                 DemagnetizingSample.image_plate(np.ones((8, 8), dtype=bool), (3.1, 2.9), 0.17)
             )
@@ -773,10 +780,9 @@ def test_photo_plate_sum_is_the_fft_of_the_whole_box(
     monkeypatch.setattr(demagnetization, "PLATE_FOURIER_GRID", 48)
     plate = DemagnetizingSample.image_plate(outline, size, thickness)
 
-    two_dimensional = demagnetization._cached_fourier_result(plate)
+    two_dimensional = fourier_demagnetizing_result(plate)
     model = plate.voxel_model()
     whole_box = voxel_demagnetizing_tensor(model.mask, model.spacing)
-    demagnetization._cached_fourier_result.cache_clear()
 
     assert two_dimensional.box_shape == whole_box.box_shape
     assert two_dimensional.voxel_count == whole_box.voxel_count
@@ -886,16 +892,31 @@ def test_photo_plate_reports_how_many_voxels_its_narrow_side_spans(
 def test_photo_plate_too_thin_is_refused_naming_the_infinite_plate(thickness: float) -> None:
     plate = DemagnetizingSample.image_plate(np.ones((64, 64), dtype=bool), (1.0, 1.0), thickness)
 
-    with pytest.raises(DemagnetizationError, match="Choose Infinite plate.*within 0.0006"):
+    with pytest.raises(
+        DemagnetizationError, match="Choose Infinite plate.*within .*Rectangular prism"
+    ):
         sample_fourier_box(plate)
     with pytest.raises(DemagnetizationError, match="Choose Infinite plate"):
         fourier_demagnetizing_result(plate)
 
 
-def test_infinite_plate_is_within_the_refusal_s_figure_at_the_thin_limit() -> None:
-    exact = demagnetizing_factors_rectangular_prism((1.0, 1.0, 1e-4))
+@pytest.mark.parametrize(
+    ("size", "figure"), [((1.0, 1.0), "0.0005"), ((1.0, 0.1), "0.002")], ids=["square", "ribbon"]
+)
+def test_refusal_gives_the_infinite_plate_s_error_for_the_plate_in_hand(
+    size: tuple[float, float], figure: str
+) -> None:
+    plate = DemagnetizingSample.image_plate(np.ones((64, 64), dtype=bool), size, 0.8e-4)
 
-    assert 1.0 - exact[2] < 0.0007
+    with pytest.raises(DemagnetizationError, match=f"within {figure} .*Rectangular prism"):
+        sample_fourier_box(plate)
+
+
+def test_plate_at_the_thin_limit_is_not_refused_for_rounding_its_edges() -> None:
+    outline = np.ones((64, 64), dtype=bool)
+
+    for height in (1.0, 0.996, 0.5, 0.1, 0.0059):
+        assert sample_fourier_box(DemagnetizingSample.image_plate(outline, (1.0, height), 1e-4))
 
 
 @pytest.mark.parametrize(
@@ -947,7 +968,6 @@ def test_photo_plate_whose_trace_is_off_by_over_a_percent_raises(monkeypatch) ->
     monkeypatch.setattr(
         demagnetization.scipy_fft, "rfft2", lambda *args, **kw: 0.99 * transform(*args, **kw)
     )
-    # A shape no other test uses, so a cached tensor is not reused.
     plate = DemagnetizingSample.image_plate(np.ones((8, 8), dtype=bool), (3.3, 2.1), 0.19)
 
     with pytest.raises(DemagnetizationError, match=r"trace 0\.9801 rather than 1"):

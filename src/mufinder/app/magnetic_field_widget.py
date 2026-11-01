@@ -1089,6 +1089,15 @@ class MagneticFieldWidget(QWidget):
         def refuse(status: str) -> None:
             self._clear_results(clear_state=True)
             self._calculation_status.setText(status)
+
+        def fail(status: str) -> None:
+            if self._page_reloads != reloads:
+                # As below: the reloaded page keeps its own results.
+                self._calculation_status.setText(
+                    "Results: the page was reloaded during the calculation; calculate again"
+                )
+                return
+            refuse(status)
             # The earlier results are gone; save that so they do not come back on reopening.
             self._emit_form_state_changed()
 
@@ -1150,10 +1159,10 @@ class MagneticFieldWidget(QWidget):
             refuse(f"Results unavailable: {exc}")
             return
         except NonFiniteFieldError as exc:
-            refuse(f"Calculation failed: {exc}")
+            fail(f"Calculation failed: {exc}")
             return
         except Exception as exc:  # noqa: BLE001 - muesr and muLFC raise untyped errors
-            refuse(f"Calculation failed: {exc}")
+            fail(f"Calculation failed: {exc}")
             return
         if self._page_reloads != reloads:
             # The project reloaded the page while the worker ran: its results

@@ -47,9 +47,14 @@ _MAX_FFT_LENGTH = 1 << 40
 _STORED_MASK_EDGE = 256
 _DEFAULT_PLATE_THICKNESS = 0.1
 _THINNEST_PLATE_RATIO = 10_000
-# A plate's sum takes a time that follows its box, not its memory. This is the box of a plate
-# _THINNEST_PLATE_RATIO times as wide as it is thick, at FOURIER_PADDING and PLATE_FOURIER_GRID.
-_MAX_PLATE_BOX_VOXELS = 640 * 640 * int(FOURIER_PADDING * _THINNEST_PLATE_RATIO)
+# A plate's sum takes a time that follows its box, not its memory. The limit is half as much
+# again as the box of a square plate at _THINNEST_PLATE_RATIO, so that rounding an in-plane edge
+# to whole voxels does not refuse a plate at that ratio. It is what refuses a long needle.
+_MAX_PLATE_BOX_VOXELS = 3 * (
+    int(FOURIER_PADDING * PLATE_FOURIER_GRID) ** 2
+    * int(FOURIER_PADDING * _THINNEST_PLATE_RATIO)
+    // 2
+)
 # An in-plane edge this many thicknesses long makes an infinite plate a fair description.
 _INFINITE_PLATE_MIN_RATIO = 1_000
 
@@ -357,7 +362,7 @@ class DemagnetizingSample:
             for edge in (width, height, thickness)
         )
         layers = counts[2]
-        in_plane = resample_mask(self.plate_mask.array(), counts[:2])
+        in_plane = _resampled_outline(self.plate_mask, counts[:2])
         if not np.any(in_plane):
             raise DemagnetizationError(
                 "the outline vanishes at this resolution; outline a larger part of the photo"
@@ -827,6 +832,15 @@ def fourier_demagnetizing_result(sample: DemagnetizingSample) -> FourierDemagnet
     return _cached_fourier_result(shape_only)
 
 
+@lru_cache(maxsize=4)
+def _resampled_outline(outline: VoxelMask, counts: tuple[int, int]) -> np.ndarray:
+    """Return a stored outline at ``counts`` voxels; a dialog asks for it on every edit."""
+
+    resampled = resample_mask(outline.array(), counts)
+    resampled.flags.writeable = False
+    return resampled
+
+
 @lru_cache(maxsize=8)
 def _cached_fourier_result(sample: DemagnetizingSample) -> FourierDemagnetizingResult:
     if _normalize_shape(sample.shape) == "image_plate":
@@ -909,6 +923,9 @@ def _plate_box(
 
     in_plane, layers, step = sample._plate_layout()
     outline = _trimmed_outline(in_plane)
+    edges = (*sample.plate_size, float(sample.plate_thickness))
+    if max(edges) > _THINNEST_PLATE_RATIO * min(edges):
+        raise DemagnetizationError(_plate_refusal(sample))
     try:
         box = fourier_box_shape((*outline.shape, layers), step, FOURIER_PADDING)
     except OverflowError:
@@ -922,10 +939,12 @@ def _plate_refusal(sample: DemagnetizingSample) -> str:
     width, height = sample.plate_size
     thickness = float(sample.plate_thickness)
     if min(width, height) >= _INFINITE_PLATE_MIN_RATIO * thickness:
+        off_by = 1.0 - demagnetizing_factors_rectangular_prism((width, height, thickness))[2]
         return (
-            f"the plate is too thin: its longest edge can be at most about "
-            f"{_THINNEST_PLATE_RATIO} times its thickness. Choose Infinite plate, which is "
-            "within 0.0006 at that ratio"
+            f"the plate is too thin: its longest edge can be at most {_THINNEST_PLATE_RATIO} "
+            f"times its thickness. Choose Infinite plate, which has its normal along c and is "
+            f"within {off_by:.1g} for a rectangular plate of this size, or a Rectangular prism, "
+            "which keeps the orientation"
         )
     return (
         "the sample's edges are too different in length for the Fourier method. A Rectangular "
