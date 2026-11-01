@@ -570,7 +570,7 @@ def test_checkboxes_and_radio_buttons_take_their_parent_background(qapp) -> None
 
 
 @pytest.mark.parametrize("palette_factory", ["light_palette", "dark_palette"])
-def test_disabled_menu_items_are_muted_and_never_highlighted(palette_factory: str) -> None:
+def test_disabled_menu_items_are_muted_and_never_highlighted(qapp, palette_factory: str) -> None:
     palette = getattr(theme_module, palette_factory)()
     stylesheet = theme_module._build_stylesheet(palette)
 
