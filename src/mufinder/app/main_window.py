@@ -56,6 +56,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QProgressDialog,
     QPushButton,
+    QSizePolicy,
     QSplitter,
     QStackedWidget,
     QStatusBar,
@@ -198,6 +199,7 @@ from mufinder.app.project_home_trail import (
     WorkflowDefinition,
 )
 from mufinder.app.hyperfine_coupling_widget import HyperfineCouplingWidget
+from mufinder.app.recent_project_button import RecentProjectButton
 from mufinder.app.quantum_analysis_dialog import QuantumPhononAnalysisDialog
 from mufinder.app.quantum_corrections_widget import (
     QuantumCorrectionsWidget,
@@ -1187,6 +1189,15 @@ class MainWindow(QMainWindow):
         self.statusBar().addPermanentWidget(self._cluster_refresh_button)
         self._sync_cluster_status_widgets()
         self.statusBar().showMessage("Ready")
+        # Measured with the panels still shown: the welcome page keeps a project's
+        # minimum size, so opening a project never resizes the window.
+        self.setMinimumSize(self.minimumSizeHint())
+        self._sync_project_panels()
+        # Pause the 1s runtime timer while the dock is not visible (closed,
+        # obscured, or window minimized), and refresh + re-arm when it returns,
+        # so we do not update an invisible table every second. Connected after
+        # the first sync: hiding the dock until a project opens is no such pause.
+        self._jobs_dock.visibilityChanged.connect(self._on_jobs_dock_visibility_changed)
 
     def _build_layout(self) -> None:
         central = QWidget()
@@ -1262,10 +1273,6 @@ class MainWindow(QMainWindow):
         jobs_panel_layout.addWidget(self._jobs_selection_hint)
         jobs_panel_layout.addWidget(self._jobs_table, 1)
         jobs_dock.setWidget(jobs_panel)
-        # Pause the 1s runtime timer while the dock is not visible (closed,
-        # obscured, or window minimized), and refresh + re-arm when it returns,
-        # so we do not update an invisible table every second.
-        jobs_dock.visibilityChanged.connect(self._on_jobs_dock_visibility_changed)
         self._jobs_delete_shortcut = QShortcut(QKeySequence.StandardKey.Delete, jobs_dock)
         self._jobs_delete_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
         self._jobs_delete_shortcut.activated.connect(self._on_dashboard_delete_key_requested)
@@ -1273,6 +1280,21 @@ class MainWindow(QMainWindow):
         self._jobs_backspace_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
         self._jobs_backspace_shortcut.activated.connect(self._on_dashboard_delete_key_requested)
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, jobs_dock)
+        self._jobs_dock = jobs_dock
+
+    def _sync_project_panels(self) -> None:
+        """Show the navigator and the Job Dashboard only while a project is open.
+
+        Called on every project change, so this also brings back a dashboard
+        closed with its title-bar button.
+        """
+
+        has_project = self._document is not None
+        self._project_tree_panel.setVisible(has_project)
+        self._jobs_dock.setVisible(has_project)
+        if has_project:
+            # The panels are back in the layout, which sets the minimum from here on.
+            self.setMinimumSize(0, 0)
 
     def showEvent(self, event) -> None:  # noqa: N802 - Qt API naming.
         super().showEvent(event)
@@ -1474,9 +1496,13 @@ class MainWindow(QMainWindow):
 
         title_label = QLabel(title, card)
         title_label.setObjectName("cardTitle")
+        # A card beside a taller one has height to spare. The body takes it, so
+        # every title keeps one height and the buttons line up at the bottom.
+        title_label.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         body_label = QLabel(body, card)
         body_label.setObjectName("cardBody")
         body_label.setWordWrap(True)
+        body_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
 
         layout.addWidget(title_label)
         layout.addWidget(body_label)
@@ -1578,18 +1604,8 @@ class MainWindow(QMainWindow):
         open_button.clicked.connect(self._open_project)
         open_layout.addWidget(open_button)
 
-        demo_card, demo_layout = self._make_home_card(
-            "Open Demo",
-            "Use a demo job to explore the interface before running real calculations.",
-        )
-        demo_button = QPushButton("Add Demo Job", demo_card)
-        demo_button.setIcon(icon("demo"))
-        demo_button.clicked.connect(self._add_demo_job)
-        demo_layout.addWidget(demo_button)
-
         actions_grid.addWidget(new_card, 0, 0)
         actions_grid.addWidget(open_card, 0, 1)
-        actions_grid.addWidget(demo_card, 0, 2)
         layout.addLayout(actions_grid)
 
         recent_card, recent_layout = self._make_home_card(
@@ -1631,8 +1647,7 @@ class MainWindow(QMainWindow):
             return
 
         for project_path in recent:
-            button = QPushButton(project_path, self)
-            button.setIcon(icon("open_project"))
+            button = RecentProjectButton(project_path, self)
             button.clicked.connect(
                 lambda _checked=False, project_path=project_path: self._open_recent_project(
                     project_path
@@ -2073,6 +2088,9 @@ class MainWindow(QMainWindow):
         if self._document is None:
             return
 
+        # First, so a project is reachable even if a refresh below fails, and the
+        # jobs table is measured in view rather than over all its rows.
+        self._sync_project_panels()
         trace = PerfTrace(label="project change refresh", logger=_LOG)
         # Several steps below cascade into the Relaxation Analysis page (the
         # jobs table, the muon relaxation form restore, the explicit calls).
@@ -3097,21 +3115,6 @@ class MainWindow(QMainWindow):
         end_time = job.completed_at or utc_now()
         elapsed_seconds = max(0, int((end_time - job.started_at).total_seconds()))
         return self._format_runtime_seconds(elapsed_seconds)
-
-    def _add_demo_job(self) -> None:
-        if self._document is None:
-            QMessageBox.information(self, "No project", "Create or open a project first.")
-            return
-
-        job = self._project_service.add_job(
-            self._document,
-            label="Muon relaxation demo",
-            workflow_stage=WorkflowStage.MUON_RELAXATION,
-            calc_type="castep_geom_opt",
-        )
-        self._project_service.submit_job(job)
-        self._project_service.mark_job_queued(job, remote_job_id="demo-queued")
-        self._refresh_jobs_table()
 
     def _persist_document_ui_state(self, *, failure_message: str) -> None:
         if self._document is None:

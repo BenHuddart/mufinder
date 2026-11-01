@@ -36,7 +36,6 @@ _ICON_MAP: dict[str, QStyle.StandardPixmap] = {
     "open_project": QStyle.StandardPixmap.SP_DialogOpenButton,
     "project_home": QStyle.StandardPixmap.SP_DirHomeIcon,
     "save_project": QStyle.StandardPixmap.SP_DialogSaveButton,
-    "demo": QStyle.StandardPixmap.SP_ComputerIcon,
     "refresh": QStyle.StandardPixmap.SP_BrowserReload,
     "cluster": QStyle.StandardPixmap.SP_DriveNetIcon,
     "settings": QStyle.StandardPixmap.SP_FileDialogDetailedView,
@@ -433,15 +432,6 @@ def _draw_monitor_stand(painter: QPainter) -> None:
     _line(painter, 8.0, 10.5, 8.0, 14.0)
 
 
-def _draw_demo_icon(
-    painter: QPainter, ink: QColor, accent: QColor, muted: QColor, paper: QColor
-) -> None:
-    painter.setBrush(accent.lighter(170))
-    painter.drawRoundedRect(QRectF(2.5, 2.5, 11.0, 8.0), 1.4, 1.4)
-    painter.setBrush(Qt.BrushStyle.NoBrush)
-    _draw_monitor_stand(painter)
-
-
 def _draw_cluster_icon(
     painter: QPainter, ink: QColor, accent: QColor, muted: QColor, paper: QColor
 ) -> None:
@@ -540,7 +530,6 @@ _GLYPHS: dict[str, tuple[float, Callable[[QPainter, QColor, QColor, QColor, QCol
     "project_home": (22.0, _draw_project_home_icon),
     "save_project": (16.0, _draw_save_project_icon),
     "save_workspace": (16.0, _draw_save_workspace_icon),
-    "demo": (16.0, _draw_demo_icon),
     "stale": (16.0, _draw_stale_icon),
     "cluster": (16.0, _draw_cluster_icon),
     "settings": (16.0, _draw_settings_icon),

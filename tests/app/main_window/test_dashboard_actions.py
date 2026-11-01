@@ -2711,6 +2711,7 @@ def test_dashboard_runtime_tick_writes_only_visible_active_rows_that_changed(
     _freeze_dashboard_clock(monkeypatch, now)
     _add_scaled_dashboard_jobs(service, doc, now=now)
     window._document = doc
+    window._sync_project_panels()
     window.resize(1400, 900)
     window.show()
     try:

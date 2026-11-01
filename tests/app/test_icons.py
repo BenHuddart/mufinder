@@ -221,7 +221,7 @@ def test_branded_icons_prefer_semantic_over_platform_standard(monkeypatch, qapp)
 
     monkeypatch.setattr(qapp, "style", lambda: _StyleThatShouldNotBeUsed())
 
-    for name in ("new_project", "open_project", "save_project", "demo", "cluster", "settings"):
+    for name in ("new_project", "open_project", "save_project", "cluster", "settings"):
         rendered = icon(name)
         assert not rendered.isNull(), name
         assert not rendered.pixmap(18, 18).isNull(), name

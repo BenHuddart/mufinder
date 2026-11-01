@@ -470,16 +470,16 @@ def opened(app: QApplication, project: Path, *, dashboard: bool = False) -> Iter
 
     window = MainWindow()
     window.resize(*WINDOW_SIZE)
-    # Most scenes run no jobs, so the empty Job Dashboard would only take room
-    # from the page.
-    for dock in window.findChildren(QDockWidget):
-        dock.setVisible(dashboard)
     # The status bar warns, in red, that no keyword catalog is installed and
     # no cluster is connected: true of the scratch settings, noise in the docs.
     window.statusBar().hide()
     window.show()
     if not window._open_project_from_path(project, show_errors=False):
         raise RuntimeError(f"Could not open the project {project}")
+    # Most scenes run no jobs, so the empty Job Dashboard would only take room
+    # from the page. Opening the project shows it, so this comes after.
+    for dock in window.findChildren(QDockWidget):
+        dock.setVisible(dashboard)
     settle(app)
     try:
         yield window

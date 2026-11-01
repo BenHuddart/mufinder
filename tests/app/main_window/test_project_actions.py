@@ -376,17 +376,6 @@ def test_save_without_document_shows_info(main_window, monkeypatch: pytest.Monke
     window.close()
 
 
-def test_add_demo_job_requires_project(main_window, monkeypatch: pytest.MonkeyPatch) -> None:
-    window = main_window
-    infos: list[str] = []
-    monkeypatch.setattr(
-        main_window_module.QMessageBox, "information", lambda *args, **kwargs: infos.append("info")
-    )
-    window._add_demo_job()
-    assert infos == ["info"]
-    window.close()
-
-
 def test_journal_write_does_not_change_active_workflow_view_on_submission(
     main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
