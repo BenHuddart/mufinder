@@ -8,7 +8,13 @@ from uuid import uuid4
 import numpy as np
 import pytest
 
-from mufinder.domain.models import MuonSite
+from mufinder.domain.models import MuonSite, Structure
+from mufinder.science.magnetic_fields import MagneticFieldOptions, calculate_commensurate_fields
+from mufinder.science.magnetic_structure import (
+    AtomSelector,
+    MagneticStructureModel,
+    build_collinear_component,
+)
 from mufinder.services.magnetic_field_sites import (
     CUSTOM_SITE_SOURCE,
     RELAXATION_SITE_SOURCE,
@@ -55,17 +61,90 @@ def test_uep_batch_cluster_is_offered_at_its_optimised_position(tmp_path) -> Non
     assert option.properties["cluster"]["cluster_index"] == 2
 
 
-def test_a_uep_cluster_uses_the_position_its_group_reports(tmp_path) -> None:
+_COF2_MEMBERS = {
+    # member position: (antiferromagnet field in T, |B| of a ferromagnet along a in T),
+    # both as calculated by main at f60fbf3 at the position main's option gives.
+    (0.081633, 0.611304, 0.299606): ((-0.0704, -0.1302, 0.1186), 0.5134),
+    (0.111304, 0.418367, 0.200394): ((-0.1302, 0.0704, -0.1186), 0.5178),
+}
+
+
+@pytest.mark.parametrize("member", _COF2_MEMBERS)
+def test_a_uep_group_gives_the_field_of_its_lowest_member_as_found(
+    real_muesr, tmp_path, member
+) -> None:
+    """The group's image in the asymmetric unit, which Generation uses, changes no field."""
+
+    a, c, x = 4.695, 3.180, 0.306
+    host = Structure(
+        label="CoF2",
+        lattice_vectors=[[a, 0.0, 0.0], [0.0, a, 0.0], [0.0, 0.0, c]],
+        species=["Co", "Co", "F", "F", "F", "F"],
+        fractional_positions=[
+            [0.0, 0.0, 0.0],
+            [0.5, 0.5, 0.5],
+            [x, x, 0.0],
+            [1 - x, 1 - x, 0.0],
+            [0.5 + x, 0.5 - x, 0.5],
+            [0.5 - x, 0.5 + x, 0.5],
+        ],
+    )
     document = uep_cluster_document(tmp_path)
     (state,) = document.ui_state[UEP_ANALYSIS_STATES_KEY].values()
-    cluster = state["batch_summary_data"]["clusters"][0]
-    cluster["representative_fractional_position"] = [0.0, 0.5, 0.25]
-    cluster["representative_position_ang"] = [0.0, 1.5, 0.75]
+    state["batch_results"] = [
+        {
+            "optimized_fractional_position": list(member),
+            "optimized_position_ang": [member[0] * a, member[1] * a, member[2] * c],
+        }
+    ]
+    state["batch_summary_data"]["clusters"][0].update(
+        representative_fractional_position=[0.081633, 0.611304, 0.299606],
+        representative_position_ang=[0.081633 * a, 0.611304 * a, 0.299606 * c],
+    )
 
-    (option,) = uep_cluster_muon_site_options(document, feo_host_structure())
+    (option,) = uep_cluster_muon_site_options(document, host)
 
-    assert option.fractional_position == (0.0, 0.5, 0.25)
-    assert option.cartesian_position == (0.0, 1.5, 0.75)
+    assert option.fractional_position == member
+    assert option.cartesian_position == pytest.approx((member[0] * a, member[1] * a, member[2] * c))
+    antiferromagnet = MagneticStructureModel(
+        components=(
+            build_collinear_component(
+                label="Corner",
+                selector=AtomSelector.indices([0]),
+                q_coeff=(0.0, 0.0, 0.0),
+                moment=(0.0, 0.0, 2.64),
+                component_id="corner",
+            ),
+            build_collinear_component(
+                label="Centre",
+                selector=AtomSelector.indices([1]),
+                q_coeff=(0.0, 0.0, 0.0),
+                moment=(0.0, 0.0, -2.64),
+                component_id="centre",
+            ),
+        ),
+    )
+    ferromagnet = MagneticStructureModel(
+        components=(
+            build_collinear_component(
+                label="Ferromagnet",
+                selector=AtomSelector.species("Co"),
+                q_coeff=(0.0, 0.0, 0.0),
+                moment=(2.64, 0.0, 0.0),
+                component_id="ferromagnet",
+            ),
+        ),
+    )
+    options = MagneticFieldOptions()
+    (afm,) = calculate_commensurate_fields(
+        host, antiferromagnet, [option.fractional_position], options=options
+    )
+    (fm,) = calculate_commensurate_fields(
+        host, ferromagnet, [option.fractional_position], options=options
+    )
+    field, magnitude = _COF2_MEMBERS[member]
+    assert [float(value) for value in afm.total] == pytest.approx(field, abs=5e-5)
+    assert float(fm.magnitude) == pytest.approx(magnitude, abs=5e-5)
 
 
 def test_uep_cluster_without_an_optimised_position_uses_the_representative(tmp_path) -> None:

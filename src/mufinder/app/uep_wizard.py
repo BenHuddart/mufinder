@@ -6,6 +6,7 @@ from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from dataclasses import asdict, dataclass
 from pathlib import Path
+import re
 from typing import Any
 from uuid import uuid4
 
@@ -103,6 +104,7 @@ from mufinder.science.uep_clustering import (
     UepMinimaDistances,
     group_uep_minima,
     measure_uep_minima,
+    position_in_source_cell,
     relaxed_site_number_map,
     uep_batch_summary_from_dict,
     uep_search_log,
@@ -114,6 +116,7 @@ _ISOSURFACE_SLIDER_DEBOUNCE_MS = 120
 #: How long after the last edit of the grouping tolerance its groups are saved and journalled.
 _GROUPING_SETTLED_MS = 1500
 _GROUPING_TOLERANCE_MINIMUM_ANG = 0.001
+_RETIRED_DEFAULT_MUON_LABEL = re.compile(r"Site \d+")
 _GROUPING_TOLERANCE_TOOLTIP = (
     "Two minima are one site when one lies within this distance of any symmetry image of the "
     "other and their classical energies differ by less than 1 meV."
@@ -207,10 +210,10 @@ def _align_spins_to_fractional_structure_order(
     return aligned
 
 
-_BATCH_VIEWER_IDLE_TEXT = "Showing the host structure. Select one or more clusters or sites to overlay their muon positions."
+_BATCH_VIEWER_IDLE_TEXT = "Showing the host structure. Select one or more sites or starts to overlay their muon positions."
 _BATCH_TABLE_INDENTATION = 10
 _BATCH_TABLE_HEADERS = [
-    "Cluster / Site",
+    "Site / Start",
     "Size",
     "fX",
     "fY",
@@ -220,7 +223,7 @@ _BATCH_TABLE_HEADERS = [
     "Total energy\n(eV)",
 ]
 _VIEWER_MUON_CANDIDATE_HEADERS = [
-    "Cluster / Site",
+    "Site / Start",
     "fX",
     "fY",
     "fZ",
@@ -299,6 +302,7 @@ class _BatchMuonCandidate:
     classical_energy_ev: float
     zero_point_energy_ev: float | None
     total_energy_ev: float | None
+    display_fractional_position: tuple[float, float, float]
 
 
 @dataclass(slots=True)
@@ -315,6 +319,9 @@ class _ManagedViewerMuonState:
     zero_point_energy_ev: float | None = None
     total_energy_ev: float | None = None
     linked_isosurface_layer_key: str | None = None
+    #: A search result's position as the tables read it, in the input structure's cell.
+    #: ``fractional_position`` places the muon in the viewer, in the job's cell.
+    display_fractional_position: tuple[float, float, float] | None = None
 
 
 def _pyvista_camera_snapshots_match(
@@ -1165,7 +1172,7 @@ class _ManageViewerMuonsDialog(QDialog):
         tables_row.setContentsMargins(0, 0, 0, 0)
         tables_row.setSpacing(12)
 
-        candidate_group = QGroupBox("Clustered Muons", self)
+        candidate_group = QGroupBox("Batch-search sites", self)
         candidate_layout = QVBoxLayout(candidate_group)
         candidate_layout.setContentsMargins(12, 12, 12, 12)
         candidate_layout.setSpacing(8)
@@ -1280,9 +1287,9 @@ class _ManageViewerMuonsDialog(QDialog):
             item = QTreeWidgetItem(
                 [
                     entry.label,
-                    f"{entry.fractional_position[0]:.6f}",
-                    f"{entry.fractional_position[1]:.6f}",
-                    f"{entry.fractional_position[2]:.6f}",
+                    f"{entry.display_fractional_position[0]:.6f}",
+                    f"{entry.display_fractional_position[1]:.6f}",
+                    f"{entry.display_fractional_position[2]:.6f}",
                     "" if entry.classical_energy_ev is None else f"{entry.classical_energy_ev:.6f}",
                     ""
                     if entry.zero_point_energy_ev is None
@@ -1304,13 +1311,14 @@ class _ManageViewerMuonsDialog(QDialog):
         self._current_entries = {entry.key: entry for entry in entries}
         self._current_table.clear()
         for entry in entries:
+            shown = entry.display_fractional_position or entry.fractional_position
             item = QTreeWidgetItem(
                 [
                     entry.label,
                     entry.source_label,
-                    f"{entry.fractional_position[0]:.6f}",
-                    f"{entry.fractional_position[1]:.6f}",
-                    f"{entry.fractional_position[2]:.6f}",
+                    f"{shown[0]:.6f}",
+                    f"{shown[1]:.6f}",
+                    f"{shown[2]:.6f}",
                     "" if entry.classical_energy_ev is None else f"{entry.classical_energy_ev:.6f}",
                     ""
                     if entry.zero_point_energy_ev is None
@@ -2680,7 +2688,11 @@ class UepAnalysisDialog(QDialog):
         grouping_row.setContentsMargins(0, 0, 0, 0)
         grouping_label = QLabel("Grouping tolerance (Å)", results_panel)
         self._batch_grouping_tolerance = DecimalLineEdit(
-            results_panel, minimum=_GROUPING_TOLERANCE_MINIMUM_ANG, maximum=10.0, decimals=4
+            results_panel,
+            minimum=_GROUPING_TOLERANCE_MINIMUM_ANG,
+            maximum=10.0,
+            decimals=4,
+            restore_value=self._grouping_tolerance,
         )
         self._batch_grouping_tolerance.setValue(DEFAULT_GROUPING_TOLERANCE_ANG)
         self._batch_grouping_tolerance.setMaximumWidth(124)
@@ -2829,6 +2841,7 @@ class UepAnalysisDialog(QDialog):
                     classical_energy_ev=float(candidate.classical_energy_ev),
                     zero_point_energy_ev=candidate.zero_point_energy_ev,
                     total_energy_ev=candidate.total_energy_ev,
+                    display_fractional_position=candidate.display_fractional_position,
                 )
                 entries.append(existing)
             if viewer_kind == "isosurface" and include_isosurface:
@@ -3065,13 +3078,13 @@ class UepAnalysisDialog(QDialog):
         )
         candidates: list[_BatchMuonCandidate] = []
         for cluster in summary.clusters:
-            cluster_label = f"Cluster {cluster.cluster_index}"
+            cluster_label = f"Site {cluster.cluster_index}"
             for result_index in self._batch_sorted_member_indexes(cluster):
                 result = self._latest_batch_results[result_index]
                 candidates.append(
                     _BatchMuonCandidate(
                         key=f"result:{int(result_index)}",
-                        label=f"Site {site_numbers[result_index]}",
+                        label=f"Start {site_numbers[result_index]}",
                         cluster_label=cluster_label,
                         result_index=int(result_index),
                         cluster_index=int(cluster.cluster_index),
@@ -3083,6 +3096,7 @@ class UepAnalysisDialog(QDialog):
                         ),
                         classical_energy_ev=float(result.classical_energy_ev),
                         zero_point_energy_ev=self._optional_float(result.zero_point_energy_ev),
+                        display_fractional_position=self._batch_table_position(result),
                         total_energy_ev=self._optional_float(result.total_energy_ev),
                     )
                 )
@@ -3615,12 +3629,12 @@ class UepAnalysisDialog(QDialog):
         ):
             cluster_index = next(iter(cluster_indexes))
             self._batch_viewer_summary.setText(
-                f"Showing all {muon_count} optimized muon positions from cluster {cluster_index} overlaid on the host structure."
+                f"Showing all {muon_count} optimized muon positions from site {cluster_index} overlaid on the host structure."
             )
             return
         self._batch_viewer_summary.setText(
             f"Showing {muon_count} selected optimized muon positions from {selection_count} selected table entr"
-            f"{'y' if selection_count == 1 else 'ies'} across {len(cluster_indexes)} cluster"
+            f"{'y' if selection_count == 1 else 'ies'} across {len(cluster_indexes)} site"
             f"{'' if len(cluster_indexes) == 1 else 's'}."
         )
 
@@ -4143,7 +4157,7 @@ class UepAnalysisDialog(QDialog):
 
             label_parts = [entry.label]
             if entry.cluster_index is not None:
-                label_parts.append(f"Cluster {int(entry.cluster_index)}")
+                label_parts.append(f"Site {int(entry.cluster_index)}")
             elif entry.source_label:
                 label_parts.append(entry.source_label)
             label = QLabel(" | ".join(label_parts), row)
@@ -5196,6 +5210,9 @@ class UepAnalysisDialog(QDialog):
     def _batch_has_successful_optimizations(self) -> bool:
         return any(result.success for result in self._latest_batch_results)
 
+    def _batch_table_position(self, result: UepOptimizationResult) -> tuple[float, float, float]:
+        return position_in_source_cell(result, self._grouping_structure())
+
     def _grouping_structure(self) -> Any:
         """The structure a search is grouped on: the source job's input, whatever its supercell."""
 
@@ -5627,7 +5644,7 @@ class UepAnalysisDialog(QDialog):
             }
             cluster_item = QTreeWidgetItem(
                 [
-                    f"Cluster {cluster.cluster_index}",
+                    f"Site {cluster.cluster_index}",
                     str(cluster.size),
                     self._format_batch_fractional(cluster.representative_fractional_position[0]),
                     self._format_batch_fractional(cluster.representative_fractional_position[1]),
@@ -5651,13 +5668,14 @@ class UepAnalysisDialog(QDialog):
                     "site_number": global_site_number,
                     "site_result_index": int(result_index),
                 }
+                position = self._batch_table_position(site)
                 site_item = QTreeWidgetItem(
                     [
-                        f"Site {global_site_number}",
+                        f"Start {global_site_number}",
                         "1",
-                        self._format_batch_fractional(site.optimized_fractional_position[0]),
-                        self._format_batch_fractional(site.optimized_fractional_position[1]),
-                        self._format_batch_fractional(site.optimized_fractional_position[2]),
+                        self._format_batch_fractional(position[0]),
+                        self._format_batch_fractional(position[1]),
+                        self._format_batch_fractional(position[2]),
                         self._format_batch_energy(site.classical_energy_ev),
                         self._format_batch_energy(site.zero_point_energy_ev),
                         self._format_batch_energy(site.total_energy_ev),
@@ -5696,7 +5714,11 @@ class UepAnalysisDialog(QDialog):
             for entry in self._viewer_muons_for(viewer_kind):
                 candidate = candidates.get(entry.result_index)
                 if entry.source_kind == "clustered" and candidate is not None:
+                    # A default label from before starts had their own name; a typed one stays.
+                    if _RETIRED_DEFAULT_MUON_LABEL.fullmatch(entry.label):
+                        entry.label = candidate.label
                     entry.source_label = candidate.cluster_label
+                    entry.display_fractional_position = candidate.display_fractional_position
                     entry.cluster_index = int(candidate.cluster_index)
 
     def state_snapshot(self) -> dict[str, object]:

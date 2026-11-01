@@ -251,6 +251,21 @@ def _cluster_summary(
     )
 
 
+def position_in_source_cell(
+    result: UepOptimizationResult, source_structure: Any
+) -> tuple[float, float, float]:
+    """Return a result's fractional position in the source structure's cell, as tables read it.
+
+    Rounded to six places in [0, 1), like a group's representative, so 0.99999999 reads 0.
+    """
+
+    fractional = lattice_cart_to_frac(
+        result.optimized_position_ang, source_structure.lattice_vectors
+    )
+    rounded = np.mod(np.round(np.asarray(fractional, dtype=float), _ORDER_DECIMALS), 1.0)
+    return (float(rounded[0]), float(rounded[1]), float(rounded[2]))
+
+
 def relaxed_site_number_map(
     optimizations: Sequence[UepOptimizationResult],
     *,
@@ -370,6 +385,7 @@ __all__ = [
     "group_uep_minima",
     "is_converged_minimum",
     "measure_uep_minima",
+    "position_in_source_cell",
     "relaxed_site_number_map",
     "uep_batch_summary_from_dict",
     "uep_grouping_report",

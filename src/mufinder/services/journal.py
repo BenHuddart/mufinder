@@ -951,10 +951,10 @@ def _uep_grouping_text(grouping: object) -> str:
 
 
 def _uep_minima_entry(record: ProvenanceRecord) -> JournalEntry:
-    """``UEP: 3 distinct minima; lowest at (0.000, 0.500, 0.000)``."""
+    """``UEP: 3 distinct sites; lowest at (0.000, 0.500, 0.000)``."""
 
     minima = _mapping_rows(record, "minima")
-    count = plural(len(minima), "distinct minimum", "distinct minima")
+    count = plural(len(minima), "distinct site")
     position = _position_text(minima[0].get("fractional_position")) if minima else ""
     body = f"UEP: {count}; lowest at {position}" if position else f"UEP: {count}"
     energies = [
@@ -990,7 +990,7 @@ def _uep_minima_entry(record: ProvenanceRecord) -> JournalEntry:
         entry,
         detail_lines=tuple(lines),
         table=JournalJobTable(
-            ("Minimum", "Position", "Starts", "ΔE (meV)"), rows, name="Minima of this batch search"
+            ("Site", "Position", "Starts", "ΔE (meV)"), rows, name="Sites of this batch search"
         ),
     )
 

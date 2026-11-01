@@ -662,7 +662,7 @@ def test_widget_uep_cluster_rows_emit_selected_payload_and_preview(qapp) -> None
     assert [
         widget._uep_cluster_table.horizontalHeaderItem(column).text()
         for column in range(widget._uep_cluster_table.columnCount())
-    ] == ["Source", "Cluster", "Size", "Class", "E (eV)", "fX", "fY", "fZ"]
+    ] == ["Source", "Site", "Size", "Class", "E (eV)", "fX", "fY", "fZ"]
     assert widget._uep_cluster_table.item(0, 4).text() == "-0.7"
     assert widget._uep_cluster_table.item(0, 7).text() == "0.3000"
     assert emitted[0][0] == "uep_clusters"

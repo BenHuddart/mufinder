@@ -167,3 +167,23 @@ def test_a_typed_blank_field_stays_blank_on_leaving_it(qapp) -> None:
 
     assert field.text() == ""
     window.close()
+
+
+def test_a_field_can_ask_to_restore_a_value_when_left_blank(qapp) -> None:
+    window = QWidget()
+    layout = QVBoxLayout(window)
+    field = DecimalLineEdit(
+        window, minimum=0.001, maximum=10.0, decimals=4, restore_value=lambda: 0.25
+    )
+    layout.addWidget(field)
+    layout.addWidget(DecimalLineEdit(window))
+    window.show()
+    window.activateWindow()
+    field.setFocus()
+    field.clear()
+    qapp.processEvents()
+
+    QTest.keyClick(field, Qt.Key.Key_Tab)
+
+    assert field.text() == "0.25"
+    window.close()

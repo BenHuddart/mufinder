@@ -18,7 +18,8 @@ class _ClampingValidator(QDoubleValidator):
     """Clamp a number out of range when the user leaves the field.
 
     ``QLineEdit`` calls ``fixup`` on leaving a field whose text is not acceptable, and
-    finishes editing only if that makes it so. Blank or unparsable text stays as it is.
+    finishes editing only if that makes it so. Blank or unparsable text stays as it is,
+    unless the field has a ``restore_value``.
     """
 
     def __init__(self, line_edit: "DecimalLineEdit", bottom: float, top: float, decimals: int):
@@ -28,7 +29,10 @@ class _ClampingValidator(QDoubleValidator):
     def fixup(self, text: str) -> str:  # noqa: N802 - Qt API naming.
         parsed = self._line_edit._parse(text)
         if parsed is None:
-            return text
+            restore = self._line_edit._restore_value
+            if restore is None:
+                return text
+            parsed = restore()
         return self._line_edit._format_value(self._line_edit._clamp(parsed))
 
 
@@ -39,6 +43,8 @@ class DecimalLineEdit(QLineEdit):
     given (``"1.0"`` stays ``"1.0"``, ``""`` stays blank) rather than
     reformatted, for forms that read the typed text. ``standard_notation``
     refuses exponents such as ``1e-3``; by default they are accepted.
+    ``restore_value`` gives the value to show when the field is left blank or
+    unparsable; by default such text stays, for callers that read blank as unset.
     """
 
     valueChanged = Signal(float)
@@ -53,8 +59,10 @@ class DecimalLineEdit(QLineEdit):
         decimals: int = 8,
         standard_notation: bool = False,
         placeholder: str = "",
+        restore_value: Callable[[], float] | None = None,
     ) -> None:
         super().__init__(parent)
+        self._restore_value = restore_value
         self._minimum = float(minimum)
         self._maximum = float(maximum)
         self._decimals = max(0, int(decimals))

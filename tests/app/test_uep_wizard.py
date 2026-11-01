@@ -27,6 +27,7 @@ from mufinder.domain.models import Structure
 from mufinder.science.site_generation import generate_random_sites, symmetry_equivalent_positions
 from mufinder.science.uep import (
     StationaryPointClassification,
+    load_uep_source,
     UepOptimizationResult,
     cartesian_normal_to_lattice_plane_components,
     extract_isosurface,
@@ -581,7 +582,7 @@ def test_uep_wizard_batch_search_populates_the_groups_when_it_ends_without_direc
         if (item := dialog._batch_table.topLevelItem(item_index)) is not None
         for index in range(item.childCount())
     ]
-    assert sorted(int(label.removeprefix("Site ")) for label in all_site_labels) == list(
+    assert sorted(int(label.removeprefix("Start ")) for label in all_site_labels) == list(
         range(1, len(all_site_labels) + 1)
     )
     assert not hasattr(dialog, "promote_requested")
@@ -732,7 +733,7 @@ def test_uep_wizard_isosurface_muon_management_adds_and_removes_clustered_muons(
         )
     ]
     assert any(candidate.label in text for text in legend_texts)
-    assert any(f"Cluster {candidate.cluster_index}" in text for text in legend_texts)
+    assert any(f"Site {candidate.cluster_index}" in text for text in legend_texts)
 
     dialog._remove_viewer_muons("isosurface", [viewer_entry.key])
 
@@ -1036,12 +1037,12 @@ def test_uep_wizard_isosurface_muon_dialog_places_include_checkbox_in_clustered_
 
     assert muon_dialog._include_isosurfaces is not None
     assert muon_dialog._include_isosurfaces.parentWidget() is not None
-    assert muon_dialog._include_isosurfaces.parentWidget().title() == "Clustered Muons"
+    assert muon_dialog._include_isosurfaces.parentWidget().title() == "Batch-search sites"
     assert [
         muon_dialog._candidate_table.headerItem().text(index)
         for index in range(muon_dialog._candidate_table.columnCount())
     ] == [
-        "Cluster / Site",
+        "Site / Start",
         "fX",
         "fY",
         "fZ",
@@ -1088,7 +1089,7 @@ def test_uep_wizard_batch_search_default_split_and_headers_are_compact(qapp) -> 
         dialog._batch_table.headerItem().text(index)
         for index in range(dialog._batch_table.columnCount())
     ] == [
-        "Cluster / Site",
+        "Site / Start",
         "Size",
         "fX",
         "fY",
@@ -2863,15 +2864,15 @@ def test_the_group_row_reports_its_representative_and_the_log_what_was_left_out(
 
     item = dialog._batch_table.topLevelItem(0)
     assert dialog._batch_table.topLevelItemCount() == 1
-    assert item.text(0) == "Cluster 1"
+    assert item.text(0) == "Site 1"
     assert item.text(1) == "4"
     expected = dialog._latest_batch_summary.clusters[0].representative_fractional_position
     assert [float(item.text(column)) for column in (2, 3, 4)] == pytest.approx(expected, abs=1e-6)
     assert [item.child(index).text(0) for index in range(item.childCount())] == [
-        "Site 1",
-        "Site 2",
-        "Site 3",
-        "Site 4",
+        "Start 1",
+        "Start 2",
+        "Start 3",
+        "Start 4",
     ]
     log = dialog._batch_summary.toPlainText()
     assert "4 minima in 1 site" in log
@@ -3110,7 +3111,7 @@ def test_a_selection_follows_its_sites_when_the_groups_are_renumbered(qapp, monk
     dialog._batch_grouping_tolerance.setText("0.5")
 
     assert dialog._batch_table.topLevelItemCount() == 2
-    # The far site is Cluster 2 now, and the site joined Cluster 1.
+    # The far site is Site 2 now, and the start joined Site 1.
     assert set(dialog._selected_batch_keys()) == {"cluster:2", f"cluster:1:site:{site_index}"}
     dialog.close()
 
@@ -3125,11 +3126,11 @@ def test_a_muon_in_a_viewer_follows_its_site_into_a_new_group(qapp, monkeypatch)
         if candidate.cluster_index == 2
     )
     dialog._add_candidate_muons_to_viewer("slice", [second.key], False)
-    assert dialog._slice_viewer_muons[0].source_label == "Cluster 2"
+    assert dialog._slice_viewer_muons[0].source_label == "Site 2"
 
     dialog._batch_grouping_tolerance.setText("0.5")
 
-    assert dialog._slice_viewer_muons[0].source_label == "Cluster 1"
+    assert dialog._slice_viewer_muons[0].source_label == "Site 1"
     assert dialog._slice_viewer_muons[0].cluster_index == 1
     dialog.close()
 
@@ -3227,7 +3228,7 @@ def test_a_tolerance_edit_keeps_expanded_groups_expanded(qapp, monkeypatch) -> N
         True,
     ]
 
-    # Clusters 1 and 2 merge: the far site is Cluster 2 now, and stays open.
+    # Sites 1 and 2 merge: the far site is Site 2 now, and stays open.
     dialog._batch_grouping_tolerance.setText("0.5")
 
     assert [dialog._batch_table.topLevelItem(row).isExpanded() for row in range(2)] == [True, True]
@@ -3313,4 +3314,122 @@ def test_the_search_log_and_its_button_do_not_overlap_at_the_minimum_window(
     assert dialog._batch_calculate_zpe.geometry().top() > log_bottom
     card = dialog._batch_summary.parentWidget()
     assert dialog._batch_zpe_progress.geometry().bottom() < card.height()
+    dialog.close()
+
+
+def _supercell_job_dialog(monkeypatch) -> tuple[UepAnalysisDialog, list, Structure]:
+    """A source job on a cell twice as long as its input structure along the first vector."""
+
+    job_lattice = np.asarray(
+        load_uep_source(
+            den_fmt_path=_fixture_path("Si2.den_fmt"),
+            castep_path=_fixture_path("Si2.castep"),
+            cell_path=_fixture_path("Si2.cell"),
+        ).structure.lattice_vectors,
+        dtype=float,
+    )
+    host_lattice = job_lattice.copy()
+    host_lattice[0] /= 2.0
+    host = Structure(
+        id=uuid4(),
+        label="Input cell",
+        lattice_vectors=host_lattice.tolist(),
+        species=["Si", "Ge", "C"],
+        fractional_positions=[[0.0, 0.0, 0.0], [0.31, 0.47, 0.13], [0.71, 0.11, 0.59]],
+    )
+    (template, _other) = _two_nearby_sites(_no_symmetry_host())
+    endpoints = []
+    for job_fractional in ((0.6, 0.2, 0.3), (0.1, 0.7, 0.4)):
+        cartesian = tuple((np.asarray(job_fractional) @ job_lattice).tolist())
+        endpoints.append(
+            replace(
+                template,
+                optimized_position_ang=cartesian,
+                optimized_fractional_position=job_fractional,
+                classical_energy_ev=template.classical_energy_ev + job_fractional[1],
+            )
+        )
+    return _dialog_with_endpoints(monkeypatch, endpoints, host), endpoints, host
+
+
+def test_every_row_of_a_supercell_job_reads_in_the_input_cell(qapp, monkeypatch) -> None:
+    dialog, _endpoints, _host = _supercell_job_dialog(monkeypatch)
+
+    dialog._run_batch_search()
+
+    first = dialog._batch_table.topLevelItem(0)
+    second = dialog._batch_table.topLevelItem(1)
+    # (0.6, 0.2, 0.3) in the job is (1.2 → 0.2, 0.2, 0.3) in the input cell.
+    assert [float(first.child(0).text(column)) for column in (2, 3, 4)] == pytest.approx(
+        (0.2, 0.2, 0.3), abs=1e-6
+    )
+    assert [float(second.child(0).text(column)) for column in (2, 3, 4)] == pytest.approx(
+        (0.2, 0.7, 0.4), abs=1e-6
+    )
+    dialog.close()
+
+
+def test_the_muons_of_a_supercell_job_stay_where_the_job_cell_has_them(qapp, monkeypatch) -> None:
+    dialog, endpoints, _host = _supercell_job_dialog(monkeypatch)
+    dialog._run_batch_search()
+    dialog.show()
+
+    # Selecting a start overlays that start's muon, at its position in the job.
+    start = dialog._batch_table.topLevelItem(1).child(0)
+    start.setSelected(True)
+    dialog._batch_table.setCurrentItem(start)
+    qapp.processEvents()
+    (overlay,) = dialog._batch_viewer._point_overlay_specs
+    assert np.asarray(overlay.positions).reshape(-1, 3)[0] == pytest.approx(
+        endpoints[1].optimized_position_ang
+    )
+
+    # A muon in a viewer sits at its job position; its dialogs read in the input cell.
+    candidate = next(
+        entry for entry in dialog._clustered_muon_candidates() if entry.result_index == 0
+    )
+    assert candidate.fractional_position == pytest.approx((0.6, 0.2, 0.3))
+    assert candidate.display_fractional_position == pytest.approx((0.2, 0.2, 0.3), abs=1e-6)
+    dialog._add_candidate_muons_to_viewer("slice", [candidate.key], False)
+    assert dialog._slice_viewer_structure.fractional_positions[-1] == pytest.approx([0.6, 0.2, 0.3])
+    assert dialog._slice_viewer_muons[0].display_fractional_position == pytest.approx(
+        (0.2, 0.2, 0.3), abs=1e-6
+    )
+    dialog.close()
+
+
+@pytest.mark.parametrize("key", [Qt.Key.Key_Tab, Qt.Key.Key_Return])
+def test_a_blank_tolerance_restores_the_value_in_use_on_leaving_the_field(
+    qapp, monkeypatch, key: Qt.Key
+) -> None:
+    dialog = _shown_dialog_with_two_sites(qapp, monkeypatch)
+    QTest.keyClicks(dialog._batch_grouping_tolerance, "0.3")
+    summary = dialog._latest_batch_summary
+    dialog._batch_grouping_tolerance.selectAll()
+    QTest.keyClick(dialog._batch_grouping_tolerance, Qt.Key.Key_Delete)
+    assert dialog._batch_grouping_tolerance.text() == ""
+
+    QTest.keyClick(dialog._batch_grouping_tolerance, key)
+    qapp.processEvents()
+
+    assert dialog._batch_grouping_tolerance.text() == "0.3"
+    assert dialog._latest_batch_summary is summary
+    dialog.close()
+
+
+def test_a_saved_viewer_muon_with_a_default_label_reads_in_the_new_words(qapp, monkeypatch) -> None:
+    host = _no_symmetry_host()
+    dialog = _dialog_with_endpoints(monkeypatch, _two_nearby_sites(host), host)
+    dialog._run_batch_search()
+    candidate = dialog._clustered_muon_candidates()[0]
+    dialog._add_candidate_muons_to_viewer("slice", [candidate.key], False)
+    entry = dialog._slice_viewer_muons[0]
+    entry.label, entry.source_label = "Site 1", "Cluster 1"
+
+    dialog._relabel_viewer_muons()
+
+    assert (entry.label, entry.source_label) == ("Start 1", "Site 1")
+    entry.label = "My muon"
+    dialog._relabel_viewer_muons()
+    assert entry.label == "My muon"
     dialog.close()

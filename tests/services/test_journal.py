@@ -1764,7 +1764,7 @@ def test_a_uep_minima_entry_gives_the_count_and_the_lowest_position() -> None:
 
     assert entry.title == "UEP minima found"
     assert entry.stamp_kind == "success"
-    assert entry.body == "UEP: 3 distinct minima; lowest at (0.000, 0.500, 0.000)"
+    assert entry.body == "UEP: 3 distinct sites; lowest at (0.000, 0.500, 0.000)"
     assert entry.open_label == "Open in UEP"
     details = entry_details(entry)
     assert details.lines == (
@@ -1773,7 +1773,7 @@ def test_a_uep_minima_entry_gives_the_count_and_the_lowest_position() -> None:
         "Grouped within 0.2 Å",
         "Energies include the zero-point energy",
     )
-    assert details.job_table.headers == ("Minimum", "Position", "Starts", "ΔE (meV)")
+    assert details.job_table.headers == ("Site", "Position", "Starts", "ΔE (meV)")
     assert details.job_table.rows == (
         ("1", "(0.000, 0.500, 0.000)", "12", "0.0"),
         ("2", "(0.500, 0.000, 0.250)", "5", "112.0"),
@@ -1809,7 +1809,7 @@ def test_one_uep_minimum_is_singular_and_an_unknown_method_is_not_shown() -> Non
         minima=[{"size": 1, "fractional_position": [0, 0, 0], "minimum_energy_eV": -1.0}],
     )
 
-    assert entry.body == "UEP: 1 distinct minimum; lowest at (0.000, 0.000, 0.000)"
+    assert entry.body == "UEP: 1 distinct site; lowest at (0.000, 0.000, 0.000)"
     assert entry_details(entry).lines == ("Batch search of uep_source",)
 
 

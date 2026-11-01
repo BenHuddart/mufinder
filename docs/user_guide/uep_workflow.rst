@@ -145,7 +145,7 @@ The window offers:
   ``Add / remove muon``, either from the batch-search groups or from
   custom fractional coordinates;
 - a table on the ``Batch Search`` tab of the groups of the latest search, one
-  ``Cluster`` row per site with its members under it, and one ``Grouping
+  ``Site`` row per site with its ``Start`` rows, its members, under it, and one ``Grouping
   tolerance (Å)`` under the table that regroups them as you type;
 - exposure of the groups to the ``Muon Sites ->
   Generation`` page, where selected UEP rows can be committed as candidate
@@ -172,11 +172,17 @@ the results as soon as the search ends:
 - **Energy.** A link also needs the two classical energies to differ by less
   than 1 meV, so nearby but distinct minima stay apart.
 
-Each group is one ``Cluster`` row. Its ``Size`` is its number of members. Its
+Each group is one ``Site`` row, with one ``Start`` row per start that reached it.
+Its ``Size`` is its number of members. Its
 coordinates and energy are those of its representative, the lowest-energy member,
 at the image of its orbit with the smallest fractional coordinates, compared
 ``fX``, then ``fY``, then ``fZ``. Rows are ordered from the lowest energy. The
 members stay available under each row and in the viewer.
+
+Every row's ``fX``, ``fY`` and ``fZ`` are in the cell of the structure the source job
+was configured on, the coordinates ``Muon Sites -> Generation`` receives, so in a job
+on a supercell they are in the input structure's cell and not the supercell's. The
+viewer still draws each muon where it sits in the job's cell.
 
 All of this uses the classical energy, which every search has, so ``Calculate
 ZPE`` adds its columns without changing the groups or their order.
@@ -198,7 +204,11 @@ search that finds none adds no entry: the table stays empty, the progress bar re
 ``No minima found`` and the ``Search Log`` counts what was left out.
 
 A tolerance outside 0.001 to 10 Å is set to the nearest limit when you leave the
-field.
+field, and a blank field goes back to the tolerance in use.
+
+The ``UEP clustering`` source of the Magnetic Fields page takes each site's
+lowest-energy start as the optimizer found it, not the image in the asymmetric unit:
+in a magnetic host, symmetry images need not have the same field.
 
 A project saved with an earlier clustering of a search is regrouped this way from
 its stored results when it opens.
@@ -211,7 +221,7 @@ The analysis window does not write muon sites directly. After running a batch
 search, open ``Muon Sites -> Generation``
 and choose the ``UEP clusters`` method. That table lists one
 representative per group from the UEP analysis state, including source job,
-cluster size, stationary classification, classical energy ``E (eV)``, and
+site number and size, stationary classification, classical energy ``E (eV)``, and
 fractional coordinates.
 
 A row's position is the position of the group's representative in the asymmetric
@@ -223,9 +233,10 @@ of the generation table to keep the relaxation-start list compact.
 Selecting rows in the generation tab previews the corresponding muon positions
 over the host structure. Clicking ``Generate Sites`` then records the selected
 UEP rows as normal generated muon sites for the full structural-relaxation
-workflow. MuFinder keeps the source job, cluster index, representative member
+workflow, labelled ``UEP Site <n>``. MuFinder keeps the source job, site number,
+representative member
 index, grouping settings, energies, and classification with each created site,
-and protects against adding the same UEP cluster row twice.
+and protects against adding the same UEP site twice.
 
 Before staging the generated sites for CASTEP relaxation, you can use
 ``Cluster Positions…`` in the ``Generation`` tab to rewrite selected

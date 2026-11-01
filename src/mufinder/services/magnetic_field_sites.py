@@ -145,8 +145,8 @@ def uep_cluster_muon_site_options(
 ) -> list[MagneticMuonSiteOption]:
     """Return the project's UEP cluster sites and every UEP batch cluster representative.
 
-    A batch representative takes the position its group reports, in the asymmetric
-    unit, else its optimised position. Sorted by source, cluster and label.
+    A batch representative takes its optimised position, else the cluster's
+    representative position. Sorted by source, cluster and label.
     """
 
     options: list[MagneticMuonSiteOption] = []
@@ -195,14 +195,13 @@ def uep_cluster_muon_site_options(
                 if not isinstance(result, dict):
                     continue
                 fractional = float_triplet_or_none(
-                    cluster.get("representative_fractional_position")
-                    or result.get("optimized_fractional_position")
+                    result.get("optimized_fractional_position")
+                    or cluster.get("representative_fractional_position")
                 )
                 if fractional is None:
                     continue
                 cartesian = float_triplet_or_none(
-                    cluster.get("representative_position_ang")
-                    or result.get("optimized_position_ang")
+                    result.get("optimized_position_ang")
                 ) or site_cartesian_position(fractional, host_structure)
                 key = f"uep:{raw_job_id}:{cluster_index}:{representative_index}"
                 if key in seen:

@@ -8174,7 +8174,7 @@ class MainWindow(QMainWindow):
                         "fractional_position": [float(value) for value in fractional],
                         "cartesian_position": [float(value) for value in cartesian],
                         "generation_method": "uep_cluster",
-                        "label": f"UEP Cluster {cluster_index}",
+                        "label": f"UEP Site {cluster_index}",
                         "properties": properties,
                     }
 

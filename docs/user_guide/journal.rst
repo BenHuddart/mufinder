@@ -150,7 +150,7 @@ numbers in its summary line and in full on the expanded card.
      - Example summary and details
    * - ``UEP minima found``
      - A UEP batch search that found minima is grouped
-     - ``UEP: 3 distinct minima; lowest at (0.000, 0.500, 0.000)``. Each minimum's
+     - ``UEP: 3 distinct sites; lowest at (0.000, 0.500, 0.000)``. Each site's
        position, starts and ``ΔE (meV)``, and how the search was grouped.
    * - ``Relaxed sites grouped``
      - A grouping is applied to an analysis workspace

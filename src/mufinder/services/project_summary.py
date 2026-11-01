@@ -730,7 +730,7 @@ def _uep_facts(document: ProjectDocument) -> tuple[str, ...]:
             if isinstance(clusters, list):
                 minima += sum(isinstance(cluster, Mapping) for cluster in clusters)
     if minima:
-        facts.append(plural(minima, "clustered minimum", "clustered minima"))
+        facts.append(plural(minima, "UEP site"))
     return tuple(facts) or ("Not visited",)
 
 

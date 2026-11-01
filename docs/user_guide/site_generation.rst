@@ -5,7 +5,7 @@ Generation
 muon structural relaxations, and ``Muon Sites -> Relaxations`` is where you
 configure and run those relaxations. On the Generation page you create one row
 per candidate position, by random sampling, by attaching a muon to a chosen
-element, by typing coordinates, or by taking clustered UEP results. You then
+element, by typing coordinates, or by taking the sites of a UEP search. You then
 stage the rows as CASTEP relaxation jobs. Every generated row enters the same
 downstream relaxation workflow, whichever method created it.
 
@@ -258,7 +258,7 @@ running a UEP batch search, whose minima are grouped when it ends (see
 3. Click ``Generate Sites``.
 
 The table lists one row per group of the saved search, with the columns
-``Source`` (the source job), ``Cluster``, ``Size``, ``Class`` (the
+``Source`` (the source job), ``Site``, ``Size``, ``Class`` (the
 stationary-point classification), ``E (eV)`` (the classical energy) and ``fX``,
 ``fY``, ``fZ``.
 
@@ -271,7 +271,9 @@ generation table.
 Generating stores the selected rows as normal generated sites for full
 structural relaxation. MuFinder also keeps the source job, cluster identity,
 representative member index, classification, energies, and grouping settings
-with each site, and prevents the same UEP cluster row from being added twice.
+with each site, and prevents the same UEP site from being added twice. A new site
+is labelled ``UEP Site <n>``; one created before searches were grouped this way keeps
+its ``UEP Cluster <n>`` label and what it recorded.
 
 Tidying generated rows
 ----------------------

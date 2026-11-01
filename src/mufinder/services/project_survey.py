@@ -179,7 +179,7 @@ def _uep_layers(document: ProjectDocument, host: Structure) -> list[SurveyLayer]
                 continue
             members = _int(cluster.get("size")) or len(_list(cluster.get("member_indexes"))) or 1
             energy = _float(cluster.get("minimum_energy_ev"))
-            detail = f"UEP minimum {_int(cluster.get('cluster_index')) or len(markers) + 1}"
+            detail = f"UEP site {_int(cluster.get('cluster_index')) or len(markers) + 1}"
             if energy is not None:
                 detail += f" · {energy:.3f} eV"
             markers.append(

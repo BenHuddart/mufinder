@@ -475,7 +475,10 @@ Compatibility ledger
        index, member index and clustering settings they recorded, and those are
        history, so they are not regrouped. Their methods sentence and Journal entry
        still name the old method, and an old Journal record's ``includes_zpe`` is
-       still read.
+       still read. Such a site also keeps its ``UEP Cluster <n>`` label, where a
+       new one reads ``UEP Site <n>``, and the field names ``cluster_index``,
+       ``cluster_size``, ``clusters``, ``uep_cluster`` and ``uep_source_key`` stay
+       as they are in new records.
      - Current project data, not deprecated. These records say how a past result
        was made and are not rewritten.
    * - ``clusters/<name>/default_queue_name`` without

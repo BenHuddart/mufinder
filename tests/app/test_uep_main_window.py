@@ -1029,6 +1029,7 @@ def test_a_generation_row_reads_the_group_and_records_its_member(
     assert row["fractional_position"] == [0.0, 0.5, 0.25]
     assert row["cartesian_position"] == [0.0, 1.0, 0.5]
     assert row["cluster_size"] == 12
+    assert row["label"] == "UEP Site 1"
     assert row["properties"]["member_index"] == 0
     assert row["properties"]["threshold_ang"] == 0.25
     assert row["properties"]["energy_tolerance_ev"] == 0.001

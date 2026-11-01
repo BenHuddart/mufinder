@@ -433,7 +433,7 @@ def test_generation_rejects_an_unknown_method(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     ("selections", "message"),
     [
-        ([], "one or more UEP cluster rows"),
+        ([], "one or more UEP sites"),
         ([{"fractional_position": [0.1, 0.2]}], "missing valid coordinates"),
     ],
     ids=["no-selection", "missing-coordinates"],

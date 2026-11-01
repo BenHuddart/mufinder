@@ -906,7 +906,7 @@ def _generate_uep_cluster_sites(
 
     selections = parameters.get("selections", [])
     if not isinstance(selections, list) or not selections:
-        raise SiteGenerationError("Select one or more UEP cluster rows to add as generated sites.")
+        raise SiteGenerationError("Select one or more UEP sites to add as generated sites.")
 
     sites: list[MuonSite] = []
     skipped_duplicates = 0
@@ -921,12 +921,10 @@ def _generate_uep_cluster_sites(
 
     if not sites and skipped_duplicates:
         raise SiteGenerationError(
-            "Selected UEP cluster rows are already present in the generated-site list."
+            "Selected UEP sites are already present in the generated-site list."
         )
     if not sites:
-        raise SiteGenerationError(
-            "Selected UEP cluster rows did not contain any usable generated sites."
-        )
+        raise SiteGenerationError("Selected UEP sites did not contain any usable generated sites.")
     return _GeneratedBatch(sites=sites, inputs=_uep_run_inputs(selections))
 
 

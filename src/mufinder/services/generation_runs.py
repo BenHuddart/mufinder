@@ -234,7 +234,7 @@ def run_methods_sentence(
     elif run.method == "uep_clusters":
         source = _uep_source_text(run)
         text = (
-            f"MuFinder took {plural(n, 'initial muon position')}{host} from the clustered "
+            f"MuFinder took {plural(n, 'initial muon position')}{host} from the grouped "
             "minima of the unperturbed electrostatic potential (UEP)"
         )
         if source:
