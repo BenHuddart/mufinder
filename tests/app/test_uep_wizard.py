@@ -12,6 +12,7 @@ import numpy as np
 import pytest
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QDialog, QPushButton, QSizePolicy, QWidget
 
 from mufinder.app.theme import cluster_color_map, current_palette
@@ -988,7 +989,7 @@ def test_uep_wizard_batch_search_uses_compact_control_card_layout(qapp) -> None:
     assert summary_parent is not None
     assert summary_parent.objectName() == "uepIsosurfaceInfoCard"
     assert dialog._batch_summary.verticalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAsNeeded
-    assert dialog._batch_summary.minimumHeight() >= 148
+    assert dialog._batch_summary.maximumHeight() == 148
 
     control_cards = dialog._batch_tab.findChildren(
         type(summary_parent), options=Qt.FindChildOption.FindChildrenRecursively
@@ -2994,8 +2995,8 @@ def test_a_search_that_finds_no_minimum_lists_nothing_and_says_why(qapp, monkeyp
     dialog._run_batch_search()
 
     assert dialog._batch_table.topLevelItemCount() == 0
-    assert "0 minima in 0 sites" in dialog._batch_summary.toPlainText()
-    assert dialog._batch_progress.format() == "Batch search complete"
+    assert "Grouping: no minima found." in dialog._batch_summary.toPlainText()
+    assert dialog._batch_progress.format() == "No minima found"
     dialog.close()
 
 
@@ -3133,12 +3134,152 @@ def test_a_muon_in_a_viewer_follows_its_site_into_a_new_group(qapp, monkeypatch)
     dialog.close()
 
 
+def _shown_dialog_with_two_sites(qapp, monkeypatch) -> UepAnalysisDialog:
+    host = _no_symmetry_host()
+    dialog = _dialog_with_endpoints(monkeypatch, _two_nearby_sites(host), host)
+    dialog._run_batch_search()
+    dialog.show()
+    dialog.activateWindow()
+    dialog._batch_grouping_tolerance.setFocus()
+    dialog._batch_grouping_tolerance.selectAll()
+    qapp.processEvents()
+    return dialog
+
+
+@pytest.mark.parametrize("key", [Qt.Key.Key_Tab, Qt.Key.Key_Return])
 @pytest.mark.parametrize(
-    ("typed", "clamped", "groups"), [("0", 0.001, 2), ("50", 10.0, 1)], ids=["below", "above"]
+    ("typed", "clamped", "groups"),
+    [("100", 10.0, 1), ("0.0001", 0.001, 2), ("0", 0.001, 2)],
+    ids=["above", "below", "zero"],
 )
-def test_a_tolerance_clamped_as_editing_finishes_is_the_one_grouped_at(
-    qapp, monkeypatch, typed: str, clamped: float, groups: int
+def test_an_out_of_range_tolerance_is_clamped_and_grouped_at_on_leaving_the_field(
+    qapp, monkeypatch, key: Qt.Key, typed: str, clamped: float, groups: int
 ) -> None:
+    dialog = _shown_dialog_with_two_sites(qapp, monkeypatch)
+    searches: list[bool] = []
+    dialog._batch_run.clicked.connect(searches.append)
+    emitted: list[float] = []
+    dialog.state_changed.connect(
+        lambda state: emitted.append(state["batch_summary_data"]["threshold_ang"])
+    )
+
+    QTest.keyClicks(dialog._batch_grouping_tolerance, typed)
+    QTest.keyClick(dialog._batch_grouping_tolerance, key)
+    qapp.processEvents()
+
+    assert dialog._batch_grouping_tolerance.value() == pytest.approx(clamped)
+    assert float(dialog._batch_grouping_tolerance.text()) == pytest.approx(clamped)
+    assert dialog._latest_batch_summary.threshold_ang == pytest.approx(clamped)
+    assert dialog._batch_table.topLevelItemCount() == groups
+    assert f"within {clamped:g} Å" in dialog._batch_summary.toPlainText()
+    assert emitted[-1] == pytest.approx(clamped)
+    # Return in the field does not press a button and run another search.
+    assert searches == []
+    dialog.close()
+
+
+def test_typing_the_minimum_tolerance_regroups_without_leaving_the_field(qapp, monkeypatch) -> None:
+    host = _no_symmetry_host()
+    first, second = _two_nearby_sites(host)
+    # 0.0005 Å apart: one site at any tolerance but the smallest.
+    close = replace(
+        second,
+        optimized_position_ang=(
+            first.optimized_position_ang[0] + 0.0005,
+            *first.optimized_position_ang[1:],
+        ),
+    )
+    dialog = _dialog_with_endpoints(monkeypatch, [first, close], host)
+    dialog._batch_grouping_tolerance.setValue(0.0005 * 2 + 0.0001)
+    dialog._run_batch_search()
+    dialog.show()
+    dialog.activateWindow()
+    dialog._batch_grouping_tolerance.setFocus()
+    dialog._batch_grouping_tolerance.selectAll()
+    qapp.processEvents()
+
+    QTest.keyClicks(dialog._batch_grouping_tolerance, "0.001")
+
+    assert dialog._latest_batch_summary.threshold_ang == pytest.approx(0.001)
+    dialog.close()
+
+
+def test_a_tolerance_edit_keeps_expanded_groups_expanded(qapp, monkeypatch) -> None:
+    host = _no_symmetry_host()
+    first, second = _two_nearby_sites(host)
+    far = replace(
+        second,
+        classical_energy_ev=second.classical_energy_ev + 0.01,
+        optimized_position_ang=(2.0, 3.0, 3.5),
+        optimized_fractional_position=(0.4, 0.5, 0.5),
+    )
+    dialog = _dialog_with_endpoints(monkeypatch, [first, second, far], host)
+    dialog._run_batch_search()
+    dialog._batch_table.topLevelItem(0).setExpanded(True)
+    dialog._batch_table.topLevelItem(2).setExpanded(True)
+
+    # The same groups.
+    dialog._batch_grouping_tolerance.setText("0.28")
+
+    assert [dialog._batch_table.topLevelItem(row).isExpanded() for row in range(3)] == [
+        True,
+        False,
+        True,
+    ]
+
+    # Clusters 1 and 2 merge: the far site is Cluster 2 now, and stays open.
+    dialog._batch_grouping_tolerance.setText("0.5")
+
+    assert [dialog._batch_table.topLevelItem(row).isExpanded() for row in range(2)] == [True, True]
+    dialog.close()
+
+
+def test_a_zero_point_pass_keeps_expanded_groups_expanded(qapp, monkeypatch) -> None:
+    host = _no_symmetry_host()
+    dialog = _dialog_with_endpoints(monkeypatch, _two_nearby_sites(host), host)
+    _run_batch_zpe_inline(monkeypatch)
+    monkeypatch.setattr(
+        "mufinder.app.uep_wizard.calculate_optimization_zero_point_energy",
+        lambda _field, result: result,
+    )
+    dialog._run_batch_search()
+    dialog._batch_table.topLevelItem(1).setExpanded(True)
+
+    dialog._run_batch_zpe()
+
+    assert dialog._batch_table.topLevelItem(1).isExpanded()
+    dialog.close()
+
+
+def test_a_search_where_every_start_fails_says_no_minima_were_found(qapp, monkeypatch) -> None:
+    host = _no_symmetry_host()
+    endpoints = [replace(entry, success=False) for entry in _two_nearby_sites(host)]
+    dialog = _dialog_with_endpoints(monkeypatch, endpoints, host)
+
+    dialog._run_batch_search()
+
+    assert dialog._batch_table.topLevelItemCount() == 0
+    assert dialog._batch_search_progress.format() == "No minima found"
+    assert "Grouping: no minima found. Left out 2 failed optimisations." in (
+        dialog._batch_summary.toPlainText()
+    )
+    snapshot = dialog.state_snapshot()
+    dialog.close()
+
+    restored = UepAnalysisDialog(
+        source_job_label="uep_source_row1",
+        source_structure_id="11111111-1111-1111-1111-111111111111",
+        source_structure=host,
+        den_fmt_path=_fixture_path("Si2.den_fmt"),
+        castep_path=_fixture_path("Si2.castep"),
+        cell_path=_fixture_path("Si2.cell"),
+        initial_state=snapshot,
+    )
+    assert restored._batch_search_progress.format() == "No minima found"
+    restored.close()
+
+
+def test_flushing_writes_a_pending_regroup_and_nothing_otherwise(qapp, monkeypatch) -> None:
     host = _no_symmetry_host()
     dialog = _dialog_with_endpoints(monkeypatch, _two_nearby_sites(host), host)
     dialog._run_batch_search()
@@ -3147,11 +3288,29 @@ def test_a_tolerance_clamped_as_editing_finishes_is_the_one_grouped_at(
         lambda state: emitted.append(state["batch_summary_data"]["threshold_ang"])
     )
 
-    dialog._batch_grouping_tolerance.setText(typed)
-    dialog._batch_grouping_tolerance.editingFinished.emit()
+    dialog.flush_pending_state()
+    assert emitted == []
 
-    assert dialog._batch_grouping_tolerance.value() == pytest.approx(clamped)
-    assert dialog._latest_batch_summary.threshold_ang == pytest.approx(clamped)
-    assert dialog._batch_table.topLevelItemCount() == groups
-    assert emitted == [pytest.approx(clamped)]
+    dialog._batch_grouping_tolerance.setText("0.5")
+    dialog.flush_pending_state()
+
+    assert emitted == [pytest.approx(0.5)]
+    assert not dialog._grouping_settled_timer.isActive()
+    dialog.close()
+
+
+def test_the_search_log_and_its_button_do_not_overlap_at_the_minimum_window(
+    qapp, monkeypatch
+) -> None:
+    host = _no_symmetry_host()
+    dialog = _dialog_with_endpoints(monkeypatch, _two_nearby_sites(host), host)
+    dialog._run_batch_search()
+    dialog.resize(dialog.minimumSize())
+    dialog.show()
+    qapp.processEvents()
+
+    log_bottom = dialog._batch_summary.geometry().bottom()
+    assert dialog._batch_calculate_zpe.geometry().top() > log_bottom
+    card = dialog._batch_summary.parentWidget()
+    assert dialog._batch_zpe_progress.geometry().bottom() < card.height()
     dialog.close()

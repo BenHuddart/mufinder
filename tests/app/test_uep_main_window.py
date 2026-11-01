@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from functools import partial
+import json
 from pathlib import Path
 from uuid import UUID
 
@@ -1032,6 +1033,31 @@ def test_a_generation_row_reads_the_group_and_records_its_member(
     assert row["properties"]["threshold_ang"] == 0.25
     assert row["properties"]["energy_tolerance_ev"] == 0.001
     assert row["properties"]["clustering_method"] == "symmetry_distance"
+
+
+def test_saving_writes_a_grouping_tolerance_that_has_not_settled(
+    main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = main_window
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "uep_pending.mufinder", "UEPPending")
+    window._document = doc
+    job_id = UUID("11111111-1111-1111-1111-111111111111")
+
+    class _PendingDialog:
+        """A window whose regroup has not been emitted yet."""
+
+        def flush_pending_state(self) -> None:
+            window._on_uep_analysis_state_changed(job_id, {"current_tab": 7})
+
+    window._uep_analysis_dialogs[job_id] = _PendingDialog()
+    try:
+        window._save_project()
+    finally:
+        window._uep_analysis_dialogs.clear()
+
+    saved = json.loads(doc.project_root.joinpath("state.json").read_text(encoding="utf-8"))
+    assert saved[window._UEP_ANALYSIS_STATES_KEY][str(job_id)]["current_tab"] == 7
 
 
 def test_main_window_ignores_stale_uep_cluster_states_for_generation(

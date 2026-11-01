@@ -14,6 +14,24 @@ from mufinder.app.theme import style_inline_group
 _AXES = ("x", "y", "z")
 
 
+class _ClampingValidator(QDoubleValidator):
+    """Clamp a number out of range when the user leaves the field.
+
+    ``QLineEdit`` calls ``fixup`` on leaving a field whose text is not acceptable, and
+    finishes editing only if that makes it so. Blank or unparsable text stays as it is.
+    """
+
+    def __init__(self, line_edit: "DecimalLineEdit", bottom: float, top: float, decimals: int):
+        super().__init__(bottom, top, decimals, line_edit)
+        self._line_edit = line_edit
+
+    def fixup(self, text: str) -> str:  # noqa: N802 - Qt API naming.
+        parsed = self._line_edit._parse(text)
+        if parsed is None:
+            return text
+        return self._line_edit._format_value(self._line_edit._clamp(parsed))
+
+
 class DecimalLineEdit(QLineEdit):
     """Line edit with float validation and a QDoubleSpinBox-like API subset.
 
@@ -42,7 +60,7 @@ class DecimalLineEdit(QLineEdit):
         self._decimals = max(0, int(decimals))
         self._single_step = 0.1
         self._last_value = 0.0
-        self._validator = QDoubleValidator(self._minimum, self._maximum, self._decimals, self)
+        self._validator = _ClampingValidator(self, self._minimum, self._maximum, self._decimals)
         self._validator.setNotation(
             QDoubleValidator.Notation.StandardNotation
             if standard_notation

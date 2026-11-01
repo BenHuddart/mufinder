@@ -1353,6 +1353,7 @@ class MainWindow(QMainWindow):
                 event.ignore()
                 return
             if answer == "save":
+                self._flush_uep_analysis_dialogs()
                 try:
                     self._project_service.save_project(self._document)
                 except (OSError, ValueError) as exc:
@@ -1427,6 +1428,15 @@ class MainWindow(QMainWindow):
             seen.add(viewer_id)
             try:
                 viewer.shutdown()
+            except RuntimeError:
+                continue
+
+    def _flush_uep_analysis_dialogs(self) -> None:
+        """Bring the document up to date with a regroup whose edit has not settled."""
+
+        for dialog in tuple(self._uep_analysis_dialogs.values()):
+            try:
+                dialog.flush_pending_state()
             except RuntimeError:
                 continue
 
@@ -1945,6 +1955,7 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "No project", "Create or open a project first.")
             return
 
+        self._flush_uep_analysis_dialogs()
         try:
             self._project_service.save_project(self._document)
         except (OSError, ValueError) as exc:
@@ -3130,6 +3141,7 @@ class MainWindow(QMainWindow):
     def _persist_document_ui_state(self, *, failure_message: str) -> None:
         if self._document is None:
             return
+        self._flush_uep_analysis_dialogs()
         try:
             self._project_service.save_project(self._document)
         except (OSError, ValueError) as exc:

@@ -2485,7 +2485,7 @@ class UepAnalysisDialog(QDialog):
         title = QLabel("Random-Start Batch Search", controls)
         style_section_title(title)
         subtitle = QLabel(
-            "Generate initial muon positions and relax them within the unperturbed electrostatic potential. The minima they reach are grouped into distinct sites when the search ends. Estimate their zero-point energy.",
+            "Generate initial muon positions and relax them within the unperturbed electrostatic potential. The minima are grouped into sites when the search ends.",
             controls,
         )
         subtitle.setWordWrap(True)
@@ -2607,7 +2607,8 @@ class UepAnalysisDialog(QDialog):
         self._batch_summary.setReadOnly(True)
         self._batch_summary.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self._batch_summary.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self._batch_summary.setMinimumHeight(148)
+        # The log gives way first, so a short window cannot lay the button over it.
+        self._batch_summary.setMinimumHeight(96)
         self._batch_summary.setMaximumHeight(148)
         self._batch_summary.setPlaceholderText("No batch search has been run yet.")
         log_layout.addWidget(log_title)
@@ -2685,7 +2686,8 @@ class UepAnalysisDialog(QDialog):
         self._batch_grouping_tolerance.setMaximumWidth(124)
         self._batch_grouping_tolerance.setAccessibleName("Grouping tolerance in ångström")
         self._batch_grouping_tolerance.setToolTip(_GROUPING_TOLERANCE_TOOLTIP)
-        self._batch_grouping_tolerance.valueChanged.connect(self._on_grouping_tolerance_edited)
+        # The text, not the value: the prefixes of the minimum already clamp to it.
+        self._batch_grouping_tolerance.textChanged.connect(self._on_grouping_tolerance_edited)
         self._batch_grouping_tolerance.editingFinished.connect(self._on_grouping_tolerance_finished)
         grouping_label.setBuddy(self._batch_grouping_tolerance)
         grouping_row.addWidget(grouping_label)
@@ -3483,6 +3485,15 @@ class UepAnalysisDialog(QDialog):
             self._batch_table.setColumnWidth(
                 column, max(int(width), self._batch_table.header().minimumSectionSize())
             )
+
+    def _expanded_batch_keys(self) -> list[str]:
+        items = (
+            self._batch_table.topLevelItem(row)
+            for row in range(self._batch_table.topLevelItemCount())
+        )
+        return [
+            str(item.data(0, Qt.ItemDataRole.UserRole + 1)) for item in items if item.isExpanded()
+        ]
 
     def _selected_batch_keys(self) -> list[str]:
         keys: list[str] = []
@@ -5259,7 +5270,7 @@ class UepAnalysisDialog(QDialog):
         self._batch_grouping_tolerance.setValue(float(value))
         self._batch_grouping_tolerance.blockSignals(blocked)
 
-    def _on_grouping_tolerance_edited(self, _value: float = 0.0) -> None:
+    def _on_grouping_tolerance_edited(self, _text: str = "") -> None:
         """Regroup at the tolerance being typed; the state follows when the edit settles."""
 
         if not self._latest_batch_results or self._batch_search_thread is not None:
@@ -5271,17 +5282,23 @@ class UepAnalysisDialog(QDialog):
         if summary is None or summary == self._latest_batch_summary:
             return
         selected_keys = self._selection_after_regrouping(self._selected_batch_keys(), summary)
+        expanded_keys = self._selection_after_regrouping(self._expanded_batch_keys(), summary)
         self._populate_batch_results(
             self._latest_batch_results,
             summary,
             summary_text=uep_search_log(self._batch_summary.toPlainText(), summary),
             selected_keys=selected_keys,
+            expanded_keys=expanded_keys,
         )
         self._grouping_settled_timer.start()
 
     def _on_grouping_tolerance_finished(self) -> None:
-        # An out-of-range number was clamped as editing finished, with no new value signal.
         self._on_grouping_tolerance_edited()
+        self.flush_pending_state()
+
+    def flush_pending_state(self) -> None:
+        """Emit a regrouped state now, for a save, rather than when the edit settles."""
+
         if self._grouping_settled_timer.isActive():
             self._grouping_settled_timer.stop()
             self._emit_state_changed()
@@ -5589,6 +5606,7 @@ class UepAnalysisDialog(QDialog):
         summary_text: str | None = None,
         selected_keys: list[str] | tuple[str, ...] | None = None,
         legacy_selected_row: int | None = None,
+        expanded_keys: list[str] | tuple[str, ...] = (),
     ) -> None:
         self._latest_batch_results = list(results)
         self._latest_batch_summary = summary
@@ -5651,13 +5669,15 @@ class UepAnalysisDialog(QDialog):
                 self._batch_item_by_key[site_key] = site_item
                 cluster_item.addChild(site_item)
             self._batch_table.addTopLevelItem(cluster_item)
-            cluster_item.setExpanded(False)
+            cluster_item.setExpanded(cluster_key in expanded_keys)
         if summary_text is not None:
             self._batch_summary.setPlainText(summary_text)
         self._batch_progress.setRange(0, max(len(results), 1))
         self._batch_progress.setValue(max(len(results), 1))
         self._apply_batch_search_progress_style(completed=True)
-        self._batch_progress.setFormat("Batch search complete")
+        self._batch_progress.setFormat(
+            "Batch search complete" if summary.clusters else "No minima found"
+        )
         self._sync_batch_zpe_progress_from_results()
         self._update_batch_table_column_layout()
         if selected_keys or legacy_selected_row is not None:
@@ -6361,6 +6381,7 @@ class UepAnalysisDialog(QDialog):
         self, results: list[UepOptimizationResult], summary_text: str
     ) -> None:
         selected_keys = self._selected_batch_keys()
+        expanded_keys = self._expanded_batch_keys()
         self._latest_batch_results = list(results)
         self._batch_summary.setPlainText(summary_text)
         summary = self._group_batch_results(self._latest_batch_results)
@@ -6370,6 +6391,7 @@ class UepAnalysisDialog(QDialog):
                 summary,
                 summary_text=uep_search_log(summary_text, summary),
                 selected_keys=selected_keys,
+                expanded_keys=expanded_keys,
             )
         self._refresh_viewer_muon_dialogs()
 

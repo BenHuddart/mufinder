@@ -149,7 +149,7 @@ numbers in its summary line and in full on the expanded card.
      - Written when
      - Example summary and details
    * - ``UEP minima found``
-     - A UEP batch search is grouped
+     - A UEP batch search that found minima is grouped
      - ``UEP: 3 distinct minima; lowest at (0.000, 0.500, 0.000)``. Each minimum's
        position, starts and ``ΔE (meV)``, and how the search was grouped.
    * - ``Relaxed sites grouped``
@@ -193,7 +193,7 @@ page, simulation or row) on the same day; on a later day it does. Each record ke
 a fingerprint of its inputs for this. A UEP
 grouping, a site grouping and a magnetic field also fingerprint what they found, so
 regrouping after a relaxation was run again is a new entry. A UEP search's entry
-is added when the search ends and it is grouped. Its zero-point energies and a
+is added when the search ends and it is grouped, if it found minima. Its zero-point energies and a
 grouping tolerance that gives the same groups add none; a tolerance that gives
 other groups adds one once the edit settles. A Magnetic Fields calculation that gives the values already stored
 adds no entry on any day.

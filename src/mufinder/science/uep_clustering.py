@@ -279,6 +279,8 @@ def uep_grouping_report(summary: UepBatchSummary) -> str:
         f"{GROUPING_LOG_PREFIX}{plural(minima, 'minimum', 'minima')} in "
         f"{plural(len(summary.clusters), 'site')}, within {summary.threshold_ang:g} Å and "
         f"{summary.energy_tolerance_ev * 1000.0:g} meV."
+        if summary.clusters
+        else f"{GROUPING_LOG_PREFIX}no minima found."
     )
     left_out = []
     if summary.failed_count:

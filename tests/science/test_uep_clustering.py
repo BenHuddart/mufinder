@@ -176,7 +176,10 @@ def test_a_batch_with_no_minimum_has_no_groups() -> None:
     assert summary.clusters == ()
     assert summary.failed_count == 1
     assert summary.non_minimum_count == 1
-    assert uep_grouping_report(summary).startswith(f"{GROUPING_LOG_PREFIX}0 minima in 0 sites")
+    assert uep_grouping_report(summary) == (
+        f"{GROUPING_LOG_PREFIX}no minima found. "
+        "Left out 1 failed optimisation and 1 result that is not a minimum."
+    )
 
 
 def test_an_empty_batch_has_no_groups() -> None:

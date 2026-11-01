@@ -191,9 +191,14 @@ hierarchical and k-means clustering for those.
 Larger groups usually indicate minima with larger attraction basins and are often
 the most physically relevant first-pass candidates.
 
-Each search adds a ``UEP minima found`` entry to the :doc:`/user_guide/journal`
-when it is grouped. A tolerance that changes the groups adds another once the edit
-settles; one that gives the same groups adds nothing.
+A search that finds minima adds a ``UEP minima found`` entry to the
+:doc:`/user_guide/journal` when it is grouped. A tolerance that changes the groups
+adds another once the edit settles; one that gives the same groups adds nothing. A
+search that finds none adds no entry: the table stays empty, the progress bar reads
+``No minima found`` and the ``Search Log`` counts what was left out.
+
+A tolerance outside 0.001 to 10 Å is set to the nearest limit when you leave the
+field.
 
 A project saved with an earlier clustering of a search is regrouped this way from
 its stored results when it opens.
