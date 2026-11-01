@@ -15,13 +15,20 @@ from typing import Any
 from uuid import UUID
 
 from mufinder.domain.enums import WorkflowStage
+from mufinder.persistence.codec import to_jsonable
+from mufinder.science.uep import optimization_result_from_dict
+from mufinder.science.uep_clustering import (
+    UEP_GROUPING_METHOD,
+    group_uep_minima,
+    uep_search_log,
+)
 from mufinder.services.project_document import ProjectDocument
 
 _LOG = logging.getLogger(__name__)
 
-_UEP_ANALYSIS_STATES_KEY = "uep_analysis_states"
-#: The method of a current grouping, and the state key of the retired clustering window.
-_CURRENT_METHOD = "symmetry_distance"
+#: The ``ui_state`` key of the UEP analysis state of each source job.
+UEP_ANALYSIS_STATES_KEY = "uep_analysis_states"
+#: The state key of the retired clustering window.
 _RETIRED_WINDOW_STATE_KEY = "clustering_window_state"
 #: Selections name groups that no longer exist once a search is regrouped.
 _SELECTION_KEYS = ("batch_selected_keys", "batch_selected_row")
@@ -63,22 +70,18 @@ def _needs_regrouping(state: dict[str, Any]) -> bool:
     results = state.get("batch_results")
     summary = state.get("batch_summary_data")
     method = summary.get("clustering_method") if isinstance(summary, dict) else None
-    return isinstance(results, list) and bool(results) and method != _CURRENT_METHOD
+    return isinstance(results, list) and bool(results) and method != UEP_GROUPING_METHOD
 
 
 def _regrouped(state: dict[str, Any], structure: Any) -> dict[str, Any] | None:
     """Return ``state`` with its stored results grouped, ``None`` when they cannot be."""
-
-    # Deferred: only a project saved with a retired clustering pays for these imports.
-    from mufinder.science.uep import optimization_result_from_dict
-    from mufinder.science.uep_clustering import group_uep_minima, uep_search_log
 
     results = [optimization_result_from_dict(entry) for entry in state["batch_results"]]
     if any(result is None for result in results):
         return None
     summary = group_uep_minima(results, source_structure=structure)
     regrouped = {key: value for key, value in state.items() if key not in _SELECTION_KEYS}
-    regrouped["batch_summary_data"] = asdict(summary)
+    regrouped["batch_summary_data"] = to_jsonable(asdict(summary))
     text = state.get("batch_summary_text")
     regrouped["batch_summary_text"] = uep_search_log(text if isinstance(text, str) else "", summary)
     return regrouped
@@ -93,7 +96,7 @@ def regroup_saved_uep_searches(document: ProjectDocument) -> bool:
     whether anything changed.
     """
 
-    states = document.ui_state.get(_UEP_ANALYSIS_STATES_KEY)
+    states = document.ui_state.get(UEP_ANALYSIS_STATES_KEY)
     if not isinstance(states, dict):
         return False
     changed = False
@@ -108,7 +111,7 @@ def regroup_saved_uep_searches(document: ProjectDocument) -> bool:
             structure = _source_structure(document, str(raw_job_id))
             try:
                 regrouped = None if structure is None else _regrouped(current, structure)
-            except ValueError as exc:
+            except Exception as exc:  # noqa: BLE001 - one search must not stop a project opening.
                 _LOG.warning("Could not regroup the UEP search of job %s: %s", raw_job_id, exc)
                 regrouped = None
             if regrouped is None:
@@ -119,8 +122,8 @@ def regroup_saved_uep_searches(document: ProjectDocument) -> bool:
             updated[raw_job_id] = current
             changed = True
     if changed:
-        document.ui_state[_UEP_ANALYSIS_STATES_KEY] = updated
+        document.ui_state[UEP_ANALYSIS_STATES_KEY] = updated
     return changed
 
 
-__all__ = ["regroup_saved_uep_searches", "uep_source_structure_id"]
+__all__ = ["UEP_ANALYSIS_STATES_KEY", "regroup_saved_uep_searches", "uep_source_structure_id"]

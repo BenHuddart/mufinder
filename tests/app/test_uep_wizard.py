@@ -3049,3 +3049,85 @@ def test_a_saved_hierarchical_grouping_is_regrouped_when_the_window_opens(qapp) 
     assert dialog._batch_grouping_tolerance.value() == pytest.approx(0.25)
     assert "clustering_window_state" not in dialog.state_snapshot()
     dialog.close()
+
+
+def test_a_failed_measurement_keeps_the_finished_optimisations(qapp, monkeypatch) -> None:
+    host = _no_symmetry_host()
+    dialog = _dialog_with_endpoints(monkeypatch, _two_nearby_sites(host), host)
+
+    def _fail(*_args, **_kwargs):
+        raise ValueError("no symmetry today")
+
+    monkeypatch.setattr("mufinder.app.uep_wizard.measure_uep_minima", _fail)
+
+    dialog._run_batch_search()
+
+    assert len(dialog._latest_batch_results) == 2
+    assert dialog._batch_progress.format() == "Batch search complete"
+    assert "Grouping failed: no symmetry today" in dialog._batch_summary.toPlainText()
+    dialog.close()
+
+
+def test_a_zero_point_pass_keeps_the_tolerance_in_use_while_the_field_is_invalid(
+    qapp, monkeypatch
+) -> None:
+    host = _no_symmetry_host()
+    dialog = _dialog_with_endpoints(monkeypatch, _two_nearby_sites(host), host)
+    _run_batch_zpe_inline(monkeypatch)
+    monkeypatch.setattr(
+        "mufinder.app.uep_wizard.calculate_optimization_zero_point_energy",
+        lambda _field, result: result,
+    )
+    dialog._run_batch_search()
+    dialog._batch_grouping_tolerance.setText("0")
+
+    dialog._run_batch_zpe()
+
+    assert dialog._latest_batch_summary.threshold_ang == pytest.approx(0.25)
+    assert dialog._batch_table.topLevelItemCount() == 2
+    dialog.close()
+
+
+def test_a_selection_follows_its_sites_when_the_groups_are_renumbered(qapp, monkeypatch) -> None:
+    host = _no_symmetry_host()
+    first, second = _two_nearby_sites(host)
+    far = replace(
+        second,
+        classical_energy_ev=second.classical_energy_ev + 0.01,
+        optimized_position_ang=(2.0, 3.0, 3.5),
+        optimized_fractional_position=(0.4, 0.5, 0.5),
+    )
+    dialog = _dialog_with_endpoints(monkeypatch, [first, second, far], host)
+    dialog._run_batch_search()
+    assert dialog._batch_table.topLevelItemCount() == 3
+    (site_index,) = dialog._latest_batch_summary.clusters[1].member_indexes
+    group_item = dialog._batch_table.topLevelItem(2)
+    group_item.setSelected(True)
+    site_item = dialog._batch_table.topLevelItem(1).child(0)
+    site_item.setSelected(True)
+
+    dialog._batch_grouping_tolerance.setText("0.5")
+
+    assert dialog._batch_table.topLevelItemCount() == 2
+    # The far site is Cluster 2 now, and the site joined Cluster 1.
+    assert set(dialog._selected_batch_keys()) == {"cluster:2", f"cluster:1:site:{site_index}"}
+    dialog.close()
+
+
+def test_a_muon_in_a_viewer_follows_its_site_into_a_new_group(qapp, monkeypatch) -> None:
+    host = _no_symmetry_host()
+    dialog = _dialog_with_endpoints(monkeypatch, _two_nearby_sites(host), host)
+    dialog._run_batch_search()
+    second = next(
+        candidate
+        for candidate in dialog._clustered_muon_candidates()
+        if candidate.cluster_index == 2
+    )
+    dialog._add_candidate_muons_to_viewer("slice", [second.key], False)
+    assert dialog._slice_viewer_muons[0].source_label == "Cluster 2"
+
+    dialog._batch_grouping_tolerance.setText("0.5")
+
+    assert dialog._slice_viewer_muons[0].source_label == "Cluster 1"
+    assert dialog._slice_viewer_muons[0].cluster_index == 1
+    dialog.close()

@@ -13,7 +13,7 @@ from matplotlib import cm, colormaps, colors as mcolors
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
 import numpy as np
-from PySide6.QtCore import QPointF, QRectF, QSize, Qt, QThread, QTimer, Signal
+from PySide6.QtCore import QItemSelectionModel, QPointF, QRectF, QSize, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QColor, QPainter, QPen
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -1588,7 +1588,10 @@ class _BatchSearchThread(QThread):
 
             if self.isInterruptionRequested():
                 return
-            distances = measure_uep_minima(results, source_structure=self._grouping_structure)
+            try:
+                distances = measure_uep_minima(results, source_structure=self._grouping_structure)
+            except Exception:  # noqa: BLE001 - the window reports it; the results are kept.
+                distances = None
             if self.isInterruptionRequested():
                 return
             self.batch_ready.emit(results, distances, "\n".join(generation_lines))
@@ -3556,7 +3559,10 @@ class UepAnalysisDialog(QDialog):
             if first_selected is None:
                 first_selected = item
         if first_selected is not None:
-            self._batch_table.setCurrentItem(first_selected)
+            # Without NoUpdate this would clear every other row just selected.
+            self._batch_table.setCurrentItem(
+                first_selected, 0, QItemSelectionModel.SelectionFlag.NoUpdate
+            )
 
     def _batch_point_overlay_for_selection(self) -> list[dict[str, object]]:
         positions = [
@@ -5198,12 +5204,55 @@ class UepAnalysisDialog(QDialog):
             return group_uep_minima(
                 results,
                 source_structure=structure,
-                tolerance_ang=self._batch_grouping_tolerance.value(),
+                tolerance_ang=self._grouping_tolerance(),
                 distances=self._batch_minima_distances,
             )
-        except ValueError as exc:
+        except Exception as exc:  # noqa: BLE001 - the results stay; the log says why.
             self._append_batch_log(f"Grouping failed: {exc}")
             return None
+
+    def _grouping_tolerance(self) -> float:
+        """The tolerance shown, or the one in use while the field holds no valid number."""
+
+        if self._batch_grouping_tolerance.hasAcceptableInput():
+            return self._batch_grouping_tolerance.value()
+        if self._latest_batch_summary is not None:
+            return self._latest_batch_summary.threshold_ang
+        return DEFAULT_GROUPING_TOLERANCE_ANG
+
+    def _selection_after_regrouping(self, keys: list[str], summary: UepBatchSummary) -> list[str]:
+        """Carry selected rows to the new groups, which may be numbered differently.
+
+        A selected site stays selected in whichever group holds it now, and a selected
+        group becomes the group that holds its representative.
+        """
+
+        group_of_result = {
+            int(member): cluster.cluster_index
+            for cluster in summary.clusters
+            for member in cluster.member_indexes
+        }
+        old_groups = (
+            {}
+            if self._latest_batch_summary is None
+            else {
+                self._batch_cluster_key(cluster.cluster_index): cluster.representative_index
+                for cluster in self._latest_batch_summary.clusters
+            }
+        )
+        carried: list[str] = []
+        for key in keys:
+            _, _, site = key.partition(":site:")
+            result_index = int(site) if site else old_groups.get(key)
+            group = group_of_result.get(result_index)
+            if group is None:
+                continue
+            carried.append(
+                self._batch_site_key(group, result_index)
+                if site
+                else self._batch_cluster_key(group)
+            )
+        return list(dict.fromkeys(carried))
 
     def _set_grouping_tolerance(self, value: float) -> None:
         blocked = self._batch_grouping_tolerance.blockSignals(True)
@@ -5218,10 +5267,10 @@ class UepAnalysisDialog(QDialog):
         # A number on its way to a valid one, such as the ``0.0`` of ``0.05``.
         if not self._batch_grouping_tolerance.hasAcceptableInput():
             return
-        selected_keys = self._selected_batch_keys()
         summary = self._group_batch_results(self._latest_batch_results)
         if summary is None or summary == self._latest_batch_summary:
             return
+        selected_keys = self._selection_after_regrouping(self._selected_batch_keys(), summary)
         self._populate_batch_results(
             self._latest_batch_results,
             summary,
@@ -5614,7 +5663,19 @@ class UepAnalysisDialog(QDialog):
         else:
             self._batch_viewer.set_structure(self._viewer_host_structure)
             self._batch_viewer_summary.setText(_BATCH_VIEWER_IDLE_TEXT)
+        self._relabel_viewer_muons()
         self._refresh_viewer_muon_dialogs()
+
+    def _relabel_viewer_muons(self) -> None:
+        """Bring muons already in a viewer up to date with the groups their sites are in."""
+
+        candidates = {entry.result_index: entry for entry in self._clustered_muon_candidates()}
+        for viewer_kind in ("isosurface", "slice"):
+            for entry in self._viewer_muons_for(viewer_kind):
+                candidate = candidates.get(entry.result_index)
+                if entry.source_kind == "clustered" and candidate is not None:
+                    entry.source_label = candidate.cluster_label
+                    entry.cluster_index = int(candidate.cluster_index)
 
     def state_snapshot(self) -> dict[str, object]:
         selected_keys = self._selected_batch_keys()
@@ -6299,7 +6360,6 @@ class UepAnalysisDialog(QDialog):
     ) -> None:
         selected_keys = self._selected_batch_keys()
         self._latest_batch_results = list(results)
-        self._batch_minima_distances = None
         self._batch_summary.setPlainText(summary_text)
         summary = self._group_batch_results(self._latest_batch_results)
         if summary is not None:

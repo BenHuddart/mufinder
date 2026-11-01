@@ -52,7 +52,7 @@ from mufinder.services.project_summary import (
     muon_relaxation_row_jobs,
     relaxation_analysis_workspaces,
 )
-from mufinder.services.uep_grouping import uep_source_structure_id
+from mufinder.services.uep_grouping import UEP_ANALYSIS_STATES_KEY, uep_source_structure_id
 from mufinder.services.source_candidates import (
     coerce_fractional_triplet,
     completed_muon_relaxation_sources,
@@ -67,7 +67,6 @@ from mufinder.workflow.muon_site import MUON_RELAXATION_DEFINITION_CALC_TYPE
 from mufinder.workflow.hyperfine import HYPERFINE_SET_CALC_TYPE
 from mufinder.workflow.quantum import QUANTUM_PHONON_SET_CALC_TYPE
 
-UEP_ANALYSIS_STATES_KEY = "uep_analysis_states"
 
 Fractional = tuple[float, float, float]
 

@@ -31,7 +31,7 @@ from mufinder.science.relaxation_analysis import (
 )
 from mufinder.science.site_generation import asymmetric_unit_position
 from mufinder.science.spglib_compat import SYMMETRY_TOLERANCE_ANG, symmetry_detection_warning
-from mufinder.science.uep import UepError, UepOptimizationResult
+from mufinder.science.uep import UepError, UepOptimizationResult, triple_from_payload
 
 #: The tolerance a search is grouped at until the user changes it, well under the
 #: 0.8 Å minimum muon-muon distance of the starts.
@@ -309,17 +309,11 @@ def uep_search_log(existing: str, summary: UepBatchSummary) -> str:
     return "\n".join([*lines, uep_grouping_report(summary)])
 
 
-def _triple(values: object) -> tuple[float, float, float] | None:
-    if not isinstance(values, (list, tuple)) or len(values) != 3:
-        return None
-    return (float(values[0]), float(values[1]), float(values[2]))
-
-
 def _cluster_summary_from_dict(payload: object) -> UepClusterSummary | None:
     if not isinstance(payload, Mapping):
         return None
-    position = _triple(payload.get("representative_position_ang"))
-    fractional = _triple(payload.get("representative_fractional_position"))
+    position = triple_from_payload(payload.get("representative_position_ang"))
+    fractional = triple_from_payload(payload.get("representative_fractional_position"))
     members = payload.get("member_indexes")
     if position is None or fractional is None or not isinstance(members, (list, tuple)):
         return None

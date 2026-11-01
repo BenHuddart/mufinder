@@ -225,7 +225,7 @@ def serialize_potential_grid(grid: UepPotentialGrid) -> dict[str, Any]:
     return payload
 
 
-def _triple_from_payload(values: object) -> tuple[float, float, float] | None:
+def triple_from_payload(values: object) -> tuple[float, float, float] | None:
     if not isinstance(values, (list, tuple)) or len(values) != 3:
         return None
     try:
@@ -239,7 +239,7 @@ def classification_from_dict(payload: object) -> StationaryPointClassification |
 
     if not isinstance(payload, Mapping):
         return None
-    eigenvalues = _triple_from_payload(payload.get("eigenvalues"))
+    eigenvalues = triple_from_payload(payload.get("eigenvalues"))
     if eigenvalues is None:
         return None
     try:
@@ -259,9 +259,9 @@ def optimization_result_from_dict(payload: object) -> UepOptimizationResult | No
 
     if not isinstance(payload, Mapping):
         return None
-    start = _triple_from_payload(payload.get("start_position_ang"))
-    optimized = _triple_from_payload(payload.get("optimized_position_ang"))
-    fractional = _triple_from_payload(payload.get("optimized_fractional_position"))
+    start = triple_from_payload(payload.get("start_position_ang"))
+    optimized = triple_from_payload(payload.get("optimized_position_ang"))
+    fractional = triple_from_payload(payload.get("optimized_fractional_position"))
     classification = classification_from_dict(payload.get("classification"))
     if start is None or optimized is None or fractional is None or classification is None:
         return None

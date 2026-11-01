@@ -13,6 +13,7 @@ import pytest
 from mufinder.domain.enums import WorkflowStage
 from mufinder.domain.models import Job, MuonSite, Structure
 from mufinder.services.project_service import ProjectDocument, ProjectService
+from mufinder.services.study_findings import record_uep_minima
 from mufinder.services.uep_grouping import regroup_saved_uep_searches, uep_source_structure_id
 
 from tests.support.uep_results import fake_optimization
@@ -267,3 +268,31 @@ def test_a_job_finds_its_source_structure_through_its_definition(tmp_path: Path)
 
     assert uep_source_structure_id(document, job.id) == document.project.host_structure_id
     assert uep_source_structure_id(document, uuid4()) is None
+
+
+def test_a_regrouped_search_is_plain_data_that_every_reader_accepts(tmp_path: Path) -> None:
+    service, document, job = _project(tmp_path, _old_state(_noisy_results()))
+
+    loaded = service.load_project(document.project_root)
+
+    state = loaded.ui_state[_STATES_KEY][str(job.id)]
+    assert isinstance(state["batch_summary_data"]["clusters"], list)
+    # Turning a camera in the window it opens is not a new finding.
+    assert not record_uep_minima(loaded, loaded.jobs[job.id], state, {**state, "current_tab": 2})
+
+
+def test_a_search_that_fails_in_any_way_does_not_stop_the_project_opening(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service, document, job = _project(tmp_path, _old_state(_noisy_results()))
+
+    def _fail(*_args, **_kwargs):
+        raise TypeError("not a kind of failure the grouping expects")
+
+    monkeypatch.setattr("mufinder.services.uep_grouping.group_uep_minima", _fail)
+
+    loaded = service.load_project(document.project_root)
+
+    assert loaded.ui_state[_STATES_KEY][str(job.id)]["batch_summary_data"]["clustering_method"] == (
+        "hier"
+    )
