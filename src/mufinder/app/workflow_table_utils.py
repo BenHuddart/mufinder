@@ -8,7 +8,7 @@ import math
 from typing import Callable
 
 import shiboken6
-from PySide6.QtCore import QObject, Qt
+from PySide6.QtCore import QObject, QSize, Qt
 from PySide6.QtGui import QAction, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -300,6 +300,13 @@ def confirm_row_removal(
     )
 
 
+class _MaximumHeightTable(QTableWidget):
+    """Table that asks a layout for its maximum height instead of Qt's default hint."""
+
+    def sizeHint(self) -> QSize:  # noqa: N802 - Qt API naming.
+        return QSize(super().sizeHint().width(), self.maximumHeight())
+
+
 def create_workflow_table(
     headers: tuple[str, ...],
     *,
@@ -312,7 +319,7 @@ def create_workflow_table(
     stretch_last_section: bool = True,
     default_resize_mode: QHeaderView.ResizeMode = QHeaderView.ResizeMode.Stretch,
     accessible_name: str = "",
-    table_type: type[QTableWidget] = QTableWidget,
+    prefer_maximum_height: bool = False,
 ) -> QTableWidget:
     """Build a table with MuFinder's shared chrome.
 
@@ -332,11 +339,12 @@ def create_workflow_table(
     and ``default_resize_mode`` let sites that want every column sized to its
     contents (rather than stretched to fill) opt out of the stretch default.
     ``accessible_name`` is what a screen reader announces for the table: the
-    title of the group or dialog that shows it, in Title Case. ``table_type`` is
-    a ``QTableWidget`` subclass to build instead.
+    title of the group or dialog that shows it, in Title Case. With
+    ``prefer_maximum_height`` the table asks a layout for its maximum height, which
+    the caller sets to hold the rows it may show.
     """
 
-    table = table_type(0, len(headers))
+    table = (_MaximumHeightTable if prefer_maximum_height else QTableWidget)(0, len(headers))
     if accessible_name:
         table.setAccessibleName(accessible_name)
     table.setHorizontalHeaderLabels(list(headers))
