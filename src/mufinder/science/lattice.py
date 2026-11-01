@@ -136,6 +136,27 @@ def inverse_lattice(
     ]
 
 
+def lattice_plane_heights(
+    lattice_vectors: Sequence[Sequence[float]] | np.ndarray,
+    *,
+    error: type[Exception] = LatticeError,
+) -> np.ndarray:
+    """Return the spacing (Angstrom) of the lattice planes normal to each axis.
+
+    ``h_i = V / |a_j x a_k|``, the height of the cell over the face of the other
+    two vectors. A point within ``R`` of the origin has fractional coordinate
+    ``|f_i| <= R / h_i``, so these and not the vector lengths bound the cells a
+    sphere reaches. Raises ``error`` for a singular lattice.
+    """
+
+    lattice = lattice_matrix(lattice_vectors, error=error)
+    volume = cell_volume(lattice.tolist())
+    if math.isclose(volume, 0.0, abs_tol=1e-12):
+        raise error("Lattice matrix is singular and has no plane heights.")
+    areas = np.linalg.norm(np.cross(lattice[[1, 2, 0]], lattice[[2, 0, 1]]), axis=1)
+    return volume / areas
+
+
 # Scalar helpers: one point, plain float arithmetic.
 
 
@@ -672,6 +693,7 @@ __all__ = [
     "lattice_cart_to_frac",
     "lattice_frac_to_cart",
     "lattice_matrix",
+    "lattice_plane_heights",
     "lattice_rows",
     "minimum_image_cartesian_delta",
     "minimum_image_delta",

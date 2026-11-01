@@ -1369,9 +1369,8 @@ element, from bundled isotope data.
    calculation. In TF this direction is the applied-field axis. In ZF it is the
    initial muon-polarisation axis. Polycrystal modes use analytical
    orientational averages and ignore the direction inputs.
-4. Optionally set ``Radius (Å)`` (the default is ``auto``) and ``Convergence
-   rtol`` (default ``1e-6``), and untick elements under ``Elements`` to leave
-   their nuclei out of the sum. Every element of the host is ticked by default;
+4. Optionally untick elements under ``Elements`` to leave their nuclei out of
+   the sum. Every element of the host is ticked by default;
    ``Calculate`` refuses to run with none ticked. The choice is saved with the
    other options.
 5. For a ZF mode, optionally tick ``Include ZF quadrupolar correction``. The
@@ -1391,8 +1390,9 @@ element, from bundled isotope data.
 
 The ``Results`` group reports :math:`\sigma` in :math:`\mu\mathrm{s}^{-1}`,
 :math:`\sigma^2` and :math:`M_2` in :math:`\mu\mathrm{s}^{-2}`, equivalent
-field width :math:`\Delta B` in Tesla, convergence radius in Å, number of
-nuclei summed, the elements included (``All`` when none was left out), and
+field width :math:`\Delta B` in Tesla, the explicit sum radius in Å to one
+decimal at most (the row's tooltip says it is the largest of the elements'), the number
+of nuclei in that sum, the elements included (``All`` when none was left out), and
 element-resolved :math:`\sigma^2` contributions. For ZF
 single-crystal calculations it also reports the perpendicular and parallel
 widths :math:`\sigma_\perp^2` and :math:`\sigma_\parallel^2`.
@@ -1410,12 +1410,42 @@ width of R. S. Hayano *et al.*, Phys. Rev. B **20**, 850 (1979), DOI:
 ``10.1103/PhysRevB.20.850``, so single-crystal and
 polycrystal results share one normalization.
 
+The sum over nuclei has no radius or tolerance to set. MuFinder sums every
+nucleus within :math:`R` of the muon explicitly, with the cells to visit found
+from the plane spacings of a reduced basis, so the choice of basis does not matter,
+however skewed the cell. Each element has its own :math:`R`: 20 Å, or five mean
+spacings of that element's nuclei when they are sparser than that allows, as for
+one nucleus in a 16 Å cell or a dilute dopant, and at least twice the distance to
+the nearest of them, for a muon in the vacuum of a slab. ``Explicit sum radius``
+reports the largest. The nuclei beyond :math:`R` are a uniform
+continuum of density :math:`n_w = \sum_\text{cell} w / V`, with
+:math:`w = \sum_\text{isotopes} c\,\gamma^2 I(I+1)` per nucleus for abundance
+:math:`c`, so their share of the sum has an exact integral:
+
+.. math::
+
+   \sum_{r > R} \frac{w}{r^6} \approx \int_R^\infty \frac{n_w}{r^6}\, 4\pi r^2\, \mathrm{d}r
+   = \frac{4\pi n_w}{3 R^3}.
+
+This tail is isotropic. It adds to the single-crystal widths along every
+direction exactly what it adds to the polycrystal width of the same regime. The
+sum with its tail matches a direct sum to 100 Å to about 0.001 % in
+:math:`\sigma` for the Fe, MnSi and CoF₂ hosts of the worked examples and for a
+sheared copper cell, and to about 0.05 % for one copper nucleus in a 16 Å cell.
+
+The tail assumes nuclei in every direction, which a slab does not have. For a
+muon at or inside a realistic surface this does not matter: in a six-layer copper
+slab, a muon between the middle layers or 1.5 Å above the surface is within
+0.004 % in :math:`\sigma`. Far out in the vacuum the single-crystal widths are
+off by up to 2 %, on very small widths: in a two-layer copper slab, 15 Å above the
+surface, +1.7 % along (0, 0, 1) and −2.0 % along (1, 1, 1).
+
 With the distortion correction ticked, MuFinder pairs the relaxed supercell
 with the active host exactly as for the dipolar field, with the same checks (see
 :ref:`Apply muon-induced distortion corrections
 <magnetic-fields-distortion-corrections>`), places the displaced and pristine
 ions around a muon at the centre of the correction cell, and adds the local
-finite-cell correction to the converged pristine lattice sum:
+finite-cell correction to the pristine lattice sum:
 
 .. math::
 
@@ -1491,7 +1521,8 @@ list of a commensurate approximant is stored as ``commensurate`` entries. A
 ``nuclear_relaxation`` record holds ``result``. The form state saves the
 measured magnetisation as ``use_measured_magnetization`` and
 ``measured_magnetization``, the applied field as ``applied_field_T``, and the
-contact shell as ``contact_nnn`` and ``contact_rcont``. See :doc:`/compatibility_policy` for the persisted
+contact shell as ``contact_nnn`` and ``contact_rcont``. A ``nuclear_relaxation``
+result keeps its explicit sum radius as ``convergence_radius_a``. See :doc:`/compatibility_policy` for the persisted
 names.
 
 Dependency handling

@@ -151,8 +151,6 @@ def test_decimal_inputs_accept_the_same_text_as_before(qapp) -> None:
     assert _accepted(texture._q1[0]) == ("0.05", -10.0, 10.0, 8, False)
     assert _accepted(texture._normalise_threshold) == ("0.001", 1e-8, 1.0, 8, False)
     assert _accepted(nuclear._direction_z) == ("1.0", -1e6, 1e6, 12, True)
-    assert _accepted(nuclear._radius) == ("", 0.0, 1e6, 12, True)
-    assert _accepted(nuclear._rtol) == ("1e-6", 0.0, 1e6, 12, True)
     assert _accepted(site._custom_x) == ("0.0", 0.0, 1.0, 8, True)
     assert _accepted(page._applied_field_input.edits[0]) == ("0.0", -1000.0, 1000.0, 6, True)
     assert _accepted(page._measured_magnetization_input.edits[1]) == (

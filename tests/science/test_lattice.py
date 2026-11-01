@@ -157,6 +157,31 @@ def test_crystal_axis_to_cartesian_rejects_bad_input_with_the_callers_error() ->
         )
 
 
+def test_plane_heights_are_the_spacing_of_the_planes_not_the_vector_lengths() -> None:
+    assert lattice_module.lattice_plane_heights(np.diag([2.0, 3.0, 4.0])) == pytest.approx(
+        [2.0, 3.0, 4.0]
+    )
+    # A sheared cubic basis keeps every plane spacing of 2 along c and has longer vectors.
+    sheared = np.array([[2.0, 0.0, 0.0], [10.0, 2.0, 0.0], [6.0, 8.0, 2.0]])
+    heights = lattice_module.lattice_plane_heights(sheared)
+    assert heights[2] == pytest.approx(2.0)
+    assert np.all(heights <= np.linalg.norm(sheared, axis=1) + 1e-12)
+    # A point within R of the origin is within R / h in each fractional coordinate.
+    points = np.random.default_rng(336).normal(size=(500, 3))
+    points *= (5.0 / np.linalg.norm(points, axis=1))[:, None]
+    assert np.all(np.abs(points @ np.linalg.inv(sheared)) <= 5.0 / heights + 1e-12)
+
+
+def test_plane_heights_reject_a_singular_lattice_with_the_callers_error() -> None:
+    class CallerError(ValueError):
+        pass
+
+    with pytest.raises(CallerError, match="singular"):
+        lattice_module.lattice_plane_heights(
+            [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 0.0]], error=CallerError
+        )
+
+
 def test_inverse_rejects_singular_lattices() -> None:
     with pytest.raises(LatticeError, match="singular"):
         inverse_lattice(_SINGULAR)

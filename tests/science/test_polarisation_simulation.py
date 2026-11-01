@@ -225,7 +225,7 @@ def test_nuclear_widths_damp_each_field_with_its_own_width() -> None:
         species=["H"],
         fractional_positions=[[0.0, 0.0, 0.0]],
     )
-    tensors = calculate_nuclear_width_tensors(host, (0.3, 0.4, 0.2), radius=10.0)
+    tensors = calculate_nuclear_width_tensors(host, (0.3, 0.4, 0.2))
     settings = PolarisationSettings(
         sigma_from_nuclear_widths=True, sigma_per_us=5.0, time_points=501, end_time_us=5.0
     )
