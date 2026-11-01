@@ -3131,3 +3131,27 @@ def test_a_muon_in_a_viewer_follows_its_site_into_a_new_group(qapp, monkeypatch)
     assert dialog._slice_viewer_muons[0].source_label == "Cluster 1"
     assert dialog._slice_viewer_muons[0].cluster_index == 1
     dialog.close()
+
+
+@pytest.mark.parametrize(
+    ("typed", "clamped", "groups"), [("0", 0.001, 2), ("50", 10.0, 1)], ids=["below", "above"]
+)
+def test_a_tolerance_clamped_as_editing_finishes_is_the_one_grouped_at(
+    qapp, monkeypatch, typed: str, clamped: float, groups: int
+) -> None:
+    host = _no_symmetry_host()
+    dialog = _dialog_with_endpoints(monkeypatch, _two_nearby_sites(host), host)
+    dialog._run_batch_search()
+    emitted: list[float] = []
+    dialog.state_changed.connect(
+        lambda state: emitted.append(state["batch_summary_data"]["threshold_ang"])
+    )
+
+    dialog._batch_grouping_tolerance.setText(typed)
+    dialog._batch_grouping_tolerance.editingFinished.emit()
+
+    assert dialog._batch_grouping_tolerance.value() == pytest.approx(clamped)
+    assert dialog._latest_batch_summary.threshold_ang == pytest.approx(clamped)
+    assert dialog._batch_table.topLevelItemCount() == groups
+    assert emitted == [pytest.approx(clamped)]
+    dialog.close()

@@ -5280,6 +5280,8 @@ class UepAnalysisDialog(QDialog):
         self._grouping_settled_timer.start()
 
     def _on_grouping_tolerance_finished(self) -> None:
+        # An out-of-range number was clamped as editing finished, with no new value signal.
+        self._on_grouping_tolerance_edited()
         if self._grouping_settled_timer.isActive():
             self._grouping_settled_timer.stop()
             self._emit_state_changed()
