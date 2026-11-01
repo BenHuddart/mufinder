@@ -2027,9 +2027,11 @@ each platform's native look:
   content scrolls as a control takes focus. ``reading_scroll_area`` holds content the
   keyboard cannot reach that way, because it is read-only or the controls in it sit
   above what they leave out of view: the Journal, the Convergence Testing overview, the
-  quantum analysis help and a read-only Parameter Dialog. It stays a Tab stop, so the
-  arrow and page keys can scroll, shows the ring, and keeps a fixed gutter around its
-  viewport so that the ring covers no content. Whenever focus moves during keyboard
+  quantum analysis help and a read-only Parameter Dialog. While its content overflows
+  it is a Tab stop, so the arrow and page keys can scroll, and shows the ring; when the
+  content fits it is neither, following resizes and content changes. The Journal is
+  always a stop. It keeps a fixed gutter around its viewport so that the ring covers no
+  content. Whenever focus moves during keyboard
   use, every scroll area around the focused widget scrolls to show it; a click scrolls
   nothing.
 - The project home (``mufinder.app.project_home_trail``) is painted from data,

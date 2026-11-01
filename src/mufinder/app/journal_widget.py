@@ -316,7 +316,7 @@ class JournalWidget(QWidget):
         controls.addWidget(self._export_button)
         layout.addLayout(controls)
 
-        self._scroll = reading_scroll_area(self)
+        self._scroll = reading_scroll_area(self, always_tab_stop=True)
         self._scroll.setObjectName("journalScrollArea")
         layout.addWidget(self._scroll, 1)
 

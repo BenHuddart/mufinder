@@ -563,7 +563,7 @@ def test_style_tab_widget_uses_the_shared_tab_rules(qapp) -> None:
     assert "QTabWidget#mufinderTabs > QStackedWidget > QWidget" in stylesheet
 
 
-def test_checkboxes_and_radio_buttons_take_their_parent_background() -> None:
+def test_checkboxes_and_radio_buttons_take_their_parent_background(qapp) -> None:
     stylesheet = theme_module._build_stylesheet(theme_module.light_palette())
 
     assert "QLabel, QCheckBox, QRadioButton {\n        background: transparent;" in stylesheet
@@ -1297,7 +1297,7 @@ def _tree() -> QTreeWidget:
 
 
 def _scroll_area() -> QScrollArea:
-    area = theme_module.reading_scroll_area(framed=True)
+    area = theme_module.reading_scroll_area(framed=True, always_tab_stop=True)
     area.setWidget(QLabel("contents"))
     return area
 
@@ -2025,6 +2025,100 @@ def test_reading_scroll_area_keeps_its_stop_and_its_ring_covers_no_content(
     assert area.grab().toImage().pixelColor(0, area.height() // 2) == accent
     dialog.close()
     theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)
+
+
+def _reading_window(area: QScrollArea, content: QWidget) -> QWidget:
+    """A window with a button either side of ``area``, 320 x 400 and active."""
+
+    window = QWidget()
+    window.before = QPushButton("Before")
+    window.after = QPushButton("After")
+    area.setWidget(content)
+    layout = QVBoxLayout(window)
+    for widget in (window.before, area, window.after):
+        layout.addWidget(widget)
+    window.resize(320, 400)
+    window.show()
+    window.activateWindow()
+    assert QTest.qWaitForWindowActive(window)
+    QApplication.processEvents()
+    window.before.setFocus()
+    return window
+
+
+def _tab_from_before(window: QWidget) -> QWidget:
+    window.before.setFocus()
+    QApplication.processEvents()
+    QTest.keyClick(window.windowHandle(), Qt.Key.Key_Tab)
+    QApplication.processEvents()
+    return QApplication.focusWidget()
+
+
+def test_reading_scroll_area_is_a_tab_stop_only_while_its_content_overflows(
+    fresh_focus_tracker,
+) -> None:
+    area = theme_module.reading_scroll_area()
+    label = QLabel("A read-only page.")
+    label.setMinimumHeight(150)
+    window = _reading_window(area, label)
+
+    assert _tab_from_before(window) is window.after
+    assert [ring.parentWidget() for ring in _shown_rings(window)] == [window.after]
+
+    window.resize(320, 120)
+    QApplication.processEvents()
+    assert _tab_from_before(window) is area
+    assert [ring.parentWidget() for ring in _shown_rings(window)] == [area]
+
+    window.resize(320, 400)
+    QApplication.processEvents()
+    assert _tab_from_before(window) is window.after
+    window.close()
+
+
+def test_reading_scroll_area_follows_its_content_changing(fresh_focus_tracker) -> None:
+    area = theme_module.reading_scroll_area()
+    label = QLabel("A read-only page.")
+    window = _reading_window(area, label)
+    assert _tab_from_before(window) is window.after
+
+    label.setMinimumHeight(1000)
+    QApplication.processEvents()
+    assert _tab_from_before(window) is area
+
+    label.setMinimumHeight(0)
+    QApplication.processEvents()
+    assert _tab_from_before(window) is window.after
+    window.close()
+
+
+def test_reading_scroll_area_drops_its_ring_when_a_resize_leaves_nothing_to_scroll(
+    fresh_focus_tracker,
+) -> None:
+    area = theme_module.reading_scroll_area()
+    label = QLabel("A read-only page.")
+    label.setMinimumHeight(150)
+    window = _reading_window(area, label)
+    window.resize(320, 120)
+    QApplication.processEvents()
+    assert _tab_from_before(window) is area
+
+    window.resize(320, 400)
+    QApplication.processEvents()
+
+    assert not _shown_rings(window)
+    window.close()
+
+
+def test_always_tab_stop_reading_area_is_a_stop_when_its_content_fits(
+    fresh_focus_tracker,
+) -> None:
+    area = theme_module.reading_scroll_area(always_tab_stop=True)
+    window = _reading_window(area, QLabel("A short page."))
+
+    assert _tab_from_before(window) is area
+    assert [ring.parentWidget() for ring in _shown_rings(window)] == [area]
+    window.close()
 
 
 def test_reading_scroll_area_scrolls_from_the_keyboard(fresh_focus_tracker) -> None:

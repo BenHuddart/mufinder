@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from matplotlib.colors import to_hex
 from PySide6.QtCore import QSize, Qt
-from PySide6.QtWidgets import QLabel, QScrollArea
+from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QApplication, QLabel, QScrollArea
 import pytest
 
 from mufinder.app import theme as theme_module
@@ -544,9 +545,29 @@ def test_convergence_overview_keeps_plot_text_clear_of_the_pop_out_button(
     widget.close()
 
 
-def test_overview_stays_a_tab_stop_for_the_summaries_below_its_buttons(qapp) -> None:
+def test_overview_is_a_tab_stop_only_when_it_overflows(fresh_focus_tracker) -> None:
     widget = ConvergenceOverviewWidget()
+    widget.resize(_DEFAULT_PAGE_SIZE)
+    widget.show()
+    widget.activateWindow()
+    assert QTest.qWaitForWindowActive(widget)
+    QApplication.processEvents()
 
-    assert widget._scroll.focusPolicy() & Qt.FocusPolicy.TabFocus
+    assert widget._scroll.verticalScrollBar().maximum() == 0
+    for _ in range(8):
+        QTest.keyClick(widget.windowHandle(), Qt.Key.Key_Tab)
+        QApplication.processEvents()
+        assert QApplication.focusWidget() is not widget._scroll
 
+    widget.resize(_DEFAULT_PAGE_SIZE.width(), 300)
+    QApplication.processEvents()
+    assert widget._scroll.verticalScrollBar().maximum() > 0
+    reached = False
+    for _ in range(8):
+        QTest.keyClick(widget.windowHandle(), Qt.Key.Key_Tab)
+        QApplication.processEvents()
+        reached = reached or QApplication.focusWidget() is widget._scroll
+    assert reached
+
+    widget.close()
     widget.deleteLater()

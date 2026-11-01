@@ -883,20 +883,38 @@ class _ReadingScrollArea(QScrollArea):
     the ring covers no content at any scroll position.
     """
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(self, parent: QWidget | None, *, always_tab_stop: bool) -> None:
         super().__init__(parent)
         band = _FOCUS_RING_BAND
         self.setViewportMargins(band, band, band, band)
+        if always_tab_stop:
+            return
+        # The ranges change when the area resizes and when its content does.
+        self.verticalScrollBar().rangeChanged.connect(self._sync_tab_stop)
+        self.horizontalScrollBar().rangeChanged.connect(self._sync_tab_stop)
+        self._sync_tab_stop()
+
+    def _sync_tab_stop(self, *_args: object) -> None:
+        if self.verticalScrollBar().maximum() > 0 or self.horizontalScrollBar().maximum() > 0:
+            self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+            return
+        self.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
+        _remove_focus_ring(self)
 
 
-def reading_scroll_area(parent: QWidget | None = None, *, framed: bool = False) -> QScrollArea:
+def reading_scroll_area(
+    parent: QWidget | None = None, *, framed: bool = False, always_tab_stop: bool = False
+) -> QScrollArea:
     """A scroll area for content with no controls to carry the keyboard through it.
 
-    It stays a Tab stop, because only with focus on the area can the arrow and page keys
-    scroll read-only content.
+    It is a Tab stop while its content overflows, because only with focus on the area can
+    the arrow and page keys scroll read-only content. When the content fits there is
+    nothing to scroll, so it is not a stop unless ``always_tab_stop`` says it must be.
     """
 
-    return _new_scroll_area(_ReadingScrollArea(parent), framed=framed)
+    return _new_scroll_area(
+        _ReadingScrollArea(parent, always_tab_stop=always_tab_stop), framed=framed
+    )
 
 
 class _FocusRingTracker(QObject):
