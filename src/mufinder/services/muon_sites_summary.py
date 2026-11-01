@@ -643,10 +643,13 @@ def pinned_sites_notice(selection: PinnedSourceSelection, charge_states: Sequenc
         parts.append(f"No {labels} sites are pinned; show every relaxed site to include them.")
     if selection.unresolved:
         count = len(selection.unresolved)
-        noun = "site is" if count == 1 else "sites are"
+        state = (
+            "site is no longer an eligible relaxed site (its relaxation was"
+            if count == 1
+            else "sites are no longer eligible relaxed sites (their relaxations were"
+        )
         parts.append(
-            f"{count} pinned {noun} no longer an eligible relaxed site (its relaxation "
-            "was reset or removed); re-pin the analysis to refresh the summary."
+            f"{count} pinned {state} reset or removed); re-pin the analysis to refresh the summary."
         )
     return " ".join(parts)
 

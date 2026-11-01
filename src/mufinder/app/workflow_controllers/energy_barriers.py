@@ -788,7 +788,7 @@ class EnergyBarriersController(WorkflowJobController):
         self.remove_rows(removed)
         self.refresh_view()
         self._deps.paths_removed()
-        self._context.status_message(f"Deleted {plural(len(removed), 'energy-barrier path')}")
+        self._context.status_message(f"Removed {plural(len(removed), 'energy-barrier path')}")
         self._context.persist_ui_state(
             failure_message="Energy Barriers paths were removed, but autosave failed."
         )
@@ -964,7 +964,7 @@ class EnergyBarriersController(WorkflowJobController):
             advanced_names=frozenset(advanced_names),
             title="Inspect NEB Parameters" if read_only else "Configure NEB Parameters",
             intro_text=(
-                _hop_heading(document, first, source_candidates.get(first.key))
+                _hop_heading(document, first, self._hop_names().get(first.key))
                 if len(candidates) == 1
                 else f"Selected paths: {len(candidates)}"
             ),
@@ -1517,24 +1517,18 @@ def _hop_direction(document: ProjectDocument, candidate: EnergyBarrierSourceCand
 def _hop_heading(
     document: ProjectDocument,
     candidate: EnergyBarrierNebCandidate,
-    source_candidate: EnergyBarrierSourceCandidate | None,
+    hop_name: str | None,
 ) -> str:
-    """Return the hop as the endpoint pickers name it, with its length.
+    """Return the hop as the page names it, with its length.
 
     A path whose endpoints are no longer eligible is named by its stored sites.
     """
 
-    if source_candidate is not None:
-        scope = downstream_site_scope(document, ENERGY_BARRIERS_SCOPE)
-        names = (
-            _site_label(scope, source_candidate.reactant),
-            _site_label(scope, source_candidate.product),
-        )
-    else:
+    if hop_name is None:
         names = energy_barrier_source_site_labels(document, candidate.source)
-    hop = f"{names[0]} → {names[1]}" if names is not None else "Selected path"
+        hop_name = f"{names[0]} → {names[1]}" if names is not None else "Selected path"
     length_ang = float_from_source(candidate.source, "path_length_ang")
-    return hop if length_ang is None else f"{hop} · {length_ang:.2f} Å"
+    return hop_name if length_ang is None else f"{hop_name} · {length_ang:.2f} Å"
 
 
 def _source_ids(

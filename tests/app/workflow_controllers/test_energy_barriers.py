@@ -436,6 +436,33 @@ def test_energy_barriers_hop_and_endpoints_name_a_site_alike(tmp_path: Path) -> 
     assert view.sources[-1][0].hop == f"{names[0]} → {names[1]}"
 
 
+def test_energy_barriers_dialog_heading_gives_the_direction_of_same_named_hops(
+    tmp_path: Path,
+) -> None:
+    service = ProjectService()
+    document, _definition, source, output_root = _seed_energy_barriers_document(service, tmp_path)
+    sources = [
+        {
+            **source,
+            "path_start_fractional": [0.0, 0.0, 0.0],
+            "path_end_fractional": [0.0, 0.0, 0.25],
+        },
+        {
+            **source,
+            "key": "source-key-2",
+            "path_index": 2,
+            "path_start_fractional": [0.0, 0.0, 0.0],
+            "path_end_fractional": [0.25, 0.25, 0.0],
+        },
+    ]
+    document.ui_state[ENERGY_BARRIERS_FORM_STATE_KEY]["generated_sources"] = sources
+    controller = _neb_controller(service, document, output_root)
+
+    request = controller.configure_request(["source-key"])
+
+    assert request.intro_text == "siteA → siteB along c · 2.50 Å"
+
+
 def test_energy_barriers_remove_paths_stops_when_file_cleanup_is_cancelled(tmp_path: Path) -> None:
     service = ProjectService()
     document, definition, _source, output_root = _seed_energy_barriers_document(service, tmp_path)
@@ -448,8 +475,9 @@ def test_energy_barriers_remove_paths_stops_when_file_cleanup_is_cancelled(tmp_p
         plans.append(list(plan))
         return False
 
+    statuses: list[str] = []
     controller = EnergyBarriersController(
-        make_context(document=document, project_service=service),
+        make_context(document=document, project_service=service, statuses=statuses),
         _stub_energy_barriers_deps(
             clean_up_removed_jobs=cancel, paths_removed=lambda: removed.append(True)
         ),
@@ -467,6 +495,7 @@ def test_energy_barriers_remove_paths_stops_when_file_cleanup_is_cancelled(tmp_p
 
     assert controller.neb_candidates() == []
     assert removed == [True]
+    assert statuses == ["Removed 1 energy-barrier path"]
 
 
 @pytest.mark.parametrize(

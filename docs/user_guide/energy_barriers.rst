@@ -86,11 +86,13 @@ The whole workflow is on one page, from top to bottom:
   The initial and final relaxed sites, ``Max length`` and ``Generate Paths``.
 
 ``Paths``
-  One row per hop, with its status and, once it has run, its barriers.
+  One row per hop, with its status and, once it has run, its barriers. The table
+  shows up to five rows and scrolls beyond that, and never holds fewer than three
+  while it has them.
 
 ``Selected path``
   What the row selected in the table holds: the hop, or its finished band. With
-  several rows selected it shows the first.
+  several rows selected it shows the first. With none it reads ``No path selected``.
 
 The endpoint selectors list the distinct sites pinned to the ``Muon Sites``
 summary (:doc:`/user_guide/structural_relaxation_analysis`), in the summary's
@@ -163,13 +165,13 @@ Without spins, or with non-collinear moments, paths use the crystal
 symmetry.
 
 Below ``Generate Paths`` the page states which symmetry the paths from the
-selected ``Initial`` endpoint use: "Paths use the crystal symmetry." or "Paths
+selected initial endpoint use: "Paths use the crystal symmetry." or "Paths
 use the magnetic order's symmetry, which is lower than the crystal symmetry."
 
 Generating a pair again replaces its rows, with two exceptions that keep NEB
 jobs and settings with the hop they were made for. A generated path
 symmetry-equivalent to a stored one keeps that row's number and key; a stored
-path no longer generated (for example after a shorter ``Max path length``, or
+path no longer generated (for example after a shorter ``Max length``, or
 after the grouping changed) stays when it has an NEB job or saved settings.
 Newly distinct paths take the next path numbers after those kept.
 
@@ -224,7 +226,8 @@ Configuration UI
 ----------------
 
 The heading of the configuration dialog names the hop as the endpoint selectors
-do, with its length (``8g · site 1 → 16m · site 2 · 1.72 Å``); with
+do, with its length (``8g · site 1 → 16m · site 2 · 1.72 Å``, and the direction for hops the page tells
+apart by it); with
 several paths selected it gives their number. Its rows start with the settings
 shared by every workflow, then the three a band usually needs:
 
@@ -363,8 +366,8 @@ structure in the project.
 
 ``Pop Out Viewer`` moves the structure viewer into its own resizable window while it
 stays linked to the page, which is useful for larger supercells on small screens.
-The window floats above the main window and carries its own image stepper, so a band
-can be scrubbed either from the page or from the popped-out viewer without hiding
+The window floats above the main window and, for a band, carries its own image
+stepper, so the band can be scrubbed either from the page or from the popped-out viewer without hiding
 it. Closing the window (or clicking ``Restore Viewer``) docks it back.
 
 Because the workflow is anchored to a user-selected ordered endpoint pair, the

@@ -3,12 +3,13 @@ from __future__ import annotations
 from functools import partial
 
 import pytest
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QEvent, QSize, Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QPushButton, QTabWidget
 
 from mufinder.app import energy_barriers_widget as energy_barriers_widget_module
 from mufinder.app import workflow_table_utils
+from mufinder.app.atomic_structure_viewer import AtomicStructureViewer
 from mufinder.app import selection_snapshot as selection_snapshot_module
 from mufinder.app.selection_snapshot import SelectionScope
 from mufinder.app.theme import status_brush
@@ -424,23 +425,99 @@ def test_energy_barriers_inspector_switches_between_hop_and_band(qapp) -> None:
     widget.close()
 
 
-def test_energy_barriers_page_fits_the_default_window(qapp) -> None:
-    """The page's minimum fits what a 1,333 × 864 window leaves it, with a full table."""
+def _viewer_with_its_real_size_hint(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Give the viewer the size hint it has on a real display; offscreen it asks for less."""
 
-    widget = EnergyBarriersWidget()
-    widget.set_sources([_path_row(f"path-{index}") for index in range(10)])
+    monkeypatch.setattr(AtomicStructureViewer, "sizeHint", lambda _self: QSize(640, 496))
+
+
+def _show_band_at_default_size(qapp, widget: EnergyBarriersWidget, height: int = 674) -> None:
     widget.set_neb_preview(
         title="A → B  ·  3 images",
         image_rows=_sample_preview_rows(),
         structures=[_sample_structure(), _sample_structure(), _sample_structure()],
     )
-    widget.resize(1089, 674)
+    widget.resize(1089, height)
     widget.show()
-    qapp.processEvents()
+    for _ in range(3):
+        qapp.processEvents()
+
+
+def _rows_shown_without_scrolling(table) -> int:
+    return table.viewport().height() // table.rowHeight(0)
+
+
+@pytest.mark.parametrize("height", [674, 700, 814])
+def test_energy_barriers_table_holds_three_rows_beside_a_real_viewer(
+    qapp, monkeypatch: pytest.MonkeyPatch, height: int
+) -> None:
+    _viewer_with_its_real_size_hint(monkeypatch)
+    widget = EnergyBarriersWidget()
+    widget.set_sources([_path_row(f"path-{index}") for index in range(3)])
+    _show_band_at_default_size(qapp, widget, height)
+
+    table = widget._sources_table
+    assert table.verticalScrollBar().maximum() == 0
+    assert _rows_shown_without_scrolling(table) == 3
+    widget.hide()
+    widget.close()
+
+
+def test_energy_barriers_table_grows_to_five_rows_then_scrolls(
+    qapp, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _viewer_with_its_real_size_hint(monkeypatch)
+    widget = EnergyBarriersWidget()
+    widget.set_sources([_path_row(f"path-{index}") for index in range(10)])
+    _show_band_at_default_size(qapp, widget)
+
+    table = widget._sources_table
+    assert _rows_shown_without_scrolling(table) == 5
+    assert table.verticalScrollBar().maximum() > 0
+    widget.hide()
+    widget.close()
+
+
+def test_energy_barriers_page_fits_the_default_window(
+    qapp, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The page's minimum fits what a 1,333 × 864 window leaves it, with a full table."""
+
+    _viewer_with_its_real_size_hint(monkeypatch)
+    widget = EnergyBarriersWidget()
+    widget.set_sources([_path_row(f"path-{index}") for index in range(10)])
+    _show_band_at_default_size(qapp, widget)
 
     minimum = widget.minimumSizeHint()
     assert minimum.width() <= 1089
     assert minimum.height() <= 674
+    assert widget._preview_splitter.height() >= widget._preview_viewer.minimumSizeHint().height()
+    widget.hide()
+    widget.close()
+
+
+def test_energy_barriers_empty_viewer_says_something_true(qapp) -> None:
+    """Deselecting never tells a project with a host to load one."""
+
+    widget = EnergyBarriersWidget()
+    widget.set_path_preview(
+        title="A → B",
+        summary="1.2 Å",
+        structure=_sample_structure(),
+        start_cartesian=(0.0, 0.0, 0.0),
+        end_cartesian=(1.0, 0.0, 0.0),
+    )
+    viewer = widget._preview_viewer
+
+    widget.clear_neb_preview()
+
+    assert widget._preview_title.text() == "No path selected"
+    assert viewer._structure is None
+    assert viewer._empty_message.startswith("Select a path")
+
+    # A selected path that cannot be shown says why in the title; the viewer adds nothing.
+    widget.clear_neb_preview(title="A → B: the band file was not found")
+    assert viewer._empty_message == ""
     widget.close()
 
 
@@ -543,6 +620,74 @@ def test_energy_barriers_widget_viewer_popout_and_restore(qapp) -> None:
     assert widget._viewer_popout_placeholder is None
     assert widget._preview_splitter.widget(1) is viewer
     assert widget._popout_viewer_button.text() == "Pop Out Viewer"
+    widget.close()
+
+
+def _delete_deferred(qapp) -> None:
+    qapp.processEvents()
+    qapp.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
+    qapp.processEvents()
+
+
+def test_energy_barriers_viewer_survives_popping_out_and_restoring_twice(qapp) -> None:
+    widget = EnergyBarriersWidget()
+    widget.set_neb_preview(
+        title="NEB preview",
+        image_rows=_sample_preview_rows(),
+        structures=[_sample_structure(), _sample_structure(), _sample_structure()],
+    )
+    viewer = widget._preview_viewer
+    widget.show()
+
+    for _cycle in range(2):
+        widget._popout_viewer_button.click()
+        assert widget._viewer_popout_window is not None
+        assert viewer.window() is widget._viewer_popout_window
+        widget._popout_viewer_button.click()
+        assert widget._viewer_popout_window is None
+        _delete_deferred(qapp)
+
+        assert viewer.window() is widget
+        # The controls' layout items outlive the window that held the viewer.
+        controls = viewer._controls_layout
+        assert [controls.itemAt(index).isEmpty() for index in range(controls.count())]
+        assert controls.heightForWidth(400) > 0
+        viewer.resize(viewer.width() + 40, viewer.height() + 40)
+        qapp.processEvents()
+    widget.hide()
+    widget.close()
+
+
+def test_energy_barriers_popout_stepper_shows_only_for_a_band(qapp) -> None:
+    widget = EnergyBarriersWidget()
+    widget.set_path_preview(
+        title="A → B",
+        summary="1.2 Å",
+        structure=_sample_structure(),
+        start_cartesian=(0.0, 0.0, 0.0),
+        end_cartesian=(1.0, 0.0, 0.0),
+    )
+    widget._popout_viewer_button.click()
+    window = widget._viewer_popout_window
+    assert window._prev_button.isHidden()
+    assert window._next_button.isHidden()
+
+    widget.set_neb_preview(
+        title="A → B  ·  3 images",
+        image_rows=_sample_preview_rows(),
+        structures=[_sample_structure(), _sample_structure(), _sample_structure()],
+    )
+    assert not window._next_button.isHidden()
+    assert window._position_label.text() == "Image 1 / 3"
+
+    widget.set_path_preview(
+        title="A → B",
+        summary="1.2 Å",
+        structure=_sample_structure(),
+        start_cartesian=(0.0, 0.0, 0.0),
+        end_cartesian=(1.0, 0.0, 0.0),
+    )
+    assert window._next_button.isHidden()
     widget.close()
 
 

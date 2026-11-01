@@ -58,14 +58,17 @@ from mufinder.app.workflow_table_utils import (
 )
 from mufinder.domain.models import Structure
 
-# The path table caps its height at this many visible rows so the inspector keeps
-# the remaining vertical space.
-_MAX_VISIBLE_PATH_ROWS = 6
+# The path table shows up to this many rows when the page has room, and always holds
+# the smaller number, so a short path list never scrolls. The default window fits both
+# with the inspector at its minimum.
+_MAX_VISIBLE_PATH_ROWS = 5
+_MIN_HELD_PATH_ROWS = 3
 # The endpoint selectors keep this many characters of a label on narrow pages; the
 # open list shows every label in full.
 _ENDPOINT_COMBO_MIN_CHARACTERS = 14
 
 _NO_PATH_SELECTED_TITLE = "No path selected"
+_SELECT_A_PATH_HINT = "Select a path to see its hop, or its band once it has run."
 
 
 @dataclass(frozen=True, slots=True)
@@ -515,13 +518,29 @@ class _ViewerPopoutWindow(QWidget):
         layout.insertWidget(0, viewer, 1)
 
     def update_position(self, text: str, *, has_previous: bool, has_next: bool) -> None:
+        """Show the image position; without one (no band) the stepper is hidden."""
+
         self._position_label.setText(text)
         self._prev_button.setEnabled(has_previous)
         self._next_button.setEnabled(has_next)
+        self._prev_button.setVisible(bool(text))
+        self._position_label.setVisible(bool(text))
+        self._next_button.setVisible(bool(text))
 
     def closeEvent(self, event) -> None:  # noqa: N802 - Qt API naming.
         self.closing.emit()
         super().closeEvent(event)
+
+
+class _InspectorSplitter(QSplitter):
+    """Splitter that asks only for its minimum height, so the path table is served first.
+
+    The structure viewer prefers about 500 px. Asked for by size hint, that would leave the
+    table at its minimum however tall the window; the splitter still takes what is left.
+    """
+
+    def sizeHint(self) -> QSize:  # noqa: N802 - Qt API naming.
+        return QSize(super().sizeHint().width(), self.minimumSizeHint().height())
 
 
 class EnergyBarriersWidget(SourceTableWidget):
@@ -715,7 +734,7 @@ class EnergyBarriersWidget(SourceTableWidget):
         header.addWidget(self._popout_viewer_button)
         inspector_layout.addLayout(header)
 
-        self._preview_splitter = QSplitter(Qt.Orientation.Horizontal, group)
+        self._preview_splitter = _InspectorSplitter(Qt.Orientation.Horizontal, group)
         self._preview_splitter.setChildrenCollapsible(False)
         # The band's profile and image stepper; hidden while no band is shown.
         self._band_controls = QWidget(self._preview_splitter)
@@ -740,7 +759,7 @@ class EnergyBarriersWidget(SourceTableWidget):
         controls_layout.addLayout(stepper_row)
 
         self._preview_viewer_placeholder = QLabel(
-            "Select a path to see its hop, or its band once it has run.",
+            _SELECT_A_PATH_HINT,
             self._preview_splitter,
         )
         self._preview_viewer_placeholder.setWordWrap(True)
@@ -864,10 +883,9 @@ class EnergyBarriersWidget(SourceTableWidget):
             table.rowHeight(0) if table.rowCount() else table.verticalHeader().defaultSectionSize()
         )
         chrome = header_height + 2 * table.frameWidth() + 6
-        visible_rows = max(2, min(table.rowCount(), _MAX_VISIBLE_PATH_ROWS))
-        # The table gives way to the inspector down to two rows on short screens.
-        table.setMinimumHeight(chrome + 2 * row_height)
-        table.setMaximumHeight(chrome + visible_rows * row_height)
+        rows = max(1, table.rowCount())
+        table.setMinimumHeight(chrome + min(rows, _MIN_HELD_PATH_ROWS) * row_height)
+        table.setMaximumHeight(chrome + min(rows, _MAX_VISIBLE_PATH_ROWS) * row_height)
 
     def _on_path_selection_changed(self) -> None:
         self._update_actions()
@@ -960,6 +978,8 @@ class EnergyBarriersWidget(SourceTableWidget):
         self._preview_summary.setText("")
         self._popout_viewer_button.setEnabled(self._viewer_popout_window is not None)
         if self._preview_viewer is not None:
+            # A title says why a selected path shows nothing, so the viewer adds no text.
+            self._preview_viewer.set_empty_message("" if title else _SELECT_A_PATH_HINT)
             with self._preview_viewer.batch_update():
                 self._preview_viewer.set_point_overlays(None)
                 self._preview_viewer.set_line_overlays(None)
@@ -1107,11 +1127,14 @@ class EnergyBarriersWidget(SourceTableWidget):
         placeholder = self._viewer_popout_placeholder
         self._viewer_popout_placeholder = None
         if viewer is not None and placeholder is not None:
+            # Taken out of the window first: PySide ties Python objects to the parent it
+            # last saw, so deleting the window would kill the viewer's layout items.
+            viewer.setParent(None)
             self._preview_splitter.replaceWidget(1, viewer)
             placeholder.deleteLater()
             viewer.show()
         self._popout_viewer_button.setText("Pop Out Viewer")
-        self._popout_viewer_button.setEnabled(bool(self._inspected[0]))
+        self._popout_viewer_button.setEnabled(viewer is not None and viewer.has_structure())
         window.deleteLater()
 
     def _shutdown_preview_viewer(self) -> None:
