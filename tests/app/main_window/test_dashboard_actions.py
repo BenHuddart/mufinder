@@ -2382,6 +2382,29 @@ def test_dashboard_double_click_shows_the_stage_with_the_row_selected(
         window.hide()
 
 
+def test_dashboard_open_finds_a_convergence_row_whose_form_has_diverged(
+    main_window, tmp_path: Path
+) -> None:
+    window = main_window
+    service, doc, _host = open_project_with_host(window, tmp_path)
+    window._convergence_view.configure_requested.emit(
+        ConvergenceConfig(
+            sweep_values=(300.0, 400.0),
+            shared_params={"task": "SINGLEPOINT"},
+            overrides={},
+            name_prefix="another_prefix",
+        )
+    )
+    job = _add_dashboard_job(service, doc, "another_prefix_ecut_400", JobStatus.FAILED)
+    definition = window._convergence_controller.active_definition()
+    definition.parameters["job_ids_by_cutoff"]["400"] = str(job.id)
+    window._refresh_ui_after_project_change()
+
+    window._on_open_in_stage_from_dashboard([job.id])
+
+    assert window._convergence_view._selected_keys() == (400.0,)
+
+
 @pytest.mark.parametrize(
     "stage",
     [
