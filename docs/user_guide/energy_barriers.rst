@@ -87,8 +87,8 @@ The whole workflow is on one page, from top to bottom:
 
 ``Paths``
   One row per hop, with its status and, once it has run, its barriers. The table
-  shows up to five rows and scrolls beyond that, and never holds fewer than three
-  while it has them.
+  always holds three rows when it has them, shows up to five when the window has
+  room, and scrolls beyond that.
 
 ``Selected path``
   What the row selected in the table holds: the hop, or its finished band. With

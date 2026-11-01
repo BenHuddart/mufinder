@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSizePolicy,
     QSplitter,
+    QTableWidget,
     QToolButton,
     QToolTip,
     QVBoxLayout,
@@ -59,8 +60,8 @@ from mufinder.app.workflow_table_utils import (
 from mufinder.domain.models import Structure
 
 # The path table shows up to this many rows when the page has room, and always holds
-# the smaller number, so a short path list never scrolls. The default window fits both
-# with the inspector at its minimum.
+# the smaller number, so a short path list never scrolls. The default window fits the
+# smaller number with the inspector at its minimum.
 _MAX_VISIBLE_PATH_ROWS = 5
 _MIN_HELD_PATH_ROWS = 3
 # The endpoint selectors keep this many characters of a label on narrow pages; the
@@ -532,6 +533,13 @@ class _ViewerPopoutWindow(QWidget):
         super().closeEvent(event)
 
 
+class _PathTable(QTableWidget):
+    """Table that asks for the height of the rows it may show, which its maximum holds."""
+
+    def sizeHint(self) -> QSize:  # noqa: N802 - Qt API naming.
+        return QSize(super().sizeHint().width(), self.maximumHeight())
+
+
 class _InspectorSplitter(QSplitter):
     """Splitter that asks only for its minimum height, so the path table is served first.
 
@@ -671,6 +679,7 @@ class EnergyBarriersWidget(SourceTableWidget):
             resize_to_contents_columns=(1, 2, 3, 4, 5, 6),
             stretch_last_section=False,
             accessible_name="Paths",
+            table_type=_PathTable,
         )
         self._sources_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self._sources_table.itemSelectionChanged.connect(self._on_path_selection_changed)

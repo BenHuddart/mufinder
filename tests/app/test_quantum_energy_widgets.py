@@ -463,7 +463,7 @@ def test_energy_barriers_table_holds_three_rows_beside_a_real_viewer(
     widget.close()
 
 
-def test_energy_barriers_table_grows_to_five_rows_then_scrolls(
+def test_energy_barriers_long_table_holds_three_rows_and_grows_to_five_then_scrolls(
     qapp, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _viewer_with_its_real_size_hint(monkeypatch)
@@ -472,6 +472,12 @@ def test_energy_barriers_table_grows_to_five_rows_then_scrolls(
     _show_band_at_default_size(qapp, widget)
 
     table = widget._sources_table
+    assert _rows_shown_without_scrolling(table) >= 3
+    assert table.verticalScrollBar().maximum() > 0
+
+    widget.resize(1089, 900)
+    qapp.processEvents()
+
     assert _rows_shown_without_scrolling(table) == 5
     assert table.verticalScrollBar().maximum() > 0
     widget.hide()

@@ -312,6 +312,7 @@ def create_workflow_table(
     stretch_last_section: bool = True,
     default_resize_mode: QHeaderView.ResizeMode = QHeaderView.ResizeMode.Stretch,
     accessible_name: str = "",
+    table_type: type[QTableWidget] = QTableWidget,
 ) -> QTableWidget:
     """Build a table with MuFinder's shared chrome.
 
@@ -331,10 +332,11 @@ def create_workflow_table(
     and ``default_resize_mode`` let sites that want every column sized to its
     contents (rather than stretched to fill) opt out of the stretch default.
     ``accessible_name`` is what a screen reader announces for the table: the
-    title of the group or dialog that shows it, in Title Case.
+    title of the group or dialog that shows it, in Title Case. ``table_type`` is
+    a ``QTableWidget`` subclass to build instead.
     """
 
-    table = QTableWidget(0, len(headers))
+    table = table_type(0, len(headers))
     if accessible_name:
         table.setAccessibleName(accessible_name)
     table.setHorizontalHeaderLabels(list(headers))
