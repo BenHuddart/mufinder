@@ -1390,7 +1390,8 @@ element, from bundled isotope data.
 
 The ``Results`` group reports :math:`\sigma` in :math:`\mu\mathrm{s}^{-1}`,
 :math:`\sigma^2` and :math:`M_2` in :math:`\mu\mathrm{s}^{-2}`, equivalent
-field width :math:`\Delta B` in Tesla, the explicit sum radius in Å, the number
+field width :math:`\Delta B` in Tesla, the explicit sum radius in Å to one
+decimal at most (the row's tooltip says it is the largest of the elements'), the number
 of nuclei in that sum, the elements included (``All`` when none was left out), and
 element-resolved :math:`\sigma^2` contributions. For ZF
 single-crystal calculations it also reports the perpendicular and parallel
@@ -1431,6 +1432,13 @@ direction exactly what it adds to the polycrystal width of the same regime. The
 sum with its tail matches a direct sum to 100 Å to about 0.001 % in
 :math:`\sigma` for the Fe, MnSi and CoF₂ hosts of the worked examples and for a
 sheared copper cell, and to about 0.05 % for one copper nucleus in a 16 Å cell.
+
+The tail assumes nuclei in every direction, which a slab does not have. For a
+muon at or inside a realistic surface this does not matter: in a six-layer copper
+slab, a muon between the middle layers or 1.5 Å above the surface is within
+0.004 % in :math:`\sigma`. Far out in the vacuum the single-crystal widths are
+off by up to 2 %, on very small widths: in a two-layer copper slab, 15 Å above the
+surface, +1.7 % along (0, 0, 1) and −2.0 % along (1, 1, 1).
 
 With the distortion correction ticked, MuFinder pairs the relaxed supercell
 with the active host exactly as for the dipolar field, with the same checks (see

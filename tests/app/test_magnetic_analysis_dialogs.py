@@ -82,6 +82,30 @@ def test_nuclear_relaxation_dialog_reports_a_failed_calculation(qapp) -> None:
     dialog.close()
 
 
+@pytest.mark.parametrize(("radius", "shown"), [(30.093759, "30.1"), (20.0, "20"), (219.96, "220")])
+def test_explicit_sum_radius_reads_short_and_explains_itself(
+    qapp, radius: float, shown: str
+) -> None:
+    dialog = NuclearRelaxationDialog(
+        muon_site=None,
+        distortion_available=False,
+        results_state={"mode": "zf_polycrystal", "convergence_radius_a": radius},
+    )
+    table = dialog._summary_table
+    row = next(
+        index
+        for index in range(table.rowCount())
+        if table.item(index, 0).text() == "Explicit sum radius (Å)"
+    )
+
+    assert table.item(row, 1).text() == shown
+    assert "each element" in table.item(row, 0).toolTip().lower()
+    assert "largest" in table.item(row, 0).toolTip().lower()
+    # Only the display is rounded.
+    assert dialog.results_state()["convergence_radius_a"] == radius
+    dialog.close()
+
+
 def _site_from(source: str) -> MagneticMuonSiteOption:
     return replace(custom_muon_site((0.25, 0.25, 0.25)), source=source, label=f"{source} site")
 

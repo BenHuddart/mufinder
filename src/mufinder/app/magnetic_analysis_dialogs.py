@@ -65,6 +65,10 @@ from mufinder.services.magnetic_field_results import (
 from mufinder.services.magnetic_field_sites import MagneticMuonSiteOption
 
 
+_SUM_RADIUS_LABEL = "Explicit sum radius (Å)"
+_SUM_RADIUS_TOOLTIP = "Each element has its own reach; this row shows the largest."
+
+
 class NuclearRelaxationDialog(QDialog):
     """Configure and display nuclear dipolar relaxation calculations."""
 
@@ -106,8 +110,13 @@ class NuclearRelaxationDialog(QDialog):
             DecimalLineEdit(text=text, minimum=-1_000_000.0, maximum=1_000_000.0, decimals=12)
             for text in ("0.0", "0.0", "1.0")
         )
-        for edit in (self._direction_x, self._direction_y, self._direction_z):
+        self._regime_combo.setAccessibleName("Field regime")
+        self._sample_combo.setAccessibleName("Sample")
+        for axis, edit in zip(
+            "xyz", (self._direction_x, self._direction_y, self._direction_z), strict=True
+        ):
             edit.setObjectName("nuclearDirectionInput")
+            edit.setAccessibleName(f"Crystal-axis direction {axis}")
             edit.setMinimumWidth(92)
         self._element_checks = {
             str(element): QCheckBox(str(element), self) for element in dict.fromkeys(elements)
@@ -322,7 +331,7 @@ class NuclearRelaxationDialog(QDialog):
             ("σ² (μs⁻²)", _format_float(result.get("sigma_squared"))),
             ("M₂ (μs⁻²)", _format_float(result.get("m2"))),
             ("Δ field (T)", _format_float(result.get("delta_field_t"))),
-            ("Explicit sum radius (Å)", _format_float(result.get("convergence_radius_a"))),
+            (_SUM_RADIUS_LABEL, _format_radius(result.get("convergence_radius_a"))),
             ("Nuclei summed", str(result.get("n_nuclei_summed", ""))),
             ("Elements", _nuclear_elements_text(result.get("elements"))),
         ]
@@ -344,7 +353,10 @@ class NuclearRelaxationDialog(QDialog):
         for label, value in rows:
             row = self._summary_table.rowCount()
             self._summary_table.insertRow(row)
-            self._summary_table.setItem(row, 0, QTableWidgetItem(label))
+            label_item = QTableWidgetItem(label)
+            if label == _SUM_RADIUS_LABEL:
+                label_item.setToolTip(_SUM_RADIUS_TOOLTIP)
+            self._summary_table.setItem(row, 0, label_item)
             self._summary_table.setItem(row, 1, QTableWidgetItem(value))
         per_element = result.get("per_element_sigma_squared")
         if isinstance(per_element, Mapping):
@@ -781,6 +793,15 @@ def _nuclear_elements_text(elements: object) -> str:
 def _format_float(value: object) -> str:
     try:
         return f"{float(value):.8g}"
+    except (TypeError, ValueError):
+        return ""
+
+
+def _format_radius(value: object) -> str:
+    """A radius in Å with one decimal at most."""
+
+    try:
+        return f"{float(value):.1f}".removesuffix(".0")
     except (TypeError, ValueError):
         return ""
 
