@@ -37,7 +37,7 @@ from mufinder.app.export_dialogs import (
     report_export_failed,
     report_export_saved,
 )
-from mufinder.app.result_notes import unrelaxed_results_note
+from mufinder.app.result_notes import older_method_results_note, unrelaxed_results_note
 from mufinder.app.plot_canvas import PlotFrame, create_plot_canvas
 from mufinder.app.theme import (
     categorical_colour,
@@ -203,10 +203,7 @@ class PolarisationWidget(QWidget):
         self._stale_note.setWordWrap(True)
         style_warning_text(self._stale_note)
         self._stale_note.setVisible(False)
-        self._older_method_note = QLabel("", self)
-        self._older_method_note.setWordWrap(True)
-        style_warning_text(self._older_method_note)
-        self._older_method_note.setVisible(False)
+        self._older_method_note = older_method_results_note(self)
         self._warning_note = QLabel("", self)
         self._warning_note.setWordWrap(True)
         style_warning_text(self._warning_note)

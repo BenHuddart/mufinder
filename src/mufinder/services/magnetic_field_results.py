@@ -127,10 +127,10 @@ def uses_older_method(result: Mapping[str, Any]) -> bool:
     """Return whether a stored result predates :data:`CALCULATION_METHOD_VERSION`.
 
     ``result`` is record data or a form-state result; one with no version
-    recorded counts as older, and an empty one is no result at all.
+    recorded counts as older, and an empty or malformed one is no result at all.
     """
 
-    if not result:
+    if not isinstance(result, Mapping) or not result:
         return False
     version = result.get(CALCULATION_VERSION_KEY)
     return (

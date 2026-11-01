@@ -109,6 +109,7 @@ def test_attach_restores_the_form_the_page_stored(tmp_path: Path) -> None:
         ({"sigma": 0.2, CALCULATION_VERSION_KEY: CALCULATION_METHOD_VERSION}, False),
         ({"sigma": 0.2, CALCULATION_VERSION_KEY: CALCULATION_METHOD_VERSION + 1}, False),
         ({}, False),
+        (["not", "a", "result"], False),
     ],
 )
 def test_a_result_is_older_by_its_stored_version(result, older) -> None:
