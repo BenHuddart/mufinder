@@ -75,6 +75,9 @@ class FakeMenu:
     def setToolTipsVisible(self, _visible: bool) -> None:
         return None
 
+    def deleteLater(self) -> None:
+        return None
+
     def addMenu(self, title: str) -> FakeMenu:
         submenu = FakeMenu.__new__(FakeMenu)
         submenu.actions = []

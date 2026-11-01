@@ -900,16 +900,19 @@ class SelectionFeedback(QObject):
         multi = len(rows) >= 2
         for row in range(self._table.rowCount()):
             for column in range(self._table.columnCount()):
-                widget = self._table.cellWidget(row, column)
-                if widget is None or not getattr(widget, "propagates_to_selection", False):
+                cell = self._table.cellWidget(row, column)
+                if cell is None:
                     continue
-                targeted = multi and row in rows
-                if bool(widget.property(MULTI_ROW_TARGET_PROPERTY)) == targeted:
-                    continue
-                widget.setProperty(MULTI_ROW_TARGET_PROPERTY, targeted)
-                # A dynamic property only restyles the widget once repolished.
-                widget.style().unpolish(widget)
-                widget.style().polish(widget)
+                for widget in getattr(cell, "row_controls", (cell,)):
+                    if not getattr(widget, "propagates_to_selection", False):
+                        continue
+                    targeted = multi and row in rows
+                    if bool(widget.property(MULTI_ROW_TARGET_PROPERTY)) == targeted:
+                        continue
+                    widget.setProperty(MULTI_ROW_TARGET_PROPERTY, targeted)
+                    # A dynamic property only restyles the widget once repolished.
+                    widget.style().unpolish(widget)
+                    widget.style().polish(widget)
 
 
 def show_status_message(widget: QWidget, text: str, timeout_ms: int = 6000) -> None:

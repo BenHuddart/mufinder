@@ -188,7 +188,8 @@ affected.
   previous selection.
 - Controls that propagate: the ``Supercell`` drop-down, the ``Fix cell``
   checkbox, the per-row ``Configure`` and remove buttons, and every Job Dashboard
-  action button.
+  action button and ``⋯`` menu entry except ``Continue relaxation…`` and ``Open
+  in``, which act on their own row.
 - Controls that only make sense for one row (``Open Wizard`` in the UEP table,
   ``View…`` in the Energy Barriers table) always act on their own row and
   never prompt.
@@ -199,7 +200,7 @@ inside the rows, so tables stay usable on a small laptop screen:
 - While two or more rows are selected, the row controls that will act on all of
   them are drawn with a heavier border. Single-row controls are not.
 - Each workflow table shows ``N selected`` beside its buttons. The Job
-  Dashboard shows ``N selected · row buttons apply to all selected`` above the
+  Dashboard shows ``N selected · row actions apply to all selected`` above the
   table, only while two or more rows are selected.
 - After a multi-row ``Supercell`` or ``Fix cell`` change the status bar reports
   how many rows were changed and how many were skipped.
@@ -238,10 +239,10 @@ right-click menu, or Delete/Backspace):
   mention cancellation, so those removals are confirmed again with it stated.
 - A single-row ``Cancel`` or ``Dismiss`` on the Job Dashboard, and ``Cancel``
   or ``Dismiss`` in a workflow table's or the dashboard's right-click menu, ask
-  before acting. ``Reset`` asks its clean-up question, which can be cancelled.
-- Deleting a saved supercell, a comparison table, a magnetic field workspace,
-  an analysis or dashboard jobs, and removing imported relaxations, are
-  confirmed the same way.
+  before acting, as does Delete or Backspace on the dashboard. ``Reset…`` asks
+  its clean-up question, which can be cancelled.
+- Deleting a saved supercell, a comparison table, a magnetic field workspace
+  or an analysis, and removing imported relaxations, are confirmed the same way.
 - In every confirmation the safe choice is the default button and the one
   Escape selects, and the buttons are labelled with the action
   (``Delete supercell`` / ``Cancel``, ``Remove 3 rows``, ``Keep running``)
@@ -271,15 +272,42 @@ failed jobs, stopped jobs and cancelled jobs. Completed jobs leave it after
 their results are handled, and a failed, stopped or cancelled job that you
 ``Dismiss`` is hidden without losing its records. Rows are listed in the order
 their jobs were created, and that order survives closing and reopening the
-project: resubmitting, resetting or continuing a job does not move its row.
+project: resubmitting, resetting or continuing a job does not move its row. The
+dock opens tall enough for about five rows when the window has the room.
 
-Each row lists the job's ``Label``, ``Workflow``, ``Calc Type``, ``Status``,
-``Progress``, ``Last Checked``, ``Cluster`` (``local`` for local jobs),
-``Remote Job ID``, ``Runtime`` and ``Processes``, followed by per-row
-``Resubmit``, ``Retry retrieval``, ``Cancel``, ``Inspect``, ``Reset`` and
-``Dismiss`` buttons that are enabled only when they apply. The dashboard has no
-filter controls; select rows to act on them, as in `Working with selected
-rows`_.
+Each row has these columns:
+
+``Job``
+   The job's label.
+
+``Stage``
+   The navigator's name for the page the job belongs to, such as ``Cutoff
+   Energy``, ``Relaxations`` or ``Quantum Corrections``.
+
+``Status``
+   The job's state with its reason or progress beside it:
+   ``failed · SCF did not converge``, ``stopped · walltime``, ``running · step
+   12 of 100``. Hold the pointer over the cell for the full explanation and for
+   when and how the status was last checked. A small clock on the row means the
+   status of an active cluster job may be out of date, because the cluster is
+   not connected or has not been checked for a while; the tooltip says which.
+
+``Where``
+   ``local``, or the cluster and its scheduler job id (``SCARF #4127731``).
+
+``Runtime``
+   How long the job has run.
+
+``Cores``
+   The processes it runs on.
+
+``Action``
+   One button for what the job most likely needs, and a ``⋯`` menu with the
+   rest (see `Acting on jobs`_).
+
+Double-click a row to show its stage's page with the job's row selected. The
+dashboard has no filter controls; select rows to act on them, as in `Working
+with selected rows`_.
 
 Job states
 ~~~~~~~~~~
@@ -313,7 +341,7 @@ The ``Status`` column shows where each job is:
 ``failed``
    The process, scheduler, retrieval, or parser reported a failure. Failed jobs
    remain in the dashboard so their diagnostics can be inspected with
-   ``Inspect``. They can be resubmitted or reset. A cluster job that failed
+   ``Inspect…``. They can be resubmitted or reset. A cluster job that failed
    only because the scheduler stopped listing it is still watched: if SLURM
    later reports it queued, running, or completed, the job returns to the
    dashboard's active states and the status bar says that tracking resumed.
@@ -333,19 +361,44 @@ The ``Status`` column shows where each job is:
 Acting on jobs
 ~~~~~~~~~~~~~~
 
-To act on one or more jobs, click a row button or select rows and right-click.
-The right-click menu offers ``Resubmit``, ``Retry Retrieval``, ``Cancel``,
-``Inspect``, ``Reset``, ``Dismiss`` and ``Delete…``. Each entry is enabled
-when it applies to at least one selected job, acts on those jobs only, as the
-row buttons do, and carries the count when it is partial (``Reset (2 of 3)``).
-The row buttons remain the primary controls.
+Each row's ``Action`` column has one button, for the action that fits its
+state:
 
-``Inspect``
+.. list-table::
+   :header-rows: 1
+
+   * - Job state
+     - Button
+   * - ``submitting``, ``queued``, ``running``, ``retrieving``
+     - ``Cancel``
+   * - ``failed``, ``stopped``
+     - ``Inspect…``
+   * - ``failed`` or ``stopped`` because its output could not be retrieved,
+       with its cluster connected
+     - ``Retry retrieval``
+   * - ``cancelled``
+     - ``Resubmit…``
+
+The ``⋯`` menu beside it lists the other actions that apply to the job, and ends
+with ``Open in <stage>``, which does what a double-click does. Right-click a row
+for the same entries applied to the selection: each is enabled when it applies
+to at least one selected job, acts on those jobs only, and carries the count
+when it is partial (``Reset… (2 of 3)``).
+
+``Cancel``
+   Cancels an active job after asking for confirmation.
+
+``Inspect…``
    Shows why a failed or stopped job failed (see `When a job fails`_). On a
    running relaxation it opens the progress dialog (see `Watching a
    relaxation`_).
 
-``Resubmit``
+``Retry retrieval``
+   Failed or stopped cluster jobs that kept their remote metadata can fetch
+   their output again instead of being resubmitted, while their cluster is
+   connected.
+
+``Resubmit…``
    Available for failed, stopped and cancelled jobs. Relaxations ask first
    whether to continue from their checkpoint or start again (see
    :ref:`resubmit-continue-or-start-again`). Cluster resubmission reuses
@@ -354,14 +407,11 @@ The row buttons remain the primary controls.
    scheduler submit script is regenerated on every submission, so an updated
    walltime, core count, or memory request takes effect on resubmission.
 
-``Retry retrieval``
-   Failed or stopped cluster jobs that kept their remote metadata can fetch
-   their output again instead of being resubmitted.
+``Continue relaxation…``
+   For a failed, stopped or cancelled relaxation whose workflow row can be
+   continued (see :ref:`continue-relaxation`). It opens for one job at a time.
 
-``Cancel``
-   Cancels a queued or running job after asking for confirmation.
-
-``Reset``
+``Reset…``
    Returns a failed, stopped or cancelled job to ``defined``, with an option to
    clean its output folder. See `Reset and its clean-up`_.
 
@@ -369,24 +419,24 @@ The row buttons remain the primary controls.
    Hides a failed, stopped or cancelled job from the dashboard, after asking
    for confirmation. Its records are kept.
 
-``Delete…``
-   Pressing Delete or Backspace with dashboard rows selected, or choosing
-   ``Delete…``, applies the action that fits each job's state: active jobs
-   (``submitting``, ``queued``, ``running``, ``retrieving``) are cancelled,
-   failed, stopped and cancelled jobs are reset, and any other job has its
-   records deleted. One summary dialog lists those actions with their counts
-   before anything happens and offers ``Also clean the output directories of the
-   jobs being reset``; cancelling it leaves every selected job untouched.
-   Imported jobs cannot be reset and are reported as left unchanged.
+``Open in <stage>``
+   Shows the stage's page with the job's row selected. When a job has no row on
+   the page, the page still shows and the status bar says so. From the
+   right-click menu it needs the selected jobs to belong to one stage.
 
-A ``Cancel`` or ``Dismiss`` button on a single row asks for confirmation; on a
+Pressing Delete or Backspace with dashboard rows selected cancels the active
+jobs and dismisses the failed, stopped and cancelled ones, after one summary
+that states both; refusing it leaves every selected job untouched. It never
+resets a job or deletes its records: ``Reset…`` is in the menus only.
+
+A ``Cancel`` or ``Dismiss`` on a single row asks for confirmation; on a
 multi-row selection the "all selected jobs / this job only / cancel" prompt
 serves as that confirmation.
 
 Reset and its clean-up
 ~~~~~~~~~~~~~~~~~~~~~~
 
-``Reset`` asks ``Clean and reset``, ``Reset, keep files`` (the default) or
+``Reset…`` asks ``Clean and reset``, ``Reset, keep files`` (the default) or
 ``Cancel``. The clean-up deletes everything in a job's output folder
 except its ``.cell``/``.param`` inputs, and applies the same ownership check as
 :ref:`starting a relaxation again <resubmit-continue-or-start-again>`, limited
@@ -422,20 +472,17 @@ Geometry-optimisation progress
    synthetic CASTEP output.
 
 A running pristine or muon relaxation shows how far its geometry optimisation
-has got in the narrow ``Progress`` column, as ``iteration · criteria met``: for
-example ``14 · 3/4`` means CASTEP has finished iteration 14 and three of the
-four convergence criteria it tests (``dE/ion``, ``|F|max``, ``|dR|max``,
-``Smax``) are within tolerance. A run that fixes every ion or the cell tests
-fewer criteria, so its count reads out of three or two. ``starting`` means the
-run has echoed its parameters but not finished a step. The cell is empty for
-every other job and status.
+has got beside its status: ``running · step 14 of 100`` means CASTEP has finished
+iteration 14 of the ``GEOM_MAX_ITER`` limit. ``running · starting`` means the run
+has echoed its parameters but not finished a step.
 
 To see more detail:
 
-1. Hover the ``Progress`` cell. The tooltip lists each criterion's value
-   against its tolerance, the step limit (``GEOM_MAX_ITER``) and, after a
-   continuation, which restart the figures belong to.
-2. Select the running relaxation and click ``Inspect``. The progress dialog
+1. Hover the ``Status`` cell. The tooltip lists the convergence criteria CASTEP
+   tests (``dE/ion``, ``|F|max``, ``|dR|max``, ``Smax``; a run that fixes every
+   ion or the cell tests fewer) with each value against its tolerance and, after
+   a continuation, which restart the figures belong to.
+2. Choose ``Inspect…`` from the row's ``⋯`` menu. The progress dialog
    (``Geometry Progress - <label>``) shows the same table and a plot of each
    criterion over the iterations against its tolerance.
 3. Leave the dialog open. It updates as new steps arrive, and its ``Refresh``
@@ -462,13 +509,13 @@ Why a job failed
 ~~~~~~~~~~~~~~~~
 
 A failed or stopped row names its cause in the ``Status`` column, for example
-``stopped · walltime`` or ``failed · memory``. Hovering the cell shows a
-one-sentence explanation followed by the recorded failure message; a failure
-with no recognised cause shows ``failed`` and its message, and points to
-``Inspect``.
+``stopped · walltime`` or ``failed · memory``. A CASTEP error, or a failure with
+no recognised cause, shows the first line of the recorded message instead
+(``failed · SCF did not converge``). Hovering the cell shows a one-sentence
+explanation followed by the recorded failure message.
 
-To read the diagnosis, select the job and click ``Inspect`` (``Inspect
-Failure`` in a workflow table's right-click menu). The ``Failed job`` dialog
+To read the diagnosis, click the row's ``Inspect…`` (``Inspect Failure`` in a
+workflow table's right-click menu). The ``Failed job`` dialog
 opens with a headline saying why the job did not finish:
 
 1. the recognised cause, from the table below, when there is one;
@@ -485,7 +532,7 @@ context around the failure lines of each error file in the output folder
 
 The dialog's buttons act on the job directly:
 
-- ``Resubmit…`` runs the dashboard's ``Resubmit``, including its
+- ``Resubmit…`` runs the dashboard's ``Resubmit…``, including its
   continue-or-start-again question for relaxations (see
   :ref:`resubmit-continue-or-start-again`).
 - ``Continue relaxation…`` (a pristine or muon relaxation whose row can be
@@ -543,12 +590,12 @@ failure, so a job killed at its walltime before CASTEP wrote any output is
 reported as ``walltime``, not ``no output``. Logs last modified before the job
 was submitted are ignored, so a continuation in a reused directory is not
 blamed on the previous run's errors. Jobs that failed before causes were
-recorded show ``failed`` alone; ``Inspect`` still diagnoses them from their
+recorded show ``failed`` alone; ``Inspect…`` still diagnoses them from their
 logs.
 
 MuFinder never resubmits a failed job by itself: the cause tells you whether to
 raise the walltime or memory request, continue from the checkpoint, or fix the
-input. A ``walltime`` row's tooltip ends with that next step: ``Resubmit``
+input. A ``walltime`` row's tooltip ends with that next step: ``Resubmit…``
 (continuing or starting again, for a relaxation), with a longer walltime if
 needed.
 
@@ -560,11 +607,11 @@ Resubmitting a relaxation: continue or start again
 Every relaxation ``.param`` contains ``CONTINUATION : DEFAULT``, so a relaxation
 resubmitted into its own run directory resumes from the ``{seed}.check`` file
 the previous run left there, and starts from its initial structure when there
-is none. When ``Resubmit`` includes pristine or muon relaxations, MuFinder
+is none. When ``Resubmit…`` includes pristine or muon relaxations, MuFinder
 therefore asks once for the whole selection, in ``Resubmit relaxations``,
 before the submission dialog.
 
-Before that question, ``Resubmit`` checks what the submission needs. Local jobs
+Before that question, ``Resubmit…`` checks what the submission needs. Local jobs
 need a CASTEP executable: without one, ``CASTEP executable missing`` offers
 ``Open Setup > CASTEP…``, and the resubmission goes on once an executable is
 set there. Cluster jobs need a configured cluster: without one, ``No configured
@@ -806,7 +853,8 @@ Monitoring and retrieval
   the next one reconnects. The button is
   disabled, with a tooltip saying why, when no job has a remote job id to poll,
   such as while the only cluster job is still being submitted.
-- The queue is polled periodically, updating each job's ``Last Checked`` time.
+- The queue is polled periodically, updating when each job was last checked, shown
+  in its ``Status`` tooltip.
   SLURM polling tolerates stale or expired job ids (``Invalid job id
   specified``) by falling back to per-job status checks instead of failing the
   whole refresh.

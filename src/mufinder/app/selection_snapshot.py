@@ -32,18 +32,22 @@ from collections.abc import Callable, Sequence
 from enum import Enum
 from typing import TypeVar
 
+import shiboken6
 from PySide6.QtCore import QEvent, QItemSelection, QItemSelectionModel, QObject, Qt, QTimer
 from PySide6.QtGui import QKeyEvent, QMouseEvent, QWheelEvent
 from PySide6.QtWidgets import (
     QCheckBox,
+    QHBoxLayout,
     QMessageBox,
     QPushButton,
     QTableWidget,
+    QTabWidget,
     QToolButton,
     QWidget,
 )
 
 from mufinder.app.eliding_label import ElidingComboBox
+from mufinder.app.theme import SPACING
 
 KeyT = TypeVar("KeyT")
 
@@ -135,10 +139,12 @@ class _SnapshotMixin:
         self.selection_snapshot_rows = rows
 
     def _own_table_row(self, table: QTableWidget) -> int | None:
-        """Return the row of *table* this widget is installed in as a cell widget."""
+        """Return the row of *table* this widget is in, directly or inside a controls cell."""
+        parent = self.parent()  # type: ignore[attr-defined]
         for row in range(table.rowCount()):
             for column in range(table.columnCount()):
-                if table.cellWidget(row, column) is self:
+                cell = table.cellWidget(row, column)
+                if cell is not None and (cell is self or cell is parent):
                     return row
         return None
 
@@ -227,6 +233,25 @@ class SelectionSnapshotToolButton(_SnapshotMixin, QToolButton):
         if event.key() in (Qt.Key.Key_Space, Qt.Key.Key_Return, Qt.Key.Key_Enter):
             self._capture_selection_snapshot()
         super().keyPressEvent(event)
+
+
+class RowControlsCell(QWidget):
+    """A table cell holding several snapshot controls side by side.
+
+    Each control keeps the targeting rule of a control installed directly in the
+    cell. ``row_controls`` is what ``SelectionFeedback`` marks as multi-row
+    targets. Focus on a control in here is not focus on the cell widget, so it
+    does not collapse a multi-row selection.
+    """
+
+    def __init__(self, *controls: QWidget, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.row_controls: tuple[QWidget, ...] = controls
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(SPACING.xs)
+        for control in controls:
+            layout.addWidget(control)
 
 
 class SelectionSnapshotComboBox(_SnapshotMixin, ElidingComboBox):
@@ -371,6 +396,29 @@ def _select_table_rows(table: QTableWidget, rows: Sequence[int]) -> None:
     )
 
 
+def select_and_reveal_table_rows(table: QTableWidget, rows: Sequence[int]) -> bool:
+    """Select *rows* of *table* and bring the first into view; False when there are none.
+
+    A table on a hidden tab (a charge-state tab, say) has that tab shown first.
+    """
+    if not rows:
+        return False
+    ancestor = table.parentWidget()
+    while ancestor is not None:
+        if isinstance(ancestor, QTabWidget):
+            for index in range(ancestor.count()):
+                page = ancestor.widget(index)
+                if page is table or page.isAncestorOf(table):
+                    ancestor.setCurrentIndex(index)
+                    break
+        ancestor = ancestor.parentWidget()
+    first = table.model().index(min(rows), 0)
+    table.setCurrentIndex(first)
+    _select_table_rows(table, rows)
+    table.scrollTo(first)
+    return True
+
+
 def resolve_target_keys(
     widget: _SnapshotMixin,
     *,
@@ -457,7 +505,8 @@ def resolve_target_keys(
         f"This {singular} only",
     )
 
-    table = widget._owning_table()
+    # A refresh during the prompt can have removed the control's row.
+    table = widget._owning_table() if shiboken6.isValid(widget) else None
     if table is not None:
         own_row = widget._own_table_row(table)
         if scope is SelectionScope.CLICKED_ONLY and own_row is not None:

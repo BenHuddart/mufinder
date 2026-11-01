@@ -28,6 +28,7 @@ from mufinder.app.workflow_config_codecs import (
 from mufinder.castep_setup import CastepSetup
 from mufinder.domain.cluster import ClusterConfig
 from mufinder.domain.enums import JobStatus, WorkflowStage
+from tests.support.dashboard import more_button, open_more_menu
 from mufinder.domain.models import CalculationRun, Job, MuonSite, Structure
 from mufinder.services.job_file_cleanup import JobFileCleanup
 from mufinder.services.project_service import ProjectService
@@ -370,21 +371,16 @@ def test_dashboard_retry_retrieval_button_enablement(main_window, tmp_path: Path
     _connect_cluster_runner(window, "scarf")
     window._refresh_jobs_table()
 
-    def retry_btn_for(job_id):
-        for row in range(window._jobs_table.rowCount()):
-            item = window._jobs_table.item(row, window._JOB_LABEL_COLUMN)
-            if item is not None and item.data(Qt.ItemDataRole.UserRole) == str(job_id):
-                return window._jobs_table.cellWidget(row, window._JOB_RETRY_RETRIEVAL_COLUMN)
-        return None
+    def offers_retry(job) -> bool:
+        return window._dashboard_action_applies("retry_retrieval", job)
 
-    assert retry_btn_for(connected_job.id).text() == "Retry retrieval"
-    assert retry_btn_for(connected_job.id).isEnabled() is True
-    # Cluster not connected for this job's target -> disabled.
-    assert retry_btn_for(disconnected_job.id).isEnabled() is False
-    # Missing remote directory -> disabled.
-    assert retry_btn_for(no_meta_job.id).isEnabled() is False
-    # Local job -> disabled.
-    assert retry_btn_for(local_job.id).isEnabled() is False
+    assert offers_retry(connected_job) is True
+    # Cluster not connected for this job's target -> not offered.
+    assert offers_retry(disconnected_job) is False
+    # Missing remote directory -> not offered.
+    assert offers_retry(no_meta_job) is False
+    # Local job -> not offered.
+    assert offers_retry(local_job) is False
     window.close()
 
 
@@ -409,9 +405,7 @@ def test_dashboard_retry_retrieval_click_dispatches_to_runner(
     monkeypatch.setattr(window, "_request_dashboard_flush", lambda **kwargs: None)
 
     window._refresh_jobs_table()
-    row = 0
-    retry_btn = window._jobs_table.cellWidget(row, window._JOB_RETRY_RETRIEVAL_COLUMN)
-    retry_btn.click()
+    open_more_menu(window, monkeypatch).action("Retry retrieval").triggered.emit()
 
     # The job moved to RETRIEVING and the runner was asked to re-download.
     assert job.status == JobStatus.RETRIEVING
@@ -423,7 +417,9 @@ def test_dashboard_retry_retrieval_click_dispatches_to_runner(
     window.close()
 
 
-def test_dashboard_dismiss_hides_row_after_flush(main_window, tmp_path: Path) -> None:
+def test_dashboard_dismiss_hides_row_after_flush(
+    main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     window = main_window
     service = ProjectService()
     doc = service.create_project(tmp_path / "dismiss.mufinder", "Dismiss")
@@ -446,18 +442,10 @@ def test_dashboard_dismiss_hides_row_after_flush(main_window, tmp_path: Path) ->
     window._refresh_jobs_table()
     assert window._jobs_table.rowCount() == 2
 
-    # The running job's Dismiss button must be disabled; the failed job's enabled.
-    def dismiss_btn_for(job_id):
-        for row in range(window._jobs_table.rowCount()):
-            item = window._jobs_table.item(row, window._JOB_LABEL_COLUMN)
-            if item is not None and item.data(Qt.ItemDataRole.UserRole) == str(job_id):
-                return window._jobs_table.cellWidget(row, window._JOB_DISMISS_COLUMN)
-        return None
+    monkeypatch.setattr(workflow_table_utils, "confirm_destructive", lambda *_args, **_kwargs: True)
+    assert open_more_menu(window, monkeypatch, 1).action("Dismiss") is None
 
-    assert dismiss_btn_for(failed_job.id).isEnabled() is True
-    assert dismiss_btn_for(running_job.id).isEnabled() is False
-
-    dismiss_btn_for(failed_job.id).click()
+    open_more_menu(window, monkeypatch, 0).action("Dismiss").triggered.emit()
     # Dismissal schedules a coalesced flush; force it to rebuild the table now.
     window._flush_dashboard()
 
@@ -474,8 +462,6 @@ def test_dashboard_dismiss_hides_row_after_flush(main_window, tmp_path: Path) ->
 def test_dashboard_dismiss_multi_select(
     main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from mufinder.app.selection_snapshot import SelectionSnapshotPushButton
-
     window = main_window
     service = ProjectService()
     doc = service.create_project(tmp_path / "dismiss_multi.mufinder", "DismissMulti")
@@ -502,10 +488,8 @@ def test_dashboard_dismiss_multi_select(
     )
     window._refresh_jobs_table()
 
-    dismiss_btn = window._jobs_table.cellWidget(0, window._JOB_DISMISS_COLUMN)
-    assert isinstance(dismiss_btn, SelectionSnapshotPushButton)
-    dismiss_btn.selection_snapshot_rows = (0, 1)
-    dismiss_btn.clicked.emit()
+    more_button(window).selection_snapshot_rows = (0, 1)
+    open_more_menu(window, monkeypatch).action("Dismiss").triggered.emit()
     window._flush_dashboard()
 
     assert job0.dismissed_at is not None
@@ -1400,6 +1384,49 @@ def test_failed_job_dialog_continues_a_muon_relaxation_by_its_charge_qualified_r
 
     assert dialogs[0].continue_button is not None
     assert continued == ["positivemuon:Site 1"]
+    window.close()
+
+
+def test_dashboard_opens_a_muon_relaxation_on_its_charge_state_row(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window, _service, _doc, _definition, job, _output_root, _param_path = _muon_continue_fixture(
+        tmp_path
+    )
+    job.status = JobStatus.FAILED
+    window._refresh_ui_after_project_change()
+
+    menu = open_more_menu(window, monkeypatch)
+    assert [action.text for action in menu.actions] == [
+        "Resubmit…",
+        "Continue relaxation…",
+        "Reset…",
+        "Dismiss",
+        "Open in Relaxations",
+    ]
+    menu.action("Open in Relaxations").triggered.emit()
+
+    assert window._active_route() == "muon_relaxations"
+    assert window._muon_relaxation_view._selected_keys() == ["positivemuon:Site 1"]
+    window.close()
+
+
+def test_dashboard_more_menu_continues_a_relaxation_through_its_row(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window, _service, _doc, _definition, job, _output_root, _param_path = (
+        _pristine_continue_fixture(tmp_path)
+    )
+    job.status = JobStatus.STOPPED
+    window._refresh_ui_after_project_change()
+    continued: list[object] = []
+    monkeypatch.setattr(
+        window, "_on_continue_relaxation_requested_from_pristine_relaxation", continued.append
+    )
+
+    open_more_menu(window, monkeypatch).action("Continue relaxation…").triggered.emit()
+
+    assert len(continued) == 1
     window.close()
 
 

@@ -56,7 +56,7 @@ Application shell
   navigator; MuFinder remembers the width. Analysis-workspace and saved
   magnetic-field-workspace nodes have a right-click delete action; workflow
   stage nodes have no context menu.
-- The ``Job Dashboard`` dock tracks every job in the project (see `Jobs and
+- The ``Job Dashboard`` dock lists the jobs that need attention (see `Jobs and
   execution`_).
 - The project home charts the workflow stages with their dependencies and
   progress, opens at the stage last worked on, and surveys the host cell with
@@ -379,11 +379,12 @@ and shares one set of table behaviours:
   several named queues (partitions) per profile with per-queue walltime,
   cores, memory, executable and template overrides, a queue choice on every
   submission, and queue polling and automatic output retrieval;
-- a ``Job Dashboard`` of the jobs that still need attention, with per-row
-  ``Resubmit``, ``Retry retrieval``, ``Cancel``, ``Inspect``, ``Reset`` and
-  ``Dismiss``, a failure cause on each failed or stopped row, the
-  geometry-optimisation progress of each running relaxation (iteration and
-  convergence criteria met, with a plot of every criterion against its
+- a ``Job Dashboard`` of the jobs that still need attention, with one action
+  button per row and a ``⋯`` menu holding the rest (``Resubmit…``, ``Retry
+  retrieval``, ``Cancel``, ``Inspect…``, ``Reset…``, ``Dismiss``, ``Open in
+  <stage>``), double-click to open a job's page, a failure cause on each failed
+  or stopped row, the geometry-optimisation progress of each running relaxation
+  (the step reached in its status, with a plot of every criterion against its
   tolerance), and safeguards that keep no job stuck in an active state;
 - for relaxations, a choice on resubmission between continuing from the
   checkpoint and starting again.

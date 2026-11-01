@@ -31,6 +31,16 @@ def is_cluster_job(job: Job) -> bool:
     return bool(target) and target.casefold() != "local"
 
 
+def job_where_text(job: Job) -> str:
+    """Return where the job runs: ``local``, ``SCARF`` or ``SCARF #4127731``."""
+
+    if not is_cluster_job(job):
+        return "local"
+    remote_id = (job.remote_job_id or "").strip()
+    target = job.execution_target.strip()
+    return f"{target} #{remote_id}" if remote_id else target
+
+
 def _age_seconds(now: datetime, then: datetime) -> float:
     # Stamps written by older builds may be naive; treat them as UTC, the
     # convention used by mufinder.domain.models.utc_now.

@@ -1,23 +1,23 @@
-"""The Job Dashboard's geometry-optimisation Progress column and progress dialog."""
+"""The Job Dashboard's geometry-optimisation progress in Status, and the progress dialog."""
 
 from __future__ import annotations
 
 from dataclasses import replace
 from pathlib import Path
 
-from PySide6.QtCore import Qt
 
 import mufinder.app.main_window as main_window_module
 from mufinder.app.geometry_progress_dialog import (
     GeometryProgressDialog,
-    progress_cell_text,
     progress_heading,
+    progress_status_text,
     progress_tooltip,
 )
 from mufinder.app.main_window import MainWindow
 from mufinder.app.theme import plot_series_colours
 from mufinder.castep_io.geometry_progress import GeometryProgress, parse_geometry_progress
 from mufinder.domain.enums import JobStatus
+from tests.support.dashboard import job_row, open_more_menu
 from mufinder.services.project_service import ProjectService
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "geometry"
@@ -25,17 +25,17 @@ BFGS = FIXTURES / "Si2_bfgs.castep"
 LBFGS_CONTINUED = FIXTURES / "Si2_lbfgs.castep"
 
 
-def test_progress_cell_is_iteration_and_criteria_met() -> None:
+def test_progress_status_text_is_the_step_of_the_limit() -> None:
     progress = parse_geometry_progress(BFGS)
     running = replace(progress, iterations=progress.iterations[:7], converged=None)
 
-    assert progress_cell_text(running) == "6 · 3/4"
-    assert progress_cell_text(progress) == "7 · 4/4"
+    assert progress_status_text(running) == "step 6 of 30"
+    assert progress_status_text(replace(running, max_iterations=None)) == "step 6"
     assert (
-        progress_cell_text(GeometryProgress(method="BFGS", max_iterations=30, iterations=()))
+        progress_status_text(GeometryProgress(method="BFGS", max_iterations=30, iterations=()))
         == "starting"
     )
-    assert progress_cell_text(None) == ""
+    assert progress_status_text(None) == ""
 
 
 def test_progress_tooltip_lists_each_criterion_against_its_tolerance() -> None:
@@ -123,36 +123,53 @@ def _running_window(window: MainWindow, tmp_path: Path, *, stage, target: str = 
     return window, job
 
 
-def _row_cell(window, job, column):
-    for row in range(window._jobs_table.rowCount()):
-        item = window._jobs_table.item(row, window._JOB_LABEL_COLUMN)
-        if item is not None and item.data(Qt.ItemDataRole.UserRole) == str(job.id):
-            return window._jobs_table.item(row, column), window._jobs_table.cellWidget(
-                row, window._JOB_INSPECT_COLUMN
-            )
-    raise AssertionError("job row missing")
+def _status_item(window, job):
+    return window._jobs_table.item(job_row(window, job.id), window._JOB_STATUS_COLUMN)
 
 
-def test_dashboard_shows_progress_of_a_running_relaxation(main_window, tmp_path: Path) -> None:
+def _more_menu_texts(window, job, monkeypatch) -> list[str]:
+    menu = open_more_menu(window, monkeypatch, job_row(window, job.id))
+    return [action.text for action in menu.actions]
+
+
+def test_dashboard_shows_progress_of_a_running_relaxation(
+    main_window, tmp_path: Path, monkeypatch
+) -> None:
     window, job = _running_window(
         main_window, tmp_path, stage=main_window_module.WorkflowStage.MUON_RELAXATION
     )
     try:
-        item, inspect_button = _row_cell(window, job, window._JOB_PROGRESS_COLUMN)
+        item = _status_item(window, job)
 
-        assert item.text() == "7 · 4/4"
+        assert item.text() == "running · step 7 of 30"
         assert "iteration 7 of at most 30" in item.toolTip()
-        assert inspect_button.isEnabled()
-        header = window._jobs_table.horizontalHeaderItem(window._JOB_PROGRESS_COLUMN)
-        assert header.text() == "Progress"
-        assert "criteria met" in header.toolTip()
+        assert "Inspect…" in _more_menu_texts(window, job, monkeypatch)
+        header = window._jobs_table.horizontalHeaderItem(window._JOB_STATUS_COLUMN)
+        assert header.text() == "Status"
+        assert "step" in header.toolTip()
 
         # A finished cluster job is retrieved before it leaves the dashboard.
         job.status = JobStatus.RETRIEVING
         window._refresh_jobs_table()
-        item, inspect_button = _row_cell(window, job, window._JOB_PROGRESS_COLUMN)
-        assert item.text() == ""
-        assert not inspect_button.isEnabled()
+        assert item.text() == "retrieving"
+        assert "Inspect…" not in _more_menu_texts(window, job, monkeypatch)
+    finally:
+        window._document = None
+
+
+def test_dashboard_progress_tooltip_joins_the_last_check(main_window, tmp_path: Path) -> None:
+    window, job = _running_window(
+        main_window, tmp_path, stage=main_window_module.WorkflowStage.MUON_RELAXATION
+    )
+    try:
+        job.last_status_source = "poll"
+        job.last_status_message = "a < b"
+        window._refresh_jobs_table()
+
+        tooltip = _status_item(window, job).toolTip()
+
+        assert "iteration 7 of at most 30" in tooltip
+        assert "<br>Source: poll<br>Message: a &lt; b" in tooltip
     finally:
         window._document = None
 
@@ -165,29 +182,29 @@ def test_dashboard_progress_follows_a_cluster_answer(main_window, tmp_path: Path
         target="scarf",
     )
     try:
-        item, _inspect = _row_cell(window, job, window._JOB_PROGRESS_COLUMN)
-        assert item.text() == ""
+        item = _status_item(window, job)
+        assert item.text() == "running"
 
         window._job_progress.accept_remote_progress(
             {job.id: parse_geometry_progress(LBFGS_CONTINUED)}
         )
 
-        assert item.text() == "3 · 3/3"
+        assert item.text().startswith("running · step 3")
     finally:
         window._document = None
 
 
 def test_inspect_opens_one_progress_dialog_per_running_relaxation(
-    main_window, tmp_path: Path
+    main_window, tmp_path: Path, monkeypatch
 ) -> None:
     window, job = _running_window(
         main_window, tmp_path, stage=main_window_module.WorkflowStage.MUON_RELAXATION
     )
     try:
-        _item, inspect_button = _row_cell(window, job, window._JOB_PROGRESS_COLUMN)
-
-        inspect_button.click()
-        inspect_button.click()
+        for _ in range(2):
+            open_more_menu(window, monkeypatch, job_row(window, job.id)).action(
+                "Inspect…"
+            ).triggered.emit()
 
         dialogs = window.findChildren(GeometryProgressDialog)
         assert len(dialogs) == 1
@@ -206,17 +223,15 @@ def test_inspect_opens_one_progress_dialog_per_running_relaxation(
         window._document = None
 
 
-def test_inspect_stays_disabled_for_a_running_job_without_geometry_progress(
-    main_window, tmp_path: Path
+def test_inspect_is_not_offered_for_a_running_job_without_geometry_progress(
+    main_window, tmp_path: Path, monkeypatch
 ) -> None:
     window, job = _running_window(
         main_window, tmp_path, stage=main_window_module.WorkflowStage.CONVERGENCE_CUTOFF
     )
     try:
-        item, inspect_button = _row_cell(window, job, window._JOB_PROGRESS_COLUMN)
-
-        assert item.text() == ""
-        assert not inspect_button.isEnabled()
+        assert _status_item(window, job).text() == "running"
+        assert "Inspect…" not in _more_menu_texts(window, job, monkeypatch)
         assert not window._dashboard_action_applies("inspect", job)
     finally:
         window._document = None

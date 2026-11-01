@@ -50,6 +50,7 @@ from mufinder.app.selection_snapshot import (
     SelectionSnapshotPushButton,
     SelectionSnapshotToolButton,
     resolve_target_keys,
+    select_and_reveal_table_rows,
 )
 from mufinder.app.theme import (
     status_brush,
@@ -590,6 +591,11 @@ class SweepConvergenceWidget(QWidget):
             for row in range(self._table.rowCount())
             if self._key_at_row(row, strict=False) in keys
         )
+
+    def select_rows_for_keys(self, keys: Sequence[Any]) -> bool:
+        """Select the rows with ``keys``, bringing them into view; False when there are none."""
+
+        return select_and_reveal_table_rows(self._table, self._rows_for_keys(keys))
 
     def _selected_rows(self) -> tuple[int, ...]:
         return selected_table_rows(self._table)

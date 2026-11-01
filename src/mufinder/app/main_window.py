@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Collection, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import replace
 from datetime import UTC, datetime
 from functools import partial
@@ -10,9 +10,11 @@ import logging
 from pathlib import Path
 import posixpath
 import time
+from html import escape
 from typing import Any, TypeVar
 from uuid import UUID, uuid4
 
+import shiboken6
 from PySide6.QtCore import (
     QByteArray,
     QEvent,
@@ -26,9 +28,9 @@ from PySide6.QtCore import (
     Slot,
 )
 from PySide6.QtGui import (
+    QIcon,
     QActionGroup,
     QBrush,
-    QColor,
     QDesktopServices,
     QGuiApplication,
     QKeySequence,
@@ -36,9 +38,9 @@ from PySide6.QtGui import (
     QShortcut,
 )
 from PySide6.QtWidgets import (
+    QSizePolicy,
     QAbstractItemView,
     QApplication,
-    QCheckBox,
     QDialog,
     QFrame,
     QFileDialog,
@@ -172,9 +174,9 @@ from mufinder.app.uep_types import UepConfig, UepSourceRow
 from mufinder.app.uep_wizard import UepAnalysisDialog
 from mufinder.app.uep_widget import UEPWidget
 from mufinder.app.geometry_progress_dialog import (
-    PROGRESS_COLUMN_TOOLTIP,
+    STATUS_COLUMN_TOOLTIP,
     GeometryProgressDialog,
-    progress_cell_text,
+    progress_status_text,
     progress_tooltip,
 )
 from mufinder.app.host_structure_widget import HostStructureWidget
@@ -313,8 +315,8 @@ from mufinder.services.definition_mappings import (
 from mufinder.services.failure_diagnosis import (
     FailureDiagnosis,
     failed_job_report,
-    failure_reason_label,
     failure_reason_summary,
+    failure_status_reason,
 )
 from mufinder.services.job_artifacts import (
     ParsedJobArtifacts,
@@ -333,12 +335,16 @@ from mufinder.services.job_results import (
     max_stress_for_job,
     total_energy_for_job,
 )
-from mufinder.services.job_monitoring import job_staleness
+from mufinder.services.job_monitoring import job_staleness, job_where_text
 from mufinder.services.job_progress import JobProgressMonitor, job_reports_geometry_progress
 from mufinder.services.job_watchdog import StuckJobWatchdog
 from mufinder.services.local_runner import LocalJobRunner
 from mufinder.app import workflow_table_utils
-from mufinder.app.selection_snapshot import SelectionSnapshotPushButton, resolve_target_keys
+from mufinder.app.selection_snapshot import (
+    RowControlsCell,
+    SelectionSnapshotPushButton,
+    resolve_target_keys,
+)
 from mufinder.app.workflow_table_utils import SelectionFeedback, partial_count_suffix
 from mufinder.services.hyperfine_results import (
     apply_magnetic_field_handoff,
@@ -376,6 +382,8 @@ from mufinder.services.project_summary import (
     COMPLETION_CHECKS,
     PROJECT_HOME_STAGE_KEY,
     WORKFLOW_STAGES,
+    job_stage_key,
+    job_stage_name,
     job_stage_title,
     magnetic_field_workspace_complete,
     relaxation_analysis_workspace_clustered,
@@ -510,35 +518,25 @@ class MainWindow(QMainWindow):
     _DASHBOARD_MIN_FLUSH_INTERVAL_MS = 2000
     _MAX_RECENT_PROJECTS = 10
     _JOB_LABEL_COLUMN = 0
-    _JOB_WORKFLOW_COLUMN = 1
-    _JOB_CALC_TYPE_COLUMN = 2
-    _JOB_STATUS_COLUMN = 3
-    _JOB_PROGRESS_COLUMN = 4
-    _JOB_LAST_CHECKED_COLUMN = 5
-    _JOB_CLUSTER_COLUMN = 6
-    _JOB_REMOTE_ID_COLUMN = 7
-    _JOB_RUNTIME_COLUMN = 8
-    _JOB_PROCESSES_COLUMN = 9
-    _JOB_SUBMIT_COLUMN = 10
-    _JOB_RETRY_RETRIEVAL_COLUMN = 11
-    _JOB_CANCEL_COLUMN = 12
-    _JOB_INSPECT_COLUMN = 13
-    _JOB_RESET_COLUMN = 14
-    _JOB_DISMISS_COLUMN = 15
+    _JOB_STAGE_COLUMN = 1
+    _JOB_STATUS_COLUMN = 2
+    _JOB_WHERE_COLUMN = 3
+    _JOB_RUNTIME_COLUMN = 4
+    _JOB_CORES_COLUMN = 5
+    _JOB_ACTION_COLUMN = 6
     # Dashboard columns sized to their contents by _fit_jobs_table_columns;
-    # the other columns stretch to share the remaining width.
+    # Job and Status stretch to share the remaining width.
     _JOB_CONTENT_SIZED_COLUMNS = (
-        _JOB_PROGRESS_COLUMN,
-        _JOB_LAST_CHECKED_COLUMN,
+        _JOB_STAGE_COLUMN,
+        _JOB_WHERE_COLUMN,
         _JOB_RUNTIME_COLUMN,
-        _JOB_PROCESSES_COLUMN,
-        _JOB_SUBMIT_COLUMN,
-        _JOB_RETRY_RETRIEVAL_COLUMN,
-        _JOB_CANCEL_COLUMN,
-        _JOB_INSPECT_COLUMN,
-        _JOB_RESET_COLUMN,
-        _JOB_DISMISS_COLUMN,
+        _JOB_CORES_COLUMN,
+        _JOB_ACTION_COLUMN,
     )
+    # The status item's record of whether it carries the stale icon.
+    _JOB_STALE_ROLE = Qt.ItemDataRole.UserRole + 1
+    # The dock opens showing about this many rows.
+    _JOB_DOCK_DEFAULT_ROWS = 5
     # Both the default and the minimum: it fits a workspace label such as "Positive
     # muon sites" at the deepest indent, with room for a scrollbar.
     _PROJECT_TREE_MIN_WIDTH = 220
@@ -571,6 +569,7 @@ class MainWindow(QMainWindow):
         # also reports False on window minimize / tabbed-dock obscuring.
         # Defaults True so an as-yet-unshown window still arms the timer.
         self._jobs_dock_visible = True
+        self._jobs_dock_height_set = False
         # True while _sync_jobs_table_rows reconciles the dashboard rows.
         self._jobs_table_syncing = False
         self._settings = QSettings("MuFinder", "MuFinder")
@@ -673,7 +672,8 @@ class MainWindow(QMainWindow):
 
         self.setWindowTitle("MuFinder")
         self.setWindowIcon(app_icon())
-        self.resize(clamped_size(self, 1280, 840))
+        # Tall enough for the tallest page and about five Job Dashboard rows.
+        self.resize(clamped_size(self, 1280, 960))
         saved_geometry = self._settings.value(self._MAIN_WINDOW_GEOMETRY_KEY, QByteArray())
         if (
             isinstance(saved_geometry, QByteArray)
@@ -1119,30 +1119,15 @@ class MainWindow(QMainWindow):
         self._main_stack.addWidget(self._quantum_corrections_view)
         self._main_stack.addWidget(self._journal_view)
 
-        self._jobs_table = QTableWidget(0, 16)
+        self._jobs_table = QTableWidget(0, 7)
         self._jobs_table.setHorizontalHeaderLabels(
-            [
-                "Label",
-                "Workflow",
-                "Calc Type",
-                "Status",
-                "Progress",
-                "Last Checked",
-                "Cluster",
-                "Remote Job ID",
-                "Runtime",
-                "Processes",
-                "Resubmit",
-                "Retry retrieval",
-                "Cancel",
-                "Inspect",
-                "Reset",
-                "Dismiss",
-            ]
+            ["Job", "Stage", "Status", "Where", "Runtime", "Cores", "Action"]
         )
-        self._jobs_table.horizontalHeaderItem(self._JOB_PROGRESS_COLUMN).setToolTip(
-            PROGRESS_COLUMN_TOOLTIP
+        self._jobs_table.horizontalHeaderItem(self._JOB_STATUS_COLUMN).setToolTip(
+            STATUS_COLUMN_TOOLTIP
         )
+        self._jobs_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self._jobs_table.doubleClicked.connect(self._on_jobs_table_double_clicked)
         use_square_top_table_corners(self._jobs_table)
         self._jobs_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self._jobs_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
@@ -1158,7 +1143,7 @@ class MainWindow(QMainWindow):
             self._jobs_table,
             multi_row_hint=self._jobs_selection_hint,
             multi_row_hint_text=lambda count: (
-                f"{count} selected \u00b7 row buttons apply to all selected"
+                f"{count} selected \u00b7 row actions apply to all selected"
             ),
         )
         self._configure_jobs_table_columns()
@@ -1268,6 +1253,7 @@ class MainWindow(QMainWindow):
 
         jobs_dock = QDockWidget("Job Dashboard", self)
         jobs_dock.setObjectName("jobDashboardDock")
+        self._jobs_dock = jobs_dock
         jobs_dock.setAllowedAreas(
             Qt.DockWidgetArea.BottomDockWidgetArea | Qt.DockWidgetArea.TopDockWidgetArea
         )
@@ -1289,6 +1275,23 @@ class MainWindow(QMainWindow):
         self._jobs_backspace_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
         self._jobs_backspace_shortcut.activated.connect(self._on_dashboard_delete_key_requested)
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, jobs_dock)
+
+    def showEvent(self, event) -> None:  # noqa: N802 - Qt API naming.
+        super().showEvent(event)
+        if not self._jobs_dock_height_set:
+            self._jobs_dock_height_set = True
+            # The dock has its real geometry once this show has been laid out.
+            QTimer.singleShot(0, self._apply_default_jobs_dock_height)
+
+    def _apply_default_jobs_dock_height(self) -> None:
+        """Size the dock to show about ``_JOB_DOCK_DEFAULT_ROWS`` rows."""
+
+        if self._jobs_dock.isHidden() or self._jobs_dock.isFloating():
+            return
+        table = self._jobs_table
+        chrome = self._jobs_dock.height() - table.viewport().height()
+        rows_height = self._JOB_DOCK_DEFAULT_ROWS * table.verticalHeader().defaultSectionSize()
+        self.resizeDocks([self._jobs_dock], [chrome + rows_height], Qt.Orientation.Vertical)
 
     def _saved_navigator_width(self) -> int:
         raw_value = self._settings.value(
@@ -2581,46 +2584,18 @@ class MainWindow(QMainWindow):
         self._refresh_workflow_stage_icons()
         self._sync_project_home()
 
-    def _job_button_specs(self, job: Job) -> tuple[tuple[int, str, str, bool], ...]:
-        """Return ``(column, text, action_kind, enabled)`` for each action button.
+    def _job_primary_action(self, job: Job) -> tuple[str, str]:
+        """Return the ``(kind, text)`` of the one action button that fits ``job``'s state."""
 
-        Single source of truth shared by row insertion and in-place updates so
-        the button set, labels, dispatch kinds, and enable rules stay identical.
-        """
-
-        return (
-            (
-                self._JOB_SUBMIT_COLUMN,
-                "Resubmit",
-                "resubmit",
-                job.status in _RESUBMITTABLE_JOB_STATES,
-            ),
-            (
-                self._JOB_RETRY_RETRIEVAL_COLUMN,
-                "Retry retrieval",
-                "retry_retrieval",
-                self._can_retry_retrieval(job),
-            ),
-            (self._JOB_CANCEL_COLUMN, "Cancel", "cancel", job.status in ACTIVE_JOB_STATUSES),
-            (
-                self._JOB_INSPECT_COLUMN,
-                "Inspect",
-                "inspect",
-                self._dashboard_action_applies("inspect", job),
-            ),
-            (
-                self._JOB_RESET_COLUMN,
-                "Reset",
-                "reset",
-                job.status in {JobStatus.FAILED, JobStatus.STOPPED, JobStatus.CANCELLED},
-            ),
-            (
-                self._JOB_DISMISS_COLUMN,
-                "Dismiss",
-                "dismiss",
-                job.status in {JobStatus.FAILED, JobStatus.STOPPED, JobStatus.CANCELLED},
-            ),
-        )
+        if job.status in ACTIVE_JOB_STATUSES:
+            return "cancel", "Cancel"
+        if job.status == JobStatus.CANCELLED:
+            return "resubmit", "Resubmit…"
+        if job.failure_reason == FailureReason.OUTPUT_UNAVAILABLE and self._can_retry_retrieval(
+            job
+        ):
+            return "retry_retrieval", "Retry retrieval"
+        return "inspect", "Inspect…"
 
     @staticmethod
     def _jobs_table_row_job_id(label_item) -> UUID | None:
@@ -2704,57 +2679,72 @@ class MainWindow(QMainWindow):
         label_item.setData(Qt.ItemDataRole.UserRole, str(job.id))
         self._jobs_table.setItem(row, self._JOB_LABEL_COLUMN, label_item)
         self._jobs_table.setItem(
-            row, self._JOB_WORKFLOW_COLUMN, QTableWidgetItem(job.workflow_stage.value)
+            row, self._JOB_STAGE_COLUMN, QTableWidgetItem(job_stage_name(job.workflow_stage))
         )
-        self._jobs_table.setItem(row, self._JOB_CALC_TYPE_COLUMN, QTableWidgetItem(job.calc_type))
 
         status_item = QTableWidgetItem()
-        self._apply_job_status_cell(status_item, job)
+        self._apply_job_status_cell(status_item, job, now=now)
         self._jobs_table.setItem(row, self._JOB_STATUS_COLUMN, status_item)
 
-        progress_item = QTableWidgetItem()
-        progress_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._apply_job_progress_cell(progress_item, job)
-        self._jobs_table.setItem(row, self._JOB_PROGRESS_COLUMN, progress_item)
-
-        last_checked_item = QTableWidgetItem()
-        self._apply_last_checked_cell(last_checked_item, job, now=now)
-        self._jobs_table.setItem(row, self._JOB_LAST_CHECKED_COLUMN, last_checked_item)
-
-        cluster_name = "local" if job.execution_target == "local" else job.execution_target
-        self._jobs_table.setItem(row, self._JOB_CLUSTER_COLUMN, QTableWidgetItem(cluster_name))
-        self._jobs_table.setItem(
-            row,
-            self._JOB_REMOTE_ID_COLUMN,
-            QTableWidgetItem(job.remote_job_id or ""),
-        )
+        self._jobs_table.setItem(row, self._JOB_WHERE_COLUMN, QTableWidgetItem(job_where_text(job)))
         self._jobs_table.setItem(
             row, self._JOB_RUNTIME_COLUMN, QTableWidgetItem(self._job_runtime_text(job))
         )
         self._jobs_table.setItem(
             row,
-            self._JOB_PROCESSES_COLUMN,
+            self._JOB_CORES_COLUMN,
             QTableWidgetItem("" if job.num_processes is None else str(job.num_processes)),
         )
+        self._jobs_table.setCellWidget(
+            row, self._JOB_ACTION_COLUMN, self._make_job_action_cell(job)
+        )
 
-        for column, text, kind, enabled in self._job_button_specs(job):
-            button = self._make_job_action_button(text, job_id=job.id, enabled=enabled)
-            button.clicked.connect(
-                lambda _checked=False, jid=job.id, btn=button, action=kind: (
-                    self._dispatch_dashboard_action(btn, jid, action)
-                )
+    def _make_job_action_cell(self, job: Job) -> RowControlsCell:
+        """Build a row's action button and its ``⋯`` menu button."""
+
+        primary = SelectionSnapshotPushButton()
+        primary.selection_snapshot_key = job.id
+        self._apply_job_primary_action(primary, job)
+        primary.clicked.connect(
+            lambda _checked=False, jid=job.id, btn=primary: self._dispatch_dashboard_action(
+                btn, jid, btn.dashboard_action
             )
-            self._jobs_table.setCellWidget(row, column, button)
+        )
+        more = SelectionSnapshotPushButton("⋯")
+        more.selection_snapshot_key = job.id
+        more.setObjectName("jobRowMoreButton")
+        more.setToolTip("More actions")
+        more.setAccessibleName(f"More actions for {job.label}")
+        more.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Preferred)
+        more.clicked.connect(
+            lambda _checked=False, jid=job.id, btn=more: self._open_job_row_menu(btn, jid)
+        )
+        return RowControlsCell(primary, more)
+
+    def _apply_job_primary_action(self, button: SelectionSnapshotPushButton, job: Job) -> bool:
+        """Point a row's action button at the action ``job``'s state calls for.
+
+        Returns whether its text changed, which can change the column's width.
+        """
+
+        kind, text = self._job_primary_action(job)
+        button.dashboard_action = kind
+        name = f"{text.rstrip('…')} {job.label}"
+        if button.accessibleName() != name:
+            button.setAccessibleName(name)
+        if button.text() == text:
+            return False
+        button.setText(text)
+        return True
 
     def _update_jobs_table_row(self, row: int, job: Job, *, now) -> set[int]:
         """Refresh an existing row in place without recreating items or widgets.
 
-        Updates cell texts, the status foreground brush, the last-checked cell,
-        the runtime text, and each button's enabled state, writing only the
-        values that changed. The label item's job-id UserRole and every button
-        widget (with its captured closure) are left untouched, so button
-        clicks keep dispatching the correct job id. Returns the content-sized
-        columns whose text changed, for the caller to fit once.
+        Updates cell texts, the status cell and the action button, writing only
+        the values that changed. The label item's job-id UserRole and the
+        action cell's buttons (with their captured job id) are left untouched,
+        so clicks keep dispatching the correct job. Returns the content-sized
+        columns whose contents changed, for the caller to fit once.
         """
 
         table = self._jobs_table
@@ -2765,41 +2755,34 @@ class MainWindow(QMainWindow):
         }
 
         self._set_row_item_text(row, self._JOB_LABEL_COLUMN, job.label)
-        self._set_row_item_text(row, self._JOB_WORKFLOW_COLUMN, job.workflow_stage.value)
-        self._set_row_item_text(row, self._JOB_CALC_TYPE_COLUMN, job.calc_type)
+        self._set_row_item_text(row, self._JOB_STAGE_COLUMN, job_stage_name(job.workflow_stage))
 
         status_item = table.item(row, self._JOB_STATUS_COLUMN)
         if status_item is not None:
-            self._apply_job_status_cell(status_item, job)
+            self._apply_job_status_cell(status_item, job, now=now)
 
-        progress_item = table.item(row, self._JOB_PROGRESS_COLUMN)
-        if progress_item is not None:
-            self._apply_job_progress_cell(progress_item, job)
-
-        last_checked_item = table.item(row, self._JOB_LAST_CHECKED_COLUMN)
-        if last_checked_item is not None:
-            self._apply_last_checked_cell(last_checked_item, job, now=now)
-
-        cluster_name = "local" if job.execution_target == "local" else job.execution_target
-        self._set_row_item_text(row, self._JOB_CLUSTER_COLUMN, cluster_name)
-        self._set_row_item_text(row, self._JOB_REMOTE_ID_COLUMN, job.remote_job_id or "")
+        self._set_row_item_text(row, self._JOB_WHERE_COLUMN, job_where_text(job))
         self._set_row_item_text(row, self._JOB_RUNTIME_COLUMN, self._job_runtime_text(job))
         self._set_row_item_text(
             row,
-            self._JOB_PROCESSES_COLUMN,
+            self._JOB_CORES_COLUMN,
             "" if job.num_processes is None else str(job.num_processes),
         )
 
-        for column, _text, _kind, enabled in self._job_button_specs(job):
-            button = table.cellWidget(row, column)
-            if button is not None and button.isEnabled() != enabled:
-                button.setEnabled(enabled)
-
-        return {
+        changed = {
             column
             for column, old_text in before.items()
             if table.item(row, column).text() != old_text
         }
+        action_cell = table.cellWidget(row, self._JOB_ACTION_COLUMN)
+        if action_cell is not None:
+            primary, more = action_cell.row_controls
+            if self._apply_job_primary_action(primary, job):
+                changed.add(self._JOB_ACTION_COLUMN)
+            more_name = f"More actions for {job.label}"
+            if more.accessibleName() != more_name:
+                more.setAccessibleName(more_name)
+        return changed
 
     def _set_row_item_text(self, row: int, column: int, text: str) -> None:
         """Set a cell's text in place when it differs, or create the item if it is missing."""
@@ -2908,7 +2891,7 @@ class MainWindow(QMainWindow):
         self._sync_job_runtime_timer()
 
     def _configure_jobs_table_columns(self) -> None:
-        """Stretch the primary dashboard columns; size the rest to their contents.
+        """Stretch Job and Status; size the rest to their contents.
 
         The content-sized columns are ``Fixed``, not ``ResizeToContents``: Qt
         re-measures a ``ResizeToContents`` column over every row on each cell
@@ -2919,15 +2902,7 @@ class MainWindow(QMainWindow):
         """
 
         header = self._jobs_table.horizontalHeader()
-        stretch_columns = (
-            self._JOB_LABEL_COLUMN,
-            self._JOB_WORKFLOW_COLUMN,
-            self._JOB_CALC_TYPE_COLUMN,
-            self._JOB_STATUS_COLUMN,
-            self._JOB_CLUSTER_COLUMN,
-            self._JOB_REMOTE_ID_COLUMN,
-        )
-        for column in stretch_columns:
+        for column in (self._JOB_LABEL_COLUMN, self._JOB_STATUS_COLUMN):
             header.setSectionResizeMode(column, QHeaderView.ResizeMode.Stretch)
         for column in self._JOB_CONTENT_SIZED_COLUMNS:
             header.setSectionResizeMode(column, QHeaderView.ResizeMode.Fixed)
@@ -2940,37 +2915,64 @@ class MainWindow(QMainWindow):
             self._jobs_table.resizeColumnToContents(column)
 
     @staticmethod
-    def _make_job_action_button(
-        text: str, *, job_id: UUID, enabled: bool
-    ) -> SelectionSnapshotPushButton:
-        button = SelectionSnapshotPushButton(text)
-        button.selection_snapshot_key = job_id
-        button.setEnabled(enabled)
-        return button
-
-    @staticmethod
     def _status_brush(status_value: str):
         return status_brush(status_value)
 
-    @classmethod
-    def _apply_job_status_cell(cls, item: QTableWidgetItem, job: Job) -> None:
-        """Show the job status, with the failure cause for failed/stopped jobs.
+    def _apply_job_status_cell(self, item: QTableWidgetItem, job: Job, *, now) -> None:
+        """Show the job's state with its reason or progress inline.
 
-        The cell reads e.g. ``stopped · walltime``; its tooltip explains the
-        cause and repeats the recorded failure message, so the reason is
-        visible without opening Inspect.
+        The cell reads ``failed · SCF did not converge``, ``stopped · walltime``
+        or ``running · step 12 of 100``. Its tooltip explains the failure and
+        carries the last check's age and source; an active cluster job whose
+        status may be out of date gets a small icon, with the reason in the
+        tooltip.
         """
 
-        text = job.status.value
-        tooltip = ""
+        detail = ""
+        tooltip_parts: list[str] = []
+        progress = None
         if job.status in {JobStatus.FAILED, JobStatus.STOPPED}:
-            label = failure_reason_label(job.failure_reason)
-            if label:
-                text = f"{text} · {label}"
-            tooltip = cls._failure_tooltip(job)
-        _set_item_text(item, text)
+            detail = failure_status_reason(job.failure_reason, job.error_message)
+            tooltip_parts.append(self._failure_tooltip(job))
+        elif job.status == JobStatus.RUNNING:
+            progress = self._job_progress.progress_for(job.id)
+            detail = progress_status_text(progress)
+        stale_reason = job_staleness(
+            job, now=now, cluster_connected=self._is_cluster_connected_for_job(job)
+        )
+        check_lines = self._last_check_lines(job, stale_reason, now=now)
+        if check_lines:
+            tooltip_parts.append("\n".join(check_lines))
+        tooltip = "\n\n".join(tooltip_parts)
+        if progress is not None:
+            # The progress tooltip is rich text, so the plain lines join it as such.
+            tooltip = "<br>".join(
+                part
+                for part in (progress_tooltip(progress), escape(tooltip).replace("\n", "<br>"))
+                if part
+            )
+
+        _set_item_text(item, f"{job.status.value} · {detail}" if detail else job.status.value)
         _set_item_tooltip(item, tooltip)
-        _set_item_foreground(item, cls._status_brush(job.status.value))
+        _set_item_foreground(item, self._status_brush(job.status.value))
+        is_stale = stale_reason is not None
+        if bool(item.data(self._JOB_STALE_ROLE)) != is_stale:
+            item.setData(self._JOB_STALE_ROLE, is_stale)
+            item.setIcon(icon("stale") if is_stale else QIcon())
+
+    def _last_check_lines(self, job: Job, stale_reason: str | None, *, now) -> list[str]:
+        """Return the status tooltip's lines on when and how the job was last checked."""
+
+        lines: list[str] = []
+        if job.last_checked_at is not None:
+            lines.append(f"Last checked: {self._format_relative_age(job.last_checked_at, now=now)}")
+        if job.last_status_source:
+            lines.append(f"Source: {job.last_status_source}")
+        if job.last_status_message:
+            lines.append(f"Message: {job.last_status_message}")
+        if stale_reason is not None:
+            lines.append(f"Stale: {stale_reason}")
+        return lines
 
     _WALLTIME_NEXT_STEP = "Resubmit to run it again, with a longer walltime if needed."
     _RELAXATION_WALLTIME_NEXT_STEP = (
@@ -3041,34 +3043,6 @@ class MainWindow(QMainWindow):
             return f"{hours} hr ago"
         days = hours // 24
         return f"{days} day{'s' if days != 1 else ''} ago"
-
-    def _apply_last_checked_cell(self, item, job: Job, *, now) -> None:
-        """Fill one Last-checked cell: relative age, stale marker, and tooltip."""
-
-        base_text = self._format_relative_age(job.last_checked_at, now=now)
-        stale_reason = job_staleness(
-            job,
-            now=now,
-            cluster_connected=self._is_cluster_connected_for_job(job),
-        )
-        if stale_reason is not None:
-            _set_item_text(item, f"{base_text} — stale")
-            _set_item_foreground(item, QBrush(QColor(current_palette().warning)))
-        else:
-            _set_item_text(item, base_text)
-            # Rows are updated in place, so a job that is no longer stale
-            # drops the warning colour it was given.
-            if item.data(Qt.ItemDataRole.ForegroundRole) is not None:
-                item.setData(Qt.ItemDataRole.ForegroundRole, None)
-
-        tooltip_lines: list[str] = []
-        if job.last_status_source:
-            tooltip_lines.append(f"Source: {job.last_status_source}")
-        if job.last_status_message:
-            tooltip_lines.append(f"Message: {job.last_status_message}")
-        if stale_reason is not None:
-            tooltip_lines.append(f"Stale: {stale_reason}")
-        _set_item_tooltip(item, "\n".join(tooltip_lines))
 
     @staticmethod
     def _format_runtime_seconds(elapsed_seconds: int) -> str:
@@ -3783,21 +3757,24 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(f"Dismissed {plural(dismissed, 'job')} from the dashboard")
 
     def _dispatch_dashboard_action(
-        self, button: SelectionSnapshotPushButton, job_id: UUID, kind: str
+        self,
+        button: SelectionSnapshotPushButton,
+        job_id: UUID,
+        kind: str,
+        *,
+        snapshot_keys: Sequence[UUID] | None = None,
     ) -> None:
+        """Run a row control's action on the jobs it targets.
+
+        ``snapshot_keys`` are the jobs the selection held when the control was
+        pressed, for a caller that read them before rows could have moved.
+        """
+
         if self._document is None:
             return
 
-        snapshot_keys: list[UUID] = []
-        for row in button.selection_snapshot_rows:
-            label_item = self._jobs_table.item(row, self._JOB_LABEL_COLUMN)
-            if label_item is None:
-                continue
-            try:
-                sid = UUID(str(label_item.data(Qt.ItemDataRole.UserRole)))
-            except (TypeError, ValueError, AttributeError):
-                continue
-            snapshot_keys.append(sid)
+        if snapshot_keys is None:
+            snapshot_keys = self._job_ids_at_rows(button.selection_snapshot_rows)
 
         def eligibility(uid: UUID) -> bool:
             job = self._document.jobs.get(uid)  # type: ignore[union-attr]
@@ -3851,13 +3828,39 @@ class MainWindow(QMainWindow):
 
         self._dashboard_action_handler(kind)(list(target_ids))
 
+    def _job_ids_at_rows(self, rows: Iterable[int]) -> list[UUID]:
+        """Return the job ids of dashboard ``rows``."""
+
+        job_ids = (
+            self._jobs_table_row_job_id(self._jobs_table.item(row, self._JOB_LABEL_COLUMN))
+            for row in rows
+        )
+        return [job_id for job_id in job_ids if job_id is not None]
+
+    def _rows_of_jobs(self, job_ids: Collection[UUID]) -> tuple[int, ...]:
+        """Return the dashboard rows now showing ``job_ids``."""
+
+        return tuple(
+            row
+            for row in range(self._jobs_table.rowCount())
+            if self._jobs_table_row_job_id(self._jobs_table.item(row, self._JOB_LABEL_COLUMN))
+            in job_ids
+        )
+
     def _dashboard_action_applies(self, kind: str, job: Job) -> bool:
         """Return whether dashboard action ``kind`` can act on ``job``.
 
-        Single source of truth for the row buttons' multi-row prompt and the
-        right-click menu.
+        Single source of truth for the row controls' multi-row prompt and both
+        menus.
         """
 
+        if kind == "continue_relaxation":
+            return (
+                job.status in CONTINUABLE_JOB_STATUSES
+                and self._continue_relaxation_for_job(job) is not None
+            )
+        if kind == "open":
+            return True
         if kind == "retry_retrieval":
             # Retry needs remote metadata + a live connection, not just a status.
             return self._can_retry_retrieval(job)
@@ -3883,27 +3886,67 @@ class MainWindow(QMainWindow):
             "inspect": "_on_inspect_from_dashboard",
             "reset": "_on_reset_failed_from_dashboard",
             "dismiss": "_on_dismiss_from_dashboard",
+            "continue_relaxation": "_on_continue_relaxation_from_dashboard",
+            "open": "_on_open_in_stage_from_dashboard",
         }
         return getattr(self, names[kind])
 
-    #: Right-click menu entries for the Job Dashboard, in the row buttons' order.
+    #: Job Dashboard menu entries, before the final "Open in <stage>".
     _DASHBOARD_MENU_ACTIONS = (
-        ("Resubmit", "resubmit"),
-        ("Retry Retrieval", "retry_retrieval"),
         ("Cancel", "cancel"),
-        ("Inspect", "inspect"),
-        ("Reset", "reset"),
+        ("Inspect…", "inspect"),
+        ("Retry retrieval", "retry_retrieval"),
+        ("Resubmit…", "resubmit"),
+        ("Continue relaxation…", "continue_relaxation"),
+        ("Reset…", "reset"),
         ("Dismiss", "dismiss"),
     )
+
+    def _open_job_row_menu(self, button: SelectionSnapshotPushButton, job_id: UUID) -> QMenu | None:
+        """Open a row's ``⋯`` menu: what applies to its job, less the action button's action.
+
+        An entry follows the same rule as the action button: on a row in a
+        multi-row selection it asks whether to act on the selection. The jobs
+        are read now, since a refresh can move the rows while the menu is open.
+        """
+
+        job = self._document.jobs.get(job_id) if self._document is not None else None
+        if job is None:
+            return None
+        snapshot_keys = self._job_ids_at_rows(button.selection_snapshot_rows)
+        primary_kind, _text = self._job_primary_action(job)
+
+        def run(kind: str) -> None:
+            if kind in {"continue_relaxation", "open"}:
+                self._dashboard_action_handler(kind)([job_id])
+            elif shiboken6.isValid(button):
+                button.selection_snapshot_rows = self._rows_of_jobs(snapshot_keys)
+                self._dispatch_dashboard_action(button, job_id, kind, snapshot_keys=snapshot_keys)
+            else:
+                # A refresh removed the job's row while the menu was open.
+                self.statusBar().showMessage(f"{job.label} has left the dashboard; nothing changed")
+
+        menu = QMenu(self._jobs_table)
+        for text, kind in self._DASHBOARD_MENU_ACTIONS:
+            if kind != primary_kind and self._dashboard_action_applies(kind, job):
+                menu.addAction(text).triggered.connect(lambda _checked=False, k=kind: run(k))
+        menu.addSeparator()
+        menu.addAction(f"Open in {job_stage_name(job.workflow_stage)}").triggered.connect(
+            lambda _checked=False: run("open")
+        )
+        menu.exec(button.mapToGlobal(button.rect().bottomLeft()))
+        menu.deleteLater()
+        return menu
 
     def _open_jobs_table_context_menu(self, position) -> QMenu | None:
         """Offer the dashboard actions for the selected jobs.
 
         A right-click on a row outside the selection selects it first, so the
         menu always describes what is highlighted. Each action is enabled when
-        it applies to at least one selected job and acts on those jobs only,
-        which is how the row buttons already treat a mixed selection; for a
-        mixed selection the entry says how many ("Reset (2 of 3)").
+        it applies to at least one selected job and acts on those jobs only;
+        for a mixed selection the entry says how many ("Reset… (2 of 3)").
+        Continue relaxation opens a dialog for one job, so it needs exactly one
+        that qualifies, and Open needs the selected jobs to share a page.
         """
 
         if self._document is None:
@@ -3920,22 +3963,96 @@ class MainWindow(QMainWindow):
             return None
 
         menu = QMenu(self._jobs_table)
+        menu.setToolTipsVisible(True)
         for text, kind in self._DASHBOARD_MENU_ACTIONS:
             eligible_ids = [job.id for job in jobs if self._dashboard_action_applies(kind, job)]
             action = menu.addAction(text + partial_count_suffix(len(eligible_ids), len(jobs)))
             action.setEnabled(bool(eligible_ids))
+            if kind == "continue_relaxation" and len(eligible_ids) > 1:
+                action.setEnabled(False)
+                action.setToolTip("Continue one relaxation at a time.")
             action.triggered.connect(
                 lambda _checked=False, k=kind, ids=eligible_ids: self._run_dashboard_menu_action(
                     k, ids
                 )
             )
         menu.addSeparator()
-        delete_action = menu.addAction("Delete…")
-        delete_action.triggered.connect(
-            lambda _checked=False: self._on_dashboard_delete_key_requested()
+        stages = {job.workflow_stage for job in jobs}
+        one_stage = len({job_stage_key(stage) for stage in stages}) == 1
+        open_action = menu.addAction(
+            f"Open in {job_stage_name(jobs[0].workflow_stage)}" if one_stage else "Open in stage"
+        )
+        open_action.setEnabled(one_stage)
+        if not one_stage:
+            open_action.setToolTip("The selected jobs belong to different stages.")
+        open_action.triggered.connect(
+            lambda _checked=False, ids=[job.id for job in jobs]: self._run_dashboard_menu_action(
+                "open", ids
+            )
         )
         menu.exec(self._jobs_table.viewport().mapToGlobal(position))
+        menu.deleteLater()
         return menu
+
+    def _on_jobs_table_double_clicked(self, index) -> None:
+        job_id = self._jobs_table_row_job_id(self._jobs_table.item(index.row(), 0))
+        if job_id is not None:
+            self._on_open_in_stage_from_dashboard([job_id])
+
+    def _job_stage_page(self, stage: WorkflowStage) -> tuple[WorkflowJobController, object] | None:
+        """Return the controller and view whose table holds jobs of ``stage``, if one does."""
+
+        if stage == WorkflowStage.CONVERGENCE_CUTOFF:
+            return self._convergence_controller, self._convergence_view
+        if stage == WorkflowStage.CONVERGENCE_KPOINT:
+            return self._kpoint_convergence_controller, self._kpoint_convergence_view
+        if stage == WorkflowStage.PRISTINE_RELAXATION:
+            return self._pristine_relaxation_controller, self._pristine_relaxation_view
+        if stage == WorkflowStage.UEP:
+            return self._uep_controller, self._uep_view
+        if stage == WorkflowStage.MUON_RELAXATION:
+            return self._muon_relaxation_controller, self._muon_relaxation_view
+        if stage == WorkflowStage.HYPERFINE_COUPLING:
+            return self._hyperfine_coupling_controller, self._hyperfine_coupling_view
+        if stage == WorkflowStage.QUANTUM_CORRECTIONS:
+            return self._quantum_corrections_controller, self._quantum_corrections_view
+        if stage == WorkflowStage.ENERGY_BARRIERS:
+            return self._energy_barriers_controller, self._ensure_energy_barriers_view()
+        return None
+
+    def _on_open_in_stage_from_dashboard(self, job_ids: list[UUID]) -> None:
+        """Show the page of the jobs' stage with their rows selected."""
+
+        if self._document is None:
+            return
+        jobs = [job for job_id in job_ids if (job := self._document.jobs.get(job_id)) is not None]
+        if not jobs or not self.show_page(job_stage_key(jobs[0].workflow_stage)):
+            return
+        page = self._job_stage_page(jobs[0].workflow_stage)
+        keys: list[object] = []
+        if page is not None:
+            controller, view = page
+            keys = [key for job in jobs if (key := controller.key_for_job(job.id)) is not None]
+            if keys and not view.select_rows_for_keys(keys):
+                keys = []
+        if len(keys) < len(jobs):
+            name = job_stage_name(jobs[0].workflow_stage)
+            subject = (
+                f"{jobs[0].label} has"
+                if len(jobs) == 1
+                else plural(len(jobs) - len(keys), "job has", "jobs have")
+            )
+            self.statusBar().showMessage(f"{subject} no row on {name} now")
+
+    def _on_continue_relaxation_from_dashboard(self, job_ids: list[UUID]) -> None:
+        """Open "Continue relaxation…" for one job, through its workflow row."""
+
+        job = (
+            self._document.jobs.get(job_ids[0]) if self._document is not None and job_ids else None
+        )
+        continue_relaxation = self._continue_relaxation_for_job(job) if job is not None else None
+        if continue_relaxation is not None:
+            continue_relaxation()
 
     def _run_dashboard_menu_action(self, kind: str, job_ids: list[UUID]) -> None:
         if not job_ids:
@@ -4018,22 +4135,10 @@ class MainWindow(QMainWindow):
                 self._jobs_table_row_job_id(self._jobs_table.item(row, self._JOB_LABEL_COLUMN))
                 == job_id
             ):
-                item = self._jobs_table.item(row, self._JOB_PROGRESS_COLUMN)
+                item = self._jobs_table.item(row, self._JOB_STATUS_COLUMN)
                 if item is not None:
-                    old_text = item.text()
-                    self._apply_job_progress_cell(item, job)
-                    if item.text() != old_text:
-                        self._fit_jobs_table_columns((self._JOB_PROGRESS_COLUMN,))
+                    self._apply_job_status_cell(item, job, now=utc_now())
                 break
-
-    def _apply_job_progress_cell(self, item: QTableWidgetItem, job: Job) -> None:
-        progress = (
-            self._job_progress.progress_for(job.id) if job.status == JobStatus.RUNNING else None
-        )
-        text = progress_cell_text(progress)
-        tooltip = progress_tooltip(progress)
-        _set_item_text(item, text)
-        _set_item_tooltip(item, tooltip)
 
     def _on_reset_failed_from_dashboard(self, job_ids: list[UUID]) -> None:
         if self._document is None:
@@ -4044,107 +4149,58 @@ class MainWindow(QMainWindow):
     def _on_dashboard_delete_key_requested(self) -> None:
         """Apply Delete/Backspace to the selected dashboard jobs.
 
-        What the key does depends on each job's state: running jobs are
-        cancelled, failed/stopped/cancelled ones are reset, and the rest have
-        their records deleted. One summary dialog states all of that before
-        anything happens, so nothing is cancelled or deleted unannounced and a
-        single Cancel leaves every selected job untouched.
+        Active jobs are cancelled and failed, stopped and cancelled ones are
+        dismissed. One summary states both before anything happens, so a
+        single refusal leaves every selected job untouched.
         """
 
         jobs = self._selected_dashboard_jobs()
-        if not jobs:
-            return
-
-        terminal_statuses = {JobStatus.FAILED, JobStatus.STOPPED, JobStatus.CANCELLED}
         active_jobs = [job for job in jobs if job.status in ACTIVE_JOB_STATUSES]
-        terminal_jobs = [job for job in jobs if job.status in terminal_statuses]
-        resettable_jobs = [job for job in terminal_jobs if not job_is_imported(job)]
-        deletable_jobs = [
-            job
-            for job in jobs
-            if job.status not in ACTIVE_JOB_STATUSES and job.status not in terminal_statuses
-        ]
-
-        if not (active_jobs or resettable_jobs or deletable_jobs):
-            # Only imported terminal jobs are selected: let the reset path
-            # explain why they cannot be reset.
-            self._reset_failed_jobs(terminal_jobs)
+        dismissable_jobs = [job for job in jobs if self._dashboard_action_applies("dismiss", job)]
+        if not active_jobs and not dismissable_jobs:
             return
-
-        cleanup_choice = self._prompt_dashboard_bulk_action(
-            cancel_count=len(active_jobs),
-            reset_count=len(resettable_jobs),
-            delete_count=len(deletable_jobs),
-            skipped_imported_count=len(terminal_jobs) - len(resettable_jobs),
-        )
-        if cleanup_choice is None:
+        if not self._confirm_dashboard_delete_key(
+            cancel_count=len(active_jobs), dismiss_count=len(dismissable_jobs)
+        ):
             return
-
         if active_jobs:
             self._cancel_jobs(active_jobs)
-        if resettable_jobs:
-            self._reset_failed_jobs(resettable_jobs, cleanup_choice=cleanup_choice)
-        if deletable_jobs:
-            self._delete_dashboard_jobs(deletable_jobs, confirmed=True)
+        if dismissable_jobs:
+            self._on_dismiss_from_dashboard([job.id for job in dismissable_jobs])
 
-    def _prompt_dashboard_bulk_action(
-        self,
-        *,
-        cancel_count: int,
-        reset_count: int,
-        delete_count: int,
-        skipped_imported_count: int = 0,
-    ) -> bool | None:
-        """Show the dashboard Delete summary; return the clean-up choice or ``None``.
+    def _confirm_dashboard_delete_key(self, *, cancel_count: int, dismiss_count: int) -> bool:
+        """Ask once before Delete/Backspace cancels and dismisses the selected jobs."""
 
-        ``None`` means the user cancelled. Otherwise the bool says whether the
-        output directories of the jobs being reset should be cleaned (always
-        ``False`` when nothing is being reset, since the option is not shown).
-        """
-
-        lines: list[str] = []
-        if cancel_count:
-            lines.append(f"Cancel {plural(cancel_count, 'running job', 'running jobs')}")
-        if reset_count:
-            lines.append(f"Reset {plural(reset_count, 'failed job', 'failed jobs')} to ready")
-        if delete_count:
-            lines.append(
-                f"Delete {plural(delete_count, 'finished job record', 'finished job records')} "
-                "and linked results"
+        cancel_phrase = plural(cancel_count, "job")
+        dismiss_phrase = plural(dismiss_count, "job")
+        dismiss_note = (
+            "Dismissed jobs stay in the project; their workflow rows can still resubmit them."
+        )
+        if not dismiss_count:
+            return workflow_table_utils.confirm_destructive(
+                self,
+                "Cancel jobs",
+                f"Cancel {cancel_phrase}?",
+                "",
+                f"Cancel {cancel_phrase}",
+                "Keep running",
             )
-        total = cancel_count + reset_count + delete_count
-
-        message = QMessageBox(self)
-        message.setIcon(QMessageBox.Icon.Warning)
-        message.setWindowTitle("Apply to selected jobs")
-        message.setText(f"Apply to {plural(total, 'selected job', 'selected jobs')}?")
-        informative = "\n".join(f"\u2022 {line}" for line in lines)
-        if skipped_imported_count:
-            informative += (
-                f"\n\n{plural(skipped_imported_count, 'imported job', 'imported jobs')} "
-                "will be left as is: imported jobs cannot be reset."
+        if not cancel_count:
+            return workflow_table_utils.confirm_destructive(
+                self,
+                "Dismiss jobs",
+                f"Dismiss {dismiss_phrase} from the dashboard?",
+                dismiss_note,
+                f"Dismiss {dismiss_phrase}",
             )
-        message.setInformativeText(informative)
-        cleanup_box: QCheckBox | None = None
-        if reset_count:
-            cleanup_box = QCheckBox(
-                "Also clean the output "
-                + (
-                    "directory of the job being reset"
-                    if reset_count == 1
-                    else "directories of the jobs being reset"
-                ),
-                message,
-            )
-            message.setCheckBox(cleanup_box)
-        apply_button = message.addButton("Apply", QMessageBox.ButtonRole.DestructiveRole)
-        cancel_button = message.addButton(QMessageBox.StandardButton.Cancel)
-        message.setDefaultButton(cancel_button)
-        message.setEscapeButton(cancel_button)
-        message.exec()
-        if message.clickedButton() is not apply_button:
-            return None
-        return bool(cleanup_box is not None and cleanup_box.isChecked())
+        return workflow_table_utils.confirm_destructive(
+            self,
+            "Cancel and dismiss jobs",
+            f"Cancel {cancel_phrase} and dismiss {dismiss_phrase} from the dashboard?",
+            dismiss_note,
+            f"Cancel {cancel_count}, dismiss {dismiss_count}",
+            "Keep them",
+        )
 
     def _selected_dashboard_jobs(self) -> list[Job]:
         if self._document is None:
@@ -4174,36 +4230,6 @@ class MainWindow(QMainWindow):
             selected.append(job)
             seen.add(job.id)
         return selected
-
-    def _delete_dashboard_jobs(self, jobs: list[Job], *, confirmed: bool = False) -> None:
-        if self._document is None:
-            return
-
-        deletable_jobs = [
-            job
-            for job in self._dedupe_jobs(jobs)
-            if job.status not in ACTIVE_JOB_STATUSES
-            and job.status not in {JobStatus.FAILED, JobStatus.STOPPED, JobStatus.CANCELLED}
-        ]
-        if not deletable_jobs:
-            return
-
-        if not confirmed and not workflow_table_utils.confirm_destructive(
-            self,
-            "Delete jobs",
-            f"Delete {plural(len(deletable_jobs), 'selected job')}?",
-            "This removes the selected job records and any linked run/result records.",
-            accept_label=f"Delete {plural(len(deletable_jobs), 'job', 'jobs')}",
-        ):
-            return
-
-        for job in deletable_jobs:
-            self._job_file_cleanup.delete_job_records(job.id)
-
-        self._refresh_jobs_table()
-        self._convergence_controller.refresh_view()
-        self._kpoint_convergence_controller.refresh_view()
-        self.statusBar().showMessage(f"Deleted {plural(len(deletable_jobs), 'job')}")
 
     @staticmethod
     def _cutoff_key(value: float) -> str:
@@ -5321,8 +5347,8 @@ class MainWindow(QMainWindow):
         """Reset terminal jobs back to ``defined``.
 
         ``cleanup_choice`` is for a caller that has already confirmed the reset
-        and asked whether to clean the job directories (the dashboard Delete
-        summary); left as ``None`` the user is asked here.
+        and asked whether to clean the job directories; left as ``None`` the
+        user is asked here.
         """
 
         if self._document is None:

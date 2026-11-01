@@ -19,8 +19,11 @@ from mufinder.services.project_summary import (
     StageStatus,
     energy_barriers_complete,
     group_stage_keys,
+    job_stage_key,
+    job_stage_name,
     job_stage_title,
     muon_relaxations_complete,
+    stage_info,
     structure_formula,
     summarize_project,
 )
@@ -319,3 +322,12 @@ def test_job_stage_title_is_none_for_a_mixed_empty_or_jobless_batch() -> None:
     assert job_stage_title([WorkflowStage.CONVERGENCE_CUTOFF, WorkflowStage.UEP]) is None
     assert job_stage_title([]) is None
     assert job_stage_title([WorkflowStage.SITE_ANALYSIS]) is None
+
+
+def test_every_job_stage_has_a_navigator_page_and_name() -> None:
+    for stage in WorkflowStage:
+        assert stage_info(job_stage_key(stage)).title == job_stage_name(stage)
+
+    assert job_stage_name(WorkflowStage.CONVERGENCE_CUTOFF) == "Cutoff Energy"
+    assert job_stage_name(WorkflowStage.MUON_RELAXATION) == "Relaxations"
+    assert job_stage_name(WorkflowStage.QUANTUM_CORRECTIONS) == "Quantum Corrections"

@@ -763,11 +763,16 @@ job, which keeps the GUI responsive for large batches.
 
 The dashboard displays active states plus ``failed``, ``stopped``, and
 ``cancelled``; rows whose job carries a ``dismissed_at`` stamp are filtered
-out. A ``Last Checked`` column shows the relative age of ``last_checked_at``
-with a stale marker for active cluster jobs whose cluster is disconnected or
-whose last check is older than the ``services.job_monitoring`` threshold, and
-a tooltip carrying ``last_status_source`` / ``last_status_message`` / the
-staleness reason. Actions are enabled as follows:
+out. The ``Status`` cell's tooltip carries the relative age of
+``last_checked_at``, ``last_status_source``, ``last_status_message`` and the
+staleness reason, and the row gets a stale icon for active cluster jobs whose
+cluster is disconnected or whose last check is older than the
+``services.job_monitoring`` threshold. Each row has one action button for its
+state and a ``⋯`` menu; the button is ``Cancel`` for active jobs, ``Inspect…`` for
+``failed`` and ``stopped``, ``Retry retrieval`` when the job's failure reason is
+``output_unavailable`` and retrying is possible, and ``Resubmit…`` for
+``cancelled``. Delete and Backspace cancel active jobs and dismiss the rest; they
+change nothing else. Actions apply as follows:
 
 - ``Resubmit``: ``failed``, ``stopped``, and ``cancelled`` (relaxations first ask
   whether to continue or start again; see :ref:`resubmit-continue-or-start-again`).
@@ -907,7 +912,7 @@ again"*, via two pieces in ``mufinder.app.workflow_submission``:
   job→row-status projection goes through it. A *non*-dismissed failed job is
   unaffected: it still shows ``"failed"``, its row still refuses to submit, and
   its recovery path is the row's own ``Reset Failed Jobs…`` action plus the
-  dashboard ``Resubmit``/``Reset`` buttons that are still on screen.
+  dashboard ``Resubmit…``/``Reset…`` actions that are still on screen.
 - ``prepare_jobs_for_resubmission`` on ``WorkflowControllerContext`` — the lazy
   reset. ``WorkflowJobController.submit`` partitions the planned jobs and, for
   the dismissed ones only, calls this hook immediately before dispatch. The
@@ -1047,16 +1052,16 @@ dashboard indefinitely. Each entry records the behavior and where it lives.
    polls (``JobExecutionController.mark_queue_checked``), retrieval outcomes,
    local-runner lifecycle events, project-open reconciliation, watchdog stops,
    and user retry requests, with the fixed source vocabulary described under
-   "Execution orchestration". The dashboard's ``Last Checked`` column renders
-   the age plus a tooltip with the source and observation.
+   "Execution orchestration". The dashboard's ``Status`` tooltip renders the
+   age with the source and observation.
 
 3. Make disconnected cluster jobs visibly stale.
    A queue poll failure still disconnects the runner and deliberately leaves
    job state untouched; staleness is derived, not stored.
    ``services.job_monitoring.job_staleness`` marks an active cluster job stale
    when its cluster is disconnected or its last check is older than the
-   threshold (180 s), and the dashboard renders a " — stale" marker with the
-   reason in the tooltip.
+   threshold (180 s), and the dashboard renders a stale icon with the reason
+   in the tooltip.
 
 4. Add a retry-retrieval action for stopped/failed cluster jobs.
    A ``Retry retrieval`` dashboard action re-attempts output retrieval for a
