@@ -464,6 +464,18 @@ Compatibility ledger
      - Read-side repair. Keep until a saved-project schema version bump
        includes a migration that regroups stored searches, or until the batch
        results become durable results.
+   * - ``fractional_position`` of a saved UEP ``selected_muon_site`` that holds the
+       job cell's position
+     - Magnetic Fields form state in ``ui_state``, read by
+       ``mufinder.services.magnetic_field_sites`` (``uep_site_in_host_cell``) when the
+       page restores it
+     - A selection saved from a supercell UEP job holds the position in the job cell.
+       It carries the result it was chosen from, so its position is worked out again on
+       restore, as a new option's is, and the next save writes that. A selection without that
+       result keeps its position. Stored field, tensor and relaxation results are not
+       rewritten: they keep the numbers they were calculated with until calculated again.
+     - Read-side repair. Keep until a saved-project schema version bump includes a
+       migration that rewrites saved selections.
    * - ``hier`` and ``kmeans`` grouping values on sites, generation runs and
        Journal records
      - ``MuonSite.properties`` of sites made from UEP clusters;

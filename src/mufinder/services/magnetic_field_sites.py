@@ -13,6 +13,7 @@ of its representative for the muon-induced distortion correction.
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from uuid import UUID
 
@@ -25,12 +26,20 @@ from mufinder.persistence.codec import (
     int_or_none,
     uuid_or_none,
 )
-from mufinder.science.lattice import fractional_to_cartesian
+from mufinder.science.lattice import (
+    MUON_FRACTIONAL_SNAP_TOLERANCE,
+    LatticeError,
+    cell_volume,
+    fractional_to_cartesian,
+    lattice_cart_to_frac,
+    wrap_fractional,
+)
 from mufinder.services.magnetic_field_results import UEP_SITE_SOURCE
 from mufinder.services.muon_sites_summary import pinned_sites_by_representative
 from mufinder.services.project_document import ProjectDocument
 from mufinder.services.project_summary import relaxation_analysis_workspaces
 from mufinder.services.project_survey import UEP_ANALYSIS_STATES_KEY
+from mufinder.services.uep_grouping import uep_source_structure_id
 
 #: The source of a relaxation-analysis cluster representative.
 RELAXATION_SITE_SOURCE = "relaxation_clustering"
@@ -156,8 +165,9 @@ def uep_cluster_muon_site_options(
 ) -> list[MagneticMuonSiteOption]:
     """Return the project's UEP cluster sites and every UEP batch cluster representative.
 
-    A batch representative takes its optimised position, else the cluster's
-    representative position. Sorted by source, cluster and label.
+    A batch representative takes its optimised position in the host cell
+    (:func:`_uep_result_host_position`), else the cluster's representative position.
+    Sorted by source, cluster and label.
     """
 
     options: list[MagneticMuonSiteOption] = []
@@ -193,6 +203,7 @@ def uep_cluster_muon_site_options(
             clusters = summary.get("clusters")
             if not isinstance(clusters, (list, tuple)):
                 continue
+            lattice = _uep_search_lattice(document, host_structure, raw_job_id)
             for cluster in clusters:
                 if not isinstance(cluster, dict):
                     continue
@@ -205,15 +216,12 @@ def uep_cluster_muon_site_options(
                 result = batch_results[representative_index]
                 if not isinstance(result, dict):
                     continue
-                fractional = float_triplet_or_none(
-                    result.get("optimized_fractional_position")
-                    or cluster.get("representative_fractional_position")
+                fractional = _uep_result_host_position(result, lattice) or float_triplet_or_none(
+                    cluster.get("representative_fractional_position")
                 )
                 if fractional is None:
                     continue
-                cartesian = float_triplet_or_none(
-                    result.get("optimized_position_ang")
-                ) or site_cartesian_position(fractional, host_structure)
+                cartesian = site_cartesian_position(fractional, host_structure)
                 key = f"uep:{raw_job_id}:{cluster_index}:{representative_index}"
                 if key in seen:
                     continue
@@ -236,6 +244,71 @@ def uep_cluster_muon_site_options(
     return sorted(
         options,
         key=lambda option: (option.source_label or "", option.cluster_label or "", option.label),
+    )
+
+
+def _uep_search_lattice(
+    document: ProjectDocument, host_structure: Structure, raw_job_id: object
+) -> list[list[float]]:
+    """Return the lattice that turns a UEP search's Cartesian positions into host fractionals.
+
+    That is the structure the search was configured on, so a relaxed copy of the host
+    keeps the fractional position its groups use. A source that is not one host cell,
+    such as a relaxed supercell, or a source that is gone, leaves the host's lattice.
+    """
+
+    job_id = uuid_or_none(raw_job_id)
+    source_id = None if job_id is None else uep_source_structure_id(document, job_id)
+    source = document.structures.get(source_id) if source_id is not None else None
+    host_volume = cell_volume(host_structure.lattice_vectors)
+    if source is None or abs(cell_volume(source.lattice_vectors) - host_volume) > host_volume / 2:
+        return host_structure.lattice_vectors
+    return source.lattice_vectors
+
+
+def _uep_result_host_position(
+    result: Mapping[str, object], lattice: Sequence[Sequence[float]]
+) -> tuple[float, float, float] | None:
+    """Return a UEP result's position in the host cell, ``None`` when it cannot be worked out.
+
+    A result's stored fractional position is in the cell the job ran on, which may be a
+    supercell, so the position comes from its Cartesian one, wrapped into the cell.
+    """
+
+    cartesian = float_triplet_or_none(result.get("optimized_position_ang"))
+    if cartesian is None:
+        return None
+    try:
+        fractional = lattice_cart_to_frac(cartesian, lattice)
+    except LatticeError:
+        return None
+    return float_triplet(wrap_fractional(fractional, snap_tolerance=MUON_FRACTIONAL_SNAP_TOLERANCE))
+
+
+def uep_site_in_host_cell(
+    document: ProjectDocument,
+    host_structure: Structure,
+    site: MagneticMuonSiteOption,
+) -> MagneticMuonSiteOption:
+    """Return a saved site with a UEP result's position in the host cell.
+
+    A selection saved from a supercell job holds the job cell's fractional position. A
+    site that does not carry the result it was chosen from is returned as it is.
+    """
+
+    properties = site.properties or {}
+    result = properties.get("representative")
+    if site.source != UEP_SITE_SOURCE or not isinstance(result, Mapping):
+        return site
+    fractional = _uep_result_host_position(
+        result, _uep_search_lattice(document, host_structure, properties.get("source_job_id"))
+    )
+    if fractional is None:
+        return site
+    return replace(
+        site,
+        fractional_position=fractional,
+        cartesian_position=site_cartesian_position(fractional, host_structure),
     )
 
 
@@ -358,4 +431,5 @@ __all__ = [
     "site_cartesian_position",
     "site_source_label",
     "uep_cluster_muon_site_options",
+    "uep_site_in_host_cell",
 ]
