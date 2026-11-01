@@ -1790,6 +1790,7 @@ class MainWindow(QMainWindow):
         self._record_recent_project(project_root)
         self._refresh_ui_after_project_change()
         self.statusBar().showMessage(f"Created project at {project_root}")
+        self._focus_project_navigator()
 
     def _open_project(self) -> None:
         project_dir = self._get_existing_directory(
@@ -1884,7 +1885,17 @@ class MainWindow(QMainWindow):
             )
         else:
             self.statusBar().showMessage(f"Opened project {self._document.project.name}")
+        self._focus_project_navigator()
         return True
+
+    def _focus_project_navigator(self) -> None:
+        """Give the navigator keyboard focus once a project has opened.
+
+        With another window active, such as a dialog still open, this only sets
+        what takes focus when the main window is active again.
+        """
+
+        self._project_tree.setFocus(Qt.FocusReason.OtherFocusReason)
 
     def _recent_projects(self) -> list[str]:
         raw_value = self._settings.value(self._RECENT_PROJECTS_KEY, [])

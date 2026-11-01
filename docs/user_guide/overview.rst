@@ -37,7 +37,7 @@ Application shell
   (``New Project``), open one (``Open Project``) or reopen one of the last five
   (``Recent Projects``, each shown by name and parent folder, with the full path
   in its tooltip). The project navigator and the ``Job Dashboard`` appear once a
-  project is open.
+  project is open, and keyboard focus starts in the navigator.
 - The ``File`` menu creates (``New Project``), opens (``Open Project``),
   reopens (``Open Recent``) and saves (``Save Project``) projects, and holds
   ``Import Legacy Relaxations…`` and ``Remove Imported Relaxations…`` (see

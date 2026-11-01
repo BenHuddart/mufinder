@@ -6,13 +6,16 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import QSettings
+from PySide6.QtCore import QSettings, Qt
 from PySide6.QtGui import QAction
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import (
     QApplication,
+    QDialog,
     QDockWidget,
     QGridLayout,
     QLabel,
+    QLineEdit,
     QPushButton,
     QWidget,
 )
@@ -253,6 +256,168 @@ def test_panels_appear_even_if_a_refresh_fails(
 
     assert window._project_tree_panel.isVisible()
     assert _dock(window).isVisible()
+
+
+def _active(window: QWidget) -> QWidget:
+    """Activate ``window`` and wait until the application reports it as active."""
+
+    window.activateWindow()
+    for _attempt in range(200):
+        if QApplication.activeWindow() is window:
+            return window
+        QTest.qWait(10)
+    raise AssertionError("the window never became active")
+
+
+def _assert_down_walks_the_navigator(window: MainWindow) -> None:
+    tree = window._project_tree
+    assert QApplication.focusWidget() is tree
+
+    routes = []
+    for _press in range(2):
+        QTest.keyClick(QApplication.focusWidget(), Qt.Key.Key_Down)
+        QApplication.processEvents()
+        routes.append(tree.currentItem().data(0, Qt.ItemDataRole.UserRole))
+
+    assert QApplication.focusWidget() is tree
+    assert routes[0] != routes[1]
+
+
+def _open_through_the_file_menu(window: MainWindow, root: Path, monkeypatch) -> None:
+    monkeypatch.setattr(window, "_get_existing_directory", lambda **kwargs: str(root))
+    window._open_project()
+
+
+def _open_from_the_command_line(window: MainWindow, root: Path, monkeypatch) -> None:
+    assert window.open_project(root)
+
+
+def _open_from_the_command_line_on_a_page(window: MainWindow, root: Path, monkeypatch) -> None:
+    assert window.open_project(root)
+    window.show_page("uep")
+
+
+def _open_a_recent_entry(window: MainWindow, root: Path, monkeypatch) -> None:
+    _set_recents(window, [str(root)])
+    _recent_buttons(window)[0].click()
+
+
+@pytest.mark.parametrize(
+    "open_route",
+    [
+        _open_through_the_file_menu,
+        _open_from_the_command_line,
+        _open_from_the_command_line_on_a_page,
+        _open_a_recent_entry,
+    ],
+)
+def test_keyboard_focus_lands_on_the_navigator_after_opening(
+    window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, open_route
+) -> None:
+    root = ProjectService().create_project(tmp_path / "keys.mufinder", "Keys").project_root
+    _active(window)
+
+    open_route(window, root, monkeypatch)
+    QApplication.processEvents()
+
+    assert window._document is not None
+    _assert_down_walks_the_navigator(window)
+
+
+def test_keyboard_focus_lands_on_the_navigator_after_new_project(
+    window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _active(window)
+    monkeypatch.setattr(
+        main_window_module.QInputDialog, "getText", lambda *args, **kwargs: ("Keys", True)
+    )
+    monkeypatch.setattr(window, "_get_existing_directory", lambda **kwargs: str(tmp_path))
+
+    window._new_project()
+    QApplication.processEvents()
+
+    assert window._document is not None
+    _assert_down_walks_the_navigator(window)
+
+
+def test_a_failed_open_leaves_keyboard_focus_where_it_was(
+    window: MainWindow, tmp_path: Path
+) -> None:
+    _active(window)
+    button = window._home_welcome_page.findChildren(QPushButton)[0]
+    button.setFocus()
+    assert QApplication.focusWidget() is button
+
+    assert not window._open_project_from_path(tmp_path / "missing.mufinder", show_errors=False)
+    QApplication.processEvents()
+
+    assert QApplication.focusWidget() is button
+
+
+def test_a_refresh_of_the_open_project_leaves_keyboard_focus_alone(
+    window: MainWindow, tmp_path: Path
+) -> None:
+    root = ProjectService().create_project(tmp_path / "keep.mufinder", "Keep").project_root
+    _active(window)
+    assert window.open_project(root)
+    window._jobs_table.setFocus()
+    assert QApplication.focusWidget() is window._jobs_table
+
+    window._refresh_ui_after_project_change()
+    QApplication.processEvents()
+
+    assert QApplication.focusWidget() is window._jobs_table
+
+
+def test_opening_under_a_dialog_leaves_its_focus_and_lands_on_the_navigator_after(
+    window: MainWindow, tmp_path: Path
+) -> None:
+    root = ProjectService().create_project(tmp_path / "under.mufinder", "Under").project_root
+    _active(window)
+    dialog = QDialog(window)
+    field = QLineEdit(dialog)
+    dialog.setModal(True)
+    dialog.show()
+    _active(dialog)
+    field.setFocus()
+    assert QApplication.focusWidget() is field
+
+    assert window.open_project(root)
+    QApplication.processEvents()
+    assert QApplication.focusWidget() is field
+
+    dialog.close()
+    _active(window)
+    QApplication.processEvents()
+    _assert_down_walks_the_navigator(window)
+
+
+def test_integrity_warning_keeps_focus_until_dismissed_then_the_navigator_has_it(
+    window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = ProjectService()
+    root = service.create_project(tmp_path / "warned.mufinder", "Warned").project_root
+    real_load = service.load_project
+    focus_during_warning: list[bool] = []
+
+    def load_with_warning(path: Path):
+        document = real_load(path)
+        document.ui_state["_integrity_warnings"] = ["A warning."]
+        return document
+
+    monkeypatch.setattr(window._project_service, "load_project", load_with_warning)
+    monkeypatch.setattr(
+        main_window_module.QMessageBox,
+        "warning",
+        lambda *args, **kwargs: focus_during_warning.append(window._project_tree.hasFocus()),
+    )
+    _active(window)
+
+    assert window.open_project(root)
+    QApplication.processEvents()
+
+    assert focus_during_warning == [False]
+    _assert_down_walks_the_navigator(window)
 
 
 def test_welcome_window_minimum_is_the_page_minimum_alone(window: MainWindow) -> None:
