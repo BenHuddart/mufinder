@@ -51,7 +51,7 @@ and quality standards.
    user_guide/uep_workflow
    user_guide/site_generation
    user_guide/structural_relaxation_analysis
-   user_guide/legacy_import
+   user_guide/relaxation_import
    user_guide/hyperfine_coupling
    user_guide/hyperfine_coupling_theory
    user_guide/magnetic_fields
@@ -96,6 +96,6 @@ and quality standards.
    compatibility_policy
    project_specification
    job_lifecycle
-   legacy_import
+   relaxation_import
    branding
    ui_text

@@ -109,7 +109,7 @@ def _without_imported_rows(config: MuonRelaxationConfig) -> MuonRelaxationConfig
     """Return ``config`` with imported rows dropped.
 
     Job expansion must never see them. An imported row carries the parameters
-    its legacy run actually used, recovered from third-party output rather than
+    its run actually used, recovered from third-party output rather than
     authored against the current schema, so expansion can legitimately reject a
     value — and both callers turn that into a silent empty result. Since
     expansion is all-or-nothing over the whole configuration, one such row would

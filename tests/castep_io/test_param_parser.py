@@ -1,7 +1,7 @@
 """Tests for CASTEP ``.param`` parsing utilities.
 
 Every fixture here is hand-authored. Nothing is copied from a real calculation:
-see ``docs/legacy_import.rst`` (Research data boundary).
+see ``docs/relaxation_import.rst`` (Research data boundary).
 """
 
 from __future__ import annotations
@@ -23,9 +23,9 @@ from mufinder.castep_io.schema import get_keyword_spec
 from mufinder.castep_io.types import ValueWithUnit
 
 
-#: A ``.param`` in the shape the legacy MuFinder wrote. Hand-authored to that
+#: A ``.param`` in a common hand-written shape. Hand-authored to that
 #: documented shape, not taken from any calculation.
-LEGACY_PARAM_TEXT = """task: geometryoptimisation
+HAND_WRITTEN_PARAM_TEXT = """task: geometryoptimisation
 charge: +1
 xc_functional: PBE
 spin_polarized : false
@@ -39,10 +39,10 @@ continuation : default
 """
 
 
-def test_parse_param_assignments_reads_a_legacy_shaped_file() -> None:
-    assignments = parse_param_assignments(LEGACY_PARAM_TEXT)
+def test_parse_param_assignments_reads_a_hand_written_file() -> None:
+    assignments = parse_param_assignments(HAND_WRITTEN_PARAM_TEXT)
 
-    # The legacy writer used the British spelling, which CASTEP folds on read.
+    # This file uses the British spelling, which CASTEP folds on read.
     assert assignments["task"] == "GEOMETRYOPTIMIZATION"
     assert assignments["charge"] == 1
     assert assignments["spin_polarized"] is False
@@ -92,7 +92,7 @@ def test_task_value_aliases_are_folded_the_way_castep_folds_them(
 ) -> None:
     """CASTEP normalises these spellings on read; a parse must match.
 
-    Legacy MuFinder wrote ``geometryoptimisation``. Without folding, a legacy
+    A file may say ``geometryoptimisation``. Without folding, such a
     file parses to a value MuFinder's own validator rejects, so the rendered
     ``.param`` for an imported job could not be written at all.
     """
@@ -132,7 +132,7 @@ max_scf_cycles : 40
 def test_parse_param_text_round_trips_through_the_writer() -> None:
     from mufinder.castep_io.param_writer import write_param
 
-    parsed = parse_param_text(LEGACY_PARAM_TEXT)
+    parsed = parse_param_text(HAND_WRITTEN_PARAM_TEXT)
     rendered = write_param(parsed.param_file)
 
     assert "TASK :" in rendered
@@ -141,7 +141,7 @@ def test_parse_param_text_round_trips_through_the_writer() -> None:
     # keywords the schema recognises.
     reparsed = parse_param_assignments(rendered)
     for name in ("charge", "geom_max_iter", "max_scf_cycles", "spin_polarized"):
-        assert reparsed[name] == parse_param_assignments(LEGACY_PARAM_TEXT)[name]
+        assert reparsed[name] == parse_param_assignments(HAND_WRITTEN_PARAM_TEXT)[name]
 
 
 def test_parse_param_text_preserves_blocks() -> None:
@@ -189,7 +189,7 @@ def test_strict_mode_raises_and_lenient_mode_records_the_failure() -> None:
 
 def test_parse_param_file_reads_from_disk(tmp_path: Path) -> None:
     path = tmp_path / "seed.param"
-    path.write_text(LEGACY_PARAM_TEXT, encoding="utf-8")
+    path.write_text(HAND_WRITTEN_PARAM_TEXT, encoding="utf-8")
 
     parsed = parse_param_file(path)
 

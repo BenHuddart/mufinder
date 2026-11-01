@@ -411,7 +411,7 @@ Muon site generation and relaxation
   column, and CASTEP total charge stays workflow-controlled: ``+1`` for the
   positive muon and ``0`` for muonium.
 - Relaxations performed outside MuFinder can be imported as read-only rows
-  (see :doc:`/user_guide/legacy_import`).
+  (see :doc:`/user_guide/relaxation_import`).
 
 Relaxation analysis and clustering
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

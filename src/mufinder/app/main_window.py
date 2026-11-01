@@ -123,11 +123,11 @@ from mufinder.app.energy_barriers_widget import (
 from mufinder.app.export_dialogs import open_containing_folder
 from mufinder.app.failed_job_dialog import FailedJobAction, FailedJobDialog
 from mufinder.app.kpoint_convergence_widget import KPointConvergenceWidget
-from mufinder.app.legacy_import_dialog import LegacyImportDialog, start_legacy_scan
+from mufinder.app.relaxation_import_dialog import RelaxationImportDialog, start_relaxation_scan
 from mufinder.domain.text import plural
-from mufinder.services.legacy_import import LegacyFolderScan
-from mufinder.services.legacy_import_commit import IMPORT_ACTION, commit_legacy_import
-from mufinder.services.legacy_import_removal import (
+from mufinder.services.relaxation_import import RelaxationFolderScan
+from mufinder.services.relaxation_import_commit import IMPORT_ACTIONS, commit_relaxation_import
+from mufinder.services.relaxation_import_removal import (
     detach_rows_from_definition,
     imported_relaxations_in_batch,
     plan_removal,
@@ -897,10 +897,10 @@ class MainWindow(QMainWindow):
             self._on_create_muon_relaxation_jobs_requested
         )
         self._muon_generation_view.form_state_changed.connect(self._on_muon_form_state_changed)
-        self._import_legacy_action = None
+        self._import_relaxations_action = None
         self._remove_imported_action = None
-        self._legacy_scan_host: Structure | None = None
-        self._legacy_scan_root: Path | None = None
+        self._relaxation_scan_host: Structure | None = None
+        self._relaxation_scan_root: Path | None = None
         self._muon_relaxation_view = MuonRelaxationWidget()
         self._muon_relaxation_view.configure_requested.connect(self._on_muon_relaxation_configured)
         self._muon_relaxation_view.form_state_changed.connect(
@@ -1699,8 +1699,8 @@ class MainWindow(QMainWindow):
 
         file_menu.addSeparator()
 
-        self._import_legacy_action = file_menu.addAction("Import Legacy Relaxations…")
-        self._import_legacy_action.triggered.connect(self._on_import_legacy_relaxations)
+        self._import_relaxations_action = file_menu.addAction("Import CASTEP Relaxations…")
+        self._import_relaxations_action.triggered.connect(self._on_import_castep_relaxations)
 
         self._remove_imported_action = file_menu.addAction("Remove Imported Relaxations…")
         self._remove_imported_action.triggered.connect(self._on_remove_imported_relaxations)
@@ -8680,15 +8680,15 @@ class MainWindow(QMainWindow):
         self._uep_controller.remove_rows(labels)
         self._refresh_uep_rows()
 
-    def _on_import_legacy_relaxations(self) -> None:
-        """Scan a legacy MuFinder folder and import the relaxations chosen from it."""
+    def _on_import_castep_relaxations(self) -> None:
+        """Scan a folder for CASTEP relaxations and import the ones chosen from it."""
 
         document = self._document
         if document is None:
             QMessageBox.information(
                 self,
                 "No project open",
-                "Open or create a project before importing legacy relaxations.",
+                "Open or create a project before importing CASTEP relaxations.",
             )
             return
 
@@ -8707,73 +8707,75 @@ class MainWindow(QMainWindow):
             return
 
         directory = QFileDialog.getExistingDirectory(
-            self, "Select a legacy MuFinder working folder"
+            self, "Select a folder containing CASTEP relaxations"
         )
         if not directory:
             return
 
-        self._begin_legacy_scan(Path(directory), host)
+        self._begin_relaxation_scan(Path(directory), host)
 
-    def _begin_legacy_scan(self, root: Path, host: Structure) -> None:
+    def _begin_relaxation_scan(self, root: Path, host: Structure) -> None:
         """Scan ``root`` on a worker thread, then review and commit."""
 
-        self.statusBar().showMessage(f"Scanning {root.name} for legacy relaxations…")
-        if self._import_legacy_action is not None:
-            self._import_legacy_action.setEnabled(False)
-        self._legacy_scan_host = host
-        self._legacy_scan_root = root
-        start_legacy_scan(
+        self.statusBar().showMessage(f"Scanning {root.name} for CASTEP relaxations…")
+        if self._import_relaxations_action is not None:
+            self._import_relaxations_action.setEnabled(False)
+        self._relaxation_scan_host = host
+        self._relaxation_scan_root = root
+        start_relaxation_scan(
             self,
             root,
             [list(vector) for vector in host.lattice_vectors],
             list(host.species),
-            self._on_legacy_scan_completed,
-            self._on_legacy_scan_failed,
-            self._on_legacy_scan_progress,
+            self._on_relaxation_scan_completed,
+            self._on_relaxation_scan_failed,
+            self._on_relaxation_scan_progress,
         )
 
     @Slot(int, int)
-    def _on_legacy_scan_progress(self, done: int, total: int) -> None:
-        root = self._legacy_scan_root
+    def _on_relaxation_scan_progress(self, done: int, total: int) -> None:
+        root = self._relaxation_scan_root
         name = root.name if root is not None else "folder"
         self.statusBar().showMessage(f"Scanning {name}: relaxation {done} of {total}…")
 
     @Slot(str)
-    def _on_legacy_scan_failed(self, message: str) -> None:
-        self._finish_legacy_scan()
+    def _on_relaxation_scan_failed(self, message: str) -> None:
+        self._finish_relaxation_scan()
         QMessageBox.warning(self, "Import failed", f"Could not scan the folder:\n{message}")
 
     @Slot(object)
-    def _on_legacy_scan_completed(self, scan: object) -> None:
-        self._finish_legacy_scan()
+    def _on_relaxation_scan_completed(self, scan: object) -> None:
+        self._finish_relaxation_scan()
         document = self._document
-        host = self._legacy_scan_host
-        if document is None or host is None or not isinstance(scan, LegacyFolderScan):
+        host = self._relaxation_scan_host
+        if document is None or host is None or not isinstance(scan, RelaxationFolderScan):
             return
 
         if not scan.runs:
             QMessageBox.information(
                 self,
                 "Nothing to import",
-                "No muon relaxations were found in that folder.\n\n" + "\n".join(scan.warnings),
+                "No CASTEP outputs (.castep files) were found in or under that folder.",
             )
             return
 
-        dialog = LegacyImportDialog(scan, parent=self)
+        dialog = RelaxationImportDialog(scan, parent=self)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         selected = dialog.selected_runs()
         if not selected:
             return
 
-        self._commit_legacy_import(scan, selected, host)
+        self._commit_relaxation_import(scan, selected, host)
 
-    def _finish_legacy_scan(self) -> None:
-        if self._import_legacy_action is not None:
-            self._import_legacy_action.setEnabled(True)
+    def _finish_relaxation_scan(self) -> None:
+        if self._import_relaxations_action is not None:
+            self._import_relaxations_action.setEnabled(True)
         self.statusBar().clearMessage()
 
-    def _commit_legacy_import(self, scan: LegacyFolderScan, runs: list, host: Structure) -> None:
+    def _commit_relaxation_import(
+        self, scan: RelaxationFolderScan, runs: list, host: Structure
+    ) -> None:
         """Build entities and files, attach the rows, and save."""
 
         document = self._document
@@ -8791,7 +8793,7 @@ class MainWindow(QMainWindow):
                 existing_labels = [row.label for row in config.rows]
 
         try:
-            outcome = commit_legacy_import(
+            outcome = commit_relaxation_import(
                 document,
                 scan=scan,
                 runs=runs,
@@ -8823,7 +8825,7 @@ class MainWindow(QMainWindow):
         self._refresh_jobs_table()
         self._refresh_muon_sites_summary()
         self._persist_document_ui_state(
-            failure_message="Legacy relaxations were imported, but autosave failed.",
+            failure_message="CASTEP relaxations were imported, but autosave failed.",
         )
 
         messages = [f"Imported {plural(len(outcome.imported), 'relaxation')}."]
@@ -8835,7 +8837,7 @@ class MainWindow(QMainWindow):
             messages.extend(f"- {note}" for note in dict.fromkeys(row_warnings))
         QMessageBox.information(self, "Import complete", "\n".join(messages))
         self.statusBar().showMessage(
-            f"Imported {plural(len(outcome.imported), 'legacy relaxation')}"
+            f"Imported {plural(len(outcome.imported), 'CASTEP relaxation')}"
         )
 
     def _on_remove_imported_relaxations(self) -> None:
@@ -8948,7 +8950,7 @@ class MainWindow(QMainWindow):
 
         labels: dict[str, str] = {}
         for record in document.provenance:
-            if record.action != IMPORT_ACTION:
+            if record.action not in IMPORT_ACTIONS:
                 continue
             raw_batch = record.parameters.get("batch_id")
             source = record.parameters.get("source_folder")

@@ -1,4 +1,4 @@
-"""Review dialog for a scanned legacy MuFinder folder.
+"""Review dialog for a folder scanned for CASTEP relaxations.
 
 Shows every relaxation the scan found, why any of them cannot be imported, and
 what the scan had to resolve on the user's behalf — then lets the user choose
@@ -6,13 +6,13 @@ which to bring in.
 
 The dialog is deliberately a *review* step rather than a confirmation. An import
 writes entities and files that are then read-only, and it resolves genuine
-ambiguities along the way: a stale local input tree disagreeing with the output,
+ambiguities along the way: a stale local input file disagreeing with the output,
 a charge state that could not be determined, a muon labelled with a bare ``H``.
 Those resolutions are defensible but they are the user's science, so they are
 surfaced before anything is committed rather than reported afterwards.
 
 Scanning happens on a worker thread (see
-:class:`~mufinder.app.legacy_import_dialog.LegacyScanWorker`): a folder can hold
+:class:`~mufinder.app.relaxation_import_dialog.RelaxationScanWorker`): a folder can hold
 dozens of multi-megabyte outputs, and parsing them on the GUI thread would
 freeze the window.
 """
@@ -39,17 +39,21 @@ from PySide6.QtWidgets import (
 from mufinder.app.theme import style_section_subtitle, style_section_title, track_item_view_corners
 from mufinder.domain.charge_states import muon_charge_state_label
 from mufinder.domain.text import plural
-from mufinder.services.legacy_import import DetectedRun, LegacyFolderScan, scan_legacy_folder
+from mufinder.services.relaxation_import import (
+    DetectedRun,
+    RelaxationFolderScan,
+    scan_relaxation_folder,
+)
 
 
 #: Scans in flight. A worker moved to a thread is parentless, so only a Python
 #: reference keeps it alive, and Qt aborts the process if a running ``QThread``
 #: is destroyed — both must stay referenced until the thread exits.
-_LIVE_SCANS: set[tuple[QThread, "LegacyScanWorker"]] = set()
+_LIVE_SCANS: set[tuple[QThread, "RelaxationScanWorker"]] = set()
 
 
-class LegacyScanWorker(QObject):
-    """Scan a legacy folder off the GUI thread."""
+class RelaxationScanWorker(QObject):
+    """Scan a folder off the GUI thread."""
 
     completed = Signal(object)
     failed = Signal(str)
@@ -71,7 +75,7 @@ class LegacyScanWorker(QObject):
     @Slot()
     def run(self) -> None:
         try:
-            scan = scan_legacy_folder(
+            scan = scan_relaxation_folder(
                 self._root,
                 host_lattice=self._host_lattice,
                 host_species=self._host_species,
@@ -83,7 +87,7 @@ class LegacyScanWorker(QObject):
         self.completed.emit(scan)
 
 
-def start_legacy_scan(
+def start_relaxation_scan(
     parent: QObject,
     root: Path,
     host_lattice: list[list[float]] | None,
@@ -92,7 +96,7 @@ def start_legacy_scan(
     on_failed,
     on_progress=None,
 ) -> None:
-    """Run :func:`scan_legacy_folder` on a worker thread.
+    """Run :func:`scan_relaxation_folder` on a worker thread.
 
     Returns nothing deliberately: the thread deletes itself once finished, so a
     handle retained by the caller would dangle. Progress and completion are
@@ -116,7 +120,7 @@ def start_legacy_scan(
     with its thread and worker.
     """
 
-    worker = LegacyScanWorker(root, host_lattice, host_species)
+    worker = RelaxationScanWorker(root, host_lattice, host_species)
     thread = QThread()
     worker.moveToThread(thread)
     thread.started.connect(worker.run)
@@ -148,24 +152,23 @@ def _status_text(run: DetectedRun) -> str:
     return "completed"
 
 
-def run_summary_lines(scan: LegacyFolderScan) -> list[str]:
+def run_summary_lines(scan: RelaxationFolderScan) -> list[str]:
     """Return the folder-level notes worth showing above the table."""
 
     lines = list(scan.warnings)
-    conflicts = sum(len(run.conflicts) for run in scan.runs)
+    conflicts = sum(len(run.conflicts) for run in scan.importable_runs)
     if conflicts:
         lines.append(
             f"{plural(conflicts, 'parameter disagreement')} between the run outputs and the "
             "local input files. The value the calculation actually used will be "
             "imported; see the Notes column."
         )
-    undetermined = [run.site_index for run in scan.runs if run.charge_state is None]
+    undetermined = [run.display_name for run in scan.importable_runs if run.charge_state is None]
     if undetermined:
         lines.append(
-            "Charge state could not be determined for "
-            f"{'site' if len(undetermined) == 1 else 'sites'} "
-            f"{', '.join(str(index) for index in undetermined)}; they will be imported "
-            "as positive muons."
+            f"Charge state could not be determined for {', '.join(undetermined)}; "
+            f"{'it' if len(undetermined) == 1 else 'they'} will be imported as "
+            f"{'a positive muon' if len(undetermined) == 1 else 'positive muons'}."
         )
     return lines
 
@@ -175,35 +178,36 @@ def run_notes(run: DetectedRun) -> str:
 
     notes = [conflict.describe() for conflict in run.conflicts]
     notes.extend(run.warnings)
+    notes.extend(run.pairing_notes)
     notes.extend(run.blockers)
     return " ".join(notes)
 
 
-class LegacyImportDialog(QDialog):
-    """Choose which detected legacy relaxations to import."""
+class RelaxationImportDialog(QDialog):
+    """Choose which detected CASTEP relaxations to import."""
 
     _SELECT_COLUMN = 0
-    _SITE_COLUMN = 1
+    _RUN_COLUMN = 1
     _CHARGE_COLUMN = 2
     _STATUS_COLUMN = 3
     _SUPERCELL_COLUMN = 4
     _ENERGY_COLUMN = 5
     _NOTES_COLUMN = 6
 
-    def __init__(self, scan: LegacyFolderScan, parent=None) -> None:
+    def __init__(self, scan: RelaxationFolderScan, parent=None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Import Legacy Relaxations")
+        self.setWindowTitle("Import CASTEP Relaxations")
         self.resize(940, 560)
         self._scan = scan
 
         layout = QVBoxLayout(self)
 
-        title = QLabel("Import Legacy Relaxations")
+        title = QLabel("Import CASTEP Relaxations")
         style_section_title(title)
         layout.addWidget(title)
 
         subtitle = QLabel(
-            f"Found {plural(len(scan.runs), 'relaxation')} in {scan.root.name}. "
+            f"Found {plural(len(scan.runs), 'CASTEP run')} in {scan.root.name}. "
             "Imported relaxations are read-only: they record calculations run "
             "outside MuFinder."
         )
@@ -222,7 +226,7 @@ class LegacyImportDialog(QDialog):
         self._table = QTableWidget(0, 7, self)
         track_item_view_corners(self._table)
         self._table.setHorizontalHeaderLabels(
-            ["Import", "Site", "Charge", "Status", "Supercell", "Energy (eV)", "Notes"]
+            ["Import", "Run", "Charge", "Status", "Supercell", "Energy (eV)", "Notes"]
         )
         self._table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
         self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -268,7 +272,7 @@ class LegacyImportDialog(QDialog):
             )
             self._table.setItem(row, self._SELECT_COLUMN, check)
 
-            self._table.setItem(row, self._SITE_COLUMN, QTableWidgetItem(str(run.site_index)))
+            self._table.setItem(row, self._RUN_COLUMN, QTableWidgetItem(run.display_name))
             charge = (
                 muon_charge_state_label(run.charge_state) if run.charge_state else "undetermined"
             )
@@ -339,9 +343,9 @@ def _is_diagonal(matrix) -> bool:
 
 
 __all__ = [
-    "LegacyImportDialog",
-    "LegacyScanWorker",
+    "RelaxationImportDialog",
+    "RelaxationScanWorker",
     "run_notes",
     "run_summary_lines",
-    "start_legacy_scan",
+    "start_relaxation_scan",
 ]

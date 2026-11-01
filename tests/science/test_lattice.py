@@ -111,7 +111,7 @@ def _magnetic_fields_fractional_distance(a, b):
     return float(np.linalg.norm(delta))
 
 
-def _legacy_import_fold_to_host(position, matrix):
+def _import_fold_to_host(position, matrix):
     x, y, z = position
     folded = (
         x * matrix[0][0] + y * matrix[1][0] + z * matrix[2][0],
@@ -243,11 +243,11 @@ def test_cell_volume_and_vector_length() -> None:
         assert vector_length(vector) == float(sum(float(value) ** 2 for value in vector) ** 0.5)
 
 
-def test_folding_a_supercell_position_matches_the_legacy_import_arithmetic() -> None:
+def test_folding_a_supercell_position_matches_the_relaxation_import_arithmetic() -> None:
     matrix = ((2, 0, 0), (1, 3, 0), (0, -1, 2))
     for position, _ in _random_pairs(50):
         folded = tuple(wrap_fractional(lattice_frac_to_cart(position, matrix)))
-        assert folded == _legacy_import_fold_to_host(position, matrix)
+        assert folded == _import_fold_to_host(position, matrix)
 
 
 @pytest.mark.parametrize(

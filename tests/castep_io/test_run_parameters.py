@@ -2,7 +2,7 @@
 
 Every fixture here is hand-authored to the layout CASTEP's own source produces
 (``Source/Fundamental/parameters.f90`` and ``cell.f90``). Nothing is copied from
-a real calculation: see ``docs/legacy_import.rst`` (Research data boundary).
+a real calculation: see ``docs/relaxation_import.rst`` (Research data boundary).
 """
 
 from __future__ import annotations
@@ -142,7 +142,7 @@ def test_recovers_the_keywords_an_import_needs() -> None:
 def test_recovers_the_two_values_downstream_jobs_inherit() -> None:
     """The cutoff and k-point grid are the functional payload of the whole reader.
 
-    Legacy inputs often state neither: the cutoff is implied by
+    Inputs often state neither: the cutoff is implied by
     ``BASIS_PRECISION`` and the grid never reaches the local input cell. Only
     the echo carries both.
     """
@@ -377,7 +377,7 @@ def test_parse_run_parameters_reports_a_missing_file(tmp_path: Path) -> None:
 
 
 def test_recovers_the_density_mixing_settings() -> None:
-    """A legacy ``.param`` need not state these.
+    """A ``.param`` need not state these.
 
     Without them, whether a run's mixing settings survive an import depends on
     whether the local input file happened to carry them — so two runs of the

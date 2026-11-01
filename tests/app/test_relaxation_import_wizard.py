@@ -1,11 +1,11 @@
-"""The legacy-import review dialog and the action that drives it.
+"""The relaxation-import review dialog and the action that drives it.
 
 The dialog is a review step, not a confirmation: an import writes read-only
 entities and resolves genuine ambiguities on the user's behalf, so what it
 resolved has to be visible *before* anything is committed. Most of these tests
 are therefore about what the user is shown, not just what is selected.
 
-Fixtures are hand-authored: see ``docs/legacy_import.rst``.
+Fixtures are hand-authored: see ``docs/relaxation_import.rst``.
 """
 
 from __future__ import annotations
@@ -15,18 +15,18 @@ from pathlib import Path
 import pytest
 
 from mufinder.app import workflow_table_utils
-from mufinder.app.legacy_import_dialog import (
-    LegacyImportDialog,
+from mufinder.app.relaxation_import_dialog import (
+    RelaxationImportDialog,
     run_notes,
     run_summary_lines,
 )
 from mufinder.app.main_window import MainWindow
 from mufinder.app.workflow_config_codecs import deserialize_muon_relaxation_config
 from mufinder.domain.models import Project, Structure
-from mufinder.services.legacy_import import scan_legacy_folder
+from mufinder.services.relaxation_import import scan_relaxation_folder
 from mufinder.services.project_service import ProjectDocument
 
-from tests.services.test_legacy_import_scan import HOST_LATTICE, _legacy_param, build_folder
+from tests.services.test_relaxation_import_scan import HOST_LATTICE, _run_param, build_folder
 from tests.support.qt import pump_until
 
 
@@ -55,20 +55,20 @@ def _document(tmp_path: Path, host: Structure) -> ProjectDocument:
 
 
 def _scan(folder: Path):
-    return scan_legacy_folder(folder, host_lattice=HOST_LATTICE)
+    return scan_relaxation_folder(folder, host_lattice=HOST_LATTICE)
 
 
 class TestSelection:
     def test_converged_runs_are_preselected(self, qapp, tmp_path: Path) -> None:
         """The wizard offers everything and pre-ticks what is safe."""
 
-        dialog = LegacyImportDialog(_scan(build_folder(tmp_path, sites=(1, 2))))
+        dialog = RelaxationImportDialog(_scan(build_folder(tmp_path, sites=(1, 2))))
 
         assert len(dialog.selected_runs()) == 2
 
     def test_an_unconverged_run_is_offered_but_not_preselected(self, qapp, tmp_path: Path) -> None:
         scan = _scan(build_folder(tmp_path, sites=(1,), castep_kwargs={"converged": False}))
-        dialog = LegacyImportDialog(scan)
+        dialog = RelaxationImportDialog(scan)
 
         assert dialog._table.rowCount() == 1
         assert dialog.selected_runs() == []
@@ -80,20 +80,20 @@ class TestSelection:
 
         folder = build_folder(tmp_path, sites=(1, 2))
         next(folder.glob("results/*_2-out.cell")).unlink()
-        dialog = LegacyImportDialog(_scan(folder))
+        dialog = RelaxationImportDialog(_scan(folder))
 
         assert dialog._table.rowCount() == 2
-        assert [run.site_index for run in dialog.selected_runs()] == [1]
+        assert [run.seed_name for run in dialog.selected_runs()] == ["Host_1"]
 
     def test_select_none_clears_the_selection(self, qapp, tmp_path: Path) -> None:
-        dialog = LegacyImportDialog(_scan(build_folder(tmp_path, sites=(1, 2))))
+        dialog = RelaxationImportDialog(_scan(build_folder(tmp_path, sites=(1, 2))))
 
         dialog._on_select_none()
 
         assert dialog.selected_runs() == []
 
     def test_select_converged_restores_the_default(self, qapp, tmp_path: Path) -> None:
-        dialog = LegacyImportDialog(_scan(build_folder(tmp_path, sites=(1, 2))))
+        dialog = RelaxationImportDialog(_scan(build_folder(tmp_path, sites=(1, 2))))
         dialog._on_select_none()
 
         dialog._on_select_converged()
@@ -103,7 +103,7 @@ class TestSelection:
     def test_ok_is_disabled_with_nothing_selected(self, qapp, tmp_path: Path) -> None:
         from PySide6.QtWidgets import QDialogButtonBox
 
-        dialog = LegacyImportDialog(_scan(build_folder(tmp_path, sites=(1,))))
+        dialog = RelaxationImportDialog(_scan(build_folder(tmp_path, sites=(1,))))
         ok = dialog._buttons.button(QDialogButtonBox.StandardButton.Ok)
 
         assert ok.isEnabled()
@@ -116,7 +116,7 @@ class TestWhatTheUserIsTold:
         """The headline hazard. The scan resolves it in favour of the output,
         which is right, but it is the user's science and they should see it."""
 
-        folder = build_folder(tmp_path, sites=(1,), param_text=_legacy_param(xc="LDA"))
+        folder = build_folder(tmp_path, sites=(1,), param_text=_run_param(xc="LDA"))
         scan = _scan(folder)
 
         summary = " ".join(run_summary_lines(scan))
@@ -131,18 +131,14 @@ class TestWhatTheUserIsTold:
             tmp_path,
             sites=(1,),
             castep_kwargs={"charge": "  7.000"},
-            param_text=_legacy_param(charge_line=""),
+            param_text=_run_param(charge_line=""),
         )
 
         summary = " ".join(run_summary_lines(_scan(folder)))
 
         assert "Charge state could not be determined" in summary
-        assert "positive muons" in summary
-
-    def test_a_missing_cif_is_surfaced(self, tmp_path: Path) -> None:
-        scan = _scan(build_folder(tmp_path, sites=(1,), include_cif=False))
-
-        assert any("No CIF" in line for line in run_summary_lines(scan))
+        assert "results/Host_1" in summary
+        assert "a positive muon" in summary
 
     def test_a_blocked_run_explains_itself(self, tmp_path: Path) -> None:
         folder = build_folder(tmp_path, sites=(1,))
@@ -158,6 +154,39 @@ class TestWhatTheUserIsTold:
         assert not any("disagreement" in line for line in run_summary_lines(scan))
 
 
+class TestWording:
+    def test_the_dialog_names_runs_by_path_under_the_folder(self, qapp, tmp_path: Path) -> None:
+        dialog = RelaxationImportDialog(_scan(build_folder(tmp_path, sites=(1,))))
+
+        assert dialog.windowTitle() == "Import CASTEP Relaxations"
+        assert dialog._table.horizontalHeaderItem(dialog._RUN_COLUMN).text() == "Run"
+        assert dialog._table.item(0, dialog._RUN_COLUMN).text() == "results/Host_1"
+
+    def test_the_file_menu_offers_the_import(self, window: MainWindow) -> None:
+        assert window._import_relaxations_action.text() == "Import CASTEP Relaxations…"
+
+    def test_a_folder_with_no_castep_output_says_so(
+        self,
+        window: MainWindow,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        host_structure: Structure,
+    ) -> None:
+        from mufinder.services.relaxation_import import scan_relaxation_folder
+
+        window._document = _document(tmp_path, host_structure)
+        window._relaxation_scan_host = host_structure
+        shown: list[str] = []
+        monkeypatch.setattr(
+            "mufinder.app.main_window.QMessageBox.information",
+            lambda *args, **kwargs: shown.append(args[2]),
+        )
+
+        window._on_relaxation_scan_completed(scan_relaxation_folder(tmp_path))
+
+        assert shown == ["No CASTEP outputs (.castep files) were found in or under that folder."]
+
+
 class TestTheAction:
     def test_it_refuses_without_a_project(
         self, window: MainWindow, monkeypatch: pytest.MonkeyPatch
@@ -169,7 +198,7 @@ class TestTheAction:
             lambda *args, **kwargs: shown.append(args[1]),
         )
 
-        window._on_import_legacy_relaxations()
+        window._on_import_castep_relaxations()
 
         assert shown == ["No project open"]
 
@@ -192,7 +221,7 @@ class TestTheAction:
             lambda *args, **kwargs: picked.append("called") or "",
         )
 
-        window._on_import_legacy_relaxations()
+        window._on_import_castep_relaxations()
 
         assert shown == ["No host structure"]
         # The folder picker never opened: refusing early beats refusing after
@@ -215,8 +244,8 @@ class TestTheAction:
         monkeypatch.setattr(window, "_persist_document_ui_state", lambda **kwargs: None)
         monkeypatch.setattr(window, "_refresh_muon_sites_summary", lambda **kwargs: None)
 
-        scan = _scan(build_folder(tmp_path / "legacy", sites=(1, 2)))
-        window._commit_legacy_import(scan, list(scan.importable_runs), host_structure)
+        scan = _scan(build_folder(tmp_path / "runs", sites=(1, 2)))
+        window._commit_relaxation_import(scan, list(scan.importable_runs), host_structure)
 
         definition = window._muon_relaxation_controller.active_definition()
         assert definition is not None
@@ -240,10 +269,10 @@ class TestTheAction:
         monkeypatch.setattr(window, "_persist_document_ui_state", lambda **kwargs: None)
         monkeypatch.setattr(window, "_refresh_muon_sites_summary", lambda **kwargs: None)
 
-        folder = build_folder(tmp_path / "legacy", sites=(1, 2), muon_label="H")
+        folder = build_folder(tmp_path / "runs", sites=(1, 2), muon_label="H")
         next(folder.glob("results/*_2-out.cell")).unlink()
         scan = _scan(folder)
-        window._commit_legacy_import(scan, list(scan.runs), host_structure)
+        window._commit_relaxation_import(scan, list(scan.runs), host_structure)
 
         assert messages
         body = messages[0]
@@ -258,31 +287,31 @@ class TestScanWorker:
         """Scanning runs off the GUI thread, so it is exercised directly here
         rather than through a spun event loop."""
 
-        from mufinder.app.legacy_import_dialog import LegacyScanWorker
+        from mufinder.app.relaxation_import_dialog import RelaxationScanWorker
 
         received: list[object] = []
-        worker = LegacyScanWorker(build_folder(tmp_path, sites=(1,)), HOST_LATTICE)
+        worker = RelaxationScanWorker(build_folder(tmp_path, sites=(1,)), HOST_LATTICE)
         worker.completed.connect(received.append)
 
         worker.run()
 
         assert len(received) == 1
-        assert [run.site_index for run in received[0].runs] == [1]
+        assert [run.seed_name for run in received[0].runs] == ["Host_1"]
 
     def test_the_worker_reports_failure_instead_of_raising(
         self, qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """An exception crossing a thread boundary would be lost."""
 
-        from mufinder.app import legacy_import_dialog
-        from mufinder.app.legacy_import_dialog import LegacyScanWorker
+        from mufinder.app import relaxation_import_dialog
+        from mufinder.app.relaxation_import_dialog import RelaxationScanWorker
 
         def _boom(*args, **kwargs):
             raise RuntimeError("disk on fire")
 
-        monkeypatch.setattr(legacy_import_dialog, "scan_legacy_folder", _boom)
+        monkeypatch.setattr(relaxation_import_dialog, "scan_relaxation_folder", _boom)
         failures: list[str] = []
-        worker = LegacyScanWorker(tmp_path, None)
+        worker = RelaxationScanWorker(tmp_path, None)
         worker.failed.connect(failures.append)
 
         worker.run()
@@ -292,12 +321,12 @@ class TestScanWorker:
 
 class TestRemovalAction:
     def _imported_window(self, window: MainWindow, tmp_path: Path, host: Structure):
-        from mufinder.services.legacy_import_commit import commit_legacy_import
+        from mufinder.services.relaxation_import_commit import commit_relaxation_import
 
         window._document = _document(tmp_path, host)
-        scan = _scan(build_folder(tmp_path / "legacy", sites=(1, 2)))
+        scan = _scan(build_folder(tmp_path / "runs", sites=(1, 2)))
         output_root = window._document.project_root / "files" / "muon_relaxation"
-        outcome = commit_legacy_import(
+        outcome = commit_relaxation_import(
             window._document,
             scan=scan,
             runs=scan.importable_runs,
@@ -305,7 +334,7 @@ class TestRemovalAction:
             output_root=output_root,
         )
         window.merge_imported_relaxation_rows(outcome, output_directory=output_root)
-        # As _commit_legacy_import does: the record is returned rather than
+        # As _commit_relaxation_import does: the record is returned rather than
         # appended by the service, and the batch listing reads it back.
         assert outcome.provenance is not None
         window._project_service.append_provenance(window._document, outcome.provenance)
@@ -339,7 +368,7 @@ class TestRemovalAction:
         assert len(batches) == 1
         label, count, _batch_id = batches[0]
         assert count == 2
-        assert label == "legacy"
+        assert label == "runs"
 
     def test_removal_refuses_while_something_still_uses_the_sites(
         self,
@@ -436,10 +465,10 @@ class TestRemovalAction:
 
 class TestScanProgressReporting:
     def test_the_worker_relays_progress(self, qapp, tmp_path: Path) -> None:
-        from mufinder.app.legacy_import_dialog import LegacyScanWorker
+        from mufinder.app.relaxation_import_dialog import RelaxationScanWorker
 
         seen: list[tuple[int, int]] = []
-        worker = LegacyScanWorker(build_folder(tmp_path, sites=(1, 2)), HOST_LATTICE)
+        worker = RelaxationScanWorker(build_folder(tmp_path, sites=(1, 2)), HOST_LATTICE)
         worker.progressed.connect(lambda done, total: seen.append((done, total)))
 
         worker.run()
@@ -449,11 +478,11 @@ class TestScanProgressReporting:
     def test_the_status_bar_names_the_folder_and_position(
         self, window: MainWindow, tmp_path: Path
     ) -> None:
-        window._legacy_scan_root = tmp_path / "legacy"
+        window._relaxation_scan_root = tmp_path / "runs"
 
-        window._on_legacy_scan_progress(3, 36)
+        window._on_relaxation_scan_progress(3, 36)
 
-        assert window.statusBar().currentMessage() == "Scanning legacy: relaxation 3 of 36…"
+        assert window.statusBar().currentMessage() == "Scanning runs: relaxation 3 of 36…"
 
 
 class TestScanRunsOnAThread:
@@ -487,7 +516,7 @@ class TestScanRunsOnAThread:
 
         from PySide6.QtCore import QEventLoop, QObject, QTimer, Slot
 
-        from mufinder.app.legacy_import_dialog import start_legacy_scan
+        from mufinder.app.relaxation_import_dialog import start_relaxation_scan
 
         events: list[tuple] = []
         threads: dict[str, int] = {}
@@ -512,7 +541,7 @@ class TestScanRunsOnAThread:
                 events.append(("progress", done, total))
 
         receiver = Receiver()
-        start_legacy_scan(
+        start_relaxation_scan(
             None,
             folder,
             HOST_LATTICE,
@@ -561,12 +590,12 @@ class TestScanRunsOnAThread:
     def test_a_failing_scan_reports_across_the_thread_boundary(
         self, qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from mufinder.app import legacy_import_dialog
+        from mufinder.app import relaxation_import_dialog
 
         def _boom(*args, **kwargs):
             raise RuntimeError("disk on fire")
 
-        monkeypatch.setattr(legacy_import_dialog, "scan_legacy_folder", _boom)
+        monkeypatch.setattr(relaxation_import_dialog, "scan_relaxation_folder", _boom)
 
         import threading
 
@@ -580,7 +609,7 @@ class TestScanRunsOnAThread:
     def test_the_registry_is_emptied_once_the_thread_exits(self, qapp, tmp_path: Path) -> None:
         """A registry that never drains would leak a thread per import."""
 
-        from mufinder.app.legacy_import_dialog import _LIVE_SCANS
+        from mufinder.app.relaxation_import_dialog import _LIVE_SCANS
 
         self._run_to_completion(build_folder(tmp_path, sites=(1,)))
 
@@ -602,7 +631,7 @@ class TestScanRunsOnAThread:
         every run of this test.
         """
 
-        from mufinder.app.legacy_import_dialog import _LIVE_SCANS
+        from mufinder.app.relaxation_import_dialog import _LIVE_SCANS
 
         folder = build_folder(tmp_path, sites=(1,))
         for attempt in range(150):
@@ -641,7 +670,7 @@ class TestProvenanceReachesDisk:
         host_structure: Structure,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        from mufinder.services.legacy_import_commit import IMPORT_ACTION
+        from mufinder.services.relaxation_import_commit import IMPORT_ACTION
 
         window._document = _document(tmp_path, host_structure)
         monkeypatch.setattr(
@@ -650,8 +679,8 @@ class TestProvenanceReachesDisk:
         monkeypatch.setattr(window, "_persist_document_ui_state", lambda **kwargs: None)
         monkeypatch.setattr(window, "_refresh_muon_sites_summary", lambda **kwargs: None)
 
-        scan = _scan(build_folder(tmp_path / "legacy", sites=(1, 2)))
-        window._commit_legacy_import(scan, list(scan.importable_runs), host_structure)
+        scan = _scan(build_folder(tmp_path / "runs", sites=(1, 2)))
+        window._commit_relaxation_import(scan, list(scan.importable_runs), host_structure)
 
         records = [
             item for item in self._lines(window._document) if item["action"] == IMPORT_ACTION
@@ -669,7 +698,7 @@ class TestProvenanceReachesDisk:
         """Which file each parameter came from survives only here — the row
         itself carries the values, not their provenance."""
 
-        from mufinder.services.legacy_import_commit import IMPORT_ACTION
+        from mufinder.services.relaxation_import_commit import IMPORT_ACTION
 
         window._document = _document(tmp_path, host_structure)
         monkeypatch.setattr(
@@ -678,8 +707,8 @@ class TestProvenanceReachesDisk:
         monkeypatch.setattr(window, "_persist_document_ui_state", lambda **kwargs: None)
         monkeypatch.setattr(window, "_refresh_muon_sites_summary", lambda **kwargs: None)
 
-        scan = _scan(build_folder(tmp_path / "legacy", sites=(1,)))
-        window._commit_legacy_import(scan, list(scan.importable_runs), host_structure)
+        scan = _scan(build_folder(tmp_path / "runs", sites=(1,)))
+        window._commit_relaxation_import(scan, list(scan.importable_runs), host_structure)
 
         record = [
             item for item in self._lines(window._document) if item["action"] == IMPORT_ACTION
@@ -708,8 +737,8 @@ class TestProvenanceReachesDisk:
         monkeypatch.setattr(window, "_refresh_muon_sites_summary", lambda **kwargs: None)
         monkeypatch.setattr(window, "merge_imported_relaxation_rows", lambda *args, **kwargs: False)
 
-        scan = _scan(build_folder(tmp_path / "legacy", sites=(1,)))
-        window._commit_legacy_import(scan, list(scan.importable_runs), host_structure)
+        scan = _scan(build_folder(tmp_path / "runs", sites=(1,)))
+        window._commit_relaxation_import(scan, list(scan.importable_runs), host_structure)
 
         assert self._lines(window._document) == []
 
@@ -720,7 +749,7 @@ class TestProvenanceReachesDisk:
         host_structure: Structure,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        from mufinder.services.legacy_import_removal import REMOVAL_ACTION
+        from mufinder.services.relaxation_import_removal import REMOVAL_ACTION
 
         TestRemovalAction()._imported_window(window, tmp_path, host_structure)
         monkeypatch.setattr(
@@ -748,11 +777,11 @@ class TestRemoveThenReimport:
     """
 
     def _import(self, window: MainWindow, tmp_path: Path, host: Structure, folder: Path):
-        from mufinder.services.legacy_import_commit import commit_legacy_import
+        from mufinder.services.relaxation_import_commit import commit_relaxation_import
 
         scan = _scan(folder)
         output_root = window._document.project_root / "files" / "muon_relaxation"
-        outcome = commit_legacy_import(
+        outcome = commit_relaxation_import(
             window._document,
             scan=scan,
             runs=scan.importable_runs,
@@ -784,7 +813,7 @@ class TestRemoveThenReimport:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         window._document = _document(tmp_path, host_structure)
-        folder = build_folder(tmp_path / "legacy", sites=(1, 2))
+        folder = build_folder(tmp_path / "runs", sites=(1, 2))
 
         self._import(window, tmp_path, host_structure, folder)
         first_rows = window._muon_relaxation_view.collect_state()["rows"]
@@ -804,11 +833,11 @@ class TestRemoveThenReimport:
         second_rows = window._muon_relaxation_view.collect_state()["rows"]
 
         assert len(second_rows) == 2
-        # Same labels, not "Legacy Site 1 (2)" — the de-duplication counter must
+        # Same labels, not "Imported Host_1 (2)" — the de-duplication counter must
         # not have been left holding the removed batch's labels.
         assert sorted(row["label"] for row in second_rows) == [
-            "Legacy Site 1",
-            "Legacy Site 2",
+            "Imported Host_1",
+            "Imported Host_2",
         ]
         assert (
             sorted((row["label"], sorted(row["parameter_values"])) for row in second_rows)
@@ -825,7 +854,7 @@ class TestRemoveThenReimport:
         """The signature check, on the second pass rather than the first."""
 
         window._document = _document(tmp_path, host_structure)
-        folder = build_folder(tmp_path / "legacy", sites=(1, 2))
+        folder = build_folder(tmp_path / "runs", sites=(1, 2))
 
         self._import(window, tmp_path, host_structure, folder)
         self._remove(window, monkeypatch)
@@ -847,3 +876,109 @@ class TestRemoveThenReimport:
 
         assert len(definition_signatures) == 2
         assert form_signatures == definition_signatures
+
+
+class TestBatchImportedEarlier:
+    """A batch an earlier version imported, with the names it wrote, still works."""
+
+    def _older_batch(self, window: MainWindow, host: Structure, folder: Path):
+        """Import ``folder``, then put back what an earlier version stored."""
+
+        from mufinder.domain.models import ProvenanceRecord
+        from mufinder.services.relaxation_import_commit import (
+            SOURCE_DIRNAME,
+            commit_relaxation_import,
+        )
+
+        document = window._document
+        scan = _scan(folder)
+        output_root = document.project_root / "files" / "muon_relaxation"
+        outcome = commit_relaxation_import(
+            document,
+            scan=scan,
+            runs=scan.importable_runs,
+            host_structure=host,
+            output_root=output_root,
+            label_prefix="Legacy Site",
+        )
+        window.merge_imported_relaxation_rows(outcome, output_directory=output_root)
+        for index, item in enumerate(outcome.imported, start=1):
+            site = document.sites[item.site_id]
+            site.generation_method = "imported_legacy"
+            site.properties["legacy_site_index"] = index
+            document.jobs[item.job_id].tags.append("legacy_mufinder")
+            source = document.structures[item.structure_id].properties["import_source"]
+            source["kind"] = "legacy_mufinder"
+            source["site_index"] = index
+            (item.job_directory / SOURCE_DIRNAME).rename(item.job_directory / "legacy_source")
+        assert outcome.provenance is not None
+        parameters = dict(outcome.provenance.parameters)
+        parameters["skipped"] = [{"site_index": 3, "reason": "No output file."}]
+        window._project_service.append_provenance(
+            document,
+            ProvenanceRecord(
+                action="import_legacy_relaxations",
+                workflow_stage=outcome.provenance.workflow_stage,
+                actor="user",
+                description="Imported 2 relaxations",
+                parameters=parameters,
+            ),
+        )
+        return outcome
+
+    def test_it_lists_under_its_source_folder_and_can_be_removed(
+        self,
+        window: MainWindow,
+        tmp_path: Path,
+        host_structure: Structure,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        window._document = _document(tmp_path, host_structure)
+        outcome = self._older_batch(
+            window, host_structure, build_folder(tmp_path / "older", sites=(1, 2))
+        )
+        document = window._document
+
+        batches = window._imported_relaxation_batches()
+        assert [(label, count) for label, count, _batch in batches] == [("older", 2)]
+
+        monkeypatch.setattr(
+            "mufinder.app.main_window.QInputDialog.getItem",
+            lambda *args, **kwargs: (args[3][0], True),
+        )
+        monkeypatch.setattr(
+            "mufinder.app.main_window.workflow_table_utils.confirm_destructive",
+            lambda *args, **kwargs: True,
+        )
+        monkeypatch.setattr(window, "_persist_document_ui_state", lambda **kwargs: None)
+        monkeypatch.setattr(window, "_refresh_muon_sites_summary", lambda **kwargs: None)
+
+        window._on_remove_imported_relaxations()
+
+        assert not any(site.properties.get("import_batch_id") for site in document.sites.values())
+        for item in outcome.imported:
+            assert item.job_id not in document.jobs
+            assert not item.job_directory.exists()
+
+    def test_the_journal_still_describes_it(
+        self, window: MainWindow, tmp_path: Path, host_structure: Structure
+    ) -> None:
+        from mufinder.services.journal import build_journal, entry_details
+
+        window._document = _document(tmp_path, host_structure)
+        self._older_batch(window, host_structure, build_folder(tmp_path / "older", sites=(1,)))
+
+        journal = build_journal("Test", window._document.provenance)
+        entries = [
+            entry
+            for day in journal.days
+            for entry in day.entries
+            if entry.title == "CASTEP relaxations imported"
+        ]
+        assert len(entries) == 1
+        assert "Skipped run 3: No output file." in entry_details(entries[0]).lines
+
+    def test_its_sites_read_as_imported(self, qapp) -> None:
+        from mufinder.app.muon_generation_widget import MuonGenerationWidget
+
+        assert MuonGenerationWidget._display_generation_method("imported_legacy") == "imported"

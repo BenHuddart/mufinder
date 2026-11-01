@@ -101,7 +101,7 @@ below, and the exact time with its time zone.
 - **Adopted defaults** show the tolerances they met and the functional.
 - **Muon site generation** shows the run's inputs and random seed in a full
   sentence, ready for a methods section.
-- **Legacy imports** show the source folder, each skipped run with its reason,
+- **Imported relaxations** show the source folder, each skipped run with its reason,
   and each parameter conflict with how it was resolved.
 - **Findings** show their numbers; see `Findings`_.
 
@@ -239,7 +239,7 @@ reconstructing what happened during a project, including:
   with its own card has a total energy, it is given to 0.1 meV and its largest
   force to three significant figures
 - comparison-table creation
-- import of legacy relaxations run outside MuFinder, and removal of imported
+- import of CASTEP relaxations run outside MuFinder, and removal of imported
   relaxations
 
 What the Journal omits

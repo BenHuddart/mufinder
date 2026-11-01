@@ -5,7 +5,7 @@ widget's current state, so a flag dropped anywhere in that loop silently unlocks
 every imported row while its entities and files remain. These tests pin each leg
 of the loop, and then the loop itself.
 
-See ``docs/legacy_import.rst`` for why imported rows are read-only.
+See ``docs/relaxation_import.rst`` for why imported rows are read-only.
 """
 
 from __future__ import annotations
@@ -32,7 +32,7 @@ def main_window(qapp) -> MainWindow:
 BATCH_ID = UUID("11111111-2222-3333-4444-555555555555")
 
 
-def _imported_row(label: str = "Legacy Site 1", **overrides: object) -> MuonRelaxationRow:
+def _imported_row(label: str = "Imported Host_1", **overrides: object) -> MuonRelaxationRow:
     payload: dict[str, object] = {
         "site_id": uuid4(),
         "label": label,
@@ -147,8 +147,8 @@ class TestWidgetStateRoundTrip:
         collected = widget.collect_state()
 
         by_label = {entry["label"]: entry for entry in collected["rows"]}
-        assert by_label["Legacy Site 1"]["imported"] is True
-        assert by_label["Legacy Site 1"]["import_batch_id"] == str(BATCH_ID)
+        assert by_label["Imported Host_1"]["imported"] is True
+        assert by_label["Imported Host_1"]["import_batch_id"] == str(BATCH_ID)
         assert by_label["Site 1"]["imported"] is False
         assert by_label["Site 1"]["import_batch_id"] is None
 
@@ -196,8 +196,8 @@ class TestReconfigureLoop:
 
         assert round_tripped is not None
         by_label = {row.label: row for row in round_tripped.rows}
-        assert by_label["Legacy Site 1"].imported is True
-        assert by_label["Legacy Site 1"].import_batch_id == BATCH_ID
+        assert by_label["Imported Host_1"].imported is True
+        assert by_label["Imported Host_1"].import_batch_id == BATCH_ID
         assert by_label["Site 1"].imported is False
 
     def test_the_projected_config_reports_the_marker(self, main_window) -> None:
@@ -210,8 +210,8 @@ class TestReconfigureLoop:
 
         assert config is not None
         by_label = {row.label: row for row in config.rows}
-        assert by_label["Legacy Site 1"].imported is True
-        assert by_label["Legacy Site 1"].import_batch_id == BATCH_ID
+        assert by_label["Imported Host_1"].imported is True
+        assert by_label["Imported Host_1"].import_batch_id == BATCH_ID
         assert by_label["Site 1"].imported is False
 
 

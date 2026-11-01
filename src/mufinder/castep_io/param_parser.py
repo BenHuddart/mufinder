@@ -50,8 +50,8 @@ _UNTYPED_FALSE_TOKENS = frozenset({"false", "f", ".false.", "no"})
 #: CASTEP accepts several spellings of a ``TASK`` value and normalises them on
 #: read. Transcribed from ``Source/Fundamental/parameters.f90``, which rewrites
 #: the British spelling with the comment "English spelling" and folds the short
-#: forms in the same place. Legacy MuFinder wrote ``geometryoptimisation``, so
-#: without this table a legacy file parses to a value MuFinder's own validator
+#: forms in the same place. A hand-written ``.param`` may say
+#: ``geometryoptimisation``, so without this table such a file parses to a value MuFinder's own validator
 #: then rejects.
 #:
 #: Only value aliases CASTEP itself performs appear here. This is transcription,

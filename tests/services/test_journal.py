@@ -1534,7 +1534,7 @@ def test_generation_details_of_an_older_record_are_only_the_time() -> None:
     assert entry_details(entry).lines == ()
 
 
-def test_legacy_import_details_list_skipped_runs_and_conflicts() -> None:
+def test_relaxation_import_details_list_skipped_runs_and_conflicts() -> None:
     entry = _only_entry(
         _details_record(
             "import_legacy_relaxations",

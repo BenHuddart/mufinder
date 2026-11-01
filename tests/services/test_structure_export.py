@@ -122,7 +122,7 @@ def test_imported_legacy_relaxation_exports_and_says_so(tmp_path: Path) -> None:
     export = relaxed_structure_export_for_job(document, job, now=_NOW)
 
     assert export.structure is structure
-    assert "Imported from a legacy MuFinder project" in export.header_lines
+    assert "Imported from a CASTEP run outside MuFinder" in export.header_lines
 
 
 def test_export_is_unavailable_until_the_relaxation_completes(tmp_path: Path) -> None:

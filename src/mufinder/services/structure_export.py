@@ -1,7 +1,7 @@
 """Find a relaxation's relaxed structure and describe it for export.
 
 A completed pristine or muon relaxation stores its relaxed ``-out.cell`` as a
-derived :class:`~mufinder.domain.models.Structure` (imported legacy relaxations
+derived :class:`~mufinder.domain.models.Structure` (imported CASTEP relaxations
 are stored the same way). :func:`relaxed_structure_export_for_job` and
 :func:`relaxed_structure_export_for_structure` resolve that structure together
 with a default file stem and the provenance comment lines an exported file
@@ -147,7 +147,7 @@ def _export(
         if energy is not None:
             lines.append(f"Final energy: {energy:.6f} eV")
     if structure.properties.get("import_source"):
-        lines.append("Imported from a legacy MuFinder project")
+        lines.append("Imported from a CASTEP run outside MuFinder")
     lines.append(f"Exported: {timestamp}")
     return RelaxedStructureExport(
         structure=structure,

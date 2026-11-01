@@ -1121,6 +1121,7 @@ class MuonGenerationWidget(QWidget):
             "uep_cluster": "UEP",
             "uep_cluster_member": "UEP mem.",
             "uep_batch_cluster": "UEP",
+            "imported_legacy": "imported",
         }
         return labels.get(value, value)
 
