@@ -1611,19 +1611,19 @@ def feature_dialog_stylesheet(
         """
 
 
-def uep_clustering_toolbar_stylesheet() -> str:
+def clustering_toolbar_stylesheet() -> str:
     """Return the stylesheet of the clustering dendrogram's navigation toolbar."""
 
     palette = current_palette()
     t = type_scale()
     return f"""
-        QToolBar#uepClusteringDendrogramToolbar {{
+        QToolBar#clusteringDendrogramToolbar {{
             border: none;
             background: transparent;
             spacing: 8px;
             padding: 0px;
         }}
-        QPushButton#uepClusteringToolbarButton {{
+        QPushButton#clusteringToolbarButton {{
             border: 1px solid {palette.border};
             border-radius: {RADIUS.control}px;
             padding: {SPACING.xs}px {SPACING.md}px;
@@ -1632,22 +1632,22 @@ def uep_clustering_toolbar_stylesheet() -> str:
             font-size: {t.body}px;
             font-weight: 600;
         }}
-        QPushButton#uepClusteringToolbarButton:hover {{
+        QPushButton#clusteringToolbarButton:hover {{
             border-color: {palette.accent};
             background: {palette.bg_surface_alt};
         }}
-        QPushButton#uepClusteringToolbarButton:pressed {{
+        QPushButton#clusteringToolbarButton:pressed {{
             border-color: {palette.accent_hover};
             background: {palette.bg_surface_alt};
         }}
-        QPushButton#uepClusteringToolbarButton:checked,
-        QPushButton#uepClusteringToolbarButton[active="true"] {{
+        QPushButton#clusteringToolbarButton:checked,
+        QPushButton#clusteringToolbarButton[active="true"] {{
             border-color: {palette.accent_pressed};
             background: {palette.accent};
             color: #FFFFFF;
         }}
-        QPushButton#uepClusteringToolbarButton:checked:hover,
-        QPushButton#uepClusteringToolbarButton[active="true"]:hover {{
+        QPushButton#clusteringToolbarButton:checked:hover,
+        QPushButton#clusteringToolbarButton[active="true"]:hover {{
             background: {palette.accent_hover};
         }}
         """

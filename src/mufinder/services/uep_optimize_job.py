@@ -18,11 +18,6 @@ from mufinder.science.uep import (
     particle_mass_kg_from_amu,
     probe_point,
 )
-from mufinder.science.uep_clustering import (
-    UepClusteringConfig,
-    cluster_optimized_positions,
-    cluster_uep_optimizations,
-)
 
 
 @dataclass(frozen=True, slots=True)
@@ -219,28 +214,3 @@ def run_manifest_file(path: str | Path) -> Path:
     target = job_dir / result_file_name(seed_name)
     target.write_text(json.dumps(result_payload, indent=2, sort_keys=True), encoding="utf-8")
     return target
-
-
-def summarize_batch_results(
-    optimizations: list[UepOptimizationResult],
-    *,
-    threshold_ang: float | None = None,
-    source_structure: object | None = None,
-    clustering_config: UepClusteringConfig | None = None,
-) -> dict[str, Any]:
-    """Return a JSON-friendly cluster summary for a finished batch."""
-
-    if clustering_config is not None or source_structure is not None:
-        if source_structure is None:
-            raise UepError("source_structure is required when using soprano-backed clustering.")
-        summary = cluster_uep_optimizations(
-            optimizations,
-            source_structure=source_structure,
-            config=clustering_config,
-        ).summary
-    else:
-        summary = cluster_optimized_positions(
-            optimizations,
-            threshold_ang=float(0.2 if threshold_ang is None else threshold_ang),
-        )
-    return asdict(summary)

@@ -1781,6 +1781,25 @@ def test_a_uep_minima_entry_gives_the_count_and_the_lowest_position() -> None:
     )
 
 
+def test_a_uep_minima_entry_names_the_grouping_and_what_it_left_out() -> None:
+    entry = _finding_entry(
+        "uep_minima_found",
+        WorkflowStage.UEP,
+        job_label="uep_source",
+        start_count=12,
+        excluded_count=2,
+        grouping={"clustering_method": "symmetry_distance", "threshold_ang": 0.25},
+        minima=[{"size": 10, "fractional_position": [0, 0.5, 0.25], "minimum_energy_eV": -16.0}],
+    )
+
+    assert entry_details(entry).lines == (
+        "Batch search of uep_source",
+        "12 optimised starts grouped",
+        "Grouped by symmetry within 0.25 Å",
+        "2 results left out as failed or not a minimum",
+    )
+
+
 def test_one_uep_minimum_is_singular_and_an_unknown_method_is_not_shown() -> None:
     entry = _finding_entry(
         "uep_minima_found",

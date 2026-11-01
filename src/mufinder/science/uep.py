@@ -2,13 +2,14 @@
 
 This module loads a host's CASTEP charge density, evaluates the UEP field, and
 probes, optimizes, samples and meshes it. The CASTEP readers it builds on live
-in ``mufinder.castep_io.charge_density``; clustering of optimized positions
-lives in ``mufinder.science.uep_clustering``. Names from both stay importable
-from here as public import aliases (see ``docs/compatibility_policy.rst``).
+in ``mufinder.castep_io.charge_density``, and names from there stay importable
+from here as public import aliases (see ``docs/compatibility_policy.rst``);
+grouping of optimized positions lives in ``mufinder.science.uep_clustering``.
 """
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from math import atan2
 from pathlib import Path
@@ -222,6 +223,65 @@ def serialize_potential_grid(grid: UepPotentialGrid) -> dict[str, Any]:
     if grid.gw_factor is not None:
         payload["gw_factor"] = float(grid.gw_factor)
     return payload
+
+
+def _triple_from_payload(values: object) -> tuple[float, float, float] | None:
+    if not isinstance(values, (list, tuple)) or len(values) != 3:
+        return None
+    try:
+        return (float(values[0]), float(values[1]), float(values[2]))
+    except (TypeError, ValueError):
+        return None
+
+
+def classification_from_dict(payload: object) -> StationaryPointClassification | None:
+    """Rebuild a saved stationary-point classification; ``None`` when it is malformed."""
+
+    if not isinstance(payload, Mapping):
+        return None
+    eigenvalues = _triple_from_payload(payload.get("eigenvalues"))
+    if eigenvalues is None:
+        return None
+    try:
+        return StationaryPointClassification(
+            label=str(payload.get("label", "")).strip(),
+            eigenvalues=eigenvalues,
+            positive_count=int(payload.get("positive_count", 0)),
+            negative_count=int(payload.get("negative_count", 0)),
+            near_zero_count=int(payload.get("near_zero_count", 0)),
+        )
+    except (TypeError, ValueError):
+        return None
+
+
+def optimization_result_from_dict(payload: object) -> UepOptimizationResult | None:
+    """Rebuild a saved optimisation result; ``None`` when it is malformed."""
+
+    if not isinstance(payload, Mapping):
+        return None
+    start = _triple_from_payload(payload.get("start_position_ang"))
+    optimized = _triple_from_payload(payload.get("optimized_position_ang"))
+    fractional = _triple_from_payload(payload.get("optimized_fractional_position"))
+    classification = classification_from_dict(payload.get("classification"))
+    if start is None or optimized is None or fractional is None or classification is None:
+        return None
+    zero_point = payload.get("zero_point_energy_ev")
+    total = payload.get("total_energy_ev")
+    try:
+        return UepOptimizationResult(
+            start_position_ang=start,
+            optimized_position_ang=optimized,
+            optimized_fractional_position=fractional,
+            classical_energy_ev=float(payload.get("classical_energy_ev", 0.0)),
+            zero_point_energy_ev=None if zero_point is None else float(zero_point),
+            total_energy_ev=None if total is None else float(total),
+            success=bool(payload.get("success", False)),
+            message=str(payload.get("message", "")),
+            iterations=int(payload.get("iterations", 0)),
+            classification=classification,
+        )
+    except (TypeError, ValueError):
+        return None
 
 
 def deserialize_potential_grid(payload: object) -> UepPotentialGrid | None:
@@ -1623,31 +1683,3 @@ def particle_mass_kg_from_amu(mass_amu: float) -> float:
     """Convert a particle mass from amu to kg."""
 
     return float(mass_amu) * ATOMIC_MASS_KG
-
-
-# Clustering of optimized positions lives in ``mufinder.science.uep_clustering``,
-# which imports this module, so its names resolve here lazily (PEP 562) rather
-# than through a circular top-level import.
-_UEP_CLUSTERING_ALIASES = frozenset(
-    {
-        "UepBatchSummary",
-        "UepClusterSimilaritySummary",
-        "UepClusterSummary",
-        "UepClusteringConfig",
-        "UepClusteringResult",
-        "UepPreparedClusteringDataset",
-        "cluster_optimized_positions",
-        "cluster_prepared_uep_dataset",
-        "cluster_uep_optimizations",
-        "prepare_uep_clustering_dataset",
-        "relaxed_site_number_map",
-    }
-)
-
-
-def __getattr__(name: str) -> Any:
-    if name in _UEP_CLUSTERING_ALIASES:
-        from mufinder.science import uep_clustering
-
-        return getattr(uep_clustering, name)
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

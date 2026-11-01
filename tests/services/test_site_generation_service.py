@@ -559,9 +559,10 @@ def test_a_uep_run_records_the_source_job_and_its_grouping(tmp_path: Path) -> No
         "properties": {
             "source_job_id": "job-1",
             "source_job_label": "UEP search",
-            "clustering_method": "hier",
-            "clustering_hier_t": 0.3,
-            "clustering_kmeans_k": None,
+            "clustering_method": "symmetry_distance",
+            "threshold_ang": 0.25,
+            "energy_tolerance_ev": 0.001,
+            "clustering_hier_t": None,
         },
     }
 
@@ -572,7 +573,11 @@ def test_a_uep_run_records_the_source_job_and_its_grouping(tmp_path: Path) -> No
     assert outcome.run is not None
     assert outcome.run.parameters == {
         "source_jobs": [{"id": "job-1", "label": "UEP search"}],
-        "grouping": {"clustering_method": "hier", "clustering_hier_t": 0.3},
+        "grouping": {
+            "clustering_method": "symmetry_distance",
+            "threshold_ang": 0.25,
+            "energy_tolerance_ev": 0.001,
+        },
     }
 
 

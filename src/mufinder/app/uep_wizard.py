@@ -49,10 +49,10 @@ from PySide6.QtWidgets import (
 
 from mufinder.app import workflow_table_utils
 from mufinder.app.atomic_structure_viewer import AtomicStructureViewer, MUON_VIEWER_RADIUS_ANG
-from mufinder.app.uep_clustering_dialog import UepClusteringDialog, cluster_color_map
 from mufinder.app.decimal_input import DecimalLineEdit
 from mufinder.app.screen_utils import clamped_size
 from mufinder.app.theme import (
+    cluster_color_map,
     adjust_font_size,
     body_font_family,
     controls_scroll_area,
@@ -65,7 +65,6 @@ from mufinder.app.theme import (
 from mufinder.domain.models import Structure
 from mufinder.science.site_generation import generate_random_sites, lattice_frac_to_cart
 from mufinder.science.uep import (
-    StationaryPointClassification,
     UepError,
     UepField,
     UepGridSliceSample,
@@ -79,9 +78,11 @@ from mufinder.science.uep import (
     UepSourceData,
     cartesian_normal_to_lattice_plane_components,
     calculate_optimization_zero_point_energy,
+    classification_from_dict,
     deserialize_potential_grid,
     extract_isosurface,
     load_uep_source,
+    optimization_result_from_dict,
     optimize_muon_position,
     plane_from_best_fit,
     plane_from_fractional_anchor_and_miller,
@@ -96,19 +97,27 @@ from mufinder.science.uep import (
     write_potential_grid_xsf,
 )
 from mufinder.science.uep_clustering import (
+    DEFAULT_GROUPING_TOLERANCE_ANG,
     UepBatchSummary,
     UepClusterSummary,
-    UepClusterSimilaritySummary,
-    UepClusteringConfig,
-    UepClusteringResult,
-    cluster_optimized_positions,
-    cluster_uep_optimizations,
+    UepMinimaDistances,
+    group_uep_minima,
+    measure_uep_minima,
     relaxed_site_number_map,
+    uep_batch_summary_from_dict,
+    uep_search_log,
 )
 
 _ISOSURFACE_PREVIEW_MAX_GRID_POINTS = 28
 _ISOSURFACE_LIVE_PREVIEW_MAX_GRID_POINTS = 18
 _ISOSURFACE_SLIDER_DEBOUNCE_MS = 120
+#: How long after the last edit of the grouping tolerance its groups are saved and journalled.
+_GROUPING_SETTLED_MS = 1500
+_GROUPING_TOLERANCE_MINIMUM_ANG = 0.001
+_GROUPING_TOLERANCE_TOOLTIP = (
+    "Two minima are one site when one lies within this distance of any symmetry image of the "
+    "other and their classical energies differ by less than 1 meV."
+)
 _SLICE_DEFAULT_POINTS = 161
 _SLICE_LIVE_PREVIEW_MAX_POINTS = 49
 _SLICE_SURFACE_ALPHA = 0.72
@@ -245,7 +254,7 @@ _THEORY_TEXT = (
     "are stationary points of symmetry-preserving scalar fields, so high-symmetry empty "
     "interstitial sites are useful UEP candidates. Symmetry alone is not enough to "
     "guarantee a minimum, which is why MuFinder also exposes Hessian classification, "
-    "zero-point estimates, and batch-search clustering.\n\n"
+    "zero-point estimates, and grouping of the batch-search minima.\n\n"
     "For locally stable minima, MuFinder estimates the harmonic zero-point energy with "
     "E_zp = 1/2 sum_i hbar omega_i and omega_i = sqrt(lambda_i / m_mu), where lambda_i "
     "are the total-potential Hessian eigenvalues converted into SI units. Saddles and "
@@ -1097,7 +1106,7 @@ class _EditSlicePlaneDialog(QDialog):
 
 
 class _ManageViewerMuonsDialog(QDialog):
-    """Manage per-viewer muon overlays sourced from clustering or custom positions."""
+    """Manage per-viewer muon overlays sourced from the batch-search groups or custom positions."""
 
     add_candidates_requested = Signal(object, bool)
     add_custom_requested = Signal(object)
@@ -1501,7 +1510,7 @@ class _BatchSearchThread(QThread):
 
     prepared = Signal(int, str)
     progress_changed = Signal(int, int)
-    batch_ready = Signal(object, str)
+    batch_ready = Signal(object, object, str)
     failed = Signal(str)
 
     def __init__(
@@ -1518,9 +1527,11 @@ class _BatchSearchThread(QThread):
         max_attempts: int,
         optimization_tolerance_ev: float,
         max_steps: int,
+        grouping_structure: object,
     ) -> None:
         super().__init__()
         self._field = field
+        self._grouping_structure = grouping_structure
         self._lattice_vectors = lattice_vectors
         self._host_positions_frac = host_positions_frac
         self._requested_starts = int(requested_starts)
@@ -1577,15 +1588,10 @@ class _BatchSearchThread(QThread):
 
             if self.isInterruptionRequested():
                 return
-            self.batch_ready.emit(
-                results,
-                "\n".join(
-                    generation_lines
-                    + [
-                        f"Relaxed sites available for clustering: {len(results)}",
-                    ]
-                ),
-            )
+            distances = measure_uep_minima(results, source_structure=self._grouping_structure)
+            if self.isInterruptionRequested():
+                return
+            self.batch_ready.emit(results, distances, "\n".join(generation_lines))
         except Exception as exc:  # noqa: BLE001
             if self.isInterruptionRequested():
                 return
@@ -1663,7 +1669,7 @@ class _BatchZpeThread(QThread):
 
 
 class UepAnalysisDialog(QDialog):
-    """Wizard-like dialog for UEP probing, plotting, batch search, and clustering."""
+    """Wizard-like dialog for UEP probing, plotting, batch search, and site grouping."""
 
     state_changed = Signal(dict)
     potential_grid_ready = Signal(object)
@@ -1707,10 +1713,8 @@ class UepAnalysisDialog(QDialog):
         self._latest_batch_results: list[UepOptimizationResult] = []
         self._latest_batch_summary: UepBatchSummary | None = None
         self._batch_item_by_key: dict[str, QTreeWidgetItem] = {}
-        self._clustering_dialog: UepClusteringDialog | None = None
-        self._clustering_window_state: dict[str, object] | None = None
+        self._batch_minima_distances: UepMinimaDistances | None = None
         self._shutting_down = False
-        self._pending_open_clustering_dialog = False
         self._potential_grid_raw_cache: UepPotentialGrid | None = None
         self._potential_grid_cache: UepPotentialGrid | None = None
         self._potential_grid_preview_cache: UepPotentialGrid | None = None
@@ -1757,6 +1761,10 @@ class UepAnalysisDialog(QDialog):
         self._slice_preview_timer.setSingleShot(True)
         self._slice_preview_timer.setInterval(_ISOSURFACE_SLIDER_DEBOUNCE_MS)
         self._slice_preview_timer.timeout.connect(self._dispatch_pending_slice_preview)
+        self._grouping_settled_timer = QTimer(self)
+        self._grouping_settled_timer.setSingleShot(True)
+        self._grouping_settled_timer.setInterval(_GROUPING_SETTLED_MS)
+        self._grouping_settled_timer.timeout.connect(self._emit_state_changed)
 
         palette = current_palette()
         self._line_figure = Figure(
@@ -2474,7 +2482,7 @@ class UepAnalysisDialog(QDialog):
         title = QLabel("Random-Start Batch Search", controls)
         style_section_title(title)
         subtitle = QLabel(
-            "Generate initial muon positions and relax them within the unperturbed electrostatic potential. Cluster the relaxed sites and estimate their zero-point energy.",
+            "Generate initial muon positions and relax them within the unperturbed electrostatic potential. The minima they reach are grouped into distinct sites when the search ends. Estimate their zero-point energy.",
             controls,
         )
         subtitle.setWordWrap(True)
@@ -2528,10 +2536,6 @@ class UepAnalysisDialog(QDialog):
         sampling_form.addRow("Max attempts", self._batch_max_attempts)
         sampling_layout.addLayout(sampling_form)
         sampling_layout.addStretch(1)
-        self._batch_clustering_button = QPushButton("Clustering", sampling_card)
-        self._batch_clustering_button.setEnabled(False)
-        self._batch_clustering_button.clicked.connect(self._open_clustering_dialog)
-        sampling_layout.addWidget(self._batch_clustering_button, 0, Qt.AlignmentFlag.AlignLeft)
 
         optimizer_card = QFrame(controls)
         optimizer_card.setObjectName("analysisSliderPanel")
@@ -2668,6 +2672,23 @@ class UepAnalysisDialog(QDialog):
             batch_header.setSectionResizeMode(column, QHeaderView.ResizeMode.Fixed)
         self._batch_table.itemSelectionChanged.connect(self._sync_batch_structure_viewer)
         results_layout.addWidget(self._batch_table, 1)
+        grouping_row = QHBoxLayout()
+        grouping_row.setContentsMargins(0, 0, 0, 0)
+        grouping_label = QLabel("Grouping tolerance (Å)", results_panel)
+        self._batch_grouping_tolerance = DecimalLineEdit(
+            results_panel, minimum=_GROUPING_TOLERANCE_MINIMUM_ANG, maximum=10.0, decimals=4
+        )
+        self._batch_grouping_tolerance.setValue(DEFAULT_GROUPING_TOLERANCE_ANG)
+        self._batch_grouping_tolerance.setMaximumWidth(124)
+        self._batch_grouping_tolerance.setAccessibleName("Grouping tolerance in ångström")
+        self._batch_grouping_tolerance.setToolTip(_GROUPING_TOLERANCE_TOOLTIP)
+        self._batch_grouping_tolerance.valueChanged.connect(self._on_grouping_tolerance_edited)
+        self._batch_grouping_tolerance.editingFinished.connect(self._on_grouping_tolerance_finished)
+        grouping_label.setBuddy(self._batch_grouping_tolerance)
+        grouping_row.addWidget(grouping_label)
+        grouping_row.addWidget(self._batch_grouping_tolerance)
+        grouping_row.addStretch(1)
+        results_layout.addLayout(grouping_row)
 
         viewer_panel = QWidget(tab)
         viewer_layout = QVBoxLayout(viewer_panel)
@@ -2698,7 +2719,7 @@ class UepAnalysisDialog(QDialog):
         dialog = _ManageViewerMuonsDialog(
             title="Add / Remove Muons",
             subtitle=(
-                "Add clustered muon sites from the batch-search clustering or define a custom fractional position for this viewer."
+                "Add muon sites from the batch-search groups or define a custom fractional position for this viewer."
             ),
             parent=self,
             allow_isosurface_creation=(viewer_kind == "isosurface"),
@@ -3033,7 +3054,10 @@ class UepAnalysisDialog(QDialog):
         summary = self._latest_batch_summary
         if summary is None or not self._latest_batch_results:
             return []
-        site_numbers = relaxed_site_number_map(self._latest_batch_results)
+        site_numbers = relaxed_site_number_map(
+            self._latest_batch_results,
+            included=(index for cluster in summary.clusters for index in cluster.member_indexes),
+        )
         candidates: list[_BatchMuonCandidate] = []
         for cluster in summary.clusters:
             cluster_label = f"Cluster {cluster.cluster_index}"
@@ -3379,6 +3403,13 @@ class UepAnalysisDialog(QDialog):
             )
         )
 
+    def _payload_member_indexes(self, payload: Mapping[str, object]) -> tuple[int, ...]:
+        cluster = payload.get("cluster")
+        members = cluster.get("member_indexes") if isinstance(cluster, Mapping) else None
+        if not isinstance(members, (list, tuple)):
+            return ()
+        return tuple(sorted((int(index) for index in members), key=self._batch_result_sort_key))
+
     @staticmethod
     def _batch_cluster_key(cluster_index: int) -> str:
         return f"cluster:{int(cluster_index)}"
@@ -3479,14 +3510,7 @@ class UepAnalysisDialog(QDialog):
             kind = str(payload.get("kind", ""))
             indexes: list[int] = []
             if kind == "cluster":
-                cluster_payload = payload.get("cluster")
-                cluster = (
-                    self._deserialize_cluster_summary(cluster_payload)
-                    if isinstance(cluster_payload, Mapping)
-                    else None
-                )
-                if cluster is not None:
-                    indexes.extend(self._batch_sorted_member_indexes(cluster))
+                indexes.extend(self._payload_member_indexes(payload))
             elif kind == "site":
                 raw_index = payload.get("site_result_index")
                 try:
@@ -3563,13 +3587,8 @@ class UepAnalysisDialog(QDialog):
         cluster_indexes: set[int] = set()
         for payload in payloads:
             cluster_payload = payload.get("cluster")
-            cluster = (
-                self._deserialize_cluster_summary(cluster_payload)
-                if isinstance(cluster_payload, Mapping)
-                else None
-            )
-            if cluster is not None:
-                cluster_indexes.add(int(cluster.cluster_index))
+            if isinstance(cluster_payload, Mapping):
+                cluster_indexes.add(int(cluster_payload["cluster_index"]))
         selection_count = len(payloads)
         muon_count = len(result_indexes)
         if (
@@ -5126,19 +5145,14 @@ class UepAnalysisDialog(QDialog):
         self._clear_clustered_viewer_muons()
         self._latest_batch_results = []
         self._latest_batch_summary = None
+        self._batch_minima_distances = None
         self._batch_item_by_key = {}
-        self._clustering_window_state = None
-        self._pending_open_clustering_dialog = False
         self._batch_table.clear()
         self._batch_table.setHeaderLabels(_BATCH_TABLE_HEADERS)
         self._update_batch_table_column_layout()
         self._batch_summary.clear()
         self._batch_viewer.set_structure(self._viewer_host_structure)
         self._batch_viewer_summary.setText(_BATCH_VIEWER_IDLE_TEXT)
-        self._batch_clustering_button.setEnabled(False)
-        if self._clustering_dialog is not None:
-            self._clustering_dialog.close()
-            self._clustering_dialog = None
         self._set_batch_progress_idle()
         self._set_batch_zpe_progress_idle()
         self._refresh_viewer_muon_dialogs()
@@ -5165,64 +5179,61 @@ class UepAnalysisDialog(QDialog):
     def _batch_has_successful_optimizations(self) -> bool:
         return any(result.success for result in self._latest_batch_results)
 
-    def _current_batch_clustering_config(self):
-        state: Mapping[str, object] | None = None
-        if self._clustering_dialog is not None:
-            state = self._clustering_dialog.state_snapshot()
-        elif isinstance(self._clustering_window_state, Mapping):
-            state = self._clustering_window_state
+    def _grouping_structure(self) -> Any:
+        """The structure a search is grouped on: the source job's input, whatever its supercell."""
 
-        if isinstance(state, Mapping):
-            method = str(state.get("method", "hier")).strip().lower()
-            if method in {"hier", "kmeans"}:
-                try:
-                    return {
-                        "clustering_method": method,
-                        "clustering_hier_t": float(state.get("hierarchical_t", 0.3)),
-                        "clustering_kmeans_k": int(
-                            state.get("kmeans_k", min(4, max(len(self._latest_batch_results), 1)))
-                        ),
-                    }
-                except (TypeError, ValueError):
-                    return None
+        return (
+            self._source_structure if self._source_structure is not None else self._source.structure
+        )
 
-        if self._latest_batch_summary is None:
-            return None
-        method = str(self._latest_batch_summary.clustering_method).strip().lower()
-        if method not in {"hier", "kmeans"}:
-            return None
-        return {
-            "clustering_method": method,
-            "clustering_hier_t": float(
-                0.3
-                if self._latest_batch_summary.clustering_hier_t is None
-                else self._latest_batch_summary.clustering_hier_t
-            ),
-            "clustering_kmeans_k": int(
-                min(4, max(len(self._latest_batch_results), 1))
-                if self._latest_batch_summary.clustering_kmeans_k is None
-                else self._latest_batch_summary.clustering_kmeans_k
-            ),
-        }
+    def _group_batch_results(self, results: list[UepOptimizationResult]) -> UepBatchSummary | None:
+        """Group ``results`` at the current tolerance; ``None``, with a log line, if that fails."""
 
-    def _recluster_batch_results(self) -> UepBatchSummary | None:
-        if not self._latest_batch_results or self._latest_batch_summary is None:
-            return None
-        config_values = self._current_batch_clustering_config()
+        structure = self._grouping_structure()
         try:
-            if config_values is None:
-                return cluster_optimized_positions(
-                    self._latest_batch_results,
-                    threshold_ang=self._latest_batch_summary.threshold_ang,
+            if self._batch_minima_distances is None:
+                self._batch_minima_distances = measure_uep_minima(
+                    results, source_structure=structure
                 )
-            result = cluster_uep_optimizations(
-                self._latest_batch_results,
-                source_structure=self._source.structure,
-                config=UepClusteringConfig(**config_values),
+            return group_uep_minima(
+                results,
+                source_structure=structure,
+                tolerance_ang=self._batch_grouping_tolerance.value(),
+                distances=self._batch_minima_distances,
             )
-            return result.summary
-        except (TypeError, UepError, ValueError):
+        except ValueError as exc:
+            self._append_batch_log(f"Grouping failed: {exc}")
             return None
+
+    def _set_grouping_tolerance(self, value: float) -> None:
+        blocked = self._batch_grouping_tolerance.blockSignals(True)
+        self._batch_grouping_tolerance.setValue(float(value))
+        self._batch_grouping_tolerance.blockSignals(blocked)
+
+    def _on_grouping_tolerance_edited(self, _value: float = 0.0) -> None:
+        """Regroup at the tolerance being typed; the state follows when the edit settles."""
+
+        if not self._latest_batch_results or self._batch_search_thread is not None:
+            return
+        # A number on its way to a valid one, such as the ``0.0`` of ``0.05``.
+        if not self._batch_grouping_tolerance.hasAcceptableInput():
+            return
+        selected_keys = self._selected_batch_keys()
+        summary = self._group_batch_results(self._latest_batch_results)
+        if summary is None or summary == self._latest_batch_summary:
+            return
+        self._populate_batch_results(
+            self._latest_batch_results,
+            summary,
+            summary_text=uep_search_log(self._batch_summary.toPlainText(), summary),
+            selected_keys=selected_keys,
+        )
+        self._grouping_settled_timer.start()
+
+    def _on_grouping_tolerance_finished(self) -> None:
+        if self._grouping_settled_timer.isActive():
+            self._grouping_settled_timer.stop()
+            self._emit_state_changed()
 
     def _apply_gw_factor_change(self, requested_value: float | None = None) -> None:
         try:
@@ -5326,24 +5337,6 @@ class UepAnalysisDialog(QDialog):
         return (rows[0], rows[1], rows[2])
 
     @classmethod
-    def _deserialize_classification(cls, payload: object) -> Any | None:
-        if not isinstance(payload, Mapping):
-            return None
-        eigenvalues = cls._tuple3(payload.get("eigenvalues"))
-        if eigenvalues is None:
-            return None
-        try:
-            return StationaryPointClassification(
-                label=str(payload.get("label", "")).strip(),
-                eigenvalues=eigenvalues,
-                positive_count=int(payload.get("positive_count", 0)),
-                negative_count=int(payload.get("negative_count", 0)),
-                near_zero_count=int(payload.get("near_zero_count", 0)),
-            )
-        except (TypeError, ValueError):
-            return None
-
-    @classmethod
     def _deserialize_probe(cls, payload: object) -> UepProbeResult | None:
         if not isinstance(payload, Mapping):
             return None
@@ -5355,7 +5348,7 @@ class UepAnalysisDialog(QDialog):
         hessian_total = cls._matrix3(payload.get("hessian_total_ev_per_ang2"))
         hessian_electronic = cls._matrix3(payload.get("hessian_electronic_ev_per_ang2"))
         hessian_ionic = cls._matrix3(payload.get("hessian_ionic_ev_per_ang2"))
-        classification = cls._deserialize_classification(payload.get("classification"))
+        classification = classification_from_dict(payload.get("classification"))
         if None in (
             position,
             fractional,
@@ -5469,131 +5462,6 @@ class UepAnalysisDialog(QDialog):
             charge_ionic_e_per_ang3=fields[7],
         )
 
-    @classmethod
-    def _deserialize_optimization_result(cls, payload: object) -> UepOptimizationResult | None:
-        if not isinstance(payload, Mapping):
-            return None
-        start = cls._tuple3(payload.get("start_position_ang"))
-        optimized = cls._tuple3(payload.get("optimized_position_ang"))
-        fractional = cls._tuple3(payload.get("optimized_fractional_position"))
-        classification = cls._deserialize_classification(payload.get("classification"))
-        if None in (start, optimized, fractional, classification):
-            return None
-        try:
-            return UepOptimizationResult(
-                start_position_ang=start,
-                optimized_position_ang=optimized,
-                optimized_fractional_position=fractional,
-                classical_energy_ev=float(payload.get("classical_energy_ev", 0.0)),
-                zero_point_energy_ev=(
-                    None
-                    if payload.get("zero_point_energy_ev") is None
-                    else float(payload.get("zero_point_energy_ev"))
-                ),
-                total_energy_ev=None
-                if payload.get("total_energy_ev") is None
-                else float(payload.get("total_energy_ev")),
-                success=bool(payload.get("success", False)),
-                message=str(payload.get("message", "")),
-                iterations=int(payload.get("iterations", 0)),
-                classification=classification,
-            )
-        except (TypeError, ValueError):
-            return None
-
-    @classmethod
-    def _deserialize_cluster_summary(cls, payload: object) -> Any | None:
-        if not isinstance(payload, Mapping):
-            return None
-        position = cls._tuple3(payload.get("representative_position_ang"))
-        fractional = cls._tuple3(payload.get("representative_fractional_position"))
-        asymmetric = cls._tuple3(payload.get("representative_asymmetric_fractional_position"))
-        members = payload.get("member_indexes")
-        if position is None or fractional is None or not isinstance(members, (list, tuple)):
-            return None
-        try:
-            return UepClusterSummary(
-                cluster_index=int(payload.get("cluster_index", 0)),
-                size=int(payload.get("size", 0)),
-                representative_index=int(payload.get("representative_index", 0)),
-                representative_position_ang=position,
-                representative_fractional_position=fractional,
-                minimum_energy_ev=(
-                    None
-                    if payload.get("minimum_energy_ev") is None
-                    else float(payload.get("minimum_energy_ev"))
-                ),
-                average_energy_ev=(
-                    None
-                    if payload.get("average_energy_ev") is None
-                    else float(payload.get("average_energy_ev"))
-                ),
-                standard_deviation_ev=(
-                    None
-                    if payload.get("standard_deviation_ev") is None
-                    else float(payload.get("standard_deviation_ev"))
-                ),
-                member_indexes=tuple(int(value) for value in members),
-                representative_asymmetric_fractional_position=asymmetric,
-            )
-        except (TypeError, ValueError):
-            return None
-
-    @classmethod
-    def _deserialize_similarity_summary(cls, payload: object) -> UepClusterSimilaritySummary | None:
-        if not isinstance(payload, Mapping):
-            return None
-        try:
-            return UepClusterSimilaritySummary(
-                left_cluster_index=int(payload.get("left_cluster_index", 0)),
-                right_cluster_index=int(payload.get("right_cluster_index", 0)),
-                distance=float(payload.get("distance", 0.0)),
-            )
-        except (TypeError, ValueError):
-            return None
-
-    @classmethod
-    def _deserialize_batch_summary(cls, payload: object) -> UepBatchSummary | None:
-        if not isinstance(payload, Mapping):
-            return None
-        raw_clusters = payload.get("clusters")
-        if not isinstance(raw_clusters, (list, tuple)):
-            return None
-        clusters = [cls._deserialize_cluster_summary(entry) for entry in raw_clusters]
-        if any(cluster is None for cluster in clusters):
-            return None
-        raw_similarities = payload.get("similarities", ())
-        if not isinstance(raw_similarities, (list, tuple)):
-            raw_similarities = ()
-        similarities = [cls._deserialize_similarity_summary(entry) for entry in raw_similarities]
-        if any(item is None for item in similarities):
-            return None
-        try:
-            return UepBatchSummary(
-                threshold_ang=float(payload.get("threshold_ang", 0.0)),
-                clusters=tuple(clusters),
-                clustering_method=str(payload.get("clustering_method", "legacy_cartesian_hier")),
-                clustering_hier_t=(
-                    None
-                    if payload.get("clustering_hier_t") is None
-                    else float(payload.get("clustering_hier_t"))
-                ),
-                clustering_kmeans_k=(
-                    None
-                    if payload.get("clustering_kmeans_k") is None
-                    else int(payload.get("clustering_kmeans_k"))
-                ),
-                clustering_linkage_method=(
-                    None
-                    if payload.get("clustering_linkage_method") is None
-                    else str(payload.get("clustering_linkage_method"))
-                ),
-                feature_mode=str(payload.get("feature_mode", "legacy_cartesian_positions")),
-                similarities=tuple(similarities),
-            )
-        except (TypeError, ValueError):
-            return None
-
     def _render_probe_result(self, probe: UepProbeResult) -> None:
         self._latest_probe = probe
         self._probe_output.setPlainText(
@@ -5673,7 +5541,10 @@ class UepAnalysisDialog(QDialog):
     ) -> None:
         self._latest_batch_results = list(results)
         self._latest_batch_summary = summary
-        site_number_map = relaxed_site_number_map(results)
+        site_number_map = relaxed_site_number_map(
+            results,
+            included=(index for cluster in summary.clusters for index in cluster.member_indexes),
+        )
         self._batch_table.clear()
         self._batch_table.setHeaderLabels(_BATCH_TABLE_HEADERS)
         self._batch_item_by_key = {}
@@ -5689,15 +5560,10 @@ class UepAnalysisDialog(QDialog):
                 [
                     f"Cluster {cluster.cluster_index}",
                     str(cluster.size),
-                    "",
-                    "",
-                    "",
-                    self._format_batch_energy(
-                        min(
-                            (results[index].classical_energy_ev for index in sorted_member_indexes),
-                            default=None,
-                        )
-                    ),
+                    self._format_batch_fractional(cluster.representative_fractional_position[0]),
+                    self._format_batch_fractional(cluster.representative_fractional_position[1]),
+                    self._format_batch_fractional(cluster.representative_fractional_position[2]),
+                    self._format_batch_energy(cluster.minimum_energy_ev),
                     "",
                     "",
                 ]
@@ -5748,34 +5614,6 @@ class UepAnalysisDialog(QDialog):
         else:
             self._batch_viewer.set_structure(self._viewer_host_structure)
             self._batch_viewer_summary.setText(_BATCH_VIEWER_IDLE_TEXT)
-        self._batch_clustering_button.setEnabled(
-            bool(results) and self._batch_search_thread is None
-        )
-        self._refresh_viewer_muon_dialogs()
-
-    def _set_batch_results_without_clustering(
-        self,
-        results: list[UepOptimizationResult],
-        *,
-        summary_text: str | None = None,
-    ) -> None:
-        self._clear_clustered_viewer_muons()
-        self._latest_batch_results = list(results)
-        self._latest_batch_summary = None
-        self._batch_table.clear()
-        self._batch_table.setHeaderLabels(_BATCH_TABLE_HEADERS)
-        self._batch_item_by_key = {}
-        self._update_batch_table_column_layout()
-        self._batch_viewer.set_structure(self._viewer_host_structure)
-        self._batch_viewer_summary.setText(
-            "Showing the host structure. Run Clustering to color and explore the relaxed muon sites."
-        )
-        if summary_text is not None:
-            self._batch_summary.setPlainText(summary_text)
-        self._batch_clustering_button.setEnabled(
-            bool(results) and self._batch_search_thread is None
-        )
-        self._sync_batch_zpe_progress_from_results()
         self._refresh_viewer_muon_dialogs()
 
     def state_snapshot(self) -> dict[str, object]:
@@ -5911,11 +5749,6 @@ class UepAnalysisDialog(QDialog):
             "batch_summary_text": self._batch_summary.toPlainText(),
             "batch_zpe_completed": self._batch_zpe_progress.format() == "ZPE calculation complete",
             "batch_selected_keys": selected_keys,
-            "clustering_window_state": (
-                dict(self._clustering_window_state or {})
-                if self._shutting_down or self._clustering_dialog is None
-                else self._clustering_dialog.state_snapshot()
-            ),
         }
 
     def _serialized_isosurface_mesh(
@@ -5947,11 +5780,61 @@ class UepAnalysisDialog(QDialog):
 
     def _keep_visible_child_dialogs_in_front(self) -> None:
         for dialog in (
-            self._clustering_dialog,
             self._isosurface_muon_dialog,
             self._slice_muon_dialog,
         ):
             self._keep_dialog_in_front(dialog)
+
+    def _restore_batch_search(self, state: Mapping[str, object]) -> None:
+        """Show a saved search and its groups, grouping it when it has none in this form."""
+
+        text = state.get("batch_summary_text")
+        if isinstance(text, str):
+            self._batch_summary.setPlainText(text)
+        raw_results = state.get("batch_results")
+        results = (
+            [
+                result
+                for entry in raw_results
+                if (result := optimization_result_from_dict(entry)) is not None
+            ]
+            if isinstance(raw_results, list)
+            else []
+        )
+        if not results:
+            return
+        summary = uep_batch_summary_from_dict(state.get("batch_summary_data"))
+        if summary is not None and not self._summary_fits_results(summary, results):
+            summary = None
+        if summary is None:
+            summary = self._group_batch_results(results)
+        else:
+            self._set_grouping_tolerance(summary.threshold_ang)
+        if summary is None:
+            return
+        raw_selected_keys = state.get("batch_selected_keys")
+        selected_row = state.get("batch_selected_row")
+        self._populate_batch_results(
+            results,
+            summary,
+            summary_text=uep_search_log(self._batch_summary.toPlainText(), summary),
+            selected_keys=(
+                [str(value) for value in raw_selected_keys]
+                if isinstance(raw_selected_keys, list)
+                else None
+            ),
+            legacy_selected_row=selected_row if isinstance(selected_row, int) else None,
+        )
+
+    @staticmethod
+    def _summary_fits_results(
+        summary: UepBatchSummary, results: list[UepOptimizationResult]
+    ) -> bool:
+        return all(
+            0 <= int(index) < len(results)
+            for cluster in summary.clusters
+            for index in cluster.member_indexes
+        )
 
     def _restore_initial_state(self, state: Mapping[str, object] | None) -> None:
         if not isinstance(state, Mapping):
@@ -6213,46 +6096,7 @@ class UepAnalysisDialog(QDialog):
                 )
             self._resample_all_slice_planes()
 
-            raw_results = state.get("batch_results")
-            batch_results = (
-                [
-                    result
-                    for entry in raw_results
-                    if (result := self._deserialize_optimization_result(entry)) is not None
-                ]
-                if isinstance(raw_results, list)
-                else []
-            )
-            batch_summary = self._deserialize_batch_summary(state.get("batch_summary_data"))
-            if batch_results and batch_summary is not None:
-                raw_selected_keys = state.get("batch_selected_keys")
-                selected_keys = (
-                    [str(value) for value in raw_selected_keys]
-                    if isinstance(raw_selected_keys, list)
-                    else None
-                )
-                selected_row = state.get("batch_selected_row")
-                selected_index = int(selected_row) if isinstance(selected_row, int) else None
-                summary_text = state.get("batch_summary_text")
-                self._populate_batch_results(
-                    batch_results,
-                    batch_summary,
-                    summary_text=str(summary_text) if isinstance(summary_text, str) else None,
-                    selected_keys=selected_keys,
-                    legacy_selected_row=selected_index,
-                )
-            else:
-                text = state.get("batch_summary_text")
-                if isinstance(text, str):
-                    self._batch_summary.setPlainText(text)
-            raw_clustering_state = state.get("clustering_window_state")
-            self._clustering_window_state = (
-                dict(raw_clustering_state) if isinstance(raw_clustering_state, Mapping) else None
-            )
-            self._pending_open_clustering_dialog = False
-            self._batch_clustering_button.setEnabled(
-                bool(self._latest_batch_results) and self._batch_search_thread is None
-            )
+            self._restore_batch_search(state)
             self._sync_batch_zpe_progress_from_results()
             if bool(state.get("batch_zpe_completed")) and self._latest_batch_results:
                 self._set_batch_zpe_progress_complete()
@@ -6347,9 +6191,9 @@ class UepAnalysisDialog(QDialog):
             self._batch_max_steps,
             self._batch_run,
             self._batch_calculate_zpe,
+            self._batch_grouping_tolerance,
         ):
             widget.setEnabled(enabled)
-        self._batch_clustering_button.setEnabled(enabled and bool(self._latest_batch_results))
         self._refresh_gw_factor_controls()
 
     def _set_batch_progress_idle(self) -> None:
@@ -6390,7 +6234,7 @@ class UepAnalysisDialog(QDialog):
             self._batch_search_progress.setFormat("Optimizing %v/%m starts")
         self._batch_search_progress.setValue(min(max(int(completed), 0), bounded_total))
 
-    def _on_batch_search_ready(self, results: object, summary_text: str) -> None:
+    def _on_batch_search_ready(self, results: object, distances: object, summary_text: str) -> None:
         if not isinstance(results, list):
             QMessageBox.warning(
                 self, "UEP batch search failed", "Batch search returned an unexpected result."
@@ -6400,11 +6244,22 @@ class UepAnalysisDialog(QDialog):
             self._batch_search_progress.setValue(0)
             self._batch_search_progress.setFormat("Batch search failed")
             return
-        self._set_batch_results_without_clustering(results, summary_text=summary_text)
         self._apply_batch_search_progress_style(completed=True)
         self._batch_search_progress.setRange(0, max(len(results), 1))
         self._batch_search_progress.setValue(max(len(results), 1))
         self._batch_search_progress.setFormat("Batch search complete")
+        self._batch_minima_distances = (
+            distances if isinstance(distances, UepMinimaDistances) else None
+        )
+        self._latest_batch_results = list(results)
+        self._batch_summary.setPlainText(summary_text)
+        summary = self._group_batch_results(self._latest_batch_results)
+        if summary is not None:
+            self._populate_batch_results(
+                self._latest_batch_results,
+                summary,
+                summary_text=uep_search_log(self._batch_summary.toPlainText(), summary),
+            )
         self._set_batch_zpe_progress_idle()
         self._emit_state_changed()
 
@@ -6443,38 +6298,17 @@ class UepAnalysisDialog(QDialog):
         self, results: list[UepOptimizationResult], summary_text: str
     ) -> None:
         selected_keys = self._selected_batch_keys()
-        reopen_clustering = (
-            self._clustering_dialog is not None and self._clustering_dialog.isVisible()
-        )
-        if self._clustering_dialog is not None:
-            self._clustering_window_state = self._clustering_dialog.state_snapshot()
-            self._clustering_dialog.close()
-            self._clustering_dialog = None
-
         self._latest_batch_results = list(results)
-        if self._latest_batch_summary is not None:
-            refreshed_summary = self._recluster_batch_results()
-            if refreshed_summary is not None:
-                self._populate_batch_results(
-                    self._latest_batch_results,
-                    refreshed_summary,
-                    summary_text=summary_text,
-                    selected_keys=selected_keys,
-                )
-            else:
-                self._latest_batch_summary = None
-                self._set_batch_results_without_clustering(
-                    self._latest_batch_results,
-                    summary_text=summary_text
-                    + "\nClustering should be run again to refresh any energy-dependent grouping.",
-                )
-        else:
-            self._set_batch_results_without_clustering(
-                self._latest_batch_results, summary_text=summary_text
+        self._batch_minima_distances = None
+        self._batch_summary.setPlainText(summary_text)
+        summary = self._group_batch_results(self._latest_batch_results)
+        if summary is not None:
+            self._populate_batch_results(
+                self._latest_batch_results,
+                summary,
+                summary_text=uep_search_log(summary_text, summary),
+                selected_keys=selected_keys,
             )
-
-        if reopen_clustering:
-            self._open_clustering_dialog()
         self._refresh_viewer_muon_dialogs()
 
     def _on_batch_zpe_ready(self, results: object, summary_text: str) -> None:
@@ -6510,18 +6344,15 @@ class UepAnalysisDialog(QDialog):
             return
 
         self._clear_clustered_viewer_muons()
-        if self._clustering_dialog is not None:
-            self._clustering_dialog.close()
-            self._clustering_dialog = None
+        self._grouping_settled_timer.stop()
         self._latest_batch_summary = None
+        self._batch_minima_distances = None
         self._batch_item_by_key = {}
-        self._clustering_window_state = None
         self._batch_table.clear()
         self._batch_table.setHeaderLabels(_BATCH_TABLE_HEADERS)
         self._update_batch_table_column_layout()
         self._batch_viewer.set_structure(self._viewer_host_structure)
         self._batch_viewer_summary.setText(_BATCH_VIEWER_IDLE_TEXT)
-        self._batch_clustering_button.setEnabled(False)
         self._refresh_viewer_muon_dialogs()
 
         thread = _BatchSearchThread(
@@ -6540,6 +6371,7 @@ class UepAnalysisDialog(QDialog):
             max_attempts=self._batch_max_attempts.value(),
             optimization_tolerance_ev=self._batch_optimization_tolerance.value(),
             max_steps=self._batch_max_steps.value(),
+            grouping_structure=self._grouping_structure(),
         )
         self._batch_search_thread = thread
         thread.prepared.connect(self._on_batch_search_prepared)
@@ -6580,63 +6412,6 @@ class UepAnalysisDialog(QDialog):
         )
         thread.start()
 
-    def _on_clustering_window_state_changed(self, state: dict) -> None:
-        self._clustering_window_state = dict(state)
-        if not self._restoring_state and not self._shutting_down:
-            self._emit_state_changed()
-
-    def _on_clustering_result_ready(self, result: object) -> None:
-        if not isinstance(result, UepClusteringResult):
-            return
-        self._latest_batch_summary = result.summary
-        selected_keys = self._selected_batch_keys()
-        self._populate_batch_results(
-            self._latest_batch_results,
-            result.summary,
-            selected_keys=selected_keys,
-        )
-        self._clustering_window_state = {
-            **dict(self._clustering_window_state or {}),
-            "current_result_summary": asdict(result.summary),
-        }
-        if not self._restoring_state and not self._shutting_down:
-            self._emit_state_changed()
-
-    def _on_clustering_dialog_destroyed(self, _obj=None) -> None:
-        self._clustering_dialog = None
-
-    def _open_clustering_dialog(self) -> None:
-        if not self._latest_batch_results:
-            return
-        if self._clustering_dialog is not None:
-            self._clustering_dialog.show()
-            self._clustering_dialog.raise_()
-            self._clustering_dialog.activateWindow()
-            return
-        try:
-            dialog = UepClusteringDialog(
-                source_job_label=self._source_job_label,
-                source_structure=self._source.structure,
-                viewer_host_structure=self._viewer_host_structure,
-                optimizations=self._latest_batch_results,
-                initial_state=self._clustering_window_state,
-                parent=self,
-            )
-        except (UepError, ValueError) as exc:
-            QMessageBox.warning(self, "UEP clustering unavailable", str(exc))
-            return
-        self._clustering_dialog = dialog
-        dialog.setModal(False)
-        dialog.clustering_ready.connect(self._on_clustering_result_ready)
-        dialog.state_changed.connect(self._on_clustering_window_state_changed)
-        dialog.destroyed.connect(self._on_clustering_dialog_destroyed)
-        dialog.show()
-        dialog.raise_()
-        dialog.activateWindow()
-        if dialog.current_result() is not None:
-            self._on_clustering_result_ready(dialog.current_result())
-            self._on_clustering_window_state_changed(dialog.state_snapshot())
-
     def closeEvent(self, event) -> None:
         if self._shutting_down:
             super().closeEvent(event)
@@ -6646,6 +6421,7 @@ class UepAnalysisDialog(QDialog):
         except RuntimeError:
             pass
         self._shutting_down = True
+        self._grouping_settled_timer.stop()
         preview_timer = getattr(self, "_isosurface_preview_timer", None)
         if preview_timer is not None:
             preview_timer.stop()
@@ -6660,9 +6436,6 @@ class UepAnalysisDialog(QDialog):
             thread.requestInterruption()
             thread.quit()
             thread.wait()
-        if self._clustering_dialog is not None:
-            self._clustering_dialog.close()
-            self._clustering_dialog = None
         for name in ("_isosurface_muon_dialog", "_slice_muon_dialog"):
             dialog = getattr(self, name, None)
             if dialog is not None:

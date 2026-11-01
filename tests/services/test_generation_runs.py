@@ -100,6 +100,17 @@ def test_attached_manual_and_uep_runs_are_described() -> None:
         site_ids=[MuonSite().id, MuonSite().id],
     )
 
+    grouped = GenerationRun(
+        method="uep_clusters",
+        parameters={
+            "source_jobs": [{"id": "1", "label": "UEP search"}],
+            "grouping": {"clustering_method": "symmetry_distance", "threshold_ang": 0.25},
+        },
+        site_ids=[MuonSite().id],
+    )
+    assert "grouped by symmetry-orbit distance within 0.25 Å." in (
+        generation_runs.run_methods_sentence(grouped)
+    )
     assert generation_runs.run_summary_line(attached) == (
         "Attached to F, 1 start, 1 per atom, 1.0 Å from F, ≥ 0.8 Å from atoms, P4₂/mnm (16 ops)"
     )

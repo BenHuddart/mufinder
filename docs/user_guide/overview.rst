@@ -163,12 +163,12 @@ UEP
 The ``UEP`` stage runs CASTEP single-point source calculations for the host
 charge density and then analyses the unperturbed electrostatic potential: full
 cell potential grids with isosurface and slice views, random-start batch
-searches for potential minima, an optional harmonic zero-point estimate, and a
-clustering window with hierarchical and k-means views. Cluster
-representatives are offered to muon-site generation.
+searches for potential minima, grouped automatically into distinct sites by
+symmetry, and an optional harmonic zero-point estimate. One representative of each
+site is offered to muon-site generation.
 
 See :doc:`/user_guide/uep_workflow`. :doc:`/user_guide/examples/cof2` runs a
-batch search and clustering in a model CoF₂ density.
+batch search in a model CoF₂ density.
 
 Muon Sites: Generation
 ~~~~~~~~~~~~~~~~~~~~~~

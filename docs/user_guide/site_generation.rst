@@ -249,30 +249,28 @@ UEP cluster sources
 ~~~~~~~~~~~~~~~~~~~
 
 UEP analysis does not promote sites directly from the UEP wizard. After
-running a UEP batch search and clustering the optimized points (see
+running a UEP batch search, whose minima are grouped when it ends (see
 :doc:`/user_guide/uep_workflow`):
 
 1. Choose ``UEP clusters`` as the ``Method``.
-2. In the table, select the clustered rows to add; the viewer previews their
+2. In the table, select the rows to add; the viewer previews their
    positions over the host structure.
 3. Click ``Generate Sites``.
 
-The table lists one row per saved cluster representative, with the columns
+The table lists one row per group of the saved search, with the columns
 ``Source`` (the source job), ``Cluster``, ``Size``, ``Class`` (the
 stationary-point classification), ``E (eV)`` (the classical energy) and ``fX``,
 ``fY``, ``fZ``.
 
-Each row uses the optimized position of the cluster representative member, not
-an averaged position or geometric centroid. The representative is the member
-selected by the UEP clustering summary as the lowest-energy member of that
-cluster, using total energy when ZPE-corrected total energies are available and
-classical UEP energy otherwise. Individual non-representative cluster members
-are retained in the UEP analysis state but are not shown in this version of the
+Each row uses the position of the group's representative in the asymmetric unit,
+not an averaged position or geometric centroid. The representative is the
+member of the group with the lowest classical UEP energy. Individual
+non-representative members are retained in the UEP analysis state but are not shown in this version of the
 generation table.
 
 Generating stores the selected rows as normal generated sites for full
 structural relaxation. MuFinder also keeps the source job, cluster identity,
-representative member index, classification, energies, and clustering settings
+representative member index, classification, energies, and grouping settings
 with each site, and prevents the same UEP cluster row from being added twice.
 
 Tidying generated rows
@@ -445,7 +443,7 @@ the starts can be quoted and reproduced. The run holds:
   positions were excluded. Attached: the element, muons per atom, the
   muon-element distance, the muon-atom distance and the 2.6 Å neighbour cutoff
   used to find directions. Custom: the coordinate system and coordinates. UEP:
-  the source UEP jobs and their clustering settings.
+  the source UEP jobs and their grouping settings.
 - **The random seed.** A random run draws a seed when none is given and records
   it, so the same seed and inputs give the same starts. The seed is shown in
   the Journal entry and in the run's description, not on the Generation page.

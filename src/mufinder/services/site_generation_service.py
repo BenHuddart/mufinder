@@ -930,15 +930,8 @@ def _generate_uep_cluster_sites(
     return _GeneratedBatch(sites=sites, inputs=_uep_run_inputs(selections))
 
 
-#: UEP clustering settings a UEP cluster row carries, which a generation run records.
-_UEP_GROUPING_KEYS = (
-    "clustering_method",
-    "clustering_hier_t",
-    "clustering_kmeans_k",
-    "clustering_linkage_method",
-    "feature_mode",
-    "threshold_ang",
-)
+#: UEP grouping settings a UEP cluster row carries, which a generation run records.
+_UEP_GROUPING_KEYS = ("clustering_method", "threshold_ang", "energy_tolerance_ev")
 
 
 def _uep_run_inputs(selections: Sequence[object]) -> dict[str, Any]:

@@ -66,6 +66,7 @@ from mufinder.services.supercell_assets import (
     WorkflowSupercellSelection,
 )
 from mufinder.science.structure_io import load_structure_file
+from mufinder.services.uep_grouping import regroup_saved_uep_searches
 from mufinder.workflow.muon_site import MUON_RELAXATION_DEFINITION_CALC_TYPE
 
 _LOG = logging.getLogger(__name__)
@@ -382,6 +383,10 @@ class ProjectService:
             self._content_hashes[
                 (root_key, self._UI_STATE_ENTITY_TYPE, self._UI_STATE_ENTITY_ID)
             ] = self._payload_hash(to_jsonable(ui_state))
+
+        # Regrouped after the cache is seeded, from what the project holds, so a
+        # project with a retired grouping writes the new one at its next save.
+        regroup_saved_uep_searches(document)
 
         issues = self.validate_document(document)
         if issues:

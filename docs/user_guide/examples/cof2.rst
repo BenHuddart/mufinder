@@ -120,24 +120,17 @@ charges of 17 for Co and 7 for F.
 
 .. figure:: ../../_generated/screenshots/uep_batch_search.webp
    :alt: The UEP analysis window's Batch Search tab after twelve random starts,
-         with every optimized site at the same classical energy.
+         with the twelve minima grouped into one site.
 
    A batch search in the model density: all twelve starts reach the same
-   minimum.
+   minimum, one site.
 
 Every random start relaxes to the 4d position (0, ½, ¼), the T_A site of
 De Renzi *et al.* (1984), in the open channel that runs along c through the
 octahedral 4c sites. In this density the potential along the channel is
 shallow: the 4c site (0, ½, 0) lies 0.086 eV higher and is a saddle point
-between neighbouring 4d minima. The hierarchical cut at its default tolerance
-splits the twelve symmetry-equivalent minima into two clusters of the same
-energy.
-
-.. figure:: ../../_generated/screenshots/uep_clustering_dialog.webp
-   :alt: The UEP clustering window with a dendrogram of twelve relaxed sites
-         and the cluster energy spread.
-
-   The clustering of the batch-search minima.
+between neighbouring 4d minima. The twelve starts end on symmetry images of that
+one minimum, so they group into one site.
 
 The UEP leaves the fluorines where they are, and that is what it misses here:
 the positive muon's site is fixed by the F–μ–F bond it forms once the

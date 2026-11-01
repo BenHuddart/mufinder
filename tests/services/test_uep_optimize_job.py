@@ -9,12 +9,10 @@ import pytest
 
 from mufinder.domain.constants import ATOMIC_MASS_KG, MUON_MASS_KG
 from mufinder.science.uep import StationaryPointClassification, UepOptimizationResult, UepStructure
-from mufinder.science.uep_clustering import UepClusteringConfig
 from mufinder.services.uep_optimize_job import (
     parse_result_file,
     result_file_name,
     run_manifest_file,
-    summarize_batch_results,
     write_manifest,
 )
 
@@ -120,26 +118,3 @@ def _optimization(
             near_zero_count=0,
         ),
     )
-
-
-def test_summarize_batch_results_supports_soprano_backed_metadata() -> None:
-    summary = summarize_batch_results(
-        [
-            _optimization((0.25, 0.25, 0.25), total=-1.0),
-            _optimization((0.75, 0.75, 0.75), total=-1.0),
-        ],
-        source_structure=_host(),
-        clustering_config=UepClusteringConfig(clustering_method="hier", clustering_hier_t=0.05),
-    )
-
-    assert summary["clustering_method"] == "hier"
-    assert summary["feature_mode"] == "soprano_defect_asymmetric_fpos"
-    assert len(summary["clusters"]) == 1
-    assert summary["clusters"][0]["representative_asymmetric_fractional_position"] is not None
-
-
-def test_summarize_batch_results_preserves_legacy_threshold_path() -> None:
-    summary = summarize_batch_results([], threshold_ang=0.3)
-
-    assert summary["threshold_ang"] == pytest.approx(0.3)
-    assert summary["clustering_method"] == "legacy_cartesian_hier"

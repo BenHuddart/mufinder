@@ -935,6 +935,7 @@ def _eV_text(value: object) -> str:
 
 #: How a UEP grouping's method and its parameter read on a card.
 _UEP_GROUPING_TEXT: dict[str, tuple[str, str]] = {
+    "symmetry_distance": ("Grouped by symmetry within {value:g} Å", "threshold_ang"),
     "legacy_cartesian_hier": ("Grouped within {value:g} Å", "threshold_ang"),
     "hier": ("Hierarchical grouping, t = {value:g}", "clustering_hier_t"),
     "kmeans": ("K-means grouping, k = {value:g}", "clustering_kmeans_k"),
@@ -980,6 +981,8 @@ def _uep_minima_entry(record: ProvenanceRecord) -> JournalEntry:
         lines.append(f"{plural(starts, 'optimised start')} grouped")
     if text := _uep_grouping_text(record.parameters.get("grouping")):
         lines.append(text)
+    if excluded := _int_param(record, "excluded_count"):
+        lines.append(f"{plural(excluded, 'result')} left out as failed or not a minimum")
     if record.parameters.get("includes_zpe"):
         lines.append("Energies include the zero-point energy")
     entry = _entry(record, stamp_kind="success", title="UEP minima found", body=body)

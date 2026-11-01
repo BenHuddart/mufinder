@@ -316,7 +316,7 @@ Each entry of an example's ``SCENES`` maps a file name to a ``Scene``:
   grabbing only a ``region`` of it, such as one panel or a rectangle around
   one row) or
   ``Floating`` (a non-modal window, such as the geometry progress or UEP
-  clustering window, that an opener callable shows and returns). Each target
+  analysis window, that an opener callable shows and returns). Each target
   takes an optional ``prepare`` step that receives the grabbed widget before
   the grab.
 

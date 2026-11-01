@@ -52,6 +52,7 @@ from mufinder.services.project_summary import (
     muon_relaxation_row_jobs,
     relaxation_analysis_workspaces,
 )
+from mufinder.services.uep_grouping import uep_source_structure_id
 from mufinder.services.source_candidates import (
     coerce_fractional_triplet,
     completed_muon_relaxation_sources,
@@ -161,7 +162,7 @@ def _uep_layers(document: ProjectDocument, host: Structure) -> list[SurveyLayer]
         clusters = summary.get("clusters") if isinstance(summary, Mapping) else None
         if job is None or not isinstance(clusters, list):
             continue
-        source_id = _uep_source_structure_id(document, job)
+        source_id = uep_source_structure_id(document, job.id)
         if (
             source_id is not None
             and source_id != host.id
@@ -506,18 +507,6 @@ def _wyckoff_labels(result: Mapping[str, object]) -> dict[int, str]:
         if index and label:
             labels[index] = label
     return labels
-
-
-def _uep_source_structure_id(document: ProjectDocument, job: Job) -> UUID | None:
-    for definition in document.calculations.values():
-        if definition.workflow_stage != WorkflowStage.UEP:
-            continue
-        mapping = definition.parameters.get("job_ids_by_label")
-        if isinstance(mapping, Mapping) and str(job.id) in {
-            str(value) for value in mapping.values()
-        }:
-            return definition.input_structure_ids[0] if definition.input_structure_ids else None
-    return None
 
 
 def _derived_from(document: ProjectDocument, structure_id: UUID) -> UUID | None:

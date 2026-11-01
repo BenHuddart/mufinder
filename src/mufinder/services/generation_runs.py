@@ -34,7 +34,7 @@ _UEP_SITE_METHODS = frozenset({"uep_cluster", "uep_cluster_member", "uep_batch_c
 #: Heading word of the group of starts made before generation runs were recorded.
 EARLIER_STARTS_TITLE = "Earlier starts"
 
-#: UEP clustering method names, as the methods sentence writes them.
+#: Retired UEP clustering method names, as the methods sentence of an older run writes them.
 _UEP_CLUSTERING_NAMES = {"hier": "hierarchical", "kmeans": "k-means"}
 
 
@@ -241,7 +241,11 @@ def run_methods_sentence(
             text += f" of {source}"
         grouping = parameters.get("grouping")
         method = grouping.get("clustering_method") if isinstance(grouping, Mapping) else None
-        if method:
+        if str(method) == "symmetry_distance":
+            text += ", grouped by symmetry-orbit distance"
+            if grouping.get("threshold_ang") is not None:
+                text += f" within {_distance(grouping['threshold_ang'])} Å"
+        elif method:
             name = _UEP_CLUSTERING_NAMES.get(str(method), str(method))
             text += f", grouped by {name} clustering"
             if str(method) == "hier" and grouping.get("clustering_hier_t") is not None:

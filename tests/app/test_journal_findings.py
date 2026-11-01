@@ -51,8 +51,8 @@ def test_a_grouped_uep_search_reaches_the_journal_through_its_state(window_docum
     state = {
         "batch_results": [{"start_position_ang": [0.0, 0.0, 0.0], "total_energy_ev": None}],
         "batch_summary_data": {
-            "clustering_method": "legacy_cartesian_hier",
-            "threshold_ang": 0.2,
+            "clustering_method": "symmetry_distance",
+            "threshold_ang": 0.25,
             "clusters": [
                 {
                     "cluster_index": 1,

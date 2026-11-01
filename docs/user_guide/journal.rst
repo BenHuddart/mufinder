@@ -192,8 +192,10 @@ latest finding about the same thing (the same UEP job, workspace, Magnetic Field
 page, simulation or row) on the same day; on a later day it does. Each record keeps
 a fingerprint of its inputs for this. A UEP
 grouping, a site grouping and a magnetic field also fingerprint what they found, so
-adding the ZPE to a UEP search, or regrouping after a relaxation was run again,
-is a new entry. A Magnetic Fields calculation that gives the values already stored
+regrouping after a relaxation was run again is a new entry. A UEP search's entry
+is added when the search ends and it is grouped. Its zero-point energies and a
+grouping tolerance that gives the same groups add none; a tolerance that gives
+other groups adds one once the edit settles. A Magnetic Fields calculation that gives the values already stored
 adds no entry on any day.
 
 Going back to an earlier result adds an entry: calculating ``A``, ``B`` and ``A``
@@ -249,7 +251,8 @@ intentionally omits:
 - intermediate job states such as ``queued``, ``running``, and ``retrieving``
 - inferred or backfilled history for older projects that lack the newer
   provenance milestones
-- a UEP batch search that was never grouped, whose distinct minima are not known
+- a UEP batch search saved before searches were grouped when they end, until it
+  is searched again
 - dipolar-tensor and nuclear-relaxation calculations on the Magnetic Fields page
 
 Limitations

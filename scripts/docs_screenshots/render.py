@@ -343,7 +343,7 @@ def include_every_job(dialog: QDialog) -> None:
 
 
 def run_uep_analysis(window: MainWindow, row: str) -> None:
-    """Open the UEP analysis of ``row``, run a batch search, its ZPE and clustering, as the buttons do.
+    """Open the UEP analysis of ``row``, run a batch search and its ZPE, as the buttons do.
 
     The batch search and ZPE run their worker threads' ``run`` in this thread,
     and the random starts are seeded so every build finds the same minima.
@@ -365,15 +365,12 @@ def run_uep_analysis(window: MainWindow, row: str) -> None:
     try:
         dialog._run_batch_search()
         dialog._run_batch_zpe()
-        dialog._open_clustering_dialog()
     finally:
         for thread, start in zip(threads, starts, strict=True):
             thread.start = start
         uep_wizard.generate_random_sites = generate_random_sites
     settle(QApplication.instance())
-    for child in (dialog._clustering_dialog, dialog):
-        if child is not None:
-            child.close()
+    dialog.close()
 
 
 # --- Scenes -------------------------------------------------------------------
@@ -437,7 +434,7 @@ class Dialog:
 class Floating:
     """Grab the non-modal window that ``open(window)`` shows and returns.
 
-    Some windows (the geometry progress, UEP analysis and clustering windows)
+    Some windows (the geometry progress and UEP analysis windows)
     stay open beside the main window instead of blocking it. ``size`` gives
     the window its desktop size before the grab; it is closed afterwards.
     """

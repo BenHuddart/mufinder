@@ -586,19 +586,14 @@ def test_main_window_uep_analysis_state_changed_updates_document_but_not_disk_un
         {
             "current_tab": 3,
             "probe_output": "saved",
-            "clustering_window_state": {
-                "is_open": True,
-                "method": "kmeans",
-                "kmeans_k": 2,
-                "viewer_state": {"show_bonds": True},
-            },
+            "batch_selected_keys": ["cluster:1"],
         },
     )
 
     stored = doc.ui_state[window._UEP_ANALYSIS_STATES_KEY]
     assert stored[str(job_id)]["current_tab"] == 3
     assert stored[str(job_id)]["probe_output"] == "saved"
-    assert stored[str(job_id)]["clustering_window_state"]["viewer_state"]["show_bonds"] is True
+    assert stored[str(job_id)]["batch_selected_keys"] == ["cluster:1"]
     assert doc.project_root.joinpath("state.json").read_text(encoding="utf-8") == initial_state_text
 
     service.save_project(doc)
@@ -607,7 +602,7 @@ def test_main_window_uep_analysis_state_changed_updates_document_but_not_disk_un
     persisted = reloaded.ui_state[window._UEP_ANALYSIS_STATES_KEY]
     assert persisted[str(job_id)]["current_tab"] == 3
     assert persisted[str(job_id)]["probe_output"] == "saved"
-    assert persisted[str(job_id)]["clustering_window_state"]["method"] == "kmeans"
+    assert persisted[str(job_id)]["batch_selected_keys"] == ["cluster:1"]
 
 
 def test_main_window_uep_analysis_state_change_keeps_dialog_visible_without_table_refresh(
@@ -974,6 +969,69 @@ def test_main_window_exposes_uep_cluster_rows_for_generation(main_window, tmp_pa
     assert site.generation_method == "uep_cluster"
     assert site.source_structure_id == host.id
     assert site.properties["classification"] == "minimum"
+
+
+def test_a_generation_row_reads_the_group_and_records_its_member(
+    main_window, tmp_path: Path
+) -> None:
+    window = main_window
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "uep_group_row.mufinder", "UEPGroupRow")
+    host = _host_structure()
+    service.add_structure(doc, host)
+    doc.project.host_structure_id = host.id
+    definition = service.register_uep_definition(
+        doc,
+        input_structure_id=host.id,
+        parameters={
+            "name_prefix": "uep",
+            "rows": [{"label": "row_1", "parameter_values": {}, "added_advanced": []}],
+        },
+        output_directory=doc.project_root / "files" / "uep",
+    )
+    job = service.add_job(
+        doc, label="row_1", workflow_stage=WorkflowStage.UEP, calc_type="uep_source"
+    )
+    definition.parameters["job_ids_by_label"] = {"row_1": str(job.id)}
+    doc.ui_state[window._ACTIVE_UEP_DEFINITION_KEY] = str(definition.id)
+    doc.ui_state[window._UEP_ANALYSIS_STATES_KEY] = {
+        str(job.id): {
+            "batch_results": [
+                {
+                    "optimized_position_ang": [9.0, 9.0, 9.0],
+                    "optimized_fractional_position": [0.99999999, 0.5, 0.75],
+                    "classical_energy_ev": -0.7,
+                    "classification": {"label": "minimum"},
+                }
+            ],
+            "batch_summary_data": {
+                "threshold_ang": 0.25,
+                "energy_tolerance_ev": 0.001,
+                "clustering_method": "symmetry_distance",
+                "clusters": [
+                    {
+                        "cluster_index": 1,
+                        "size": 12,
+                        "representative_index": 0,
+                        "representative_position_ang": [0.0, 1.0, 0.5],
+                        "representative_fractional_position": [0.0, 0.5, 0.25],
+                        "member_indexes": [0],
+                    }
+                ],
+            },
+        }
+    }
+    window._document = doc
+
+    (row,) = window._uep_cluster_source_rows()
+
+    assert row["fractional_position"] == [0.0, 0.5, 0.25]
+    assert row["cartesian_position"] == [0.0, 1.0, 0.5]
+    assert row["cluster_size"] == 12
+    assert row["properties"]["member_index"] == 0
+    assert row["properties"]["threshold_ang"] == 0.25
+    assert row["properties"]["energy_tolerance_ev"] == 0.001
+    assert row["properties"]["clustering_method"] == "symmetry_distance"
 
 
 def test_main_window_ignores_stale_uep_cluster_states_for_generation(

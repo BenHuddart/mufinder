@@ -55,6 +55,19 @@ def test_uep_batch_cluster_is_offered_at_its_optimised_position(tmp_path) -> Non
     assert option.properties["cluster"]["cluster_index"] == 2
 
 
+def test_a_uep_cluster_uses_the_position_its_group_reports(tmp_path) -> None:
+    document = uep_cluster_document(tmp_path)
+    (state,) = document.ui_state[UEP_ANALYSIS_STATES_KEY].values()
+    cluster = state["batch_summary_data"]["clusters"][0]
+    cluster["representative_fractional_position"] = [0.0, 0.5, 0.25]
+    cluster["representative_position_ang"] = [0.0, 1.5, 0.75]
+
+    (option,) = uep_cluster_muon_site_options(document, feo_host_structure())
+
+    assert option.fractional_position == (0.0, 0.5, 0.25)
+    assert option.cartesian_position == (0.0, 1.5, 0.75)
+
+
 def test_uep_cluster_without_an_optimised_position_uses_the_representative(tmp_path) -> None:
     document = uep_cluster_document(tmp_path)
     (state,) = document.ui_state[UEP_ANALYSIS_STATES_KEY].values()

@@ -6,8 +6,8 @@ CASTEP calculation on the host crystal. You run one CASTEP single-point source
 job that writes the host charge density; MuFinder then evaluates the
 electrostatic potential that the host would exert on a positive muon, relaxes
 many random starting positions on that potential, and groups the resulting
-minima into clusters. The cluster representatives can be committed as starting
-positions for full CASTEP relaxations on the ``Muon Sites -> Generation`` page.
+minima into distinct sites. One representative of each site can be committed as a starting
+position for full CASTEP relaxations on the ``Muon Sites -> Generation`` page.
 The physical picture, the equations and the papers behind the method are in
 `Method`_ at the end of this page.
 
@@ -74,13 +74,12 @@ Open ``UEP`` in the project navigator, then:
    label>`` opens with three tabs (see `The analysis window`_).
 6. **Run a batch search.** On the ``Batch Search`` tab, set the sampling and
    optimizer values and click ``Run Batch Search``. MuFinder generates random
-   starting positions and relaxes each on the potential.
+   starting positions, relaxes each on the potential and groups the minima.
 7. **Optionally add zero-point energies.** Once the optimization finishes,
    click ``Calculate ZPE`` to estimate the harmonic zero-point energy of every
    optimized site that is a stable minimum.
-8. **Cluster the relaxed sites.** Click ``Clustering`` in the ``Sampling``
-   card to open the clustering window and explore the relaxed sites (see
-   `Interpreting batch searches`_).
+8. **Read the sites.** The table lists the sites as soon as the search ends
+   (see `How sites are grouped`_).
 9. **Commit sites for relaxation.** Open ``Muon Sites -> Generation``, choose
    the ``UEP clusters`` method and generate sites from the cluster
    representatives (see `Using UEP clusters for relaxation starts`_).
@@ -111,7 +110,7 @@ Completed UEP source jobs open ``UEP Analysis - <job label>`` with three tabs:
 .. figure:: ../_generated/screenshots/uep_batch_search.webp
    :alt: The Batch Search tab of the UEP analysis window after twelve random
          starts, with the sampling and optimizer controls, the search log and
-         the clustered minima.
+         the minima grouped into one site.
 
    A finished batch search in the CoF₂ model density of
    :doc:`/user_guide/examples/cof2`.
@@ -140,102 +139,87 @@ The window offers:
   attempts`` (default 5000). The optimizer card sets ``Gaussian width factor``,
   ``Optimization tolerance (eV)`` (default 1e-5) and ``Optimizer max steps``
   (default 100). ``Run Batch Search`` generates and relaxes the candidate
-  starts first; an optional ``Calculate ZPE`` pass follows for the optimized
-  sites, and ``Clustering`` opens a separate window for exploring the relaxed
-  sites;
+  starts first and groups the minima when they finish; an optional ``Calculate
+  ZPE`` pass follows for the optimized sites;
 - muon markers that can be added to the isosurface and slice viewers with
-  ``Add / remove muon``, either from clustered batch-search results or from
+  ``Add / remove muon``, either from the batch-search groups or from
   custom fractional coordinates;
-- cluster tables on the ``Batch Search`` tab that reflect the most recent
-  clustering run and keep promotion of cluster representatives;
-- exposure of clustered batch-search results to the ``Muon Sites ->
+- a table on the ``Batch Search`` tab of the groups of the latest search, one
+  ``Cluster`` row per site with its members under it, and one ``Grouping
+  tolerance (Å)`` under the table that regroups them as you type;
+- exposure of the groups to the ``Muon Sites ->
   Generation`` page, where selected UEP rows can be committed as candidate
   muon-site inputs for structural relaxation.
 
-The clustering window, ``UEP Clustering - <job label>``, offers hierarchical
-dendrogram exploration of the Soprano-backed feature space with a live
-tolerance control (``Tolerance t``), a k-means PCA view with live cluster-count
-updates (``Clusters k``), a shared structure view that colours every relaxed
-muon position by its cluster, and the cluster-summary bubble plot. Clusters are
-numbered from the lowest mean classical energy. A cluster has the same colour in
-all of these plots, and the same number on its bubble and its k-means centroid;
-in the dendrogram a single-site cluster has no link of its own to colour. A
-``Clustering method`` drop-down switches between
-``Hierarchical`` and ``K-means``. On a small window it reflows only its controls, so the dendrogram
-or PCA plot stays beside the structure view and energy-spread plot instead of
-being stacked into a thin strip.
+How sites are grouped
+~~~~~~~~~~~~~~~~~~~~~
 
-Interpreting batch searches
-~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Repeated random starts estimate which minima have the largest attraction basins.
+The starts of one site end on different symmetry images of it, so MuFinder groups
+the results as soon as the search ends:
 
-.. figure:: ../_generated/screenshots/uep_clustering_dialog.webp
-   :alt: The UEP clustering window with a hierarchical dendrogram, the clustered
-         muon positions in the cell and the cluster energy-spread plot.
+- **Only converged minima are grouped.** A failed optimization or a result on a
+  saddle point, maximum or flat point is left out, and the ``Search Log`` counts
+  them.
+- **Symmetry.** The distance between two minima is the shortest minimum-image
+  Cartesian distance from one to any member of the other's symmetry orbit under
+  the host's space group. If the host's symmetry cannot be detected, the
+  ``Search Log`` says so and the distance is the plain minimum-image distance.
+- **Distance.** Two minima are linked when that distance is under ``Grouping
+  tolerance (Å)``, 0.25 Å by default, well under the 0.8 Å minimum muon-muon
+  distance of the starts. Links chain, so a group is a connected set of minima
+  (single linkage).
+- **Energy.** A link also needs the two classical energies to differ by less
+  than 1 meV, so nearby but distinct minima stay apart.
 
-   Twelve batch-search minima in the CoF₂ model density, all images of one 4d
-   position, which the default cut splits into two clusters of equal energy.
+Each group is one ``Cluster`` row. Its ``Size`` is its number of members. Its
+coordinates and energy are those of its representative, the lowest-energy member,
+at the image of its orbit with the smallest fractional coordinates, compared
+``fX``, then ``fY``, then ``fZ``. Rows are ordered from the lowest energy. The
+members stay available under each row and in the viewer.
 
-The paper and the original ``pymuonsuite`` workflow both use repeated
-random-start optimizations to estimate which minima have the largest attraction
-basins. MuFinder follows the same high-level idea:
+All of this uses the classical energy, which every search has, so ``Calculate
+ZPE`` adds its columns without changing the groups or their order.
 
-- a batch of initial muon positions is generated inside the chosen source cell;
-- each start is optimized under the UEP approximation;
-- the resulting optimized sites can then be post-processed with a separate
-  ``Calculate ZPE`` action, which evaluates the harmonic quantum correction in
-  eV for each successfully optimized site and stores it with the relaxed-site
-  data;
-- clustering is then applied separately to the relaxed sites using the same
-  Soprano-backed asymmetric-position and energy features used by
-  ``pymuonsuite``;
-- hierarchical clustering can be explored through a dendrogram and tolerance
-  cut, while k-means can be explored through a PCA projection of the normalized
-  feature vectors;
-- in the hierarchical view, the tolerance ``t`` controls where the dendrogram
-  is cut: smaller values split nearby minima into finer groups, while larger
-  values merge nearby relaxed sites into broader candidate basins;
-- in the k-means view, the user chooses a fixed ``k`` explicitly, so it is best
-  treated as an exploratory comparison against the hierarchical picture rather
-  than as a proof of the physically correct site count;
-- each cluster is summarized by its size, a representative relaxed site, and
-  cluster energy statistics; the representative is the minimum-energy member of
-  that cluster rather than an averaged coordinate or centroid, matching the
-  style used in the ``pymuonsuite`` cluster reports;
-- the clustering window bubble plot shows average energy relative to the global
-  minimum on the horizontal axis and the cluster energy standard deviation on
-  the vertical axis, so broad/high-energy clusters can be distinguished from
-  compact low-energy families at a glance;
-- larger clusters usually indicate minima with larger attraction basins and are
-  often the most physically relevant first-pass candidates.
+The tolerance is a length and the energy limit is an energy, so a group does not
+depend on which other sites the batch found, and there is no normalisation or
+target number of clusters to choose. UEP minima are exact stationary points of one
+smooth potential, which is why an absolute tolerance fits them. Sites relaxed with
+DFT carry real scatter; :doc:`/user_guide/structural_relaxation_analysis` keeps
+hierarchical and k-means clustering for those.
 
-Grouping a batch search adds a ``UEP minima found`` entry to the
-:doc:`/user_guide/journal`.
+Larger groups usually indicate minima with larger attraction basins and are often
+the most physically relevant first-pass candidates.
+
+Each search adds a ``UEP minima found`` entry to the :doc:`/user_guide/journal`
+when it is grouped. A tolerance that changes the groups adds another once the edit
+settles; one that gives the same groups adds nothing.
+
+A project saved with an earlier clustering of a search is regrouped this way from
+its stored results when it opens.
 
 
 Using UEP clusters for relaxation starts
 ----------------------------------------
 
 The analysis window does not write muon sites directly. After running a batch
-search and clustering the optimized points, open ``Muon Sites -> Generation``
-and choose the ``UEP clusters`` method. That table lists one saved
-representative per cluster from the UEP analysis state, including source job,
+search, open ``Muon Sites -> Generation``
+and choose the ``UEP clusters`` method. That table lists one
+representative per group from the UEP analysis state, including source job,
 cluster size, stationary classification, classical energy ``E (eV)``, and
 fractional coordinates.
 
-A cluster-row position is the optimized position of the representative member
-recorded in the UEP cluster summary. It is not the mean position, centroid, or
-PCA/k-means centre of the cluster. MuFinder chooses that representative as the
-lowest-energy optimized member of the cluster, using ZPE-corrected total energy
-when those totals are available and falling back to the classical UEP energy
-otherwise. Individual non-representative members remain available in the UEP
-analysis state but are intentionally hidden from this version of the generation
-table to keep the relaxation-start list compact.
+A row's position is the position of the group's representative in the asymmetric
+unit, as the ``Batch Search`` table shows it (see `How sites are grouped`_). It is
+not a mean position of the group. Individual non-representative members remain
+available in the UEP analysis state but are intentionally hidden from this version
+of the generation table to keep the relaxation-start list compact.
 
 Selecting rows in the generation tab previews the corresponding muon positions
 over the host structure. Clicking ``Generate Sites`` then records the selected
 UEP rows as normal generated muon sites for the full structural-relaxation
 workflow. MuFinder keeps the source job, cluster index, representative member
-index, clustering method, energies, and classification with each created site,
+index, grouping settings, energies, and classification with each created site,
 and protects against adding the same UEP cluster row twice.
 
 Before staging the generated sites for CASTEP relaxation, you can use
@@ -259,17 +243,11 @@ the save boundary matters:
 - UEP analysis-session state remains in memory until you choose ``Save
   Project`` (or confirm the save prompt when closing a modified project);
 - this manual-save state includes the current wizard tab, cached analysis UI
-  choices, clustering-window state, selected viewer orientation/zoom, bond and
+  choices, selected viewer orientation/zoom, bond and
   spin visibility, and slice/isosurface presentation settings.
 
-The clustering window's geometry, splitter sizes and camera are saved with the
-UEP analysis state once a move, resize, splitter drag or view change settles
-(after about a quarter of a second), not on every intermediate event, so
-dragging stays responsive however large the potential grid is. Method,
-tolerance, cluster-count and result changes are saved immediately.
-
-You can therefore explore candidate sites, refresh overlays, or compare
-clustering views without immediately rewriting the project on disk. To restore
+You can therefore explore candidate sites or refresh overlays
+without immediately rewriting the project on disk. To restore
 that exact UEP analysis layout in a future session, use ``Save Project`` before
 closing the project.
 
@@ -336,9 +314,9 @@ MuFinder implements this workflow in its own codebase rather than wrapping
 The AIRSS paper and the ``pymuonsuite`` supplementary clustering material are
 also helpful context for how to interpret repeated random starts after
 relaxation. MuFinder does not embed the full AIRSS DFT-relaxation workflow
-inside the UEP clustering window, but it uses the same broad post-processing
-ideas: repeated random starts, clustering of relaxed endpoints, and selection
-of representative low-energy sites for follow-up work.
+in the UEP stage, but it uses the same broad ideas: repeated random starts,
+grouping of relaxed endpoints, and selection of representative low-energy sites
+for follow-up work. The grouping itself differs: see `How sites are grouped`_.
 
 Zero-point energy model
 ~~~~~~~~~~~~~~~~~~~~~~~

@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import asdict, replace
+from functools import partial
 from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
@@ -13,8 +14,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QDialog, QPushButton, QSizePolicy, QWidget
 
-from mufinder.app.theme import current_palette
-from mufinder.app.uep_clustering_dialog import cluster_color_map
+from mufinder.app.theme import cluster_color_map, current_palette
 from mufinder.app.uep_wizard import (
     UepAnalysisDialog,
     _AddSlicePlaneDialog,
@@ -23,7 +23,10 @@ from mufinder.app.uep_wizard import (
 )
 from mufinder.app.atomic_structure_viewer import MUON_VIEWER_RADIUS_ANG, _CameraState
 from mufinder.domain.models import Structure
+from mufinder.science.site_generation import generate_random_sites, symmetry_equivalent_positions
 from mufinder.science.uep import (
+    StationaryPointClassification,
+    UepOptimizationResult,
     cartesian_normal_to_lattice_plane_components,
     extract_isosurface,
     fractional_point_to_cartesian,
@@ -61,11 +64,16 @@ def _slice_plane_for_dialog(dialog: UepAnalysisDialog):
 
 
 def _run_batch_search_inline(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Run the search in this thread from seeded starts, so it finds the same minima every time."""
+
     def _start_inline(thread) -> None:
         thread.run()
         thread.finished.emit()
 
     monkeypatch.setattr("mufinder.app.uep_wizard._BatchSearchThread.start", _start_inline)
+    monkeypatch.setattr(
+        "mufinder.app.uep_wizard.generate_random_sites", partial(generate_random_sites, seed=7)
+    )
 
 
 def _run_batch_zpe_inline(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -531,7 +539,7 @@ def test_uep_wizard_pressing_enter_on_batch_gw_factor_rebuilds_and_syncs_all_tab
     dialog.close()
 
 
-def test_uep_wizard_clustering_window_populates_cluster_table_without_direct_promotion(
+def test_uep_wizard_batch_search_populates_the_groups_when_it_ends_without_direct_promotion(
     qapp, monkeypatch
 ) -> None:
     _run_batch_search_inline(monkeypatch)
@@ -545,12 +553,8 @@ def test_uep_wizard_clustering_window_populates_cluster_table_without_direct_pro
     )
 
     dialog._batch_count.setValue(12)
-    dialog._batch_max_steps.setValue(5)
+    dialog._batch_max_steps.setValue(30)
     dialog._run_batch_search()
-
-    assert dialog._batch_table.topLevelItemCount() == 0
-    assert dialog._batch_clustering_button.isEnabled() is True
-    dialog._open_clustering_dialog()
 
     assert dialog._batch_table.topLevelItemCount() >= 1
     cluster_item = dialog._batch_table.topLevelItem(0)
@@ -584,37 +588,6 @@ def test_uep_wizard_clustering_window_populates_cluster_table_without_direct_pro
     dialog.close()
 
 
-def test_uep_wizard_clustering_window_close_clears_reference_and_allows_reopen(
-    qapp, monkeypatch
-) -> None:
-    _run_batch_search_inline(monkeypatch)
-    dialog = UepAnalysisDialog(
-        source_job_label="uep_source_row1",
-        source_structure_id="11111111-1111-1111-1111-111111111111",
-        source_structure=_source_structure_with_spins(),
-        den_fmt_path=_fixture_path("Si2.den_fmt"),
-        castep_path=_fixture_path("Si2.castep"),
-        cell_path=_fixture_path("Si2.cell"),
-    )
-
-    dialog._run_batch_search()
-    dialog._open_clustering_dialog()
-    first_dialog = dialog._clustering_dialog
-
-    assert first_dialog is not None
-
-    first_dialog.close()
-    qapp.processEvents()
-
-    assert dialog._clustering_dialog is None
-
-    dialog._open_clustering_dialog()
-
-    assert dialog._clustering_dialog is not None
-    assert dialog._clustering_dialog is not first_dialog
-    dialog.close()
-
-
 def test_uep_wizard_state_change_keeps_child_dialogs_after_parent_handlers(
     qapp,
     monkeypatch: pytest.MonkeyPatch,
@@ -629,28 +602,17 @@ def test_uep_wizard_state_change_keeps_child_dialogs_after_parent_handlers(
     )
     events: list[str] = []
 
-    class _FakeClusteringDialog:
-        def state_snapshot(self) -> dict[str, object]:
-            return {"method": "hier"}
-
-        def close(self) -> bool:
-            return True
-
     class _FakeChildDialog:
         def close(self) -> bool:
             return True
 
-    clustering_dialog = _FakeClusteringDialog()
     isosurface_dialog = _FakeChildDialog()
     slice_dialog = _FakeChildDialog()
-    dialog._clustering_dialog = clustering_dialog
     dialog._isosurface_muon_dialog = isosurface_dialog
     dialog._slice_muon_dialog = slice_dialog
 
     def _keep_child(child) -> None:
-        if child is clustering_dialog:
-            events.append("keep-clustering")
-        elif child is isosurface_dialog:
+        if child is isosurface_dialog:
             events.append("keep-isosurface")
         elif child is slice_dialog:
             events.append("keep-slice")
@@ -660,7 +622,7 @@ def test_uep_wizard_state_change_keeps_child_dialogs_after_parent_handlers(
 
     dialog._emit_state_changed()
 
-    assert events == ["parent-handler", "keep-clustering", "keep-isosurface", "keep-slice"]
+    assert events == ["parent-handler", "keep-isosurface", "keep-slice"]
     dialog.close()
 
 
@@ -678,9 +640,8 @@ def test_uep_wizard_site_selection_updates_viewer_without_direct_promotion(
     )
 
     dialog._batch_count.setValue(2)
-    dialog._batch_max_steps.setValue(5)
+    dialog._batch_max_steps.setValue(30)
     dialog._run_batch_search()
-    dialog._open_clustering_dialog()
 
     cluster_item = dialog._batch_table.topLevelItem(0)
     assert cluster_item is not None
@@ -728,12 +689,11 @@ def test_uep_wizard_isosurface_muon_management_adds_and_removes_clustered_muons(
     )
     dialog._apply_potential_grid_cache(potential_grid(dialog._field))
     dialog._batch_count.setValue(12)
-    dialog._batch_max_steps.setValue(5)
+    dialog._batch_max_steps.setValue(30)
     dialog._run_batch_search()
     dialog._latest_batch_results = [
         _mock_zpe(dialog._field, result) for result in dialog._latest_batch_results
     ]
-    dialog._open_clustering_dialog()
 
     candidate = dialog._clustered_muon_candidates()[0]
     dialog._add_candidate_muons_to_viewer("isosurface", [candidate.key], True)
@@ -815,12 +775,11 @@ def test_uep_wizard_editing_isosurface_muon_label_updates_linked_status_and_rest
     )
     dialog._apply_potential_grid_cache(potential_grid(dialog._field))
     dialog._batch_count.setValue(12)
-    dialog._batch_max_steps.setValue(5)
+    dialog._batch_max_steps.setValue(30)
     dialog._run_batch_search()
     dialog._latest_batch_results = [
         _mock_zpe(dialog._field, result) for result in dialog._latest_batch_results
     ]
-    dialog._open_clustering_dialog()
 
     candidate = dialog._clustered_muon_candidates()[0]
     dialog._add_candidate_muons_to_viewer("isosurface", [candidate.key], True)
@@ -1056,7 +1015,9 @@ def test_uep_wizard_batch_search_uses_compact_control_card_layout(qapp) -> None:
     assert dialog._batch_calculate_zpe.parentWidget() is summary_parent
     assert not hasattr(dialog, "_batch_promote")
     assert not hasattr(dialog, "_batch_cluster_threshold")
-    assert dialog._batch_clustering_button.parentWidget() is dialog._batch_sampling_card
+    assert not hasattr(dialog, "_batch_clustering_button")
+    assert dialog._batch_grouping_tolerance.value() == pytest.approx(0.25)
+    assert dialog._batch_grouping_tolerance.parentWidget() is dialog._batch_table.parentWidget()
     dialog.close()
 
 
@@ -1223,7 +1184,7 @@ def test_uep_wizard_batch_search_logs_reduced_initial_starts(qapp, monkeypatch) 
     dialog._batch_count.setValue(6)
     dialog._batch_min_muon_muon.setValue(1.2)
     dialog._batch_optimization_tolerance.setValue(2e-5)
-    dialog._batch_max_steps.setValue(5)
+    dialog._batch_max_steps.setValue(30)
     dialog._run_batch_search()
 
     summary = dialog._batch_summary.toPlainText()
@@ -1232,11 +1193,11 @@ def test_uep_wizard_batch_search_logs_reduced_initial_starts(qapp, monkeypatch) 
     assert "Min muon-muon distance (A): 1.200" in summary
     assert "Optimization tolerance (eV): 2e-05" in summary
     assert "muon-muon distance constraint limited packing" in summary
-    assert "Relaxed sites available for clustering" in summary
+    assert "Grouping: " in summary
+    assert "within 0.25 Å and 1 meV" in summary
+    assert "available for clustering" not in summary
     assert dialog._batch_progress.format() == "Batch search complete"
     assert "color: #FFFFFF;" in dialog._batch_progress.styleSheet()
-    assert dialog._batch_table.topLevelItemCount() == 0
-    assert dialog._batch_clustering_button.isEnabled() is True
     dialog.close()
 
 
@@ -1268,25 +1229,18 @@ def test_uep_wizard_state_snapshot_restores_generated_analysis(qapp, monkeypatch
     first._run_line_sample()
     first._batch_min_muon_muon.setValue(1.2)
     first._batch_optimization_tolerance.setValue(3e-5)
-    first._batch_max_steps.setValue(5)
+    first._batch_max_steps.setValue(30)
     first._run_batch_search()
     assert first._latest_batch_results
     first._latest_batch_results[0] = replace(first._latest_batch_results[0], success=True)
     first._run_batch_zpe()
-    first._open_clustering_dialog()
-    assert first._clustering_dialog is not None
-    first._clustering_dialog._method_combo.setCurrentIndex(1)
-    first._clustering_dialog._kmeans_k_spin.setValue(2)
-    first._clustering_dialog._structure_viewer._show_bonds.setChecked(True)
-    first._clustering_dialog._structure_viewer._camera_state = _CameraState(29.0, 61.0, -8.0)
-    first._clustering_dialog._structure_viewer._axis.set_from_state(
-        first._clustering_dialog._structure_viewer._camera_state
-    )
+    first._batch_grouping_tolerance.setValue(0.4)
     cluster_item = first._batch_table.topLevelItem(0)
     assert cluster_item is not None
     cluster_item.setSelected(True)
     first._batch_table.setCurrentItem(cluster_item)
     snapshot = first.state_snapshot()
+    first_summary = first._latest_batch_summary
     first.close()
 
     restored = UepAnalysisDialog(
@@ -1320,22 +1274,13 @@ def test_uep_wizard_state_snapshot_restores_generated_analysis(qapp, monkeypatch
     assert restored_viewer_structure.species.count("X") == 0
     assert restored._batch_viewer._point_overlay_specs
     assert np.allclose(restored._batch_viewer._point_overlay_specs[0].radii, MUON_VIEWER_RADIUS_ANG)
-    assert restored._batch_clustering_button.isEnabled() is True
+    assert restored._batch_grouping_tolerance.value() == pytest.approx(0.4)
+    assert restored._latest_batch_summary == first_summary
     assert restored._batch_progress.format() == "Batch search complete"
     assert "color: #FFFFFF;" in restored._batch_progress.styleSheet()
     assert restored._batch_zpe_progress.format() == "ZPE calculation complete"
     assert "color: #FFFFFF;" in restored._batch_zpe_progress.styleSheet()
-    assert restored._clustering_dialog is None
-
-    restored._open_clustering_dialog()
-
-    assert restored._clustering_dialog is not None
-    assert restored._clustering_dialog._method_key() == "kmeans"
-    assert restored._clustering_dialog._kmeans_k_spin.value() == 2
-    assert restored._clustering_dialog._structure_viewer._show_bonds.isChecked() is True
-    assert restored._clustering_dialog._structure_viewer._camera_state == _CameraState(
-        29.0, 61.0, -8.0
-    )
+    assert "clustering_window_state" not in snapshot
     restored.close()
 
 
@@ -1349,7 +1294,7 @@ def test_uep_wizard_batch_zpe_starts_worker_thread_and_updates_progress(qapp, mo
         castep_path=_fixture_path("Si2.castep"),
         cell_path=_fixture_path("Si2.cell"),
     )
-    dialog._batch_max_steps.setValue(5)
+    dialog._batch_max_steps.setValue(30)
     dialog._run_batch_search()
 
     started: list[object] = []
@@ -1381,7 +1326,7 @@ def test_uep_wizard_batch_zpe_populates_quantum_energies(qapp, monkeypatch) -> N
         cell_path=_fixture_path("Si2.cell"),
     )
 
-    dialog._batch_max_steps.setValue(5)
+    dialog._batch_max_steps.setValue(30)
     dialog._run_batch_search()
     assert all(result.zero_point_energy_ev is None for result in dialog._latest_batch_results)
     monkeypatch.setattr(dialog, "_batch_has_successful_optimizations", lambda: True)
@@ -2782,3 +2727,325 @@ def test_uep_wizard_close_shuts_down_viewers_and_threads(
     assert batch_thread.interrupt_calls == 1
     assert batch_thread.quit_calls == 1
     assert batch_thread.wait_calls == 1
+
+
+def _noisy_images_of_one_site(host: Structure, count: int, noise: float) -> list:
+    """``count`` optimisation endpoints on the symmetry images of one site, with optimiser scatter."""
+
+    images = symmetry_equivalent_positions(
+        (0.11, 0.17, 0.23),
+        lattice_vectors=host.lattice_vectors,
+        host_species=host.species,
+        host_positions_frac=host.fractional_positions,
+    )
+    generator = np.random.default_rng(3)
+    endpoints = []
+    for index in range(count):
+        fractional = np.mod(
+            np.asarray(images[index % len(images)]) + generator.normal(0.0, noise, 3), 1.0
+        )
+        cartesian = fractional @ np.asarray(host.lattice_vectors)
+        endpoints.append(
+            UepOptimizationResult(
+                start_position_ang=tuple(cartesian.tolist()),
+                optimized_position_ang=tuple(cartesian.tolist()),
+                optimized_fractional_position=tuple(fractional.tolist()),
+                classical_energy_ev=-15.976111 + generator.normal(0.0, 1e-11),
+                zero_point_energy_ev=None,
+                total_energy_ev=None,
+                success=True,
+                message="converged",
+                iterations=3,
+                classification=StationaryPointClassification(
+                    label="minimum",
+                    eigenvalues=(1.0, 1.0, 1.0),
+                    positive_count=3,
+                    negative_count=0,
+                    near_zero_count=0,
+                ),
+            )
+        )
+    return endpoints
+
+
+@pytest.mark.parametrize("noise", [1e-9, 1e-7, 1e-6])
+def test_a_batch_search_whose_starts_all_reach_one_site_lists_one_group_when_it_ends(
+    qapp, monkeypatch, noise: float
+) -> None:
+    host = _source_structure_with_spins()
+    endpoints = iter(_noisy_images_of_one_site(host, 12, noise))
+    monkeypatch.setattr(
+        "mufinder.app.uep_wizard.optimize_muon_position", lambda *_a, **_k: next(endpoints)
+    )
+    _run_batch_search_inline(monkeypatch)
+    dialog = UepAnalysisDialog(
+        source_job_label="uep_source_row1",
+        source_structure_id="11111111-1111-1111-1111-111111111111",
+        source_structure=host,
+        den_fmt_path=_fixture_path("Si2.den_fmt"),
+        castep_path=_fixture_path("Si2.castep"),
+        cell_path=_fixture_path("Si2.cell"),
+    )
+
+    dialog._batch_count.setValue(12)
+    dialog._batch_min_muon_muon.setValue(0.1)
+    dialog._run_batch_search()
+
+    assert dialog._batch_table.topLevelItemCount() == 1
+    assert dialog._batch_table.topLevelItem(0).childCount() == 12
+    dialog.close()
+
+
+def _dialog_with_endpoints(monkeypatch, endpoints: list, host: Structure) -> UepAnalysisDialog:
+    """A window whose batch search returns ``endpoints``, ready to run."""
+
+    remaining = iter(endpoints)
+    monkeypatch.setattr(
+        "mufinder.app.uep_wizard.optimize_muon_position", lambda *_a, **_k: next(remaining)
+    )
+    _run_batch_search_inline(monkeypatch)
+    dialog = UepAnalysisDialog(
+        source_job_label="uep_source_row1",
+        source_structure_id="11111111-1111-1111-1111-111111111111",
+        source_structure=host,
+        den_fmt_path=_fixture_path("Si2.den_fmt"),
+        castep_path=_fixture_path("Si2.castep"),
+        cell_path=_fixture_path("Si2.cell"),
+    )
+    dialog._batch_count.setValue(len(endpoints))
+    dialog._batch_min_muon_muon.setValue(0.1)
+    return dialog
+
+
+def _two_nearby_sites(host: Structure) -> list:
+    """Two minima 0.3 Å apart along x at one energy, in a host with no symmetry between them."""
+
+    lattice = host.lattice_vectors
+    endpoints = []
+    for x in (0.11, 0.11 + 0.3 / lattice[0][0]):
+        (endpoint,) = _noisy_images_of_one_site(host, 1, 0.0)
+        cartesian = (x * lattice[0][0], 0.17 * lattice[1][1], 0.23 * lattice[2][2])
+        endpoints.append(
+            replace(
+                endpoint,
+                optimized_position_ang=cartesian,
+                optimized_fractional_position=(x, 0.17, 0.23),
+            )
+        )
+    return endpoints
+
+
+def _no_symmetry_host() -> Structure:
+    return Structure(
+        id=uuid4(),
+        label="Low symmetry",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 6.0, 0.0], [0.0, 0.0, 7.0]],
+        species=["Si", "Ge", "C"],
+        fractional_positions=[[0.0, 0.0, 0.0], [0.31, 0.47, 0.13], [0.71, 0.11, 0.59]],
+    )
+
+
+def test_the_group_row_reports_its_representative_and_the_log_what_was_left_out(
+    qapp, monkeypatch
+) -> None:
+    host = _source_structure_with_spins()
+    endpoints = _noisy_images_of_one_site(host, 4, 1e-7)
+    saddle = replace(
+        endpoints[0],
+        classical_energy_ev=-15.0,
+        classification=replace(endpoints[0].classification, label="saddle"),
+    )
+    failed = replace(endpoints[1], success=False)
+    dialog = _dialog_with_endpoints(monkeypatch, [*endpoints, saddle, failed], host)
+
+    dialog._run_batch_search()
+
+    item = dialog._batch_table.topLevelItem(0)
+    assert dialog._batch_table.topLevelItemCount() == 1
+    assert item.text(0) == "Cluster 1"
+    assert item.text(1) == "4"
+    expected = dialog._latest_batch_summary.clusters[0].representative_fractional_position
+    assert [float(item.text(column)) for column in (2, 3, 4)] == pytest.approx(expected, abs=1e-6)
+    assert [item.child(index).text(0) for index in range(item.childCount())] == [
+        "Site 1",
+        "Site 2",
+        "Site 3",
+        "Site 4",
+    ]
+    log = dialog._batch_summary.toPlainText()
+    assert "4 minima in 1 site" in log
+    assert "Left out 1 failed optimisation and 1 result that is not a minimum." in log
+    dialog.close()
+
+
+def test_the_grouping_tolerance_regroups_live_and_replaces_the_log_line(qapp, monkeypatch) -> None:
+    host = _no_symmetry_host()
+    dialog = _dialog_with_endpoints(monkeypatch, _two_nearby_sites(host), host)
+    dialog._run_batch_search()
+    assert dialog._batch_table.topLevelItemCount() == 2
+
+    dialog._batch_grouping_tolerance.setText("0.5")
+
+    assert dialog._batch_table.topLevelItemCount() == 1
+    log = dialog._batch_summary.toPlainText()
+    assert "2 minima in 1 site, within 0.5 Å" in log
+    assert "within 0.25 Å" not in log
+    assert dialog._latest_batch_summary.threshold_ang == pytest.approx(0.5)
+
+    dialog._batch_grouping_tolerance.setText("0.25")
+
+    assert dialog._batch_table.topLevelItemCount() == 2
+    dialog.close()
+
+
+def test_the_grouping_tolerance_ignores_a_number_on_its_way_to_a_valid_one(
+    qapp, monkeypatch
+) -> None:
+    host = _no_symmetry_host()
+    dialog = _dialog_with_endpoints(monkeypatch, _two_nearby_sites(host), host)
+    dialog._run_batch_search()
+    before = dialog._latest_batch_summary
+
+    dialog._batch_grouping_tolerance.setText("0.0")
+
+    assert dialog._latest_batch_summary is before
+    dialog.close()
+
+
+def test_regrouping_measures_the_distances_once(qapp, monkeypatch) -> None:
+    host = _no_symmetry_host()
+    dialog = _dialog_with_endpoints(monkeypatch, _two_nearby_sites(host), host)
+    dialog._run_batch_search()
+    monkeypatch.setattr(
+        "mufinder.science.uep_clustering.symmetry_distance_matrix",
+        lambda *_a, **_k: pytest.fail("the distances were measured again"),
+    )
+
+    dialog._batch_grouping_tolerance.setText("0.5")
+
+    assert dialog._batch_table.topLevelItemCount() == 1
+    dialog.close()
+
+
+def test_a_regrouped_tolerance_is_saved_once_it_settles_not_on_every_edit(
+    qapp, monkeypatch
+) -> None:
+    host = _no_symmetry_host()
+    dialog = _dialog_with_endpoints(monkeypatch, _two_nearby_sites(host), host)
+    dialog._run_batch_search()
+    emitted: list[float] = []
+    dialog.state_changed.connect(
+        lambda state: emitted.append(state["batch_summary_data"]["threshold_ang"])
+    )
+
+    dialog._batch_grouping_tolerance.setText("0.3")
+    dialog._batch_grouping_tolerance.setText("0.35")
+    dialog._batch_grouping_tolerance.setText("0.5")
+
+    assert emitted == []
+    assert dialog._grouping_settled_timer.isActive()
+    dialog._batch_grouping_tolerance.editingFinished.emit()
+    assert emitted == [pytest.approx(0.5)]
+    assert not dialog._grouping_settled_timer.isActive()
+    # Nothing is pending, so leaving the field again saves nothing.
+    dialog._batch_grouping_tolerance.editingFinished.emit()
+    assert len(emitted) == 1
+    dialog.close()
+
+
+def test_a_zero_point_pass_leaves_the_groups_and_their_order_alone(qapp, monkeypatch) -> None:
+    host = _no_symmetry_host()
+    first, second = _two_nearby_sites(host)
+    far = replace(
+        second,
+        classical_energy_ev=second.classical_energy_ev + 0.01,
+        optimized_position_ang=(2.0, 3.0, 3.5),
+        optimized_fractional_position=(0.4, 0.5, 0.5),
+    )
+    dialog = _dialog_with_endpoints(monkeypatch, [far, first], host)
+    _run_batch_zpe_inline(monkeypatch)
+    # The ZPE would reverse the two groups if it took part in their order.
+    monkeypatch.setattr(
+        "mufinder.app.uep_wizard.calculate_optimization_zero_point_energy",
+        lambda _field, result: replace(
+            result,
+            zero_point_energy_ev=0.0 if result is far else 1.0,
+            total_energy_ev=result.classical_energy_ev + (0.0 if result is far else 1.0),
+        ),
+    )
+    dialog._run_batch_search()
+    before = dialog._latest_batch_summary
+
+    dialog._run_batch_zpe()
+
+    assert dialog._latest_batch_summary == before
+    assert [cluster.representative_index for cluster in before.clusters] == [1, 0]
+    assert dialog._latest_batch_results[0].zero_point_energy_ev == 0.0
+    assert "Grouping: " in dialog._batch_summary.toPlainText()
+    dialog.close()
+
+
+def test_a_search_that_finds_no_minimum_lists_nothing_and_says_why(qapp, monkeypatch) -> None:
+    host = _no_symmetry_host()
+    (endpoint, _other) = _two_nearby_sites(host)
+    saddle = replace(endpoint, classification=replace(endpoint.classification, label="saddle"))
+    dialog = _dialog_with_endpoints(monkeypatch, [saddle], host)
+
+    dialog._run_batch_search()
+
+    assert dialog._batch_table.topLevelItemCount() == 0
+    assert "0 minima in 0 sites" in dialog._batch_summary.toPlainText()
+    assert dialog._batch_progress.format() == "Batch search complete"
+    dialog.close()
+
+
+def test_a_saved_search_without_a_grouping_is_grouped_when_the_window_opens(qapp) -> None:
+    host = _source_structure_with_spins()
+    results = [asdict(result) for result in _noisy_images_of_one_site(host, 12, 1e-7)]
+
+    dialog = UepAnalysisDialog(
+        source_job_label="uep_source_row1",
+        source_structure_id="11111111-1111-1111-1111-111111111111",
+        source_structure=host,
+        den_fmt_path=_fixture_path("Si2.den_fmt"),
+        castep_path=_fixture_path("Si2.castep"),
+        cell_path=_fixture_path("Si2.cell"),
+        initial_state={
+            "batch_results": results,
+            "batch_summary_text": "Relaxed sites available for clustering: 12",
+        },
+    )
+
+    assert dialog._batch_table.topLevelItemCount() == 1
+    assert dialog._batch_table.topLevelItem(0).childCount() == 12
+    assert "available for clustering" not in dialog._batch_summary.toPlainText()
+    dialog.close()
+
+
+def test_a_saved_hierarchical_grouping_is_regrouped_when_the_window_opens(qapp) -> None:
+    host = _source_structure_with_spins()
+    endpoints = _noisy_images_of_one_site(host, 12, 1e-7)
+
+    dialog = UepAnalysisDialog(
+        source_job_label="uep_source_row1",
+        source_structure_id="11111111-1111-1111-1111-111111111111",
+        source_structure=host,
+        den_fmt_path=_fixture_path("Si2.den_fmt"),
+        castep_path=_fixture_path("Si2.castep"),
+        cell_path=_fixture_path("Si2.cell"),
+        initial_state={
+            "batch_results": [asdict(result) for result in endpoints],
+            "batch_summary_data": {
+                "clustering_method": "hier",
+                "threshold_ang": 0.3,
+                "clusters": [{"cluster_index": 1, "representative_index": 0}],
+            },
+            "clustering_window_state": {"method": "kmeans"},
+        },
+    )
+
+    assert dialog._batch_table.topLevelItemCount() == 1
+    # The hierarchical t was no length, so the tolerance stays at its default.
+    assert dialog._batch_grouping_tolerance.value() == pytest.approx(0.25)
+    assert "clustering_window_state" not in dialog.state_snapshot()
+    dialog.close()

@@ -47,7 +47,7 @@ from mufinder.app.atomic_structure_viewer import (
     MUON_VIEWER_RADIUS_ANG,
     viewer_atom_style_for_species,
 )
-from mufinder.app.cluster_dendrogram import draw_cluster_dendrogram
+from mufinder.app.cluster_dendrogram import ClusterDendrogramToolbar, draw_cluster_dendrogram
 from mufinder.app.decimal_input import DecimalLineEdit
 from mufinder.app.plot_canvas import PlotFrame, create_plot_canvas
 from mufinder.app.screen_utils import clamped_size
@@ -76,7 +76,6 @@ from mufinder.app.theme import (
     style_section_title,
     use_tabbed_table_corners,
 )
-from mufinder.app.uep_clustering_dialog import _DendrogramNavigationToolbar
 from mufinder.app.viewer_dialog import StructureViewerDialog
 from mufinder.app.workflow_table_utils import create_workflow_table, table_natural_width
 from mufinder.domain.models import Structure
@@ -96,7 +95,7 @@ from mufinder.science.relaxation_analysis import (
     normalize_site_energies,
     parse_tolerance_scan,
     scan_connected_component_tolerances,
-    uep_summary_to_relaxation_clusters,
+    feature_summary_to_relaxation_clusters,
 )
 from mufinder.services.analysis_grouping import (
     DEFAULT_GROUPING_SETTINGS,
@@ -890,11 +889,11 @@ class RelaxationClusteringDialog(StructureViewerDialog):
         self._soprano_panel = QWidget(left)
         soprano_layout = QVBoxLayout(self._soprano_panel)
         soprano_layout.setContentsMargins(0, 0, 0, 0)
-        self._hier_toolbar = _DendrogramNavigationToolbar(self._left_canvas, self._soprano_panel)
+        self._hier_toolbar = ClusterDendrogramToolbar(self._left_canvas, self._soprano_panel)
         self._hier_toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self._hier_toolbar.setMovable(False)
         self._hier_toolbar.setContextMenuPolicy(Qt.ContextMenuPolicy.PreventContextMenu)
-        self._hier_toolbar.setObjectName("uepClusteringDendrogramToolbar")
+        self._hier_toolbar.setObjectName("clusteringDendrogramToolbar")
         soprano_layout.addWidget(self._hier_toolbar)
         self._left_frame = PlotFrame(
             self._left_canvas, title="Clustering plot", parent=self._soprano_panel
@@ -1095,7 +1094,7 @@ class RelaxationClusteringDialog(StructureViewerDialog):
                     kmeans_k=self._kmeans_spin.value(),
                 )
                 self._current_labels = result.cluster_labels
-                self._current_clusters = uep_summary_to_relaxation_clusters(
+                self._current_clusters = feature_summary_to_relaxation_clusters(
                     self._sites, result.summary
                 )
                 self._current_kmeans_k = (
