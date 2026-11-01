@@ -23,8 +23,13 @@ import pytest
 from mufinder.domain.constants import MUON_GAMMA_OVER_2PI_MHZ_T
 from mufinder.domain.models import MuonSite, Structure
 from mufinder.science import magnetic_fields as module
+from mufinder.science import demagnetization as demagnetization_module
 from mufinder.science._muesr_compat import muesr_imports, patch_numpy_aliases_for_muesr
-from mufinder.science.demagnetization import DemagnetizingSample, principal_demagnetizing_tensor
+from mufinder.science.demagnetization import (
+    DemagnetizationError,
+    DemagnetizingSample,
+    principal_demagnetizing_tensor,
+)
 from mufinder.science.magnetic_fields import (
     CONTACT_FIELD_T_PER_ANGSTROM_MINUS3_PER_MUB,
     DIPOLAR_TENSOR_T_PER_MUB_PER_ANGSTROM_MINUS3,
@@ -1341,13 +1346,25 @@ def test_demag_field_of_an_oriented_sample_uses_the_rotated_tensor(monkeypatch) 
 def test_demag_field_of_a_photographed_plate_uses_its_fourier_tensor(monkeypatch) -> None:
     x = (np.arange(48) + 0.5) / 48 * 2.0 - 1.0
     outline = x[:, None] ** 2 + (x[None, :] / 0.8) ** 2 <= 1.0
-    plate = DemagnetizingSample.image_plate(outline, (5.0, 4.0), 0.1, padding=2.0)
+    plate = DemagnetizingSample.image_plate(outline, (5.0, 4.0), 0.1)
 
     demag = _commensurate_demag(monkeypatch, demag_sample=plate)
 
     tensor = principal_demagnetizing_tensor(plate)
     assert tensor[2, 2] > 0.9
     assert demag == pytest.approx(tuple(-tensor @ _bulk_field()))
+
+
+def test_demag_field_is_refused_when_the_plate_tensor_has_a_bad_trace(monkeypatch) -> None:
+    transform = demagnetization_module.scipy_fft.rfftn
+    monkeypatch.setattr(
+        demagnetization_module.scipy_fft, "rfftn", lambda *a, **kw: 0.9 * transform(*a, **kw)
+    )
+    # A shape no other test uses, so the cached tensor of a good run is not reused.
+    plate = DemagnetizingSample.image_plate(np.ones((8, 8), dtype=bool), (3.0, 2.7), 0.123)
+
+    with pytest.raises(DemagnetizationError, match="rather than 1"):
+        _commensurate_demag(monkeypatch, demag_sample=plate)
 
 
 def test_demag_field_is_zero_for_order_without_a_uniform_moment(monkeypatch) -> None:

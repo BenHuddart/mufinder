@@ -33,13 +33,19 @@ from mufinder.science.sample_image import extrude_plate, fit_mask, resample_mask
 _ROTATION_TOL = 1e-8
 _PARALLEL_TOL = 1e-8
 _ORTHOGONAL_TOL_DEG = 1e-6
-_DEFAULT_FOURIER_GRID = 48
-_DEFAULT_PADDING = 2.5
-_MIN_FOURIER_GRID = 8
+#: Edge of the FFT box along every axis, in units of the longest sample edge.
+FOURIER_PADDING = 2.5
+#: Voxels along the longer in-plane edge of a plate outlined in a photograph.
+PLATE_FOURIER_GRID = 64
+#: How far the trace of a computed tensor may differ from 1 before it is refused.
+_TRACE_TOLERANCE = 0.01
 _MIN_PADDING = 2.0
 _MAX_BOX_VOXELS = 1 << 24
 _STORED_MASK_EDGE = 256
 _DEFAULT_PLATE_THICKNESS = 0.1
+# The plate proportions that fit _MAX_BOX_VOXELS at PLATE_FOURIER_GRID and FOURIER_PADDING.
+_THINNEST_PLATE_RATIO = 250
+_THICKEST_PLATE_RATIO = 1.6
 
 Triplet = tuple[float, float, float]
 Rotation = tuple[Triplet, Triplet, Triplet]
@@ -178,9 +184,8 @@ class VoxelModel:
 class FourierDemagnetizingResult:
     """The magnetometric tensor of a voxel shape and how it was computed.
 
-    ``trace`` is the trace of ``tensor``. It is 1 to rounding for an unsmoothed
-    shape, and the Gaussian filter lowers it by the share of the shape's
-    spectrum it removed. ``box_shape`` is the padded FFT box in voxels.
+    ``trace`` is the trace of ``tensor``, 1 to rounding by Parseval's theorem.
+    ``box_shape`` is the padded FFT box in voxels.
     """
 
     tensor: np.ndarray
@@ -203,29 +208,25 @@ class DemagnetizingSample:
     The ``voxel_grid`` shape is ``voxels`` (a 3-D mask indexed ``[a, b, c]``)
     with ``voxel_spacing``. The ``image_plate`` shape is ``plate_mask`` (an
     in-plane outline indexed ``[a, b]``) stretched over ``plate_size`` and
-    extruded through ``plate_thickness`` in ``thickness_voxels`` layers;
-    ``fourier_grid`` voxels span its longer in-plane edge and ``photo``
-    records where the outline came from. Both use the Fourier method with the
-    FFT box ``padding`` times the longest sample edge along every axis and a
-    Gaussian filter of ``smoothing`` voxels (0 for none).
+    extruded through ``plate_thickness``; ``photo`` records where the outline
+    came from. ``PLATE_FOURIER_GRID`` voxels span its longer in-plane edge and
+    the number of layers follows from the thickness, so its voxels are close to
+    cubes. Both use the Fourier method with the FFT box ``FOURIER_PADDING``
+    times the longest sample edge along every axis.
     """
 
     shape: str = "none"
     semi_axes: tuple[float, float, float] = (1.0, 1.0, 1.0)
     prism_lengths: tuple[float, float, float] = (1.0, 1.0, 1.0)
     plate_normal_axis: str = "c"
-    fourier_grid: int = _DEFAULT_FOURIER_GRID
-    padding: float = _DEFAULT_PADDING
     rotation: Rotation | None = None
     normal_hkl: Triplet | None = None
     in_plane_uvw: Triplet | None = None
-    smoothing: float = 0.0
     voxels: VoxelMask | None = None
     voxel_spacing: Triplet = (1.0, 1.0, 1.0)
     plate_mask: VoxelMask | None = None
     plate_size: tuple[float, float] = (1.0, 1.0)
     plate_thickness: float = _DEFAULT_PLATE_THICKNESS
-    thickness_voxels: int = 1
     photo: PlatePhoto | None = field(default=None)
 
     def __post_init__(self) -> None:
@@ -322,6 +323,14 @@ class DemagnetizingSample:
             return VoxelModel(mask=extrude_plate(in_plane, layers), spacing=spacing)
         raise DemagnetizationError(f"the '{self.shape}' shape is not made of voxels")
 
+    def plate_outline_model(self) -> VoxelModel:
+        """Return an ``image_plate`` as one layer spanning its thickness, enough to draw it."""
+
+        in_plane, layers, (step_a, step_b, step_c) = self._plate_layout()
+        return VoxelModel(
+            mask=extrude_plate(in_plane, 1), spacing=(step_a, step_b, step_c * layers)
+        )
+
     def _plate_layout(self) -> tuple[np.ndarray, int, Triplet]:
         """Return a plate's in-plane voxels, its layers and the voxel edges, without extruding."""
 
@@ -331,19 +340,20 @@ class DemagnetizingSample:
         thickness = float(self.plate_thickness)
         if not math.isfinite(thickness) or thickness <= 0.0:
             raise DemagnetizationError("the plate thickness must be positive")
-        grid = _fourier_grid(self.fourier_grid)
-        layers = int(self.thickness_voxels)
-        if layers < 1:
-            raise DemagnetizationError("the plate needs at least one voxel through its thickness")
         longer = max(width, height)
+        voxels_through = thickness * PLATE_FOURIER_GRID / longer
+        if not math.isfinite(voxels_through):
+            raise DemagnetizationError("the plate is too thick for its width and height")
+        layers = max(1, int(round(voxels_through)))
         counts = (
-            max(1, int(round(grid * width / longer))),
-            max(1, int(round(grid * height / longer))),
+            max(1, int(round(PLATE_FOURIER_GRID * width / longer))),
+            max(1, int(round(PLATE_FOURIER_GRID * height / longer))),
         )
         in_plane = resample_mask(self.plate_mask.array(), counts)
         if not np.any(in_plane):
             raise DemagnetizationError(
-                "the outline vanishes at this grid; increase the Fourier grid"
+                f"the outline vanishes at {PLATE_FOURIER_GRID} voxels along the longer edge; "
+                "outline a larger part of the photo"
             )
         return in_plane, layers, (width / counts[0], height / counts[1], thickness / layers)
 
@@ -407,18 +417,14 @@ class DemagnetizingSample:
             "semi_axes": list(self.semi_axes),
             "prism_lengths": list(self.prism_lengths),
             "plate_normal_axis": self.plate_normal_axis,
-            "fourier_grid": int(self.fourier_grid),
-            "padding": float(self.padding),
             "rotation": None if self.rotation is None else [list(row) for row in self.rotation],
             "normal_hkl": None if self.normal_hkl is None else list(self.normal_hkl),
             "in_plane_uvw": None if self.in_plane_uvw is None else list(self.in_plane_uvw),
-            "smoothing": float(self.smoothing),
             "voxels": None if self.voxels is None else self.voxels.to_json(),
             "voxel_spacing": list(self.voxel_spacing),
             "plate_mask": None if self.plate_mask is None else self.plate_mask.to_json(),
             "plate_size": list(self.plate_size),
             "plate_thickness": float(self.plate_thickness),
-            "thickness_voxels": int(self.thickness_voxels),
             "photo": None if self.photo is None else self.photo.to_json(),
         }
 
@@ -441,7 +447,11 @@ class DemagnetizingSample:
 
     @classmethod
     def from_json(cls, payload: object) -> "DemagnetizingSample":
-        """Read a sample; a missing or unusable orientation reads as aligned."""
+        """Read a sample; a missing or unusable orientation reads as aligned.
+
+        The ``fourier_grid``, ``thickness_voxels``, ``padding`` and ``smoothing``
+        keys of a sample saved when they were settings are ignored.
+        """
 
         if not isinstance(payload, Mapping):
             return cls()
@@ -450,15 +460,11 @@ class DemagnetizingSample:
             semi_axes=_float_triplet(payload.get("semi_axes"), default=(1.0, 1.0, 1.0)),
             prism_lengths=_float_triplet(payload.get("prism_lengths"), default=(1.0, 1.0, 1.0)),
             plate_normal_axis=str(payload.get("plate_normal_axis", "c")).strip() or "c",
-            fourier_grid=_json_int(payload.get("fourier_grid"), _DEFAULT_FOURIER_GRID),
-            padding=_json_float(payload.get("padding"), _DEFAULT_PADDING),
-            smoothing=max(0.0, _json_float(payload.get("smoothing"), 0.0, allow_zero=True)),
             voxels=VoxelMask.from_json(payload.get("voxels")),
             voxel_spacing=_float_triplet(payload.get("voxel_spacing"), default=(1.0, 1.0, 1.0)),
             plate_mask=VoxelMask.from_json(payload.get("plate_mask")),
             plate_size=_float_pair(payload.get("plate_size"), default=(1.0, 1.0)),
             plate_thickness=_json_float(payload.get("plate_thickness"), _DEFAULT_PLATE_THICKNESS),
-            thickness_voxels=_json_int(payload.get("thickness_voxels"), 1),
             photo=PlatePhoto.from_json(payload.get("photo")),
         )
         try:
@@ -661,8 +667,7 @@ def voxel_demagnetizing_tensor(
     mask: Sequence[object] | np.ndarray,
     spacing: float | Sequence[float],
     *,
-    padding: float = _DEFAULT_PADDING,
-    smoothing: float = 0.0,
+    padding: float = FOURIER_PADDING,
 ) -> FourierDemagnetizingResult:
     """Return the magnetometric demagnetizing tensor of a voxel shape by the Fourier method.
 
@@ -670,22 +675,20 @@ def voxel_demagnetizing_tensor(
     or one per axis). Its FFT is the shape amplitude ``D(k)``; the tensor is
     ``<N_ij> = sum_k |D(k)|^2 k_i k_j / k^2`` normalised by the sample and box
     volumes, with ``k = 0`` shared equally between the diagonal elements so
-    the trace is the share of ``sum |D(k)|^2`` kept, 1 without smoothing.
+    the trace is 1 by Parseval's theorem. A trace more than 1 % from 1 means the
+    sum went wrong and raises :class:`DemagnetizationError`.
 
     The FFT box is periodic. It is ``padding`` (at least 2) times the longest
     sample edge along every axis, not along each axis separately: a thin plate
     padded only through its thickness would sit in a stack of its images and
-    look like bulk. ``smoothing`` is the width, in voxels, of a Gaussian filter
-    ``exp(-sigma^2 k^2 / 2)`` on ``D(k)`` that damps Gibbs ringing.
+    look like bulk.
     """
 
-    voxels, step, box = _fourier_box(mask, spacing, padding, smoothing)
+    voxels, step, box = _fourier_box(mask, spacing, padding)
     spectrum = scipy_fft.rfftn(_embedded(voxels, box), workers=-1)
     power = spectrum.real**2 + spectrum.imag**2
     del spectrum
     k_axes = _k_axes(box, step)
-    if smoothing > 0.0:
-        power *= _gaussian_filter(k_axes, step, smoothing, squared=True)
     # rfftn keeps the non-negative kz half; every column but kz = 0 and the
     # even-length Nyquist column stands for itself and its mirror image.
     weights = np.full(k_axes[2].shape, 2.0)
@@ -724,9 +727,15 @@ def voxel_demagnetizing_tensor(
     tensor += np.eye(3) * origin / 3.0
     count = int(np.count_nonzero(voxels))
     tensor /= float(count) * float(np.prod(box))
+    trace = float(np.trace(tensor))
+    # Written so that a NaN trace is refused too.
+    if not abs(trace - 1.0) <= _TRACE_TOLERANCE:
+        raise DemagnetizationError(
+            f"the demagnetizing tensor has trace {trace:.4f} rather than 1, so it is not used"
+        )
     return FourierDemagnetizingResult(
         tensor=tensor,
-        trace=float(np.trace(tensor)),
+        trace=trace,
         box_shape=box,
         voxel_count=count,
     )
@@ -747,13 +756,11 @@ def fourier_demagnetizing_result(sample: DemagnetizingSample) -> FourierDemagnet
 
 @lru_cache(maxsize=8)
 def _cached_fourier_result(sample: DemagnetizingSample) -> FourierDemagnetizingResult:
+    if _normalize_shape(sample.shape) == "image_plate":
+        # A plate's layers follow from its size, so refuse one too large before extruding it.
+        sample_fourier_box(sample)
     model = sample.voxel_model()
-    result = voxel_demagnetizing_tensor(
-        model.mask,
-        model.spacing,
-        padding=float(sample.padding),
-        smoothing=float(sample.smoothing),
-    )
+    result = voxel_demagnetizing_tensor(model.mask, model.spacing)
     result.tensor.flags.writeable = False
     return result
 
@@ -796,23 +803,29 @@ def sample_fourier_box(sample: DemagnetizingSample) -> tuple[int, int, int]:
 
     It applies the same checks as the calculation, without the FFT, so a
     dialog can report a box too large to hold before anything is computed:
-    :class:`DemagnetizationError` names the settings to lower.
+    :class:`DemagnetizationError` says what the sample would have to change.
     """
 
     if not sample.uses_fourier_method:
         raise DemagnetizationError(f"the '{sample.shape}' shape has a closed-form tensor")
-    _smoothing_width(sample.smoothing)
     if _normalize_shape(sample.shape) == "image_plate":
         # The layers are identical, so the box follows from the in-plane voxels.
         in_plane, layers, spacing = sample._plate_layout()
         rows = np.flatnonzero(np.any(in_plane, axis=1))
         columns = np.flatnonzero(np.any(in_plane, axis=0))
         extent = (int(rows[-1] - rows[0] + 1), int(columns[-1] - columns[0] + 1), layers)
-        return _checked_box(extent, spacing, float(sample.padding))
+        return _checked_box(
+            extent,
+            spacing,
+            FOURIER_PADDING,
+            advice=(
+                f"a plate's longer edge can be at most about {_THINNEST_PLATE_RATIO} times its "
+                f"thickness, and its thickness at most about {_THICKEST_PLATE_RATIO} times "
+                "that edge"
+            ),
+        )
     model = sample.voxel_model()
-    _voxels, _step, box = _fourier_box(
-        model.mask, model.spacing, float(sample.padding), float(sample.smoothing)
-    )
+    _voxels, _step, box = _fourier_box(model.mask, model.spacing, FOURIER_PADDING)
     return box
 
 
@@ -820,7 +833,6 @@ def _fourier_box(
     mask: Sequence[object] | np.ndarray,
     spacing: float | Sequence[float],
     padding: float,
-    smoothing: float,
 ) -> tuple[np.ndarray, Triplet, tuple[int, int, int]]:
     voxels = np.asarray(mask)
     if voxels.dtype != bool:
@@ -829,7 +841,6 @@ def _fourier_box(
         raise DemagnetizationError("the voxel shape must be a 3-D array")
     if not np.any(voxels):
         raise DemagnetizationError("the voxel shape is empty")
-    _smoothing_width(smoothing)
     hits = [np.flatnonzero(np.any(voxels, axis=axes)) for axes in ((1, 2), (0, 2), (0, 1))]
     voxels = voxels[
         hits[0][0] : hits[0][-1] + 1,
@@ -840,25 +851,25 @@ def _fourier_box(
     return voxels, step, _checked_box(voxels.shape, step, padding)
 
 
-def _smoothing_width(smoothing: float) -> float:
-    sigma = float(smoothing)
-    if not math.isfinite(sigma) or sigma < 0.0:
-        raise DemagnetizationError("smoothing must be zero or positive")
-    return sigma
-
-
 def _checked_box(
-    extent: Sequence[int], spacing: float | Sequence[float], padding: float
+    extent: Sequence[int],
+    spacing: float | Sequence[float],
+    padding: float,
+    *,
+    advice: str = "use coarser voxels",
 ) -> tuple[int, int, int]:
     """Return the FFT box for a sample of ``extent`` voxels, refusing one too large to hold."""
 
-    box = fourier_box_shape(extent, spacing, padding)
-    total = int(np.prod(box))
+    try:
+        box = fourier_box_shape(extent, spacing, padding)
+    except OverflowError as exc:
+        raise DemagnetizationError(f"the FFT box is too large to count; {advice}") from exc
+    # Python integers: a box this far over the limit would wrap around in a NumPy product.
+    total = math.prod(box)
     if total > _MAX_BOX_VOXELS:
         raise DemagnetizationError(
             f"the FFT box would hold {total / 1e6:.1f} million voxels (limit "
-            f"{_MAX_BOX_VOXELS / 1e6:.1f} million); lower the Fourier grid, the voxels "
-            "through the thickness or the padding"
+            f"{_MAX_BOX_VOXELS / 1e6:.1f} million); {advice}"
         )
     return box
 
@@ -885,20 +896,6 @@ def _without_nyquist(k: np.ndarray, length: int) -> np.ndarray:
     return trimmed
 
 
-def _gaussian_filter(
-    k_axes: tuple[np.ndarray, np.ndarray, np.ndarray],
-    step: Triplet,
-    smoothing: float,
-    *,
-    squared: bool,
-) -> np.ndarray:
-    """Return ``exp(-sum (sigma_i k_i)^2 / 2)``, or its square, with ``sigma_i`` in voxels along axis ``i``."""
-
-    factor = 1.0 if squared else 0.5
-    parts = [np.exp(-factor * (smoothing * s * k) ** 2) for k, s in zip(k_axes, step, strict=True)]
-    return parts[0][:, None, None] * parts[1][None, :, None] * parts[2][None, None, :]
-
-
 def _normalize_shape(shape: str) -> str:
     text = str(shape).strip().lower().replace(" ", "_")
     aliases = {
@@ -918,13 +915,6 @@ def _normalize_shape(shape: str) -> str:
 
 
 _FOURIER_SHAPES = frozenset({"voxel_grid", "image_plate"})
-
-
-def _fourier_grid(value: object) -> int:
-    grid = int(value)  # type: ignore[call-overload]
-    if grid < _MIN_FOURIER_GRID:
-        raise DemagnetizationError(f"fourier_grid must be at least {_MIN_FOURIER_GRID}")
-    return grid
 
 
 def _axis_index(axis: str) -> int:
@@ -1033,22 +1023,14 @@ def _float_pair(value: object, *, default: tuple[float, float]) -> tuple[float, 
     return (float(arr[0]), float(arr[1]))
 
 
-def _json_float(value: object, default: float, *, allow_zero: bool = False) -> float:
+def _json_float(value: object, default: float) -> float:
     try:
         number = float(value)  # type: ignore[arg-type]
     except (TypeError, ValueError):
         return default
-    if not math.isfinite(number) or number < 0.0 or (number == 0.0 and not allow_zero):
+    if not math.isfinite(number) or number <= 0.0:
         return default
     return number
-
-
-def _json_int(value: object, default: int) -> int:
-    try:
-        number = int(value)  # type: ignore[call-overload]
-    except (TypeError, ValueError, OverflowError):
-        return default
-    return number if number > 0 else default
 
 
 def _positive_pair(values: Iterable[float] | Sequence[float], name: str) -> tuple[float, float]:

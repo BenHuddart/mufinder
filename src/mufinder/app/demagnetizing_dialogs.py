@@ -40,6 +40,7 @@ from mufinder.app.theme import (
     style_section_subtitle,
     style_section_title,
 )
+from mufinder.app.viewer_dialog import StructureViewerDialog
 from mufinder.science.demagnetization import (
     DemagnetizationError,
     DemagnetizingSample,
@@ -119,6 +120,7 @@ class _DemagnetizingPyVistaCanvas(QWidget):
         # orientation only rotates it.
         self._voxel_mesh_cache: tuple[DemagnetizingSample, object] | None = None
         self._refreshing_theme = False
+        self._closed = False
         self._style_signature = self._style_signature_for_current_palette()
         # auto_update=False disables pyvistaqt's always-on render_timer; we
         # render explicitly (draw_idle/plotter.render), so the ~5Hz timer is
@@ -218,7 +220,8 @@ class _DemagnetizingPyVistaCanvas(QWidget):
         plotter = getattr(self, "_plotter", None)
         signature = self._style_signature_for_current_palette()
         if (
-            self._refreshing_theme
+            getattr(self, "_closed", True)
+            or self._refreshing_theme
             or plotter is None
             or signature == getattr(self, "_style_signature", None)
             or event.type()
@@ -241,6 +244,9 @@ class _DemagnetizingPyVistaCanvas(QWidget):
             self._refreshing_theme = False
 
     def shutdown(self) -> None:
+        """Release the render window; a theme change after this draws nothing."""
+
+        self._closed = True
         _shutdown_pyvista_widget(self._plotter)
 
     def _voxel_mesh(self, sample: DemagnetizingSample):
@@ -261,8 +267,9 @@ class _DemagnetizingPyVistaCanvas(QWidget):
     def _build_voxel_mesh(self, sample: DemagnetizingSample):
         try:
             if sample.shape == "image_plate":
-                sample = replace(sample, thickness_voxels=1)
-            model = sample.voxel_model()
+                model = sample.plate_outline_model()
+            else:
+                model = sample.voxel_model()
         except DemagnetizationError:
             return None
         mask, spacing = model.mask, np.asarray(model.spacing, dtype=float)
@@ -332,7 +339,7 @@ class _DemagnetizingPyVistaCanvas(QWidget):
         )
 
 
-class DemagnetizingFieldAdvancedDialog(QDialog):
+class DemagnetizingFieldAdvancedDialog(StructureViewerDialog):
     """Advanced demagnetizing-field shape and tensor settings."""
 
     def __init__(
@@ -426,7 +433,7 @@ class DemagnetizingFieldAdvancedDialog(QDialog):
         style_hint_text(self._tensor_label)
 
         try:
-            self._preview = _DemagnetizingPyVistaCanvas(self)
+            self._preview = self.hold_viewer(_DemagnetizingPyVistaCanvas(self))
         except RuntimeError as exc:
             self._preview = QLabel(str(exc), self)
             self._preview.setWordWrap(True)
@@ -565,7 +572,7 @@ class DemagnetizingFieldAdvancedDialog(QDialog):
         self._sync()
 
     def done(self, result: int) -> None:
-        """Close the dialog; a preview still waiting for edits to pause is not drawn."""
+        """Close the dialog and shut its preview; one waiting for edits to pause is not drawn."""
 
         self._preview_timer.stop()
         self._pending_preview = None
@@ -574,8 +581,6 @@ class DemagnetizingFieldAdvancedDialog(QDialog):
     def closeEvent(self, event) -> None:  # noqa: N802
         self._preview_timer.stop()
         self._pending_preview = None
-        if isinstance(self._preview, _DemagnetizingPyVistaCanvas):
-            self._preview.shutdown()
         super().closeEvent(event)
 
     def _ellipsoid_page(self) -> QWidget:

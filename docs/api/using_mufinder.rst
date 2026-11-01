@@ -174,7 +174,10 @@ Magnetic Fields page, a script can give any shape as voxels with
 :meth:`~mufinder.science.demagnetization.DemagnetizingSample.voxel_grid`: a
 3-D boolean array indexed along the sample axes ``a``, ``b`` and ``c`` and the
 voxel edge along each. Voxels need not be cubes, so a thin plate can be a few
-voxels thick. The tensor comes from the Fourier method described in
+voxels thick. The FFT box is ``FOURIER_PADDING`` (2.5) times the longest sample
+edge along every axis, and a tensor whose trace is more than 1 % from 1 raises
+:class:`~mufinder.science.demagnetization.DemagnetizationError`. The tensor
+comes from the Fourier method described in
 :ref:`demagnetizing-fourier-method`;
 :func:`~mufinder.science.demagnetization.fourier_demagnetizing_result` returns
 it with its trace and the FFT box, and

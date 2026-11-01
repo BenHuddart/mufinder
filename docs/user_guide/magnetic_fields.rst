@@ -908,12 +908,10 @@ outline from the photo:
    bounding box and the ``Thickness (along c)``. Choosing a photo sets the
    height from the width and the outline's aspect ratio; ``Match photo`` does
    so again after the width changes.
-6. Set the resolution: ``Fourier grid`` voxels span the longer in-plane edge,
-   ``Voxels through thickness`` the thickness, and ``Padding`` and
-   ``Smoothing`` are described in `How the Fourier method works`_. The line
-   under the fields gives the FFT box these settings need, or says the box is
-   too large to calculate, in which case ``Use Outline`` stays disabled.
-7. Click ``Use Outline``, then ``Use Shape``.
+   The line under the fields gives the FFT box the plate needs (see `How the
+   Fourier method works`_), or says the box is too large to calculate, in which
+   case ``Use Outline`` stays disabled.
+6. Click ``Use Outline``, then ``Use Shape``.
 
 The photo's ``x`` axis is the sample ``a`` axis, its ``y`` axis, up the photo,
 the ``b`` axis, and the plate normal the ``c`` axis, so ``Orientation`` places
@@ -1155,26 +1153,36 @@ shape that is not an ellipsoid the local tensor varies from point to point,
 most near edges and corners, so the field at a muon near a surface differs
 from the averaged value.
 
-``Padding``
-   The FFT treats the box as periodic, so the sample sits in a lattice of its
-   own images. The box spans ``Padding`` times the longest sample edge along
-   every axis, not along each axis separately: a thin plate padded only
-   through its thickness would sit in a stack of plates one thickness apart
-   and behave like bulk. ``Padding`` is at least 2. At 2.5, the default,
-   voxelised prisms from 20 x 20 x 1 plates to 1 x 1 x 20 needles, with 1 to
-   64 voxels along an edge, give every factor within 0.002 of the prism's
-   closed form.
-``Smoothing``
-   The width, in voxels along each axis, of a Gaussian filter
-   :math:`\exp(-\sigma^2 k^2 / 2)` on :math:`D(\mathbf{k})`, which damps
-   the ringing of a sharp outline. It removes part of the shape's spectrum, so
-   ``Tr N`` falls below 1 by the part removed; refining the grid at the same
-   width in voxels brings it back towards 1. 0, the default, turns it off.
+The resolution is fixed, so a calculation has no numerical settings:
 
-A box of more than 16.8 million voxels is refused with a message naming the
-settings to lower. A thin plate needs many voxels through the box: a
-5 x 4 x 0.1 plate one voxel thick at a 64-voxel grid and padding 2 needs 100
-voxels along ``c`` to span 10.
+Padding
+   The FFT treats the box as periodic, so the sample sits in a lattice of its
+   own images. The box spans 2.5 times the longest sample edge along every
+   axis, not along each axis separately: a thin plate padded only through its
+   thickness would sit in a stack of plates one thickness apart and behave like
+   bulk. Voxelised prisms from 20 x 20 x 1 plates to 1 x 1 x 20 needles, with 1
+   to 64 voxels along an edge, give every factor within 0.002 of the prism's
+   closed form.
+Voxels of a plate from a photo
+   64 voxels span the longer in-plane edge. The number of layers through the
+   thickness is the thickness divided by that voxel edge, rounded and at least
+   1, so the voxels are close to cubes and a plate thinner than one voxel edge
+   is one layer thick. Square plates from thickness 1/250 to 1.5 times the edge
+   give every factor within 0.0025 of the prism's closed form, and circular
+   plates the factor along ``c`` within 0.6 % of the cylinder's. A thin factor is
+   a small number, so this can be a large share of it: 13 % of the in-plane
+   factor of a plate 1/250 of its edge thick. An outline only a few voxels wide
+   is coarser: a 1 x 0.1 x 0.01 plate, 6 voxels wide, is within 0.009.
+
+The trace is a check on the calculation: a tensor whose ``Tr N`` differs from 1
+by more than 1 % is refused rather than used.
+
+A box of more than 16.8 million voxels is refused. A thin plate needs many
+voxels through the box: a 5 x 4 x 0.1 plate, one voxel thick, needs 125 voxels
+along ``c`` to span 12.5. That limits a plate from a photo: its longer edge can
+be at most about 250 times its thickness, and its thickness at most about 1.6
+times that edge. An ``Infinite plate`` or a ``Rectangular prism``, which have
+closed forms, describe a thinner sample.
 
 .. _magnetic-fields-distortion-corrections:
 

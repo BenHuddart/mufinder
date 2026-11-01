@@ -928,6 +928,28 @@ def test_magnetic_field_widget_restores_advanced_demag_state(qapp, tmp_path) -> 
     widget.close()
 
 
+def test_magnetic_field_form_saved_with_the_retired_plate_settings_loads(qapp, tmp_path) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "retired-plate.mufinder", "Retired Plate")
+    service.add_structure(document, feo_host_structure())
+    plate = photo_plate_sample()
+    saved = {
+        **plate.to_json(),
+        "fourier_grid": 128,
+        "thickness_voxels": 3,
+        "padding": 4.0,
+        "smoothing": 2.0,
+    }
+
+    widget = MagneticFieldWidget()
+    widget.set_document(document)
+    widget.set_form_state({"demag_shape": "image_plate", "demag_sample": saved})
+
+    assert widget.field_options().demag_sample == plate
+    assert widget.collect_state()["demag_sample"] == plate.to_json()
+    widget.close()
+
+
 def test_magnetic_field_widget_persists_and_resolves_demag_orientation(qapp, tmp_path) -> None:
     service = ProjectService()
     document = service.create_project(

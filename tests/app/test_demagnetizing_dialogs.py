@@ -6,7 +6,7 @@ from dataclasses import replace
 
 import numpy as np
 import pytest
-from PySide6.QtCore import QEvent
+from PySide6.QtCore import QEvent, Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QDialog, QWidget
 
@@ -77,6 +77,31 @@ def test_demagnetizing_advanced_dialog_collects_prism_values(qapp, monkeypatch) 
     assert "Tr N" not in dialog._tensor_label.text()
     assert not hasattr(dialog, "_fourier_grid")
     dialog.close()
+
+
+@pytest.mark.parametrize(
+    "finish",
+    [
+        lambda dialog: dialog._use_button.click(),
+        lambda dialog: dialog.reject(),
+        lambda dialog: QTest.keyClick(dialog, Qt.Key.Key_Escape),
+        lambda dialog: dialog.close(),
+    ],
+    ids=["ok", "cancel", "escape", "close"],
+)
+def test_demagnetizing_dialog_shuts_its_canvas_once_however_it_is_closed(
+    qapp, monkeypatch, finish
+) -> None:
+    shutdowns = []
+    monkeypatch.setattr(_DemagPreview, "shutdown", lambda _self: shutdowns.append(1))
+    dialog = _demag_dialog(monkeypatch)
+    dialog.show()
+
+    finish(dialog)
+
+    assert shutdowns == [1]
+    dialog.close()
+    assert shutdowns == [1]
 
 
 def test_demagnetizing_advanced_dialog_needs_an_outline_for_a_plate(qapp, monkeypatch) -> None:
@@ -392,6 +417,43 @@ def test_demagnetizing_pyvista_preview_rotates_shape_and_follows_crystal_axes(
     canvas.close()
 
 
+def test_demagnetizing_canvas_draws_nothing_on_a_theme_change_after_shutdown(
+    qapp, monkeypatch
+) -> None:
+    class _FakePlotter(QWidget):
+        def __init__(self, parent=None, **kwargs):
+            super().__init__(parent)
+            self.drawn = 0
+
+        def set_background(self, *args, **kwargs):
+            self.drawn += 1
+
+        def enable_parallel_projection(self):
+            pass
+
+        render = set_background
+
+        def shutdown(self):
+            pass
+
+    monkeypatch.setattr(
+        demagnetizing_dialogs_module, "_pyvista_modules", lambda: (object(), _FakePlotter)
+    )
+    theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)
+    try:
+        canvas = demagnetizing_dialogs_module._DemagnetizingPyVistaCanvas()
+        canvas.shutdown()
+        canvas._plotter.drawn = 0
+
+        theme_module.apply_theme(qapp, theme_module.THEME_DARK)
+        canvas.changeEvent(QEvent(QEvent.Type.ApplicationPaletteChange))
+
+        assert canvas._plotter.drawn == 0
+        canvas.close()
+    finally:
+        theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)
+
+
 def test_demagnetizing_pyvista_axis_triad_uses_active_theme(qapp, monkeypatch) -> None:
     class _FakeMesh:
         pass
@@ -499,7 +561,7 @@ def test_demagnetizing_preview_draws_the_voxels_of_a_plate(qapp, monkeypatch) ->
         demagnetizing_dialogs_module, "_pyvista_modules", lambda: (pyvista, _FakePlotter)
     )
     canvas = demagnetizing_dialogs_module._DemagnetizingPyVistaCanvas()
-    plate = photo_plate_sample(thickness_voxels=4)
+    plate = photo_plate_sample()
 
     canvas.set_sample(plate)
 
@@ -515,7 +577,7 @@ def test_demagnetizing_preview_draws_the_voxels_of_a_plate(qapp, monkeypatch) ->
     canvas.set_sample(replace(plate, rotation=tuple(map(tuple, np.eye(3)[[1, 2, 0]]))))
     assert built == []
     # A different shape setting builds a new one.
-    canvas.set_sample(replace(plate, smoothing=0.5))
+    canvas.set_sample(replace(plate, plate_thickness=0.5))
     assert len(built) == 1
     # A plate without an outline draws only the three axis arrows and M.
     canvas._plotter.meshes.clear()

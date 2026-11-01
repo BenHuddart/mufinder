@@ -20,7 +20,6 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSizePolicy,
     QSlider,
-    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
@@ -110,7 +109,7 @@ def _overlay_qimage(mask: np.ndarray, color: QColor) -> QImage:
 
 
 class SamplePhotoDialog(QDialog):
-    """Pick a photograph, segment the sample's outline and set the plate's size and grid.
+    """Pick a photograph, segment the sample's outline and set the plate's size.
 
     The outline is drawn over the photo. The threshold starts at the Otsu
     level; ``Invert`` swaps sample and background and ``Fill holes`` fills
@@ -178,32 +177,6 @@ class SamplePhotoDialog(QDialog):
         )
         self._match_button.clicked.connect(self._match_photo_aspect)
         self._thickness = demag_length_input(defaults.plate_thickness, step=0.1)
-        self._grid = QSpinBox(self)
-        self._grid.setRange(16, 256)
-        self._grid.setSingleStep(16)
-        self._grid.setValue(int(defaults.fourier_grid))
-        self._grid.setToolTip("Voxels along the longer in-plane edge.")
-        self._layers = QSpinBox(self)
-        self._layers.setRange(1, 64)
-        self._layers.setValue(int(defaults.thickness_voxels))
-        self._layers.setToolTip("Voxels through the thickness.")
-        self._padding = QDoubleSpinBox(self)
-        self._padding.setRange(2.0, 8.0)
-        self._padding.setDecimals(2)
-        self._padding.setSingleStep(0.25)
-        self._padding.setValue(max(2.0, float(defaults.padding)))
-        self._padding.setToolTip(
-            "Edge of the FFT box along every axis, in units of the longest sample edge."
-        )
-        self._smoothing = QDoubleSpinBox(self)
-        self._smoothing.setRange(0.0, 4.0)
-        self._smoothing.setDecimals(2)
-        self._smoothing.setSingleStep(0.25)
-        self._smoothing.setValue(float(defaults.smoothing))
-        self._smoothing.setSuffix(" voxels")
-        self._smoothing.setToolTip(
-            "Width of a Gaussian filter that damps ringing; 0 turns it off. It lowers Tr N."
-        )
 
         self._status = QLabel("", self)
         self._status.setWordWrap(True)
@@ -245,10 +218,6 @@ class SamplePhotoDialog(QDialog):
         size_form.addRow("Width (along a)", self._width)
         size_form.addRow("Height (along b)", height_row)
         size_form.addRow("Thickness (along c)", self._thickness)
-        size_form.addRow("Fourier grid", self._grid)
-        size_form.addRow("Voxels through thickness", self._layers)
-        size_form.addRow("Padding", self._padding)
-        size_form.addRow("Smoothing", self._smoothing)
 
         left = QVBoxLayout()
         left.addWidget(title)
@@ -273,15 +242,7 @@ class SamplePhotoDialog(QDialog):
         layout.addLayout(body)
         layout.addWidget(buttons)
 
-        for spinbox in (
-            self._width,
-            self._height,
-            self._thickness,
-            self._grid,
-            self._layers,
-            self._padding,
-            self._smoothing,
-        ):
+        for spinbox in (self._width, self._height, self._thickness):
             spinbox.valueChanged.connect(self._check_box)
         self._threshold_slider.valueChanged.connect(self._on_threshold_moved)
         self._invert.toggled.connect(self._resegment)
@@ -312,10 +273,6 @@ class SamplePhotoDialog(QDialog):
             plate_mask=self._outline_mask,
             plate_size=(float(self._width.value()), float(self._height.value())),
             plate_thickness=float(self._thickness.value()),
-            fourier_grid=int(self._grid.value()),
-            thickness_voxels=int(self._layers.value()),
-            padding=float(self._padding.value()),
-            smoothing=float(self._smoothing.value()),
             photo=PlatePhoto(
                 path=self._path.text(),
                 threshold=self._threshold,
@@ -428,7 +385,7 @@ class SamplePhotoDialog(QDialog):
         self._check_box()
 
     def _check_box(self, *_args: object) -> None:
-        """Report the FFT box the settings need; ``Use Outline`` needs an outline and a box that fits."""
+        """Report the FFT box the plate needs; ``Use Outline`` needs an outline and a box that fits."""
 
         if self._outline_mask is None:
             self._box_status.setText("")
