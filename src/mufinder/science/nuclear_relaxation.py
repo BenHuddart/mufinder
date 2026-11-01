@@ -26,6 +26,7 @@ from mufinder.science.lattice import (
     MUON_FRACTIONAL_SNAP_TOLERANCE,
     cell_volume,
     lattice_plane_heights,
+    reduced_lattice,
     wrap_fractional,
 )
 from mufinder.science.muon_distortion import MuonDistortion, map_muon_distortion
@@ -936,17 +937,19 @@ def _nuclear_vectors_within(
     A point within ``R`` of the muon has a fractional coordinate of at most
     ``R / h`` along each axis, with ``h`` the spacing of the lattice planes
     normal to it, and folding an atom next to the muon adds at most ½, so the
-    translation grid holds every such nucleus in a cell of any shape.
+    translation grid holds every such nucleus in a cell of any shape. The grid
+    runs over a reduced basis of the lattice, whose plane heights do not shrink
+    with a shear of the input cell, so its size depends on the lattice alone.
     """
 
-    cell = np.asarray(atoms.cell.array, dtype=float)
+    basis, _transform = reduced_lattice(atoms.cell.array, error=NuclearRelaxationError)
     limits = np.ceil(
-        radius_a / lattice_plane_heights(cell, error=NuclearRelaxationError) + 0.5
+        radius_a / lattice_plane_heights(basis, error=NuclearRelaxationError) + 0.5
     ).astype(int)
     grid = np.meshgrid(*(np.arange(-limit, limit + 1) for limit in limits), indexing="ij")
-    translations = np.stack(grid, axis=-1).reshape(-1, 3) @ cell
-    folded = atoms.get_scaled_positions(wrap=False) - np.linalg.solve(cell.T, muon_cart)
-    offsets = (folded - np.round(folded)) @ cell
+    translations = np.stack(grid, axis=-1).reshape(-1, 3) @ basis
+    folded = np.linalg.solve(basis.T, (atoms.get_positions() - muon_cart).T).T
+    offsets = (folded - np.round(folded)) @ basis
     vectors: list[np.ndarray] = []
     symbols: list[np.ndarray] = []
     for symbol, offset in zip(atoms.get_chemical_symbols(), offsets, strict=True):

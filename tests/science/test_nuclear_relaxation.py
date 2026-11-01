@@ -967,6 +967,19 @@ def test_the_same_lattice_in_a_sheared_basis_gives_the_same_width(mode: str, dir
         assert result.n_nuclei_summed == conventional.n_nuclei_summed
 
 
+def test_an_extreme_shear_of_the_cell_costs_nothing_and_changes_nothing() -> None:
+    # A unimodular shear of 1000 leaves the lattice alone but makes one plane height 1/1000 of
+    # a vector: a translation grid in the input basis would hold about 10⁸ cells.
+    basis = np.array([[1, 0, 0], [1000, 1, 0], [0, 0, 1]]) @ _CU_PRIMITIVE
+    site = tuple((np.array([0.5, 0.5, 0.5]) * _CU_A) @ np.linalg.inv(basis))
+    expected = calculate_nuclear_width_tensors(_cu_conventional(), (0.5, 0.5, 0.5))
+
+    tensors = calculate_nuclear_width_tensors(_cu_in_basis(basis), site)
+
+    assert tensors.isotropic == pytest.approx(expected.isotropic, rel=1e-9)
+    assert tensors.n_nuclei_summed == expected.n_nuclei_summed
+
+
 @pytest.mark.parametrize(("mode", "direction"), _ALL_MODES)
 def test_the_sum_with_its_tail_matches_a_brute_force_sum_to_60_angstrom(
     mode: str, direction

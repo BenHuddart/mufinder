@@ -1411,7 +1411,7 @@ polycrystal results share one normalization.
 
 The sum over nuclei has no radius or tolerance to set. MuFinder sums every
 nucleus within :math:`R` of the muon explicitly, with the cells to visit found
-from the spacing of the lattice planes, so the choice of basis does not matter,
+from the plane spacings of a reduced basis, so the choice of basis does not matter,
 however skewed the cell. :math:`R` is 20 Å, or five mean spacings of the summed
 nuclei when they are sparser than that allows, as for one nucleus in a 16 Å
 cell or a dilute element ticked alone. The nuclei beyond :math:`R` are a uniform
