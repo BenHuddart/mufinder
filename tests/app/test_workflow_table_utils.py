@@ -32,6 +32,7 @@ from mufinder.app import workflow_table_utils
 from mufinder.app import selection_snapshot as selection_snapshot_module
 from mufinder.app.selection_snapshot import SelectionScope
 from mufinder.app.workflow_table_utils import (
+    format_energy_mev,
     MANAGE_SUPERCELLS_TEXT,
     RESET_FAILED_ACTION_TEXT,
     RESET_FAILED_TABLE_TOOLTIP,
@@ -1330,3 +1331,19 @@ def test_table_natural_width_shows_every_column_before_the_table_is_shown(qapp) 
     for column in (0, 1):
         assert table.columnWidth(column) >= table.sizeHintForColumn(column)
     table.close()
+
+
+@pytest.mark.parametrize(
+    ("energy_ev", "signed", "text"),
+    [
+        (None, False, "–"),
+        (0.495247, False, "495 meV"),
+        (0.282726, True, "+283 meV"),
+        (-0.282726, True, "-283 meV"),
+        (-0.0001, True, "0 meV"),
+        (float("nan"), False, "–"),
+        (float("inf"), True, "–"),
+    ],
+)
+def test_format_energy_mev(energy_ev, signed, text) -> None:
+    assert format_energy_mev(energy_ev, signed=signed) == text

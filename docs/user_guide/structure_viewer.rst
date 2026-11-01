@@ -8,7 +8,7 @@ the :doc:`/user_guide/uep_workflow` analysis window, the
 :doc:`/user_guide/structural_relaxation_analysis` workspaces and dialogs, the
 muon-sites summary, the phonon modes of :doc:`/user_guide/quantum_corrections`,
 the Magnetic Structure Builder of :doc:`/user_guide/magnetic_fields`, and the
-path viewer and NEB inspector of :doc:`/user_guide/energy_barriers`. This page
+selected path of :doc:`/user_guide/energy_barriers`. This page
 describes its controls and what it draws; each workflow page describes only what
 that workflow adds to it and links here.
 
@@ -112,7 +112,7 @@ place when an overlay changes.
 - **Point markers** show candidate, clustered or relaxed muon positions in
   :doc:`/user_guide/site_generation`, the :doc:`/user_guide/uep_workflow`
   windows and :doc:`/user_guide/structural_relaxation_analysis`, and the start
-  and end sites of a hop in the path viewer of
+  and end sites of a hop in the selected path of
   :doc:`/user_guide/energy_barriers`.
 - **Isosurfaces and slice planes** show the unperturbed electrostatic
   potential on the ``Isosurfaces`` and ``Slices`` tabs of the UEP analysis
@@ -121,7 +121,7 @@ place when an overlay changes.
   :doc:`/user_guide/uep_workflow`.
 - **Arrows** show the atomic displacements of a phonon mode in
   :doc:`/user_guide/quantum_corrections`, and the hop from the start site to the
-  end site in the path viewer of :doc:`/user_guide/energy_barriers`.
+  end site in the selected path of :doc:`/user_guide/energy_barriers`.
 
 Theme
 -----

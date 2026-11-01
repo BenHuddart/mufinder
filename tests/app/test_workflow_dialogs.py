@@ -16,7 +16,6 @@ from mufinder.app.workflow_controllers.energy_barriers import EnergyBarriersCont
 from mufinder.app.workflow_controllers.hyperfine_coupling import HyperfineCouplingController
 from mufinder.app.workflow_controllers.quantum_corrections import QuantumCorrectionsController
 from mufinder.app.workflow_dialogs import (
-    EnergyBarrierPathViewerDialog,
     HyperfineCouplingConfigDialog,
     NudgedElasticBandConfigDialog,
     QuantumCorrectionsConfigDialog,
@@ -113,23 +112,6 @@ def test_atomic_structure_viewer_line_overlays_extend_scene(qapp) -> None:
     assert any(np.allclose(point, [1.0, 1.0, 1.0]) for point in extra_points)
     assert any(np.allclose(point, [6.0, 1.0, 1.0]) for point in extra_points)
     viewer.close()
-
-
-def test_energy_barrier_path_viewer_dialog_toggles_arrow_overlay(qapp) -> None:
-    dialog = EnergyBarrierPathViewerDialog(
-        structure=host_structure(label="supercell"),
-        start_fractional=(0.2, 0.2, 0.2),
-        end_fractional=(0.8, 0.2, 0.2),
-        title="Path Preview",
-    )
-
-    assert len(dialog._viewer._line_overlay_specs) == 1
-    assert len(dialog._viewer._point_overlay_specs) == 2
-
-    dialog._show_arrow.setChecked(False)
-
-    assert dialog._viewer._line_overlay_specs == []
-    dialog.close()
 
 
 def _row_request(

@@ -1506,17 +1506,18 @@ class SourceTableWidget(QWidget):
     row is a source read from the project (a relaxed site, a diffusion path;
     see ``mufinder.services.source_candidates``), shown in table order from
     ``_source_rows`` and submitted, configured and tracked under that row's
-    ``key``. A source row is a frozen dataclass with at least ``key``,
-    ``status`` and ``configured``.
+    ``key``. A source row is a frozen dataclass with at least ``key`` and
+    ``status``, and ``configured`` when the table has a Configure column.
 
     The base owns the key lookups (``selected_source_keys`` and the
     row-to-key helpers), the run and Configure targeting (the selection, else
     every row), the source table's row menu, its fill with the status colour
-    and the per-row Configure button, and the action-state refresh.
+    and any per-row Configure button, and the action-state refresh.
 
     Class attributes a subclass sets:
 
-    - ``_SOURCE_STATUS_COLUMN`` and ``_SOURCE_CONFIGURE_COLUMN``;
+    - ``_SOURCE_STATUS_COLUMN`` and ``_SOURCE_CONFIGURE_COLUMN``, the latter
+      ``None`` when the rows are configured from the selection only;
     - ``_SOURCE_WORKFLOW_LABEL``, the workflow named on the Configure button;
     - ``_CONFIGURE_SIGNAL``, ``_SUBMIT_LOCAL_SIGNAL`` and
       ``_SUBMIT_CLUSTER_SIGNAL``, the names of its own signals.
@@ -1531,7 +1532,7 @@ class SourceTableWidget(QWidget):
     """
 
     _SOURCE_STATUS_COLUMN: int
-    _SOURCE_CONFIGURE_COLUMN: int
+    _SOURCE_CONFIGURE_COLUMN: int | None
     _SOURCE_WORKFLOW_LABEL = ""
     _CONFIGURE_SIGNAL = ""
     _SUBMIT_LOCAL_SIGNAL = ""
@@ -1676,7 +1677,8 @@ class SourceTableWidget(QWidget):
             for row_index, row in enumerate(rows):
                 for column, value in enumerate(self.source_row_values(row)):
                     set_workflow_table_item(table, row_index, column, value)
-                self._create_source_configure_button(row_index, row)
+                if self._SOURCE_CONFIGURE_COLUMN is not None:
+                    self._create_source_configure_button(row_index, row)
                 self.create_source_row_cells(row_index, row)
             self._reapply_source_status_colors()
             table.resizeRowsToContents()

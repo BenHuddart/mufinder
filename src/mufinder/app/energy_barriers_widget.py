@@ -5,7 +5,6 @@ from __future__ import annotations
 import math
 from collections.abc import Sequence
 from dataclasses import dataclass
-from pathlib import Path
 
 from PySide6.QtCore import QPointF, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import (
@@ -20,16 +19,13 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
-    QFormLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QMenu,
     QPushButton,
     QSizePolicy,
     QSplitter,
-    QTabWidget,
     QToolButton,
     QToolTip,
     QVBoxLayout,
@@ -37,37 +33,39 @@ from PySide6.QtWidgets import (
 )
 
 from mufinder.app.atomic_structure_viewer import AtomicStructureViewer
-from mufinder.app.export_dialogs import open_containing_folder
 from mufinder.app.pinned_sites_scope import PinnedSitesScopeBar
 from mufinder.app.theme import (
+    STRUCTURE_OVERLAY_COLOURS,
     arrow_icon,
+    card_margins,
     current_palette,
+    form_spacing,
+    page_margins,
     plot_series_colours,
-    status_brush,
     style_hint_text,
     style_section_subtitle,
     style_section_title,
 )
 from mufinder.app.workflow_row_widget import SourceTableWidget
 from mufinder.app.workflow_table_utils import (
+    NO_VALUE_TEXT,
     REMOVE_SELECTED_TEXT,
     SelectionFeedback,
     bind_delete_shortcuts,
     confirm_row_removal,
     create_workflow_table,
-    name_row_control,
-    set_workflow_table_item,
     workflow_row_is_locked,
 )
 from mufinder.domain.models import Structure
 
-# Below this widget width the inspector splitter stacks the plot controls above the
-# structure viewer so the viewer keeps a usable size on small laptop screens.
-_NARROW_INSPECTOR_WIDTH = 1100
+# The path table caps its height at this many visible rows so the inspector keeps
+# the remaining vertical space.
+_MAX_VISIBLE_PATH_ROWS = 6
+# The endpoint selectors keep this many characters of a label on narrow pages; the
+# open list shows every label in full.
+_ENDPOINT_COMBO_MIN_CHARACTERS = 14
 
-# The completed-results table caps its height at this many visible rows so the
-# path inspector keeps the remaining vertical space.
-_MAX_VISIBLE_NEB_RESULT_ROWS = 6
+_NO_PATH_SELECTED_TITLE = "No path selected"
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,40 +74,24 @@ class EnergyBarrierEndpointRow:
 
     key: str
     label: str
-    charge_state: str
-    source_job: str
-    relative_energy: str
 
 
 @dataclass(frozen=True, slots=True)
 class EnergyBarrierSourceRow:
-    """One diffusion path eligible for NEB, shown in the Energy Barriers view."""
+    """One hop in the path table, with its barriers once its NEB band has finished."""
 
     key: str
-    reactant: str
-    product: str
-    charge_state: str
+    hop: str
     path_length: str
     status: str
     #: Configured CASTEP task-farm count, rendered as "Off" when farming is disabled.
     farms: str = "Off"
-    configured: bool = False
-
-
-@dataclass(frozen=True, slots=True)
-class EnergyBarrierNebResultRow:
-    """One completed NEB result row."""
-
-    key: str
-    label: str
-    charge_state: str
-    path_length: str
-    barrier_forward: str
-    barrier_reverse: str
-    delta_energy: str
-    images: str
-    status: str
-    transition_state_file: str
+    barrier_forward: str = NO_VALUE_TEXT
+    barrier_reverse: str = NO_VALUE_TEXT
+    delta_energy: str = NO_VALUE_TEXT
+    #: Id of the finished NEB result; the inspector shows its band instead of the hop.
+    band_key: str = ""
+    transition_state_file: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -498,7 +480,7 @@ def _build_image_stepper(
 
 
 class _ViewerPopoutWindow(QWidget):
-    """Floating tool window that hosts the shared NEB structure viewer.
+    """Floating tool window that hosts the inspector's structure viewer.
 
     The ``Qt.Tool`` flag keeps the window above the main window while the
     application is active, so scrubbing the reaction coordinate from the main
@@ -511,13 +493,13 @@ class _ViewerPopoutWindow(QWidget):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent, Qt.WindowType.Tool)
-        self.setWindowTitle("NEB Structure Viewer")
+        self.setWindowTitle("Energy Barriers Structure Viewer")
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(4, 4, 4, 4)
-        layout.setSpacing(4)
+        layout.setContentsMargins(page_margins())
+        layout.setSpacing(form_spacing())
 
         stepper_row = QHBoxLayout()
-        stepper_row.setSpacing(8)
+        stepper_row.setSpacing(form_spacing())
         self._prev_button, self._position_label, self._next_button = _build_image_stepper(
             self, lambda delta: self.step_requested.emit(delta)
         )
@@ -543,11 +525,12 @@ class _ViewerPopoutWindow(QWidget):
 
 
 class EnergyBarriersWidget(SourceTableWidget):
-    """Display eligible path sources and completed transition-state results.
+    """One page: choose endpoints, list the hops and their barriers, inspect the selected hop.
 
-    The Diffusion Paths table and its targeting come from
-    :class:`SourceTableWidget`; this widget adds the endpoint pair that
-    generates paths, the View column, path removal and the NEB inspector.
+    The path table and its targeting come from :class:`SourceTableWidget`; this
+    widget adds the endpoint pair that generates paths, path removal and the
+    inspector, which follows the table selection: the hop in the pristine supercell
+    before a band has finished, the band's profile and images after.
     """
 
     endpoint_selection_changed = Signal(str, str)
@@ -558,17 +541,15 @@ class EnergyBarriersWidget(SourceTableWidget):
     cancel_requested = Signal(object)
     inspect_failed_requested = Signal(object)
     reset_failed_requested = Signal(object)
-    view_source_requested = Signal(str)
     configure_result_requested = Signal(object)
     submit_neb_local_requested = Signal(list)
     submit_neb_cluster_requested = Signal(list)
-    neb_result_selected = Signal(str)
+    #: The path the inspector should show; empty when no row is selected.
+    path_selected = Signal(str)
 
-    # Diffusion Paths columns: reactant, product, charge, path length, farms,
-    # then status, Parameters and View.
-    _SOURCE_STATUS_COLUMN = 5
-    _SOURCE_CONFIGURE_COLUMN = 6
-    _VIEW_COLUMN = 7
+    # Path table columns: hop, length, farms, status, forward, reverse, delta E.
+    _SOURCE_STATUS_COLUMN = 3
+    _SOURCE_CONFIGURE_COLUMN = None
     _SOURCE_WORKFLOW_LABEL = "Energy Barriers"
     _CONFIGURE_SIGNAL = "configure_result_requested"
     _SUBMIT_LOCAL_SIGNAL = "submit_neb_local_requested"
@@ -579,7 +560,10 @@ class EnergyBarriersWidget(SourceTableWidget):
         self.setAccessibleName("Energy Barriers workflow")
         self._endpoint_rows: list[EnergyBarrierEndpointRow] = []
         self._source_rows: list[EnergyBarrierSourceRow]
-        self._neb_result_rows: list[EnergyBarrierNebResultRow] = []
+        # Flush-path guard: set_sources skips an unchanged rebuild.
+        self._source_rows_valid = False
+        # What the inspector was last asked to show: (path key, band key, hop name).
+        self._inspected: tuple[str, str, str] = ("", "", "")
         self._preview_structures: list[Structure] = []
         self._preview_rows: list[EnergyBarrierPreviewImageRow] = []
         self._preview_index = 0
@@ -589,132 +573,97 @@ class EnergyBarriersWidget(SourceTableWidget):
         self._viewer_popout_placeholder: QWidget | None = None
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(6, 6, 6, 6)
-        layout.setSpacing(6)
-
-        header = QVBoxLayout()
-        header.setContentsMargins(0, 0, 0, 0)
-        header.setSpacing(3)
+        layout.setContentsMargins(page_margins())
+        layout.setSpacing(form_spacing())
 
         title = QLabel("Energy Barriers")
         style_section_title(title)
-        header.addWidget(title)
+        layout.addWidget(title)
 
-        subtitle = QLabel(
-            "Build NEB jobs from two relaxed muon endpoints, then inspect the minimum-energy path inside MuFinder."
-        )
+        subtitle = QLabel("Run a nudged elastic band between two relaxed muon sites.")
         subtitle.setWordWrap(True)
         style_section_subtitle(subtitle)
-        header.addWidget(subtitle)
-        layout.addLayout(header)
+        layout.addWidget(subtitle)
 
-        self._tabs = QTabWidget(self)
-        self._tabs.setObjectName("energyBarriersTabs")
-        self._tabs.setDocumentMode(False)
-        self._tabs.setUsesScrollButtons(True)
-        self._tabs.tabBar().setExpanding(False)
-        self._tabs.setElideMode(Qt.TextElideMode.ElideRight)
-        layout.addWidget(self._tabs, 1)
+        layout.addLayout(self._build_endpoint_row())
 
-        paths_tab = QWidget(self._tabs)
-        paths_layout = QVBoxLayout(paths_tab)
-        paths_layout.setContentsMargins(10, 10, 10, 10)
-        paths_layout.setSpacing(8)
-
-        path_intro = QLabel(
-            "Select two relaxed endpoints with the same charge state, generate symmetry-distinct paths, then configure or preview each NEB path."
-        )
-        path_intro.setWordWrap(True)
-        style_hint_text(path_intro)
-        paths_layout.addWidget(path_intro)
-
-        endpoint_group = QGroupBox("Path Endpoints")
-        endpoint_layout = QVBoxLayout(endpoint_group)
-        endpoint_layout.setContentsMargins(10, 8, 10, 8)
-        endpoint_layout.setSpacing(6)
-
-        endpoint_hint = QLabel(
-            "MuFinder only generates paths after you choose both endpoints explicitly. This keeps path generation pair-scoped and traceable."
-        )
-        endpoint_hint.setWordWrap(True)
-        style_hint_text(endpoint_hint)
-        endpoint_layout.addWidget(endpoint_hint)
-        self._site_scope = PinnedSitesScopeBar(endpoint_group)
+        scope_row = QHBoxLayout()
+        scope_row.setSpacing(form_spacing())
+        self._site_scope = PinnedSitesScopeBar(self)
         self._site_scope.show_every_site_toggled.connect(self.show_every_site_toggled)
         self._site_scope.open_muon_sites_requested.connect(self.open_muon_sites_requested)
-        endpoint_layout.addWidget(self._site_scope)
-
-        endpoint_form = QFormLayout()
-        endpoint_form.setHorizontalSpacing(10)
-        endpoint_form.setVerticalSpacing(8)
-        self._reactant_combo = QComboBox(self)
-        self._reactant_combo.currentIndexChanged.connect(self._emit_endpoint_selection_changed)
-        endpoint_form.addRow("Initial", self._reactant_combo)
-        self._product_combo = QComboBox(self)
-        self._product_combo.currentIndexChanged.connect(self._emit_endpoint_selection_changed)
-        endpoint_form.addRow("Final", self._product_combo)
-        self._max_path_length_input = QLineEdit(self)
-        self._max_path_length_input.setPlaceholderText("Auto")
-        self._max_path_length_input.setClearButtonEnabled(True)
-        self._max_path_length_input.setToolTip(
-            "Optional maximum path length in Å. Leave blank to use MuFinder's automatic cutoff."
-        )
-        endpoint_form.addRow("Max path length (Å)", self._max_path_length_input)
-        endpoint_layout.addLayout(endpoint_form)
-
-        endpoint_actions = QHBoxLayout()
-        endpoint_actions.setSpacing(8)
-        self._generate_paths_button = QPushButton("Generate Paths")
-        self._generate_paths_button.clicked.connect(self._emit_generate_paths)
-        endpoint_actions.addWidget(self._generate_paths_button)
-        endpoint_actions.addStretch(1)
-        endpoint_layout.addLayout(endpoint_actions)
-        self._path_symmetry_note = QLabel("", endpoint_group)
+        scope_row.addWidget(self._site_scope, 1)
+        self._path_symmetry_note = QLabel("", self)
         self._path_symmetry_note.setWordWrap(True)
         style_hint_text(self._path_symmetry_note)
         self._path_symmetry_note.setVisible(False)
-        endpoint_layout.addWidget(self._path_symmetry_note)
-        paths_layout.addWidget(endpoint_group)
+        scope_row.addWidget(self._path_symmetry_note, 1)
+        layout.addLayout(scope_row)
 
-        self._sources_group = QGroupBox("Diffusion Paths")
-        sources_layout = QVBoxLayout(self._sources_group)
-        sources_layout.setContentsMargins(10, 8, 10, 8)
-        sources_layout.setSpacing(6)
+        layout.addWidget(self._build_paths_group())
+        layout.addWidget(self._build_inspector_group(), 1)
 
-        source_hint = QLabel(
-            "Each row is a candidate hop between two relaxed endpoints. Configure the climbing-image "
-            "NEB controls (image count, spring constant, tolerances) per path, then build the NEB job "
-            "locally or on the cluster. Use View to preview a path in the undistorted supercell. "
-            "Right-click selected rows to run, cancel, inspect, reset, configure, or remove them."
+        self.clear_neb_preview()
+        self._delete_shortcut, self._backspace_shortcut = bind_delete_shortcuts(
+            self, self._delete_selected_sources
         )
-        source_hint.setWordWrap(True)
-        style_hint_text(source_hint)
-        sources_layout.addWidget(source_hint)
+
+    def _build_endpoint_row(self) -> QHBoxLayout:
+        row = QHBoxLayout()
+        row.setSpacing(form_spacing())
+        row.addWidget(QLabel("Endpoints", self))
+        self._reactant_combo = self._endpoint_combo("Initial endpoint")
+        row.addWidget(self._reactant_combo, 1)
+        row.addWidget(QLabel("→", self))
+        self._product_combo = self._endpoint_combo("Final endpoint")
+        row.addWidget(self._product_combo, 1)
+        row.addSpacing(8)
+        row.addWidget(QLabel("Max length", self))
+        self._max_path_length_input = QLineEdit(self)
+        self._max_path_length_input.setPlaceholderText("Auto")
+        self._max_path_length_input.setClearButtonEnabled(True)
+        self._max_path_length_input.setMaximumWidth(self.fontMetrics().horizontalAdvance("0" * 12))
+        self._max_path_length_input.setAccessibleName("Maximum path length in Å")
+        self._max_path_length_input.setToolTip(
+            "Optional maximum path length in Å. Leave blank to use MuFinder's automatic cutoff."
+        )
+        row.addWidget(self._max_path_length_input)
+        row.addWidget(QLabel("Å", self))
+        self._generate_paths_button = QPushButton("Generate Paths", self)
+        self._generate_paths_button.clicked.connect(self._emit_generate_paths)
+        row.addWidget(self._generate_paths_button)
+        return row
+
+    def _endpoint_combo(self, accessible_name: str) -> QComboBox:
+        combo = QComboBox(self)
+        combo.setAccessibleName(accessible_name)
+        combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        combo.setMinimumContentsLength(_ENDPOINT_COMBO_MIN_CHARACTERS)
+        combo.currentIndexChanged.connect(self._emit_endpoint_selection_changed)
+        return combo
+
+    def _build_paths_group(self) -> QGroupBox:
+        self._sources_group = QGroupBox("Paths", self)
+        sources_layout = QVBoxLayout(self._sources_group)
+        sources_layout.setContentsMargins(card_margins())
+        sources_layout.setSpacing(form_spacing())
         self._sources_table = create_workflow_table(
-            (
-                "Reactant",
-                "Product",
-                "Charge",
-                "Path Length",
-                "Farms",
-                "Status",
-                "Parameters",
-                "View",
-            ),
-            resize_to_contents_columns=(6, 7),
-            accessible_name="Diffusion Paths",
+            ("Hop", "Length", "Farms", "Status", "Forward", "Reverse", "ΔE"),
+            resize_to_contents_columns=(1, 2, 3, 4, 5, 6),
+            stretch_last_section=False,
+            accessible_name="Paths",
         )
         self._sources_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
-        self._sources_table.itemSelectionChanged.connect(self._update_actions)
+        self._sources_table.itemSelectionChanged.connect(self._on_path_selection_changed)
         self._bind_source_row_menu(
             remove=lambda _rows: self._delete_selected_sources(),
             emit_reset=self.reset_failed_requested.emit,
         )
-        sources_layout.addWidget(self._sources_table, 1)
+        sources_layout.addWidget(self._sources_table)
 
         actions = QHBoxLayout()
-        actions.setSpacing(8)
-        self._batch_configure_button = QPushButton("Configure Selected Parameters…")
+        actions.setSpacing(form_spacing())
+        self._batch_configure_button = QPushButton("Configure…")
         self._remove_sources_button = QPushButton(REMOVE_SELECTED_TEXT)
         self._selection_count_label = QLabel("")
         style_hint_text(self._selection_count_label)
@@ -726,12 +675,12 @@ class EnergyBarriersWidget(SourceTableWidget):
         self._remove_sources_button.clicked.connect(self._delete_selected_sources)
         self._submit_neb_local_button.clicked.connect(self._emit_submit_local)
         self._submit_neb_cluster_button.clicked.connect(self._emit_submit_cluster)
-        actions.addWidget(self._remove_sources_button)
+        actions.addWidget(self._batch_configure_button)
         actions.addWidget(self._submit_neb_local_button)
         actions.addWidget(self._submit_neb_cluster_button)
+        actions.addWidget(self._remove_sources_button)
         actions.addStretch(1)
         actions.addWidget(self._selection_count_label)
-        actions.addWidget(self._batch_configure_button)
         sources_layout.addLayout(actions)
         self._sources_feedback = SelectionFeedback(
             self._sources_table,
@@ -740,138 +689,70 @@ class EnergyBarriersWidget(SourceTableWidget):
             run_cluster_button=self._submit_neb_cluster_button,
             selection_buttons=(self._remove_sources_button,),
         )
-        paths_layout.addWidget(self._sources_group, 1)
-        self._tabs.addTab(paths_tab, "Paths")
+        self._cap_path_table_height()
+        return self._sources_group
 
-        neb_tab = QWidget(self._tabs)
-        neb_layout = QVBoxLayout(neb_tab)
-        neb_layout.setContentsMargins(10, 10, 10, 10)
-        neb_layout.setSpacing(8)
+    def _build_inspector_group(self) -> QGroupBox:
+        group = QGroupBox("Selected path", self)
+        inspector_layout = QVBoxLayout(group)
+        inspector_layout.setContentsMargins(card_margins())
+        inspector_layout.setSpacing(form_spacing())
 
-        neb_intro = QLabel(
-            "Inspect completed NEB profiles by stepping through images, the synchronized reaction-coordinate plot, and the shared structure viewer."
-        )
-        neb_intro.setWordWrap(True)
-        style_hint_text(neb_intro)
-        neb_layout.addWidget(neb_intro)
-
-        self._neb_results_group = QGroupBox("Completed NEB Calculations")
-        neb_results_layout = QVBoxLayout(self._neb_results_group)
-        neb_results_layout.setContentsMargins(10, 8, 10, 8)
-        neb_results_layout.setSpacing(6)
-
-        neb_results_hint = QLabel(
-            "Right-click a row to open the folder containing the CASTEP trajectory (.ts) file."
-        )
-        neb_results_hint.setWordWrap(True)
-        style_hint_text(neb_results_hint)
-        neb_results_layout.addWidget(neb_results_hint)
-        self._neb_results_table = create_workflow_table(
-            (
-                "Path",
-                "Charge",
-                "Length",
-                "Barrier (fwd)",
-                "Barrier (rev)",
-                "ΔE",
-                "Images",
-                "Status",
-            ),
-            accessible_name="Completed NEB Calculations",
-        )
-        self._neb_results_table.itemSelectionChanged.connect(self._emit_neb_result_selected)
-        self._neb_results_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self._neb_results_table.customContextMenuRequested.connect(
-            self._show_neb_results_context_menu
-        )
-        neb_results_layout.addWidget(self._neb_results_table)
-        neb_layout.addWidget(self._neb_results_group)
-
-        preview_group = QGroupBox("NEB Path Inspector")
-        preview_layout = QVBoxLayout(preview_group)
-        preview_layout.setContentsMargins(10, 8, 10, 8)
-        preview_layout.setSpacing(6)
-
-        self._preview_splitter = QSplitter(Qt.Orientation.Horizontal, self)
-        self._preview_splitter.setChildrenCollapsible(False)
-        controls = QWidget(self._preview_splitter)
-        controls_layout = QVBoxLayout(controls)
-        controls_layout.setContentsMargins(0, 0, 0, 0)
-        controls_layout.setSpacing(10)
-
-        self._preview_title = QLabel(
-            "Select a completed NEB result to inspect the minimum-energy path."
-        )
+        header = QHBoxLayout()
+        header.setSpacing(form_spacing())
+        self._preview_title = QLabel(_NO_PATH_SELECTED_TITLE, group)
         self._preview_title.setWordWrap(True)
-        controls_layout.addWidget(self._preview_title)
-
-        self._preview_summary = QLabel("")
+        header.addWidget(self._preview_title, 1)
+        self._preview_summary = QLabel("", group)
         self._preview_summary.setWordWrap(True)
         style_hint_text(self._preview_summary)
-        controls_layout.addWidget(self._preview_summary)
+        header.addWidget(self._preview_summary, 1)
+        self._popout_viewer_button = QPushButton("Pop Out Viewer", group)
+        self._popout_viewer_button.setToolTip(
+            "Open the structure viewer in its own resizable window. It stays linked to this page."
+        )
+        self._popout_viewer_button.clicked.connect(self._toggle_viewer_popout)
+        header.addWidget(self._popout_viewer_button)
+        inspector_layout.addLayout(header)
 
-        self._profile_plot = _ReactionCoordinateProfile(controls)
+        self._preview_splitter = QSplitter(Qt.Orientation.Horizontal, group)
+        self._preview_splitter.setChildrenCollapsible(False)
+        # The band's profile and image stepper; hidden while no band is shown.
+        self._band_controls = QWidget(self._preview_splitter)
+        controls_layout = QVBoxLayout(self._band_controls)
+        controls_layout.setContentsMargins(0, 0, 0, 0)
+        controls_layout.setSpacing(form_spacing())
+
+        self._profile_plot = _ReactionCoordinateProfile(self._band_controls)
         self._profile_plot.point_selected.connect(self._apply_preview_index)
         controls_layout.addWidget(self._profile_plot, 1)
 
         stepper_row = QHBoxLayout()
-        stepper_row.setSpacing(8)
+        stepper_row.setSpacing(form_spacing())
         self._preview_prev_button, self._preview_position_label, self._preview_next_button = (
-            _build_image_stepper(controls, self._step_preview)
+            _build_image_stepper(self._band_controls, self._step_preview)
         )
+        stepper_row.addStretch(1)
         stepper_row.addWidget(self._preview_prev_button)
         stepper_row.addWidget(self._preview_position_label)
         stepper_row.addWidget(self._preview_next_button)
         stepper_row.addStretch(1)
-        self._popout_viewer_button = QPushButton("Pop Out Viewer", controls)
-        self._popout_viewer_button.setToolTip(
-            "Open the structure viewer in its own resizable window. It stays linked to the reaction coordinate."
-        )
-        self._popout_viewer_button.clicked.connect(self._toggle_viewer_popout)
-        stepper_row.addWidget(self._popout_viewer_button)
         controls_layout.addLayout(stepper_row)
 
         self._preview_viewer_placeholder = QLabel(
-            "Select a completed NEB result to load the 3D structure preview.",
+            "Select a path to see its hop, or its band once it has run.",
             self._preview_splitter,
         )
         self._preview_viewer_placeholder.setWordWrap(True)
         self._preview_viewer_placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
         style_hint_text(self._preview_viewer_placeholder)
-        self._preview_splitter.addWidget(controls)
+        self._preview_splitter.addWidget(self._band_controls)
         self._preview_splitter.addWidget(self._preview_viewer_placeholder)
         self._preview_splitter.setStretchFactor(0, 0)
         self._preview_splitter.setStretchFactor(1, 1)
-        self._preview_splitter.setSizes([420, 820])
-        preview_layout.addWidget(self._preview_splitter, 1)
-        neb_layout.addWidget(preview_group, 1)
-        self._tabs.addTab(neb_tab, "NEB Analysis")
-
-        self.clear_neb_preview()
-        self._apply_responsive_layout()
-        self._delete_shortcut, self._backspace_shortcut = bind_delete_shortcuts(
-            self, self._delete_selected_sources
-        )
-
-    def resizeEvent(self, event) -> None:  # noqa: N802 - Qt API naming.
-        super().resizeEvent(event)
-        self._apply_responsive_layout()
-
-    def _apply_responsive_layout(self) -> None:
-        if not hasattr(self, "_preview_splitter"):
-            return
-        orientation = (
-            Qt.Orientation.Vertical
-            if self.width() < _NARROW_INSPECTOR_WIDTH
-            else Qt.Orientation.Horizontal
-        )
-        if self._preview_splitter.orientation() == orientation:
-            return
-        self._preview_splitter.setOrientation(orientation)
-        if orientation == Qt.Orientation.Vertical:
-            self._preview_splitter.setSizes([320, 520])
-        else:
-            self._preview_splitter.setSizes([420, 820])
+        self._preview_splitter.setSizes([420, 620])
+        inspector_layout.addWidget(self._preview_splitter, 1)
+        return group
 
     def set_endpoint_options(
         self,
@@ -894,10 +775,8 @@ class EnergyBarriersWidget(SourceTableWidget):
         self._reactant_combo.clear()
         self._product_combo.clear()
         for row in rows:
-            parts = (row.label, row.charge_state, row.source_job, row.relative_energy)
-            label = "  ·  ".join(part for part in parts if part.strip())
-            self._reactant_combo.addItem(label, row.key)
-            self._product_combo.addItem(label, row.key)
+            self._reactant_combo.addItem(row.label, row.key)
+            self._product_combo.addItem(row.label, row.key)
 
         self._set_combo_key(self._reactant_combo, current_reactant, fallback_index=0)
         if len(rows) >= 2:
@@ -921,96 +800,137 @@ class EnergyBarriersWidget(SourceTableWidget):
         self._site_scope.set_state(show_every_site=show_every_site, notice=notice)
 
     def set_sources(self, rows: list[EnergyBarrierSourceRow]) -> None:
-        self._sources_group.setTitle(f"Diffusion Paths ({len(rows)})")
+        """Show ``rows``, keeping the selected paths; unchanged rows skip the rebuild."""
+
+        rows = list(rows)
+        if self._source_rows_valid and rows == self._source_rows:
+            return
+        self._source_rows_valid = True
+        selected = set(self.selected_source_keys())
+        self._sources_group.setTitle(f"Paths ({len(rows)})")
         self._set_source_rows(rows)
+        self._select_source_keys(selected)
+        self._cap_path_table_height()
+        self._update_inspected_path()
 
     def source_row_values(self, row: EnergyBarrierSourceRow) -> tuple[str, ...]:
-        return (row.reactant, row.product, row.charge_state, row.path_length, row.farms, row.status)
-
-    def source_row_label(self, row: EnergyBarrierSourceRow) -> str:
-        return f"{row.reactant} to {row.product}"
+        return (
+            row.hop,
+            row.path_length,
+            row.farms,
+            row.status,
+            row.barrier_forward,
+            row.barrier_reverse,
+            row.delta_energy,
+        )
 
     def create_source_row_cells(self, row_index: int, row: EnergyBarrierSourceRow) -> None:
-        view_button = QPushButton("View…", self._sources_table)
-        view_button.setToolTip("Open the path viewer for this diffusion path.")
-        name_row_control(view_button, "View", self.source_row_label(row))
-        view_button.clicked.connect(
-            lambda _checked=False, key=row.key: self.view_source_requested.emit(key)
-        )
-        self._sources_table.setCellWidget(row_index, self._VIEW_COLUMN, view_button)
+        if not row.transition_state_file:
+            return
+        tooltip = f"Trajectory file: {row.transition_state_file}"
+        for column in range(self._sources_table.columnCount()):
+            item = self._sources_table.item(row_index, column)
+            if item is not None:
+                item.setToolTip(tooltip)
 
     def refresh_source_actions(self, selected_rows: Sequence[EnergyBarrierSourceRow]) -> None:
         reactant_key, product_key = self.selected_endpoint_keys()
         can_generate = bool(reactant_key and product_key and len(self._endpoint_rows) >= 1)
         self._generate_paths_button.setEnabled(can_generate)
 
-    def set_neb_results(self, rows: list[EnergyBarrierNebResultRow]) -> None:
-        previous_key = next(iter(self.selected_neb_result_keys()), "")
-        self._neb_result_rows = list(rows)
-        self._neb_results_group.setTitle(f"Completed NEB Calculations ({len(rows)})")
-        table = self._neb_results_table
-        table.setRowCount(len(rows))
-        for row_index, row in enumerate(rows):
-            values = (
-                row.label,
-                row.charge_state,
-                row.path_length,
-                row.barrier_forward,
-                row.barrier_reverse,
-                row.delta_energy,
-                row.images,
-                row.status,
-            )
-            tooltip = (
-                f"Trajectory file: {row.transition_state_file}" if row.transition_state_file else ""
-            )
-            for column, value in enumerate(values):
-                set_workflow_table_item(table, row_index, column, value)
-                item = table.item(row_index, column)
-                if item is not None:
-                    item.setToolTip(tooltip)
-            # Colour the Status cell with the project-standard per-status palette, matching the
-            # Diffusion Paths sources table and the relaxation/convergence tables.
-            status_item = table.item(row_index, _NEB_RESULT_STATUS_COLUMN)
-            if status_item is not None:
-                status_item.setForeground(status_brush(row.status))
-        table.resizeRowsToContents()
-        self._cap_neb_results_table_height()
-        target_row = 0 if rows else -1
-        if previous_key:
-            for index, row in enumerate(rows):
-                if row.key == previous_key:
-                    target_row = index
-                    break
-        if target_row >= 0:
-            table.selectRow(target_row)
-        else:
-            self.clear_neb_preview()
+    def _select_source_keys(self, keys: set[str]) -> None:
+        """Select the rows ``keys`` name without announcing it, then refresh the actions."""
 
-    def _cap_neb_results_table_height(self) -> None:
-        table = self._neb_results_table
+        table = self._sources_table
+        previous = table.blockSignals(True)
+        try:
+            table.clearSelection()
+            model = table.selectionModel()
+            for row_index, row in enumerate(self._source_rows):
+                if row.key in keys:
+                    model.select(
+                        table.model().index(row_index, 0),
+                        model.SelectionFlag.Select | model.SelectionFlag.Rows,
+                    )
+        finally:
+            table.blockSignals(previous)
+        self._update_actions()
+        self._sources_feedback.refresh()
+
+    def _cap_path_table_height(self) -> None:
+        table = self._sources_table
         header_height = table.horizontalHeader().sizeHint().height()
         row_height = (
             table.rowHeight(0) if table.rowCount() else table.verticalHeader().defaultSectionSize()
         )
-        visible_rows = max(2, min(table.rowCount(), _MAX_VISIBLE_NEB_RESULT_ROWS))
-        table.setMaximumHeight(
-            header_height + visible_rows * row_height + 2 * table.frameWidth() + 6
-        )
+        chrome = header_height + 2 * table.frameWidth() + 6
+        visible_rows = max(2, min(table.rowCount(), _MAX_VISIBLE_PATH_ROWS))
+        # The table gives way to the inspector down to two rows on short screens.
+        table.setMinimumHeight(chrome + 2 * row_height)
+        table.setMaximumHeight(chrome + visible_rows * row_height)
 
-    def _show_neb_results_context_menu(self, position) -> None:
-        row = self._neb_results_table.rowAt(position.y())
-        if not (0 <= row < len(self._neb_result_rows)):
-            return
-        trajectory = self._neb_result_rows[row].transition_state_file.strip()
-        if not trajectory:
-            return
-        menu = QMenu(self._neb_results_table)
-        action = menu.addAction("Open Containing Folder")
-        action.triggered.connect(
-            lambda _checked=False, path=trajectory: open_containing_folder(Path(path).parent)
+    def _on_path_selection_changed(self) -> None:
+        self._update_actions()
+        self._update_inspected_path()
+
+    def _update_inspected_path(self) -> None:
+        """Ask for the first selected path when it, its band or its name changed."""
+
+        selected = self._selected_source_rows()
+        inspected = (
+            (selected[0].key, selected[0].band_key, selected[0].hop) if selected else ("", "", "")
         )
-        menu.exec(self._neb_results_table.viewport().mapToGlobal(position))
+        if inspected != self._inspected:
+            self._inspected = inspected
+            self.path_selected.emit(inspected[0])
+
+    def set_path_preview(
+        self,
+        *,
+        title: str,
+        summary: str,
+        structure: Structure,
+        start_cartesian: Sequence[float],
+        end_cartesian: Sequence[float],
+    ) -> None:
+        """Show a hop that has no band: the pristine supercell with the hop arrow."""
+
+        self._clear_band()
+        self._preview_title.setText(title)
+        self._preview_summary.setText(summary)
+        self._popout_viewer_button.setEnabled(True)
+        start = tuple(float(value) for value in start_cartesian)
+        end = tuple(float(value) for value in end_cartesian)
+        viewer = self._ensure_preview_viewer()
+        with viewer.batch_update():
+            viewer.set_structure(structure)
+            viewer.select_atoms([])
+            viewer.set_point_overlays(
+                [
+                    {
+                        "positions": [start],
+                        "colors": [STRUCTURE_OVERLAY_COLOURS.path_start],
+                        "radii": [0.28],
+                    },
+                    {
+                        "positions": [end],
+                        "colors": [STRUCTURE_OVERLAY_COLOURS.path_end],
+                        "radii": [0.28],
+                    },
+                ]
+            )
+            viewer.set_line_overlays(
+                [
+                    {
+                        "start": start,
+                        "end": end,
+                        "color": STRUCTURE_OVERLAY_COLOURS.path_arrow,
+                        "width": 7.0,
+                        "alpha": 0.92,
+                        "arrow": True,
+                    }
+                ]
+            )
 
     def set_neb_preview(
         self,
@@ -1020,32 +940,42 @@ class EnergyBarriersWidget(SourceTableWidget):
         structures: list[Structure],
         selected_index: int = 0,
     ) -> None:
+        """Show a finished band: its profile, image stepper and images in the viewer."""
+
+        if not image_rows or not structures:
+            self.clear_neb_preview(title=title)
+            return
         self._preview_title.setText(title)
         self._preview_rows = list(image_rows)
         self._preview_structures = list(structures)
         self._preview_reset_pending = True
-        if not image_rows or not structures:
-            self.clear_neb_preview(title=title)
-            return
+        self._band_controls.setVisible(True)
         self._apply_preview_index(selected_index)
 
     def clear_neb_preview(self, *, title: str | None = None) -> None:
+        """Empty the inspector; ``title`` says why when a path is selected."""
+
+        self._clear_band()
+        self._preview_title.setText(title or _NO_PATH_SELECTED_TITLE)
+        self._preview_summary.setText("")
+        self._popout_viewer_button.setEnabled(self._viewer_popout_window is not None)
+        if self._preview_viewer is not None:
+            with self._preview_viewer.batch_update():
+                self._preview_viewer.set_point_overlays(None)
+                self._preview_viewer.set_line_overlays(None)
+                self._preview_viewer.set_structure(None)
+
+    def _clear_band(self) -> None:
         self._preview_rows = []
         self._preview_structures = []
         self._preview_index = 0
         self._preview_reset_pending = True
-        self._preview_title.setText(
-            title or "Select a completed NEB result to inspect the minimum-energy path."
-        )
-        self._preview_summary.setText("")
         self._preview_position_label.setText("")
         self._preview_prev_button.setEnabled(False)
         self._preview_next_button.setEnabled(False)
-        self._popout_viewer_button.setEnabled(self._viewer_popout_window is not None)
-        self._sync_popout_stepper()
         self._profile_plot.clear_profile()
-        if self._preview_viewer is not None:
-            self._preview_viewer.set_structure(None)
+        self._band_controls.setVisible(False)
+        self._sync_popout_stepper()
 
     def selected_endpoint_keys(self) -> tuple[str, str]:
         reactant = self._reactant_combo.currentData()
@@ -1082,19 +1012,6 @@ class EnergyBarriersWidget(SourceTableWidget):
         self.set_sources([row for row in self._source_rows if row.key not in removed])
         self.remove_sources_requested.emit(keys)
 
-    def selected_neb_result_keys(self) -> list[str]:
-        indexes = sorted({index.row() for index in self._neb_results_table.selectedIndexes()})
-        keys: list[str] = []
-        for row in indexes:
-            if 0 <= row < len(self._neb_result_rows):
-                keys.append(self._neb_result_rows[row].key)
-        return keys
-
-    def _emit_neb_result_selected(self) -> None:
-        self._update_actions()
-        keys = self.selected_neb_result_keys()
-        self.neb_result_selected.emit(keys[0] if keys else "")
-
     def _step_preview(self, delta: int) -> None:
         if self._preview_rows:
             self._apply_preview_index(self._preview_index + delta)
@@ -1119,7 +1036,7 @@ class EnergyBarriersWidget(SourceTableWidget):
         row = self._preview_rows[clamped]
         structure = self._preview_structures[clamped]
         self._preview_summary.setText(
-            f"{row.label}  ·  Reaction coordinate {row.reaction_coordinate}  ·  E − E₀ {row.energy}"
+            f"Reaction coordinate {row.reaction_coordinate}  ·  E − E₀ {row.energy}"
         )
         self._profile_plot.set_profile(self._preview_rows, selected_index=clamped)
         self._preview_position_label.setText(f"Image {clamped + 1} / {len(self._preview_rows)}")
@@ -1131,6 +1048,8 @@ class EnergyBarriersWidget(SourceTableWidget):
         if self._preview_reset_pending:
             # A new NEB result: load fresh so the viewer fits the new cell.
             with preview_viewer.batch_update():
+                preview_viewer.set_point_overlays(None)
+                preview_viewer.set_line_overlays(None)
                 preview_viewer.set_structure(structure)
                 preview_viewer.select_atoms(_muon_atom_indexes(structure))
             self._preview_reset_pending = False
@@ -1192,7 +1111,7 @@ class EnergyBarriersWidget(SourceTableWidget):
             placeholder.deleteLater()
             viewer.show()
         self._popout_viewer_button.setText("Pop Out Viewer")
-        self._popout_viewer_button.setEnabled(bool(self._preview_rows))
+        self._popout_viewer_button.setEnabled(bool(self._inspected[0]))
         window.deleteLater()
 
     def _shutdown_preview_viewer(self) -> None:
@@ -1216,12 +1135,6 @@ class EnergyBarriersWidget(SourceTableWidget):
                     return
         if combo.count():
             combo.setCurrentIndex(max(0, min(fallback_index, combo.count() - 1)))
-
-
-# Column index of the "Status" header in the Completed NEB Calculations table (see
-# create_workflow_table call); the row tuple writes path, charge, length, barriers, ΔE,
-# images, then status.
-_NEB_RESULT_STATUS_COLUMN = 7
 
 
 def _muon_atom_indexes(structure: Structure) -> list[int]:

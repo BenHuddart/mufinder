@@ -232,8 +232,6 @@ from mufinder.app.workflow_config_codecs import (
     workflow_row_configuration,
 )
 from mufinder.app.workflow_dialogs import (
-    EnergyBarrierPathViewerDialog,
-    NudgedElasticBandConfigDialog,
     HyperfineCouplingConfigDialog,
     QuantumCorrectionsConfigDialog,
     run_source_configure_dialog,
@@ -4269,14 +4267,9 @@ class MainWindow(QMainWindow):
         energy_barriers_view.open_muon_sites_requested.connect(
             lambda: self._set_active_route("muon_sites")
         )
-        energy_barriers_view.remove_sources_requested.connect(
-            self._on_remove_energy_barrier_sources
-        )
+        energy_barriers_view.remove_sources_requested.connect(controller.remove_paths)
         self._connect_workflow_row_actions(energy_barriers_view, controller)
-        energy_barriers_view.view_source_requested.connect(self._on_view_energy_barrier_source)
-        energy_barriers_view.configure_result_requested.connect(
-            self._on_configure_energy_barrier_result
-        )
+        energy_barriers_view.configure_result_requested.connect(controller.configure_paths)
         # The controller was built and registered in ``__init__``; its view's
         # signals are wired here, when the view is first created.
         energy_barriers_view.submit_neb_local_requested.connect(
@@ -4285,7 +4278,7 @@ class MainWindow(QMainWindow):
         energy_barriers_view.submit_neb_cluster_requested.connect(
             lambda values: controller.submit(values, target="cluster")
         )
-        energy_barriers_view.neb_result_selected.connect(controller.show_neb_preview)
+        energy_barriers_view.path_selected.connect(controller.show_path)
         self._energy_barriers_view = energy_barriers_view
         self._main_stack.insertWidget(
             self._main_stack.indexOf(self._journal_view), energy_barriers_view
@@ -6026,7 +6019,16 @@ class MainWindow(QMainWindow):
             ),
             handle_site_host_mismatch=lambda mismatch: self._handle_site_host_mismatch(mismatch),
             show_warning=lambda title, text: QMessageBox.warning(self, title, text),
+            dialog_parent=lambda: self,
+            clean_up_removed_jobs=lambda plan, **labels: self._clean_up_removed_jobs(
+                plan, **labels
+            ),
+            paths_removed=self._on_energy_barrier_paths_removed,
         )
+
+    def _on_energy_barrier_paths_removed(self) -> None:
+        self._refresh_jobs_table()
+        self._refresh_journal_view()
 
     def _submit_workflow_selection(
         self,
@@ -9388,24 +9390,6 @@ class MainWindow(QMainWindow):
             f"Configured {len(config.rows)} muon-relaxation jobs; input files will be generated on submission"
         )
 
-    def _cleanup_energy_barrier_source_jobs(self, keys: set[str]) -> bool:
-        if self._document is None:
-            return True
-        plan = [
-            self._job_file_cleanup.plan_item(
-                [job], archive_root=definition_output_directory(self._document, definition)
-            )
-            for definition, job in self._energy_barriers_controller.jobs_for_removed_sources(keys)
-        ]
-        return self._clean_up_removed_jobs(
-            plan,
-            title="Remove energy-barrier path with files",
-            describe=lambda item: (
-                f"Energy-barrier job '{item.label}' has associated files.\n\n{item.directory}"
-            ),
-            keep_text="or Cancel to keep the generated path.",
-        )
-
     def _on_configure_quantum_corrections_source(self, payload: object) -> None:
         controller = self._quantum_corrections_controller
         request = controller.configure_request(_ordered_string_list(payload))
@@ -9551,44 +9535,6 @@ class MainWindow(QMainWindow):
             message += "\n\nSkipped:\n" + "\n".join(skipped)
         QMessageBox.information(self, title, message)
 
-    def _on_configure_energy_barrier_result(self, payload: object) -> None:
-        controller = self._energy_barriers_controller
-        request = controller.configure_request(_ordered_string_list(payload))
-        if request is None:
-            return
-        result = run_source_configure_dialog(
-            partial(
-                NudgedElasticBandConfigDialog,
-                specs=controller.parameter_specs(),
-                num_farms=request.num_farms,
-                intro_text=request.intro_text,
-                read_only=request.read_only,
-                species_options=request.species_options,
-                parent=self,
-            ),
-            request,
-            extras=lambda dialog: {"num_farms": dialog.num_farms()},
-        )
-        if result is not None:
-            controller.apply_configuration(request.keys, result, result.extras)
-
-    def _on_view_energy_barrier_source(self, key: str) -> None:
-        try:
-            preview = self._energy_barriers_controller.path_preview(key)
-        except ValueError as exc:
-            QMessageBox.warning(self, "Path preview unavailable", str(exc))
-            return
-        if preview is None:
-            return
-        dialog = EnergyBarrierPathViewerDialog(
-            structure=preview.structure,
-            start_fractional=preview.start_fractional,
-            end_fractional=preview.end_fractional,
-            title=preview.title,
-            parent=self,
-        )
-        dialog.exec()
-
     def _on_launch_quantum_phonon_analysis(self, result_id: str) -> None:
         controller = self._quantum_corrections_controller
         result = controller.phonon_result(result_id)
@@ -9632,22 +9578,6 @@ class MainWindow(QMainWindow):
         dialog.show()
         dialog.raise_()
         dialog.activateWindow()
-
-    def _on_remove_energy_barrier_sources(self, payload: object) -> None:
-        keys = self._removed_row_labels(payload)
-        if self._document is None or not keys:
-            return
-        if not self._cleanup_energy_barrier_source_jobs(keys):
-            self._refresh_energy_barriers_view()
-            return
-        self._energy_barriers_controller.remove_rows(keys)
-        self._refresh_energy_barriers_view()
-        self._refresh_jobs_table()
-        self._refresh_journal_view()
-        self.statusBar().showMessage(f"Deleted {plural(len(keys), 'energy-barrier path')}")
-        self._persist_document_ui_state(
-            failure_message="Energy Barriers paths were removed, but autosave failed."
-        )
 
     def _on_uep_source_structure_selection_requested(self, payload: object) -> None:
         if self._document is None:

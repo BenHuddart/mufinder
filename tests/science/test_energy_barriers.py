@@ -547,3 +547,34 @@ def test_hexagonal_neb_midpoint_follows_the_nearest_image_of_the_path() -> None:
             midpoint.get_scaled_positions(wrap=False)[-1] - start.get_scaled_positions()[-1]
         ) @ lattice
         assert np.linalg.norm(half_hop) == pytest.approx(path.length_ang / 2, abs=1e-6)
+
+
+@pytest.mark.parametrize(
+    ("hop", "either_sense", "label"),
+    [
+        ((0.0, 0.0, 2.0), False, "along c"),
+        ((0.0, 0.0, -2.0), False, "along -c"),
+        ((0.0, 0.0, -2.0), True, "along c"),
+        ((1.5, -1.5, 0.0), False, "along [1 -1 0]"),
+        ((-1.5, 1.5, 0.0), True, "along [1 -1 0]"),
+        ((1.0, 2.0, 0.0), False, "along [1 2 0]"),
+        ((1.0, 0.37, 0.0), False, "along [1 0.37 0]"),
+        ((1.0, 0.001, 0.0), False, "along a"),
+        ((0.0, 0.0, 0.0), False, ""),
+    ],
+)
+def test_hop_direction_label(hop, either_sense, label) -> None:
+    lattice = np.diag([3.0, 3.0, 8.0])
+    assert eb.hop_direction_label(hop, lattice, either_sense=either_sense) == label
+
+
+def test_hop_direction_label_uses_the_axes_of_the_reference_lattice() -> None:
+    # Along the hexagonal a + b diagonal, in Cartesian components that are not a ratio.
+    hexagonal = np.array([[3.0, 0.0, 0.0], [-1.5, 3.0 * np.sqrt(3.0) / 2.0, 0.0], [0.0, 0.0, 5.0]])
+    assert eb.hop_direction_label(hexagonal[0] + hexagonal[1], hexagonal) == "along [1 1 0]"
+
+
+def test_hop_cartesian_vector_takes_the_nearest_image_of_the_end() -> None:
+    lattice = np.diag([4.0, 4.0, 4.0])
+    vector = eb.hop_cartesian_vector((0.9, 0.0, 0.0), (0.1, 0.0, 0.0), lattice)
+    assert vector == pytest.approx([0.8, 0.0, 0.0])

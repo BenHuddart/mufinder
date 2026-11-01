@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+import math
 from typing import Callable
 
 import shiboken6
@@ -32,6 +33,7 @@ from mufinder.app.selection_snapshot import SelectionSnapshotComboBox, resolve_t
 from mufinder.app.theme import use_square_top_table_corners, use_tabbed_table_corners
 from mufinder.app.workflow_submission import READY_WORKFLOW_ROW_STATUSES
 from mufinder.castep_io.types import ValueWithUnit
+from mufinder.domain.constants import MEV_PER_EV
 from mufinder.domain.text import plural
 from mufinder.science.kpoint_grids import spacing_from_grid
 
@@ -59,15 +61,21 @@ RESET_FAILED_TABLE_TOOLTIP = (
 )
 
 
-def format_energy_ev(value: object) -> str:
-    """Format an energy in eV for a workflow results table; blank when not numeric."""
+#: What a results cell shows while a value does not exist yet.
+NO_VALUE_TEXT = "–"
 
-    if value is None:
-        return ""
-    try:
-        return f"{float(value):.6g} eV"
-    except (TypeError, ValueError):
-        return ""
+
+def format_energy_mev(energy_ev: float | None, *, signed: bool = False) -> str:
+    """Format an energy in eV as whole meV for a results table.
+
+    ``None`` or a non-finite value (a diverged band image) gives a dash, and ``0`` has
+    no sign.
+    """
+
+    if energy_ev is None or not math.isfinite(energy_ev):
+        return NO_VALUE_TEXT
+    rounded = round(float(energy_ev) * MEV_PER_EV)
+    return f"{rounded:+d} meV" if signed and rounded else f"{rounded:d} meV"
 
 
 #: Values at most this large are shown as ``0`` by :func:`format_table_number`.
