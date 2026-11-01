@@ -395,7 +395,7 @@ defined by two of these modules, and a pinned count may only fall.
        V with Control or Meta pastes into the focused line edit, text edit,
        plain text edit or editable combo box unless it is read-only or
        disabled. The filter follows ``QApplication.focusChanged`` onto the
-       focused text widget and its completer popup and is never installed on
+       focused text widget and its completer popup, when it has one, and is never installed on
        the application, so other events stay out of Python. ``mufinder.main`` installs it with the application.
    * - ``mufinder.app.pinned_sites_scope``
      - The "Show every relaxed site" check box, pinned-sites notice and
