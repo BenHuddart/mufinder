@@ -232,7 +232,7 @@ WORKFLOW_STAGES: tuple[WorkflowStageInfo, ...] = (
         "magnetic_fields",
         "Magnetic Fields",
         "Define at least one magnetic component.",
-        "Needs a magnetic model and distinct sites from Analysis; UEP clusters give unrelaxed estimates.",
+        "Needs a magnetic model and distinct sites from Analysis; UEP sites give unrelaxed estimates.",
     ),
     WorkflowStageInfo(
         "polarisation",

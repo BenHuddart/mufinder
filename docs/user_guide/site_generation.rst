@@ -269,7 +269,7 @@ non-representative members are retained in the UEP analysis state but are not sh
 generation table.
 
 Generating stores the selected rows as normal generated sites for full
-structural relaxation. MuFinder also keeps the source job, cluster identity,
+structural relaxation. MuFinder also keeps the source job, site number,
 representative member index, classification, energies, and grouping settings
 with each site, and prevents the same UEP site from being added twice. A new site
 is labelled ``UEP Site <n>``; one created before searches were grouped this way keeps

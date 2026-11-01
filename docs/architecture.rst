@@ -790,7 +790,7 @@ defined by two of these modules, and a pinned count may only fall.
        ``ProjectService`` delegates to it under the same method names.
    * - ``mufinder.services.site_generation_service``
      - Candidate muon-site generation for each method (manual, random by
-       separation or count, attached to an element, UEP cluster rows),
+       separation or count, attached to an element, UEP sites),
        clustering generated sites near an anchor, removing and staging
        generated sites, and the generated-site statuses. Each entry point
        changes the document in memory and returns its provenance records in a

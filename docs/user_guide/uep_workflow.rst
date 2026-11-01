@@ -81,8 +81,8 @@ Open ``UEP`` in the project navigator, then:
 8. **Read the sites.** The table lists the sites as soon as the search ends
    (see `How sites are grouped`_).
 9. **Commit sites for relaxation.** Open ``Muon Sites -> Generation``, choose
-   the ``UEP clusters`` method and generate sites from the cluster
-   representatives (see `Using UEP clusters for relaxation starts`_).
+   the ``UEP clusters`` method and generate sites from the UEP sites
+   (see `Using UEP clusters for relaxation starts`_).
 
 The UEP page
 ------------
