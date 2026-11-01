@@ -24,8 +24,10 @@ from mufinder.domain.models import Structure
 from mufinder.science.ase_bridge import element_symbol, structure_to_ase_atoms
 from mufinder.science.lattice import (
     MUON_FRACTIONAL_SNAP_TOLERANCE,
+    cartesian_to_fractional,
     cell_volume,
     lattice_plane_heights,
+    nearest_image_distance_matrix,
     reduced_lattice,
     wrap_fractional,
 )
@@ -36,8 +38,8 @@ SEC2_TO_US2 = 1e-12
 #: Radius (Å) of the explicit lattice sum around the muon. The nuclei beyond it
 #: enter through the analytic continuum tail (:func:`_tail_moments`).
 NUCLEAR_SUM_RADIUS_A = 20.0
-#: The sum reaches at least this many mean spacings of the summed nuclei, which holds the
-#: continuum tail to about 0.05 % in σ when they are too sparse for 20 Å (one Cu in 16 Å).
+#: Each element's sum reaches at least this many mean spacings of its nuclei, which holds
+#: its continuum tail to about 0.05 % in σ when they are too sparse for 20 Å (one Cu in 16 Å).
 _SUM_RADIUS_MIN_SPACINGS = 5.0
 
 NuclearRelaxationMode = Literal[
@@ -411,17 +413,16 @@ def calculate_nuclear_width_tensors(
 
     atoms = structure_to_atoms(structure, skip_muon=True)
     selected = _selected_elements(elements)
-    radius = _sum_radius(atoms, selected)
-    vectors, distances, symbols = _nuclear_vectors_within(
-        atoms, _muon_position_cartesian(atoms, muon_position, True), radius, selected
-    )
+    muon_cart = _muon_position_cartesian(atoms, muon_position, True)
+    radii = _sum_radii(atoms, muon_cart, selected)
+    vectors, distances, symbols = _nuclear_vectors_within(atoms, muon_cart, radii)
     isotropic, quadratic, quartic, zf_isotropic, zf_quadratic = _moment_tensors(
         vectors, distances * METRES_PER_ANGSTROM, symbols, include_quadrupolar
     )
     prefactor = _prefactor_sigma_squared() * SEC2_TO_US2
-    tail = prefactor * sum(_tail_moments(atoms, radius, selected).values())
+    tail = prefactor * sum(_tail_moments(atoms, radii).values())
     zf_tail = (
-        prefactor * sum(_tail_moments(atoms, radius, selected, include_quadrupolar=True).values())
+        prefactor * sum(_tail_moments(atoms, radii, include_quadrupolar=True).values())
         if include_quadrupolar
         else tail
     )
@@ -439,7 +440,7 @@ def calculate_nuclear_width_tensors(
         zf_isotropic=zf_isotropic + zf_tail,
         zf_quadratic=zf_quadratic + zf_tail * _ISOTROPIC_QUADRATIC,
         include_quadrupolar=include_quadrupolar,
-        convergence_radius_a=radius,
+        convergence_radius_a=max(radii.values()),
         n_nuclei_summed=int(distances.size),
     )
 
@@ -645,13 +646,9 @@ def _calculate_second_moment(
         _unit_vector(polarisation_direction, "direction") if mode == "zf_single_crystal" else None
     )
     selected = _selected_elements(elements)
-    radius = _sum_radius(atoms, selected)
-    vectors, distances, symbols = _nuclear_vectors_within(
-        atoms,
-        _muon_position_cartesian(atoms, muon_position, muon_position_fractional),
-        radius,
-        selected,
-    )
+    muon_cart = _muon_position_cartesian(atoms, muon_position, muon_position_fractional)
+    radii = _sum_radii(atoms, muon_cart, selected)
+    vectors, distances, symbols = _nuclear_vectors_within(atoms, muon_cart, radii)
     sigma2, sigma2_parallel, per_element = _evaluate_mode(
         mode,
         vectors * METRES_PER_ANGSTROM,
@@ -665,7 +662,7 @@ def _calculate_second_moment(
     # prefactor, so the isotropic tail adds the same amount to each width of a mode.
     prefactor = _polycrystal_prefactor(mode) * SEC2_TO_US2
     for element, moment in _tail_moments(
-        atoms, radius, selected, include_quadrupolar=include_quadrupolar
+        atoms, radii, include_quadrupolar=include_quadrupolar
     ).items():
         tail = prefactor * moment
         sigma2 += tail
@@ -686,7 +683,7 @@ def _calculate_second_moment(
         sigma_squared=sigma2,
         sigma_squared_parallel=sigma2_parallel,
         per_element=per_element,
-        convergence_radius_a=radius,
+        convergence_radius_a=max(radii.values()),
         n_nuclei_summed=int(distances.size),
     )
 
@@ -884,55 +881,73 @@ def _selected_elements(elements: Sequence[str] | None) -> set[str] | None:
     return {element_symbol(element, error=NuclearRelaxationError) for element in elements}
 
 
-def _sum_radius(atoms: Atoms, elements: set[str] | None) -> float:
-    """Return the explicit sum's radius (Å): the fixed one unless the nuclei are too sparse."""
+def _sum_radii(atoms: Atoms, muon_cart: np.ndarray, elements: set[str] | None) -> dict[str, float]:
+    """Return the explicit sum's radius (Å) for each selected element of the host.
 
-    nuclei = sum(
-        weighted_spin_factor(isotopes_for_element(symbol)) > 0.0
-        for symbol in atoms.get_chemical_symbols()
-        if elements is None or symbol in elements
-    )
-    if not nuclei:
-        return NUCLEAR_SUM_RADIUS_A
-    spacing = (cell_volume(atoms.cell.array.tolist()) / nuclei) ** (1.0 / 3.0)
-    return max(NUCLEAR_SUM_RADIUS_A, _SUM_RADIUS_MIN_SPACINGS * spacing)
+    It is the fixed radius unless that element's nuclei are too sparse for its tail,
+    whatever else the host holds. A muon far from all of them, in the vacuum of a slab
+    cell, reaches twice as far as the nearest, since a mean density says nothing about
+    its surroundings. An element with no nuclear spin adds nothing and stays at the
+    fixed radius.
+    """
+
+    symbols = np.asarray(atoms.get_chemical_symbols())
+    cell = atoms.cell.array
+    muon = cartesian_to_fractional(muon_cart, cell).reshape(1, 3)
+    scaled = atoms.get_scaled_positions(wrap=False)
+    radii: dict[str, float] = {}
+    for symbol in np.unique(symbols):
+        element = str(symbol)
+        if elements is not None and element not in elements:
+            continue
+        radii[element] = NUCLEAR_SUM_RADIUS_A
+        if weighted_spin_factor(isotopes_for_element(element)) <= 0.0:
+            continue
+        nuclei = symbols == element
+        spacing = (cell_volume(cell.tolist()) / int(np.sum(nuclei))) ** (1.0 / 3.0)
+        nearest = float(nearest_image_distance_matrix(muon, scaled[nuclei], cell).min())
+        radii[element] = max(
+            NUCLEAR_SUM_RADIUS_A, _SUM_RADIUS_MIN_SPACINGS * spacing, 2.0 * nearest
+        )
+    if not radii:
+        raise NuclearRelaxationError(
+            f"No nuclei found within {NUCLEAR_SUM_RADIUS_A:g} Å of the muon."
+        )
+    return radii
 
 
 def _tail_moments(
     atoms: Atoms,
-    radius_a: float,
-    elements: set[str] | None,
+    radii: Mapping[str, float],
     *,
     include_quadrupolar: bool = False,
 ) -> dict[str, float]:
-    """Return each element's ``Σ w / r⁶`` over the nuclei beyond ``radius_a``.
+    """Return each element's ``Σ w / r⁶`` over its nuclei beyond its radius in ``radii``.
 
     They are treated as a uniform continuum of weight density ``n_w``, whose
     integral from ``R`` outwards is ``4π n_w / (3 R³)``.
     """
 
     volume_m3 = cell_volume(atoms.cell.array.tolist()) * METRES_PER_ANGSTROM**3
-    radius_m = radius_a * METRES_PER_ANGSTROM
-    symbols, counts = np.unique(atoms.get_chemical_symbols(), return_counts=True)
+    symbols = atoms.get_chemical_symbols()
     moments: dict[str, float] = {}
-    for symbol, count in zip(symbols, counts, strict=True):
-        element = str(symbol)
-        if elements is not None and element not in elements:
-            continue
+    for element, radius_a in radii.items():
         weight = weighted_spin_factor(
             isotopes_for_element(element), include_quadrupolar=include_quadrupolar
         )
-        moments[element] = 4.0 * np.pi * weight * int(count) / (3.0 * volume_m3 * radius_m**3)
+        radius_m = radius_a * METRES_PER_ANGSTROM
+        moments[element] = (
+            4.0 * np.pi * weight * symbols.count(element) / (3.0 * volume_m3 * radius_m**3)
+        )
     return moments
 
 
 def _nuclear_vectors_within(
     atoms: Atoms,
     muon_cart: np.ndarray,
-    radius_a: float,
-    elements: set[str] | None,
+    radii: Mapping[str, float],
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Return vectors and distances (Å) to the nuclei within ``radius_a``, and their symbols.
+    """Return vectors and distances (Å) to the nuclei within their radii, and their symbols.
 
     A point within ``R`` of the muon has a fractional coordinate of at most
     ``R / h`` along each axis, with ``h`` the spacing of the lattice planes
@@ -942,9 +957,10 @@ def _nuclear_vectors_within(
     with a shear of the input cell, so its size depends on the lattice alone.
     """
 
+    reach = max(radii.values())
     basis, _transform = reduced_lattice(atoms.cell.array, error=NuclearRelaxationError)
     limits = np.ceil(
-        radius_a / lattice_plane_heights(basis, error=NuclearRelaxationError) + 0.5
+        reach / lattice_plane_heights(basis, error=NuclearRelaxationError) + 0.5
     ).astype(int)
     grid = np.meshgrid(*(np.arange(-limit, limit + 1) for limit in limits), indexing="ij")
     translations = np.stack(grid, axis=-1).reshape(-1, 3) @ basis
@@ -953,15 +969,15 @@ def _nuclear_vectors_within(
     vectors: list[np.ndarray] = []
     symbols: list[np.ndarray] = []
     for symbol, offset in zip(atoms.get_chemical_symbols(), offsets, strict=True):
-        if elements is not None and symbol not in elements:
+        if symbol not in radii:
             continue
         candidates = translations + offset
         squared = np.einsum("ij,ij->i", candidates, candidates)
-        within = candidates[(squared <= radius_a**2) & (squared >= 1e-20)]
+        within = candidates[(squared <= radii[symbol] ** 2) & (squared >= 1e-20)]
         vectors.append(within)
         symbols.append(np.full(len(within), symbol, dtype=object))
     if not any(len(block) for block in vectors):
-        raise NuclearRelaxationError(f"No nuclei found within {radius_a:g} Å of the muon.")
+        raise NuclearRelaxationError(f"No nuclei found within {reach:g} Å of the muon.")
     stacked = np.concatenate(vectors)
     return stacked, np.linalg.norm(stacked, axis=1), np.concatenate(symbols)
 

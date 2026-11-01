@@ -1085,6 +1085,55 @@ def test_a_dilute_element_selected_alone_still_gives_a_width() -> None:
     assert set(result.per_element_sigma_squared) == {"Fe"}
 
 
+def test_a_dilute_element_keeps_its_reach_beside_dense_ones() -> None:
+    # 64 Fe make the cell dense, but its one H needs the same reach as if it were alone, so
+    # the width of the whole host is the sum of the widths of its elements.
+    coordinates = (2.0, 6.0, 10.0, 14.0)
+    fe = [
+        [x / 16.0, y / 16.0, z / 16.0]
+        for x in coordinates
+        for y in coordinates
+        for z in coordinates
+    ]
+    host = Structure(
+        label="dilute H",
+        lattice_vectors=[[16.0, 0.0, 0.0], [0.0, 16.0, 0.0], [0.0, 0.0, 16.0]],
+        species=["H", *["Fe"] * 64],
+        fractional_positions=[[0.0, 0.0, 0.0], *fe],
+    )
+    site = (0.5, 0.5, 0.5)
+    options = {"mode": "tf_single_crystal", "direction": (0.0, 0.0, 1.0)}
+
+    whole = calculate_nuclear_relaxation(host, site, options=NuclearRelaxationOptions(**options))
+    parts = [
+        calculate_nuclear_relaxation(
+            host, site, options=NuclearRelaxationOptions(elements=(element,), **options)
+        )
+        for element in ("H", "Fe")
+    ]
+
+    assert whole.sigma_squared == pytest.approx(sum(p.sigma_squared for p in parts), rel=1e-12)
+    assert whole.per_element_sigma_squared["H"] == pytest.approx(parts[0].sigma_squared, rel=1e-12)
+    assert whole.convergence_radius_a == pytest.approx(80.0)
+
+
+def test_a_muon_in_the_vacuum_of_a_slab_reaches_the_slab() -> None:
+    # The mean density of this cell gives about 20 Å, and the nearest nucleus is 25 Å away.
+    host = Structure(
+        label="slab",
+        lattice_vectors=[[3.0, 0.0, 0.0], [0.0, 3.0, 0.0], [0.0, 0.0, 60.0]],
+        species=["H"] * 8,
+        fractional_positions=[[0.0, 0.0, z / 60.0] for z in range(8)],
+    )
+    site = (0.0, 0.0, 35.0 / 60.0)
+    isotropic, _quadratic, _quartic = _direct_sums(host, site, 200.0)
+
+    tensors = calculate_nuclear_width_tensors(host, site)
+
+    assert tensors.convergence_radius_a == pytest.approx(50.0)
+    assert tensors.isotropic == pytest.approx(isotropic, rel=5e-3)
+
+
 def test_tensors_and_modes_agree_with_the_tail_included() -> None:
     host = _low_symmetry_host()
     tensors = calculate_nuclear_width_tensors(host, _TENSOR_SITE)

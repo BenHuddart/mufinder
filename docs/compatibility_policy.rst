@@ -426,7 +426,8 @@ Compatibility ledger
    * - ``convergence_radius_a``
      - ``NuclearRelaxationResult``, ``NuclearWidthTensors`` and their saved
        ``nuclear_relaxation`` results
-     - Persisted name kept as it is: it holds the radius of the explicit sum.
+     - Persisted name kept as it is: it holds the largest radius of the explicit
+       sum over the elements.
        The Magnetic Fields dialog
        labels it ``Explicit sum radius (Å)``.
      - Current project data, not deprecated. Rename only with a schema

@@ -1412,9 +1412,11 @@ polycrystal results share one normalization.
 The sum over nuclei has no radius or tolerance to set. MuFinder sums every
 nucleus within :math:`R` of the muon explicitly, with the cells to visit found
 from the plane spacings of a reduced basis, so the choice of basis does not matter,
-however skewed the cell. :math:`R` is 20 Å, or five mean spacings of the summed
-nuclei when they are sparser than that allows, as for one nucleus in a 16 Å
-cell or a dilute element ticked alone. The nuclei beyond :math:`R` are a uniform
+however skewed the cell. Each element has its own :math:`R`: 20 Å, or five mean
+spacings of that element's nuclei when they are sparser than that allows, as for
+one nucleus in a 16 Å cell or a dilute dopant, and at least twice the distance to
+the nearest of them, for a muon in the vacuum of a slab. ``Explicit sum radius``
+reports the largest. The nuclei beyond :math:`R` are a uniform
 continuum of density :math:`n_w = \sum_\text{cell} w / V`, with
 :math:`w = \sum_\text{isotopes} c\,\gamma^2 I(I+1)` per nucleus for abundance
 :math:`c`, so their share of the sum has an exact integral:
