@@ -1594,6 +1594,7 @@ class MainWindow(QMainWindow):
         new_button.setIcon(icon("new_project"))
         new_button.clicked.connect(self._new_project)
         new_layout.addWidget(new_button)
+        self._home_new_project_button = new_button
 
         open_card, open_layout = self._make_home_card(
             "Open Project",
@@ -1633,17 +1634,24 @@ class MainWindow(QMainWindow):
         if self._home_recent_projects_layout is None:
             return
 
+        focused_row: int | None = None
+        row = 0
         while self._home_recent_projects_layout.count():
             item = self._home_recent_projects_layout.takeAt(0)
             widget = item.widget()
             if widget is not None:
+                if widget.hasFocus():
+                    focused_row = row
                 widget.deleteLater()
+            row += 1
 
         recent = self._recent_projects()[:5]
         if not recent:
             empty = QLabel("No recent projects yet.")
             empty.setObjectName("cardBody")
             self._home_recent_projects_layout.addWidget(empty)
+            if focused_row is not None:
+                self._home_new_project_button.setFocus(Qt.FocusReason.OtherFocusReason)
             return
 
         for project_path in recent:
@@ -1654,6 +1662,15 @@ class MainWindow(QMainWindow):
                 )
             )
             self._home_recent_projects_layout.addWidget(button)
+
+        # The entry that had focus is gone; its neighbour takes over.
+        if focused_row is not None:
+            neighbour = self._home_recent_projects_layout.itemAt(
+                min(focused_row, len(recent) - 1)
+            ).widget()
+            # The layout shows it only on its next pass, and a hidden widget takes no focus.
+            neighbour.show()
+            neighbour.setFocus(Qt.FocusReason.OtherFocusReason)
 
     def _build_menu(self) -> None:
         file_menu = self.menuBar().addMenu("File")
@@ -2567,6 +2584,9 @@ class MainWindow(QMainWindow):
 
         if selected_item is None:
             self._project_tree.clearSelection()
+            # No row is the user's on the project home. Without this, focus arriving
+            # picks the first row as current, and the first Down skips past it.
+            self._project_tree.setCurrentItem(None)
             self._main_stack.setCurrentWidget(self._home_page)
             self._sync_home_content_page()
         else:

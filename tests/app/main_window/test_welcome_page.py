@@ -269,18 +269,24 @@ def _active(window: QWidget) -> QWidget:
     raise AssertionError("the window never became active")
 
 
-def _assert_down_walks_the_navigator(window: MainWindow) -> None:
+def _assert_down_walks_the_navigator(
+    window: MainWindow, rows: tuple[str, str] = ("Host Structure", "Convergence Testing")
+) -> None:
+    """Down from where the user is reaches ``rows`` in turn, and each opens its page."""
+
     tree = window._project_tree
     assert QApplication.focusWidget() is tree
 
-    routes = []
+    walked = []
     for _press in range(2):
         QTest.keyClick(QApplication.focusWidget(), Qt.Key.Key_Down)
         QApplication.processEvents()
-        routes.append(tree.currentItem().data(0, Qt.ItemDataRole.UserRole))
+        assert tree.selectedItems() == [tree.currentItem()]
+        walked.append(tree.currentItem().text(0))
 
     assert QApplication.focusWidget() is tree
-    assert routes[0] != routes[1]
+    assert tuple(walked) == rows
+    assert window._main_stack.currentWidget() is not window._home_page
 
 
 def _open_through_the_file_menu(window: MainWindow, root: Path, monkeypatch) -> None:
@@ -304,12 +310,7 @@ def _open_a_recent_entry(window: MainWindow, root: Path, monkeypatch) -> None:
 
 @pytest.mark.parametrize(
     "open_route",
-    [
-        _open_through_the_file_menu,
-        _open_from_the_command_line,
-        _open_from_the_command_line_on_a_page,
-        _open_a_recent_entry,
-    ],
+    [_open_through_the_file_menu, _open_from_the_command_line, _open_a_recent_entry],
 )
 def test_keyboard_focus_lands_on_the_navigator_after_opening(
     window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, open_route
@@ -321,7 +322,150 @@ def test_keyboard_focus_lands_on_the_navigator_after_opening(
     QApplication.processEvents()
 
     assert window._document is not None
+    # On the project home no row is the user's yet, not even as a pale current row.
+    assert window._main_stack.currentWidget() is window._home_page
+    assert window._project_tree.currentItem() is None
     _assert_down_walks_the_navigator(window)
+
+
+def test_up_from_the_project_home_also_starts_at_the_first_row(
+    window: MainWindow, tmp_path: Path
+) -> None:
+    root = ProjectService().create_project(tmp_path / "up.mufinder", "Up").project_root
+    _active(window)
+    assert window.open_project(root)
+    QApplication.processEvents()
+
+    QTest.keyClick(QApplication.focusWidget(), Qt.Key.Key_Up)
+    QApplication.processEvents()
+
+    assert window._project_tree.currentItem().text(0) == "Host Structure"
+    assert window._project_tree.selectedItems() == [window._project_tree.currentItem()]
+
+
+def test_opening_on_a_page_walks_down_from_that_page(window: MainWindow, tmp_path: Path) -> None:
+    root = ProjectService().create_project(tmp_path / "page.mufinder", "Page").project_root
+    _active(window)
+    assert window.open_project(root)
+    assert window.show_page("uep")
+    QApplication.processEvents()
+
+    _assert_down_walks_the_navigator(window, ("Muon Sites", "Generation"))
+
+
+def test_opening_a_second_project_starts_at_the_first_row_again(
+    window: MainWindow, tmp_path: Path
+) -> None:
+    first = ProjectService().create_project(tmp_path / "first.mufinder", "First").project_root
+    second = ProjectService().create_project(tmp_path / "second.mufinder", "Second").project_root
+    _active(window)
+    assert window.open_project(first)
+    assert window.show_page("uep")
+
+    assert window.open_project(second)
+    QApplication.processEvents()
+
+    _assert_down_walks_the_navigator(window)
+
+
+def test_returning_to_the_window_after_an_open_keeps_down_on_the_first_row(
+    window: MainWindow, tmp_path: Path
+) -> None:
+    root = ProjectService().create_project(tmp_path / "away.mufinder", "Away").project_root
+    _active(window)
+    assert window.open_project(root)
+    QApplication.processEvents()
+
+    # Focus coming back to a tree with no current row must not pick one.
+    window._project_tree.clearFocus()
+    window._project_tree.setFocus(Qt.FocusReason.ActiveWindowFocusReason)
+    QApplication.processEvents()
+
+    assert window._project_tree.currentItem() is None
+    _assert_down_walks_the_navigator(window)
+
+
+def _missing_recents(window: MainWindow, tmp_path: Path, count: int) -> list[str]:
+    paths = [str(tmp_path / f"Missing{index}.mufinder") for index in range(count)]
+    _set_recents(window, paths)
+    return paths
+
+
+def _click_recent_row(window: MainWindow, row: int) -> None:
+    layout = window._home_recent_projects_layout
+    button = layout.itemAt(row).widget()
+    QTest.mouseClick(button, Qt.MouseButton.LeftButton)
+    QApplication.processEvents()
+
+
+@pytest.fixture
+def warned(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Answer warning boxes at once, recording the widget holding focus at the time."""
+
+    focused: list[str] = []
+    monkeypatch.setattr(
+        main_window_module.QMessageBox,
+        "warning",
+        lambda *args, **kwargs: focused.append(QApplication.focusWidget().accessibleName()),
+    )
+    return focused
+
+
+def test_a_missing_recent_entry_passes_focus_to_the_next_entry(
+    window: MainWindow, tmp_path: Path, warned: list[str]
+) -> None:
+    _active(window)
+    _missing_recents(window, tmp_path, 3)
+
+    _click_recent_row(window, 0)
+
+    assert window._recent_projects() == [
+        str(tmp_path / "Missing1.mufinder"),
+        str(tmp_path / "Missing2.mufinder"),
+    ]
+    assert warned == ["Open recent project Missing1"]
+    assert QApplication.focusWidget() is window._home_recent_projects_layout.itemAt(0).widget()
+
+
+def test_the_last_missing_recent_entry_passes_focus_to_the_entry_above(
+    window: MainWindow, tmp_path: Path, warned: list[str]
+) -> None:
+    _active(window)
+    _missing_recents(window, tmp_path, 2)
+
+    _click_recent_row(window, 1)
+
+    assert QApplication.focusWidget() is window._home_recent_projects_layout.itemAt(0).widget()
+    assert warned == ["Open recent project Missing0"]
+
+
+def test_the_only_missing_recent_entry_passes_focus_to_create_new_project(
+    window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(main_window_module.QMessageBox, "warning", lambda *args, **kwargs: None)
+    _active(window)
+    _missing_recents(window, tmp_path, 1)
+
+    _click_recent_row(window, 0)
+
+    focused = QApplication.focusWidget()
+    assert isinstance(focused, QPushButton)
+    assert focused.text() == "Create New Project"
+
+
+def test_a_failed_open_from_the_menu_leaves_focus_on_the_welcome_page_alone(
+    window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(main_window_module.QMessageBox, "warning", lambda *args, **kwargs: None)
+    _active(window)
+    paths = _missing_recents(window, tmp_path, 2)
+    open_button = window._home_welcome_page.findChildren(QPushButton)[1]
+    open_button.setFocus()
+
+    window._open_recent_project(paths[0])
+    QApplication.processEvents()
+
+    assert QApplication.focusWidget() is open_button
 
 
 def test_keyboard_focus_lands_on_the_navigator_after_new_project(
