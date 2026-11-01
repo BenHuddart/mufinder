@@ -27,6 +27,14 @@ nuclear-relaxation result, as ``site_source``. These results survive a change
 of muon site, so a record saved without a source has none: nothing is
 inferred, and it is not shown as an estimate.
 
+Dipolar-field, dipolar-tensor and nuclear-relaxation records carry the
+calculation-method version of their numbers in ``data["calculation_version"]``,
+written only when they are calculated (:data:`CALCULATION_METHOD_VERSION`). In
+the form state it sits where ``site_source`` does. A result with an older
+version, or none, keeps its numbers and shows :data:`OLDER_METHOD_RESULTS_NOTE`
+(:func:`uses_older_method`); moving a result to a record never updates its
+version.
+
 A muon-polarisation record (:data:`MUON_POLARISATION_RESULT_TYPE`) holds a
 :class:`~mufinder.science.polarisation.PolarisationResult` in
 ``data["result"]``, one record per owner. It is stored and read with
@@ -89,6 +97,18 @@ UNRELAXED_SITE_NOTE = (
 #: Appended to a status line about results calculated at a UEP site.
 UNRELAXED_ESTIMATE_SUFFIX = " Computed at an unrelaxed UEP site, so these are estimates."
 
+#: The method behind the dipolar-field, dipolar-tensor and nuclear-relaxation numbers
+#: MuFinder calculates now. Add 1 whenever a change means the same inputs give different
+#: numbers from one of those calculations, such as a corrected formula, position or
+#: default. Leave it alone for a change that gives the same numbers. Stored results with
+#: a lower version then show :data:`OLDER_METHOD_RESULTS_NOTE` until recalculated.
+CALCULATION_METHOD_VERSION = 1
+#: Where a stored result keeps the :data:`CALCULATION_METHOD_VERSION` it was calculated with.
+CALCULATION_VERSION_KEY = "calculation_version"
+
+#: The note shown beside a stored result calculated with an older method.
+OLDER_METHOD_RESULTS_NOTE = "Calculated with an older method. Calculate to update."
+
 MAGNETIC_FIELD_RESULT_TYPES = (
     MAGNETIC_FIELD_RESULT_TYPE,
     MAGNETIC_DIPOLAR_TENSOR_RESULT_TYPE,
@@ -101,6 +121,23 @@ def is_unrelaxed_site_source(source: object) -> bool:
     """Return whether a muon site of ``source`` is unrelaxed, so its fields are estimates."""
 
     return source == UEP_SITE_SOURCE
+
+
+def uses_older_method(result: Mapping[str, Any]) -> bool:
+    """Return whether a stored result predates :data:`CALCULATION_METHOD_VERSION`.
+
+    ``result`` is record data or a form-state result; one with no version
+    recorded counts as older, and an empty one is no result at all.
+    """
+
+    if not result:
+        return False
+    version = result.get(CALCULATION_VERSION_KEY)
+    return (
+        not isinstance(version, int)
+        or isinstance(version, bool)
+        or version < CALCULATION_METHOD_VERSION
+    )
 
 
 def field_result_site_source(
@@ -131,6 +168,8 @@ def _field_data(value: object) -> dict[str, Any] | None:
     data: dict[str, Any] = {"kind": str(value.get("kind", "")), "results": list(value["results"])}
     if value.get("site_source"):
         data["site_source"] = str(value["site_source"])
+    if CALCULATION_VERSION_KEY in value:
+        data[CALCULATION_VERSION_KEY] = value[CALCULATION_VERSION_KEY]
     return data
 
 
@@ -138,38 +177,52 @@ def _field_value(data: Mapping[str, Any]) -> object:
     value: dict[str, Any] = {"kind": data.get("kind", ""), "results": list(data.get("results", []))}
     if data.get("site_source"):
         value["site_source"] = str(data["site_source"])
+    if CALCULATION_VERSION_KEY in data:
+        value[CALCULATION_VERSION_KEY] = data[CALCULATION_VERSION_KEY]
     return value
 
 
 def _tensor_data(value: object) -> dict[str, Any] | None:
     if not isinstance(value, list) or not value:
         return None
-    sources = {entry.get("site_source") if isinstance(entry, Mapping) else None for entry in value}
-    source = sources.pop() if len(sources) == 1 else None
-    if not source:
-        return {"results": list(value)}
-    rows = [{key: item for key, item in entry.items() if key != "site_source"} for entry in value]
-    return {"results": rows, "site_source": str(source)}
+    data: dict[str, Any] = {"results": list(value)}
+    for key in ("site_source", CALCULATION_VERSION_KEY):
+        shared = [entry.get(key) if isinstance(entry, Mapping) else None for entry in value]
+        if shared[0] and all(item == shared[0] for item in shared):
+            data[key] = str(shared[0]) if key == "site_source" else shared[0]
+            data["results"] = [
+                {name: item for name, item in entry.items() if name != key}
+                for entry in data["results"]
+            ]
+    return data
 
 
 def _tensor_value(data: Mapping[str, Any]) -> object:
     rows = list(data.get("results", []))
-    source = data.get("site_source")
-    if not source:
+    shared: dict[str, Any] = {}
+    if data.get("site_source"):
+        shared["site_source"] = str(data["site_source"])
+    if CALCULATION_VERSION_KEY in data:
+        shared[CALCULATION_VERSION_KEY] = data[CALCULATION_VERSION_KEY]
+    if not shared:
         return rows
-    return [
-        {**row, "site_source": str(source)} if isinstance(row, Mapping) else row for row in rows
-    ]
+    return [{**row, **shared} if isinstance(row, Mapping) else row for row in rows]
 
 
 def _nuclear_data(value: object) -> dict[str, Any] | None:
     if not isinstance(value, Mapping) or not value:
         return None
     data: dict[str, Any] = {
-        "result": {key: item for key, item in value.items() if key != "site_source"}
+        "result": {
+            key: item
+            for key, item in value.items()
+            if key not in ("site_source", CALCULATION_VERSION_KEY)
+        }
     }
     if value.get("site_source"):
         data["site_source"] = str(value["site_source"])
+    if CALCULATION_VERSION_KEY in value:
+        data[CALCULATION_VERSION_KEY] = value[CALCULATION_VERSION_KEY]
     return data
 
 
@@ -178,6 +231,8 @@ def _nuclear_value(data: Mapping[str, Any]) -> object:
     value = dict(result) if isinstance(result, Mapping) else {}
     if value and data.get("site_source"):
         value["site_source"] = str(data["site_source"])
+    if value and CALCULATION_VERSION_KEY in data:
+        value[CALCULATION_VERSION_KEY] = data[CALCULATION_VERSION_KEY]
     return value
 
 

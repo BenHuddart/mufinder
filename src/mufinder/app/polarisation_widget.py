@@ -74,6 +74,7 @@ from mufinder.services.polarisation_simulations import (
     PolarisationSimulationRecord,
     SimulationSource,
     field_sources,
+    older_method_sources,
     polarisation_simulation,
     polarisation_simulation_summaries,
     prepare_polarisation_simulation,
@@ -202,6 +203,10 @@ class PolarisationWidget(QWidget):
         self._stale_note.setWordWrap(True)
         style_warning_text(self._stale_note)
         self._stale_note.setVisible(False)
+        self._older_method_note = QLabel("", self)
+        self._older_method_note.setWordWrap(True)
+        style_warning_text(self._older_method_note)
+        self._older_method_note.setVisible(False)
         self._warning_note = QLabel("", self)
         self._warning_note.setWordWrap(True)
         style_warning_text(self._warning_note)
@@ -582,6 +587,7 @@ class PolarisationWidget(QWidget):
         simulations_layout.addLayout(button_row)
         simulations_layout.addWidget(self._status)
         simulations_layout.addWidget(self._stale_note)
+        simulations_layout.addWidget(self._older_method_note)
         simulations_layout.addWidget(self._warning_note)
         simulations_layout.addWidget(self._estimate_note)
         simulations_layout.addWidget(self._plot_frame, 1)
@@ -744,6 +750,8 @@ class PolarisationWidget(QWidget):
                 table.insertRow(row)
                 stale = self._document is not None and bool(stale_sources(self._document, record))
                 status = "Stale" if stale else "Current"
+                if self._document is not None and older_method_sources(self._document, record):
+                    status += ", older method"
                 if record.estimate:
                     status += ", estimate"
                 cells = (
@@ -817,6 +825,9 @@ class PolarisationWidget(QWidget):
                 "simulation ran. Recalculate it to use the current fields."
             )
         self._stale_note.setVisible(bool(stale))
+        older = older_method_sources(self._document, record) if record and self._document else []
+        self._older_method_note.setText(_older_fields_note(older))
+        self._older_method_note.setVisible(bool(older))
         warnings = record.simulation.warnings if record is not None else ()
         self._warning_note.setText("\n".join(warnings))
         self._warning_note.setVisible(bool(warnings))
@@ -1115,15 +1126,33 @@ class PolarisationWidget(QWidget):
         if path is None:
             return
         try:
-            Path(path).write_text(export_text(record), encoding="utf-8")
+            older = older_method_sources(self._document, record) if self._document else []
+            Path(path).write_text(export_text(record, older_sources=older), encoding="utf-8")
         except OSError as exc:
             report_export_failed(self, exc)
             return
         report_export_saved(self, path)
 
 
-def export_text(record: PolarisationSimulationRecord) -> str:
-    """The simulation as text: a header, the time block, a blank line, the spectrum block."""
+def _older_fields_note(sources: Sequence[SimulationSource]) -> str:
+    """The note for a simulation whose ``sources`` hold fields from an older method."""
+
+    names = ", ".join(source.title for source in sources)
+    return (
+        f"The fields of {names} were calculated with an older method. "
+        "Calculate them to update, then recalculate this simulation."
+    )
+
+
+def export_text(
+    record: PolarisationSimulationRecord,
+    *,
+    older_sources: Sequence[SimulationSource] = (),
+) -> str:
+    """The simulation as text: a header, the time block, a blank line, the spectrum block.
+
+    ``older_sources`` are the sources whose fields come from an older method.
+    """
 
     static = record.simulation.static
     lines = [
@@ -1133,6 +1162,8 @@ def export_text(record: PolarisationSimulationRecord) -> str:
     ]
     if record.estimate:
         lines.append(f"# Estimate: {UNRELAXED_RESULTS_NOTE}")
+    if older_sources:
+        lines.append(f"# Older method: {_older_fields_note(older_sources)}")
     for key, value in record.settings.to_json().items():
         lines.append(f"# {key}: {value}")
     for warning in record.simulation.warnings:

@@ -150,12 +150,18 @@ exists again. A simulation that uses a field result computed at an unrelaxed
 UEP site is marked ``estimate``, with the same note as on the Magnetic Fields
 page.
 
+A simulation whose field results were calculated with an older method (see
+:ref:`older-method-results`) has ``older method`` in its ``Status`` and a note
+naming those field results. Calculating them again on their page makes the
+simulation ``Stale``, and ``Recalculate`` then brings it up to date.
+
 Exported data
 -------------
 
 ``Export Data…`` writes a ``.dat`` or ``.txt`` file. Lines starting with
 ``#`` give the simulation's name, its field results and weights, every
-setting, any warning and, for an estimate, the estimate note. Two blocks of
+setting, any warning and, for an estimate or fields from an older method, the
+same note. Two blocks of
 columns follow, separated by a blank line:
 
 - the time domain: ``t_us``, one ``P_`` column per site, ``P_average``, and

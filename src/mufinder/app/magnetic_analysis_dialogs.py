@@ -30,7 +30,7 @@ from PySide6.QtWidgets import (
 from mufinder.app.blocking_call import BlockingCallCancelled
 from mufinder.app.decimal_input import DecimalLineEdit
 from mufinder.app.magnetic_component_dialogs import selector_label
-from mufinder.app.result_notes import unrelaxed_results_note
+from mufinder.app.result_notes import older_method_results_note, unrelaxed_results_note
 from mufinder.app.theme import (
     controls_scroll_area,
     style_hint_text,
@@ -59,8 +59,11 @@ from mufinder.science.magnetic_structure import (
 from mufinder.science.nuclear_relaxation import NuclearRelaxationOptions
 from mufinder.services.magnetic_field_calculation import cancelled_status
 from mufinder.services.magnetic_field_results import (
+    CALCULATION_METHOD_VERSION,
+    CALCULATION_VERSION_KEY,
     UNRELAXED_ESTIMATE_SUFFIX,
     is_unrelaxed_site_source,
+    uses_older_method,
 )
 from mufinder.services.magnetic_field_sites import MagneticMuonSiteOption
 
@@ -153,6 +156,7 @@ class NuclearRelaxationDialog(QDialog):
             stretch_last_section=False,
             accessible_name="Element Contributions",
         )
+        self._older_method_note = older_method_results_note(self)
         self._estimate_note = unrelaxed_results_note(self)
 
         self._build_layout()
@@ -230,6 +234,7 @@ class NuclearRelaxationDialog(QDialog):
 
         results_group = QGroupBox("Results", self)
         results_layout = QVBoxLayout(results_group)
+        results_layout.addWidget(self._older_method_note)
         results_layout.addWidget(self._estimate_note)
         results_layout.addWidget(self._summary_table)
         results_layout.addWidget(self._element_table)
@@ -268,6 +273,8 @@ class NuclearRelaxationDialog(QDialog):
         self._results_state = dict(jsonable) if isinstance(jsonable, Mapping) else {}
         if self._results_state and self._muon_site is not None:
             self._results_state["site_source"] = self._muon_site.source
+        if self._results_state:
+            self._results_state[CALCULATION_VERSION_KEY] = CALCULATION_METHOD_VERSION
         elements = self._selected_elements()
         if self._results_state and elements is not None:
             self._results_state["elements"] = list(elements)
@@ -319,6 +326,7 @@ class NuclearRelaxationDialog(QDialog):
     def _populate_results(self, result: Mapping[str, object]) -> None:
         self._summary_table.setRowCount(0)
         self._element_table.setRowCount(0)
+        self._older_method_note.setVisible(uses_older_method(result))
         self._estimate_note.setVisible(is_unrelaxed_site_source(result.get("site_source")))
         if not result:
             return
@@ -454,6 +462,7 @@ class DipolarTensorDialog(QDialog):
             self._result_unit_combo.setCurrentIndex(t_index)
         self._result_unit_combo.currentIndexChanged.connect(self._refresh_result_units)
 
+        self._older_method_note = older_method_results_note(self)
         self._estimate_note = unrelaxed_results_note(self)
         self._result_scroll = controls_scroll_area(self, framed=True)
         self._result_content = QWidget(self._result_scroll)
@@ -525,6 +534,7 @@ class DipolarTensorDialog(QDialog):
         unit_row.addWidget(self._result_unit_combo)
         unit_row.addStretch(1)
         result_layout.addLayout(unit_row)
+        result_layout.addWidget(self._older_method_note)
         result_layout.addWidget(self._estimate_note)
         result_layout.addWidget(self._result_scroll, 1)
         layout.addWidget(result_group, 1)
@@ -598,6 +608,8 @@ class DipolarTensorDialog(QDialog):
         if self._muon_site is not None:
             for state in self._results_state:
                 state["site_source"] = self._muon_site.source
+        for state in self._results_state:
+            state[CALCULATION_VERSION_KEY] = CALCULATION_METHOD_VERSION
         self._populate_results(self._results_state)
         count = len(self._results_state)
         suffix = UNRELAXED_ESTIMATE_SUFFIX if not self._estimate_note.isHidden() else ""
@@ -684,6 +696,7 @@ class DipolarTensorDialog(QDialog):
                 widget.deleteLater()
         self._result_tables = []
         self._result_tensors = []
+        self._older_method_note.setVisible(any(uses_older_method(result) for result in results))
         self._estimate_note.setVisible(
             any(is_unrelaxed_site_source(result.get("site_source")) for result in results)
         )

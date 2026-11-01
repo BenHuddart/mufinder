@@ -34,6 +34,8 @@ from mufinder.app.theme import plot_series_colours
 from mufinder.science.polarisation import PolarisationError
 from mufinder.science.polarisation_simulation import PolarisationSettings
 from mufinder.services.magnetic_field_results import (
+    CALCULATION_METHOD_VERSION,
+    CALCULATION_VERSION_KEY,
     MAGNETIC_FIELD_PAGE_OWNER,
     UEP_SITE_SOURCE,
     UNRELAXED_RESULTS_NOTE,
@@ -54,11 +56,19 @@ _SOURCE_TITLES = {
 }
 
 
-def _store_fields(document, owner: str, *results, site_source: str | None = None) -> None:
+def _store_fields(
+    document,
+    owner: str,
+    *results,
+    site_source: str | None = None,
+    version: int | None = CALCULATION_METHOD_VERSION,
+) -> None:
     value: dict[str, object] = {
         "kind": "commensurate",
         "results": [result.to_json() for result in results],
     }
+    if version is not None:
+        value[CALCULATION_VERSION_KEY] = version
     if site_source:
         value["site_source"] = site_source
     store_magnetic_field_results(document, owner, {"magnetic_field_results": value})
@@ -380,6 +390,33 @@ def test_recalculated_fields_mark_a_simulation_stale(page, document) -> None:
     _button(page, "Recalculate").click()
     assert _table(page, "Simulations").item(0, 4).text() == "Current"
     assert _note(page, "Stale:") is None
+
+
+def test_a_simulation_of_fields_from_an_older_method_says_so_until_they_are_updated(
+    page, document, tmp_path, monkeypatch
+) -> None:
+    older = "The fields of Magnetic Fields were calculated with an older method."
+    _store_fields(document, MAGNETIC_FIELD_PAGE_OWNER, field_result((0.0, 0.0, 0.01)), version=None)
+    page.refresh()
+    _button(page, "Add Simulation").click()
+
+    assert _table(page, "Simulations").item(0, 4).text() == "Current, older method"
+    assert (_note(page, older) or "").endswith("recalculate this simulation.")
+
+    target = tmp_path / "older.dat"
+    monkeypatch.setattr(module, "ask_save_path", lambda *_args, **_kwargs: target)
+    monkeypatch.setattr(module, "report_export_saved", lambda *_args: None)
+    _button(page, "Export Data…").click()
+    assert f"# Older method: {older}" in target.read_text(encoding="utf-8")
+
+    # The fields are recalculated: the simulation is stale, then current, and the note goes.
+    _store_fields(document, MAGNETIC_FIELD_PAGE_OWNER, field_result((0.0, 0.0, 0.01)))
+    page.refresh()
+    assert _table(page, "Simulations").item(0, 4).text() == "Stale"
+    assert _note(page, older) is None
+    _button(page, "Recalculate").click()
+    assert _table(page, "Simulations").item(0, 4).text() == "Current"
+    assert _note(page, older) is None
 
 
 def test_remove_asks_first_and_binds_delete_and_backspace(

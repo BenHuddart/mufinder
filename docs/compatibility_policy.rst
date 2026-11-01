@@ -576,6 +576,22 @@ Compatibility ledger
      - Read-side repair. Keep until a saved-project schema version bump
        includes a migration that copies the selected site's source into each
        stored ``magnetic_field`` record.
+   * - ``magnetic_field``, ``magnetic_dipolar_tensor`` and ``nuclear_relaxation``
+       records without ``calculation_version``
+     - ``mufinder.services.magnetic_field_results`` (``uses_older_method``,
+       ``CALCULATION_METHOD_VERSION``), read by the Magnetic Fields page, its
+       dipolar-tensor and nuclear-relaxation dialogs and, for field records,
+       ``mufinder.services.polarisation_simulations``
+       (``older_method_sources``)
+     - A calculation writes the method version of its numbers in
+       ``data["calculation_version"]``. A record saved before the key existed
+       counts as older than any version: it keeps its numbers and shows the
+       older-method note until it is recalculated. Saving, reopening or copying
+       a record to a workspace never writes the key. An older MuFinder ignores
+       the key and drops it on save, which marks the result older again.
+     - Current project data, not deprecated. The key is additive and no
+       migration may fill it in, because a missing version is what marks a
+       result as older.
    * - ``magnetic_field`` distribution entries without ``terms``
      - ``mufinder.science.magnetic_fields``
        (``MagneticFieldDistributionResult.from_json``,

@@ -17,7 +17,7 @@ from PySide6.QtWidgets import QAbstractItemView, QApplication, QDialog, QProgres
 import mufinder.app.magnetic_field_widget as magnetic_field_widget_module
 import mufinder.services.magnetic_field_calculation as magnetic_field_calculation_module
 import mufinder.science.magnetic_fields as magnetic_fields_module
-from mufinder.app.magnetic_analysis_dialogs import NuclearRelaxationDialog
+from mufinder.app.magnetic_analysis_dialogs import DipolarTensorDialog, NuclearRelaxationDialog
 from mufinder.app.magnetic_component_dialogs import MagneticComponentDialog
 from mufinder.app.magnetic_field_distribution_dialog import MagneticFieldDistributionDialog
 from mufinder.app.magnetic_field_widget import (
@@ -41,8 +41,15 @@ from mufinder.science.magnetic_structure import (
 )
 from mufinder.science.nuclear_relaxation import NuclearRelaxationOptions
 from mufinder.services.magnetic_field_results import (
+    CALCULATION_METHOD_VERSION,
+    CALCULATION_VERSION_KEY,
+    FORM_RESULT_KEYS,
     MAGNETIC_FIELD_PAGE_OWNER,
+    MAGNETIC_FIELD_RESULT_TYPE,
+    OLDER_METHOD_RESULTS_NOTE,
     attach_magnetic_field_results,
+    magnetic_field_result,
+    magnetic_field_results,
     store_magnetic_field_results,
 )
 from mufinder.services.magnetic_field_settings import (
@@ -535,6 +542,188 @@ def test_magnetic_field_widget_calculates_commensurate_fields(qapp, tmp_path, mo
     ] == pytest.approx([0.1, 0.2, 0.3])
     assert "commensurate" in widget._calculation_status.text()
     widget.close()
+
+
+def _calculating_widget(document, monkeypatch) -> MagneticFieldWidget:
+    """A page on ``document`` whose ``calculate_fields`` gives one field of about 0.37 T."""
+
+    class _Result:
+        site_label = "site 1"
+        total = (0.1, 0.2, 0.3)
+        magnitude = float(np.linalg.norm(total))
+        distortion = None
+
+    monkeypatch.setattr(
+        magnetic_field_calculation_module,
+        "classify_magnetic_model",
+        lambda *_args, **_kwargs: "commensurate",
+    )
+    monkeypatch.setattr(
+        magnetic_field_calculation_module,
+        "calculate_commensurate_fields",
+        lambda *_args, **_kwargs: (_Result(),),
+    )
+    widget = MagneticFieldWidget()
+    widget.set_document(document)
+    widget.set_model(MagneticStructureModel(components=(z_moment_component("one", "One", 0),)))
+    widget._selected_muon_site = custom_muon_site((0.25, 0.5, 0.75))
+    widget._refresh_site_summary()
+    return widget
+
+
+def _reopened_page(service: ProjectService, root) -> tuple[object, MagneticFieldWidget]:
+    document = service.load_project(root)
+    page = MagneticFieldWidget()
+    page.set_document(document)
+    page.set_form_state(
+        attach_magnetic_field_results(
+            document, MAGNETIC_FIELD_PAGE_OWNER, document.ui_state.get("magnetic_field_form", {})
+        )
+    )
+    return document, page
+
+
+def _save_page(service: ProjectService, document, page: MagneticFieldWidget) -> None:
+    document.ui_state["magnetic_field_form"] = store_magnetic_field_results(
+        document, MAGNETIC_FIELD_PAGE_OWNER, page.collect_state()
+    )
+    service.save_project(document)
+
+
+@pytest.mark.parametrize(
+    "version",
+    [{}, {CALCULATION_VERSION_KEY: CALCULATION_METHOD_VERSION - 1}],
+    ids=["none recorded", "lower"],
+)
+def test_an_older_stored_field_says_so_through_reopen_until_calculate_clears_it(
+    qapp, tmp_path, monkeypatch, version
+) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "older.mufinder", "Older")
+    service.add_structure(document, feo_host_structure())
+    old_entry = {
+        "site_label": "site 1",
+        "muon_position": [0.5, 0.0, 0.75],
+        "total_T": [1.02533, 0.0, 0.255881],
+        "magnitude_T": 1.05678,
+    }
+    document.ui_state["magnetic_field_form"] = store_magnetic_field_results(
+        document,
+        MAGNETIC_FIELD_PAGE_OWNER,
+        {
+            "magnetic_field_results": {
+                "kind": "commensurate",
+                "results": [old_entry],
+                "site_source": "custom",
+                **version,
+            }
+        },
+    )
+    service.save_project(document)
+
+    # Reopening and saving without Calculate keeps the number, its version and the note.
+    for _reopen in range(2):
+        document, page = _reopened_page(service, document.project_root)
+        assert page._result_table.item(0, 4).text() == "1.05678"
+        assert not page._older_method_note.isHidden()
+        assert page._older_method_note.text() == OLDER_METHOD_RESULTS_NOTE
+        _save_page(service, document, page)
+        page.close()
+    record = magnetic_field_result(document, MAGNETIC_FIELD_PAGE_OWNER, MAGNETIC_FIELD_RESULT_TYPE)
+    assert record.data["results"] == [old_entry]
+    assert record.data.get(CALCULATION_VERSION_KEY) == version.get(CALCULATION_VERSION_KEY)
+
+    page = _calculating_widget(document, monkeypatch)
+    page.set_form_state(attach_magnetic_field_results(document, MAGNETIC_FIELD_PAGE_OWNER, {}))
+    page._selected_muon_site = custom_muon_site((0.25, 0.5, 0.75))
+    assert not page._older_method_note.isHidden()
+    page.calculate_fields()
+    assert page._older_method_note.isHidden()
+    _save_page(service, document, page)
+    page.close()
+
+    document, page = _reopened_page(service, document.project_root)
+    assert page._result_table.rowCount() == 1
+    assert page._older_method_note.isHidden()
+    page.close()
+
+
+def test_a_project_with_no_stored_field_shows_no_older_note(qapp, tmp_path) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "empty.mufinder", "Empty")
+    service.add_structure(document, feo_host_structure())
+    service.save_project(document)
+
+    document, page = _reopened_page(service, document.project_root)
+
+    assert page._result_table.rowCount() == 0
+    assert page._older_method_note.isHidden()
+    page.close()
+
+
+def test_clearing_older_field_results_clears_the_note(qapp, tmp_path) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "clear.mufinder", "Clear")
+    service.add_structure(document, feo_host_structure())
+    page = MagneticFieldWidget()
+    page.set_document(document)
+    page.set_form_state(
+        {
+            "magnetic_field_results": {
+                "kind": "commensurate",
+                "results": [{"site_label": "site 1", "total_T": [0.0, 0.0, 1.0]}],
+            }
+        }
+    )
+    assert not page._older_method_note.isHidden()
+
+    page.set_calculation_settings(replace(page.calculation_settings(), histogram_bins=64))
+
+    assert page._result_table.rowCount() == 0
+    assert page._older_method_note.isHidden()
+    page.close()
+
+
+def test_every_calculated_result_is_stored_with_the_method_version(
+    qapp, tmp_path, monkeypatch
+) -> None:
+    """Fails when a calculation, or a result type added to the form, stores no version."""
+
+    service = ProjectService()
+    document = service.create_project(tmp_path / "versions.mufinder", "Versions")
+    service.add_structure(document, feo_host_structure())
+    page = _calculating_widget(document, monkeypatch)
+    page.calculate_fields()
+    site = page.selected_muon_site()
+    tensor_dialog = DipolarTensorDialog(
+        feo_host_structure(),
+        page._model,
+        site,
+        include_equivalent_sites=False,
+        calculate_callback=lambda _dialog: (
+            {"site_label": "site 1", "dipolar_tensor_T_per_muB": np.eye(3).tolist()},
+        ),
+    )
+    tensor_dialog._calculate()
+    nuclear_dialog = NuclearRelaxationDialog(
+        muon_site=site,
+        distortion_available=False,
+        calculate_callback=lambda _dialog: {"mode": "zf_polycrystal", "sigma": 0.2},
+    )
+    nuclear_dialog._calculate()
+    page._dipolar_tensor_results_state = tensor_dialog.results_state()
+    page._nuclear_relaxation_results_state = nuclear_dialog.results_state()
+    state = page.collect_state()
+    assert all(state[key] for key in FORM_RESULT_KEYS)
+
+    store_magnetic_field_results(document, MAGNETIC_FIELD_PAGE_OWNER, state)
+
+    records = magnetic_field_results(document, MAGNETIC_FIELD_PAGE_OWNER)
+    assert len(records) == len(FORM_RESULT_KEYS)
+    for record in records:
+        assert record.data[CALCULATION_VERSION_KEY] == CALCULATION_METHOD_VERSION
+    for closed in (tensor_dialog, nuclear_dialog, page):
+        closed.close()
 
 
 def _fake_muesr_without_lattice_field(monkeypatch) -> None:

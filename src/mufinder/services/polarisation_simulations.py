@@ -27,7 +27,10 @@ an unrelaxed UEP site.
 
 Recalculating or removing a source's fields replaces or deletes its field
 record. The simulation is then stale (:func:`stale_sources`): it is kept,
-and can be recalculated once every source has fields again.
+and can be recalculated once every source has fields again. A source whose
+field record predates the current calculation method is listed by
+:func:`older_method_sources`; the simulation records no method version of its
+own, because recalculating those fields makes it stale.
 """
 
 from __future__ import annotations
@@ -64,6 +67,7 @@ from mufinder.services.magnetic_field_results import (
     field_result_site_source,
     is_unrelaxed_site_source,
     magnetic_field_result,
+    uses_older_method,
 )
 from mufinder.services.project_document import ProjectDocument, active_host_structure
 from mufinder.services.project_summary import magnetic_field_workspaces
@@ -490,6 +494,19 @@ def stale_sources(
         if current is None or str(current.id) != source.record_id:
             stale.append(source)
     return stale
+
+
+def older_method_sources(
+    document: ProjectDocument, record: PolarisationSimulationRecord | SimulationSummary
+) -> list[SimulationSource]:
+    """Return the sources whose stored fields were calculated with an older method."""
+
+    older = []
+    for source in record.sources:
+        current = magnetic_field_result(document, source.owner, MAGNETIC_FIELD_RESULT_TYPE)
+        if current is not None and uses_older_method(current.data):
+            older.append(source)
+    return older
 
 
 def _field_source(document: ProjectDocument, owner: str, title: str) -> FieldSource | None:
