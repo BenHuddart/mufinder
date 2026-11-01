@@ -7,14 +7,14 @@ minima are grouped. Two minima are linked when one lies within a distance in
 differ by less than a tolerance in eV, and the groups are the connected components
 of those links (:func:`~mufinder.science.relaxation_analysis.cluster_connected_components`).
 
-The classical energy is the one every search has, so a zero-point energy added
-later changes neither the groups nor their order. Groups are numbered from the
-lowest energy. No normalisation or batch statistic enters, so a group does not depend
+Grouping uses the classical energy, so the zero-point energy changes neither the
+groups nor their order. Groups are numbered from the lowest classical energy. No normalisation or batch statistic enters, so a group does not depend
 on which other sites the batch found.
 """
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
@@ -315,6 +315,28 @@ def uep_grouping_report(summary: UepBatchSummary) -> str:
     return text
 
 
+def uep_search_outcome(results: Sequence[UepOptimizationResult]) -> str:
+    """Return the search log's count of how the optimisations ended."""
+
+    converged = [result for result in results if result.success]
+    labels = Counter(result.classification.label for result in converged)
+    parts = [plural(labels["minimum"], "minimum", "minima")]
+    parts += [
+        plural(labels[label], singular, many)
+        for label, singular, many in (
+            ("saddle", "saddle point", "saddle points"),
+            ("maximum", "maximum", "maxima"),
+            ("flat", "flat point", "flat points"),
+        )
+        if labels[label]
+    ]
+    text = f"Converged: {', '.join(parts)}."
+    failed = len(results) - len(converged)
+    if failed:
+        text += f" Failed to converge: {failed}."
+    return text
+
+
 def uep_search_log(existing: str, summary: UepBatchSummary) -> str:
     """Return a search log with its account of the grouping brought up to date."""
 
@@ -390,4 +412,5 @@ __all__ = [
     "uep_batch_summary_from_dict",
     "uep_grouping_report",
     "uep_search_log",
+    "uep_search_outcome",
 ]

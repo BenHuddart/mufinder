@@ -72,15 +72,12 @@ Open ``UEP`` in the project navigator, then:
 5. **Open the analysis window.** When the row is ``completed``, click ``Open
    Wizard`` in its ``Analysis`` column. The window ``UEP Analysis - <job
    label>`` opens with three tabs (see `The analysis window`_).
-6. **Run a batch search.** On the ``Batch Search`` tab, set the sampling and
-   optimizer values and click ``Run Batch Search``. MuFinder generates random
-   starting positions, relaxes each on the potential and groups the minima.
-7. **Optionally add zero-point energies.** Once the optimization finishes,
-   click ``Calculate ZPE`` to estimate the harmonic zero-point energy of every
-   optimized site that is a stable minimum.
-8. **Read the sites.** The table lists the sites as soon as the search ends
-   (see `How sites are grouped`_).
-9. **Commit sites for relaxation.** Open ``Muon Sites -> Generation``, choose
+6. **Run a batch search.** On the ``Batch Search`` tab, set the number of starts
+   and the two distances and click ``Run Batch Search``. MuFinder generates random
+   starting positions, relaxes each on the potential, computes the harmonic
+   zero-point energy of every minimum and groups the minima. The table lists the
+   sites as soon as the search ends (see `How sites are grouped`_).
+7. **Commit sites for relaxation.** Open ``Muon Sites -> Generation``, choose
    the ``UEP clusters`` method and generate sites from the UEP sites
    (see `Using UEP clusters for relaxation starts`_).
 
@@ -109,8 +106,8 @@ Completed UEP source jobs open ``UEP Analysis - <job label>`` with three tabs:
 
 .. figure:: ../_generated/screenshots/uep_batch_search.webp
    :alt: The Batch Search tab of the UEP analysis window after twelve random
-         starts, with the sampling and optimizer controls, the search log and
-         the minima grouped into one site.
+         starts, with the search controls, the search log and the minima grouped
+         into one site with its energies.
 
    A finished batch search in the CoF₂ model density of
    :doc:`/user_guide/examples/cof2`.
@@ -119,7 +116,8 @@ The window offers:
 
 - full-cell 3D potential grids (``Calculate Cell Potential Grid``) shared
   between the isosurface and slice views, with a ``Gaussian width factor``
-  control, zero-minimum shifting (``Set minimum potential to zero``) and XSF
+  control (changing it discards a search's results, after a confirmation whose
+  default is ``Cancel``), zero-minimum shifting (``Set minimum potential to zero``) and XSF
   export (``Export XSF…``);
 - responsive isosurface visualization from the cached full-cell potential grid;
 - interactive 2D slice planes (``Add Plane``) defined from one selected atom
@@ -133,14 +131,17 @@ The window offers:
 - slice saturation controls (``Slice saturation``, ``Min (eV)``, ``Max
   (eV)``) and a colorbar that marks when clipped display limits exclude lower
   or higher physical potentials from the visible range;
-- random-start batch searches on the ``Batch Search`` tab. The ``Sampling``
-  card sets ``Random starts`` (default 12), ``Min muon-muon distance (A)``
-  (default 0.8), ``Min muon-atom distance (A)`` (default 1.0) and ``Max
-  attempts`` (default 5000). The optimizer card sets ``Gaussian width factor``,
-  ``Optimization tolerance (eV)`` (default 1e-5) and ``Optimizer max steps``
-  (default 100). ``Run Batch Search`` generates and relaxes the candidate
-  starts first and groups the minima when they finish; an optional ``Calculate
-  ZPE`` pass follows for the optimized sites;
+- random-start batch searches on the ``Batch Search`` tab. The controls are
+  ``Random starts`` (default 12), ``Min muon-muon distance (Å)`` (default 0.8) and
+  ``Min muon-atom distance (Å)`` (default 1.0). ``Advanced`` shows ``Max attempts``
+  (default 5000), ``Force tolerance (eV/Å)`` (default 1e-5), the gradient norm at
+  which a start counts as converged, and ``Optimizer max steps`` (default 300).
+  ``Advanced`` is open when a saved window holds other values for these, and a
+  saved window keeps its values. ``Run Batch Search`` relaxes the starts, with one progress bar, and fills the
+  table when they finish. Over existing results it asks first, and ``Cancel``, the
+  default, keeps them. The ``Search Log`` gives the starts requested and generated,
+  how many ended on minima and on other stationary points, how many failed to
+  converge, and the sites found;
 - muon markers that can be added to the isosurface and slice viewers with
   ``Add / remove muon``, either from the batch-search groups or from
   custom fractional coordinates;
@@ -173,11 +174,12 @@ the results as soon as the search ends:
   than 1 meV, so nearby but distinct minima stay apart.
 
 Each group is one ``Site`` row, with one ``Start`` row per start that reached it.
-Its ``Size`` is its number of members. Its
-coordinates and energy are those of its representative, the lowest-energy member,
-at the image of its orbit with the smallest fractional coordinates, compared
-``fX``, then ``fY``, then ``fZ``. Rows are ordered from the lowest energy. The
-members stay available under each row and in the viewer.
+Its ``Size`` is its number of members. Its coordinates, ``Classical energy``,
+``ZPE`` and ``Total energy`` are those of its representative, the member with the
+lowest classical energy, at the image of its orbit with the smallest fractional
+coordinates, compared ``fX``, then ``fY``, then ``fZ``. Rows are ordered from the
+lowest classical energy. The members stay available under each row and in the
+viewer.
 
 Every row's ``fX``, ``fY`` and ``fZ`` are in the cell of the structure the source job
 was configured on, the coordinates ``Muon Sites -> Generation`` receives, so in a job
@@ -185,8 +187,12 @@ on a supercell they are in the input structure's cell and not the supercell's. T
 viewer still draws each muon where it sits in the job's cell, and a custom muon you
 type in ``Add / Remove Muons`` is in the job's cell, as that dialog says.
 
-All of this uses the classical energy, which every search has, so ``Calculate
-ZPE`` adds its columns without changing the groups or their order.
+Grouping, ordering and the choice of representative all use the classical energy,
+so the zero-point energy changes none of them, and a lower ``Total energy`` further
+down the table is a real difference between the sites. ``Generation`` and the viewers
+take the representative's ``ZPE`` and ``Total energy`` from its row. A search saved
+without zero-point energies shows those two columns blank, and the ``Search Log``
+says to run it again.
 
 The tolerance is a length and the energy limit is an energy, so a group does not
 depend on which other sites the batch found, and there is no normalisation or
@@ -324,10 +330,8 @@ MuFinder implements this workflow in its own codebase rather than wrapping
   electrostatic potential.
 - The Hessian eigenvalues distinguish minima from saddles and maxima and are
   also used when estimating a zero-point contribution for locally stable minima.
-- MuFinder evaluates that harmonic zero-point term separately from the random
-  search itself when you click ``Calculate ZPE`` in the search controls, so the
-  optimized sites can be inspected first and quantum corrections can be added
-  afterwards.
+- MuFinder computes that harmonic zero-point term for every minimum during the
+  random search, from the Hessian that classifies the optimized site.
 
 The AIRSS paper and the ``pymuonsuite`` supplementary clustering material are
 also helpful context for how to interpret repeated random starts after

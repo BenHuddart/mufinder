@@ -9,6 +9,8 @@ from typing import Any
 
 from mufinder.domain.constants import MUON_MASS_KG
 from mufinder.science.uep import (
+    DEFAULT_FORCE_TOLERANCE_EV_PER_ANG,
+    DEFAULT_OPTIMIZER_MAX_STEPS,
     UepError,
     UepField,
     UepOptimizationResult,
@@ -192,8 +194,10 @@ def run_manifest_file(path: str | Path) -> Path:
                 float(value) for value in payload.get("start_position_ang", (0.0, 0.0, 0.0))
             ),
             particle_mass_kg=particle_mass_kg,
-            tolerance_ev=float(payload.get("tolerance_ev", 1e-5)),
-            max_steps=int(payload.get("max_steps", 300)),
+            force_tolerance_ev_per_ang=float(
+                payload.get("tolerance_ev", DEFAULT_FORCE_TOLERANCE_EV_PER_ANG)
+            ),
+            max_steps=int(payload.get("max_steps", DEFAULT_OPTIMIZER_MAX_STEPS)),
             method=str(payload.get("method", "trust-exact")),
         )
         optimize_probe = probe_point(field, optimization.optimized_position_ang)

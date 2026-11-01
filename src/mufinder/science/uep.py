@@ -51,6 +51,12 @@ def _pyvista_modules():
     return pv
 
 
+#: The gradient norm, in eV/Å, at which a search start counts as converged.
+DEFAULT_FORCE_TOLERANCE_EV_PER_ANG = 1e-5
+#: The iteration limit of one search start.
+DEFAULT_OPTIMIZER_MAX_STEPS = 300
+
+
 class UepError(ValueError):
     """Raised when UEP source data or analysis is invalid."""
 
@@ -1470,9 +1476,8 @@ def probe_point(
     position_ang: tuple[float, float, float] | np.ndarray,
     *,
     particle_mass_kg: float = MUON_MASS_KG,
-    include_zero_point_energy: bool = True,
 ) -> UepProbeResult:
-    """Evaluate the local UEP, derivatives, and Hessian classification."""
+    """Evaluate the local UEP, its derivatives, the Hessian classification and the ZPE."""
 
     position = np.asarray(position_ang, dtype=float)
     total_potential, electronic_potential, ionic_potential = field.potential(position)
@@ -1480,11 +1485,7 @@ def probe_point(
     total_hessian, electronic_hessian, ionic_hessian = field.hessian(position)
 
     classification = classify_stationary_point(total_hessian[0])
-    zpe = (
-        zero_point_energy_ev(total_hessian[0], particle_mass_kg=particle_mass_kg)
-        if include_zero_point_energy
-        else None
-    )
+    zpe = zero_point_energy_ev(total_hessian[0], particle_mass_kg=particle_mass_kg)
     total_energy = float(total_potential[0] + zpe) if zpe is not None else None
 
     return UepProbeResult(
@@ -1516,12 +1517,18 @@ def optimize_muon_position(
     *,
     start_position_ang: tuple[float, float, float] | np.ndarray,
     particle_mass_kg: float = MUON_MASS_KG,
-    tolerance_ev: float = 1e-5,
-    max_steps: int = 300,
+    force_tolerance_ev_per_ang: float = DEFAULT_FORCE_TOLERANCE_EV_PER_ANG,
+    max_steps: int = DEFAULT_OPTIMIZER_MAX_STEPS,
     method: str = "trust-exact",
-    include_zero_point_energy: bool = True,
 ) -> UepOptimizationResult:
-    """Optimize one trial muon position under the UEP approximation."""
+    """Optimize one trial muon position under the UEP approximation.
+
+    With the default ``trust-exact``, the optimizer stops when the norm of the potential's
+    gradient falls below ``force_tolerance_ev_per_ang``; another method reads it as its own
+    ``tol``. A converged result carries the harmonic zero-point energy from the Hessian at
+    the end point, or ``None`` when a curvature there is negative. A start that did not
+    converge has none, because its end point is not a stationary point.
+    """
 
     start = np.asarray(start_position_ang, dtype=float)
     if start.shape != (3,):
@@ -1542,7 +1549,7 @@ def optimize_muon_position(
         jac=gradient,
         hess=hessian,
         method=method,
-        tol=float(tolerance_ev),
+        tol=float(force_tolerance_ev_per_ang),
         options={"maxiter": int(max_steps)},
     )
 
@@ -1551,46 +1558,18 @@ def optimize_muon_position(
         field,
         optimized,
         particle_mass_kg=particle_mass_kg,
-        include_zero_point_energy=include_zero_point_energy,
     )
+    converged = bool(solution.success)
     return UepOptimizationResult(
         start_position_ang=tuple(float(value) for value in start),
         optimized_position_ang=tuple(float(value) for value in optimized),
         optimized_fractional_position=probe.fractional_position,
         classical_energy_ev=probe.potential_total_ev,
-        zero_point_energy_ev=probe.zero_point_energy_ev,
-        total_energy_ev=probe.total_quantum_energy_ev,
-        success=bool(solution.success),
+        zero_point_energy_ev=probe.zero_point_energy_ev if converged else None,
+        total_energy_ev=probe.total_quantum_energy_ev if converged else None,
+        success=converged,
         message=str(solution.message),
         iterations=int(getattr(solution, "nit", 0) or 0),
-        classification=probe.classification,
-    )
-
-
-def calculate_optimization_zero_point_energy(
-    field: UepField,
-    optimization: UepOptimizationResult,
-    *,
-    particle_mass_kg: float = MUON_MASS_KG,
-) -> UepOptimizationResult:
-    """Re-evaluate the optimized site and attach harmonic ZPE data."""
-
-    probe = probe_point(
-        field,
-        optimization.optimized_position_ang,
-        particle_mass_kg=particle_mass_kg,
-        include_zero_point_energy=True,
-    )
-    return UepOptimizationResult(
-        start_position_ang=optimization.start_position_ang,
-        optimized_position_ang=optimization.optimized_position_ang,
-        optimized_fractional_position=probe.fractional_position,
-        classical_energy_ev=probe.potential_total_ev,
-        zero_point_energy_ev=probe.zero_point_energy_ev,
-        total_energy_ev=probe.total_quantum_energy_ev,
-        success=optimization.success,
-        message=optimization.message,
-        iterations=optimization.iterations,
         classification=probe.classification,
     )
 

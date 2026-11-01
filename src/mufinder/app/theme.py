@@ -294,6 +294,13 @@ def page_margins() -> QMargins:
     return QMargins(SPACING.md, SPACING.md, SPACING.md, SPACING.md)
 
 
+def set_progress_bar_complete(bar: QWidget, completed: bool) -> None:
+    """Draw a themed progress bar as finished, in the success colour, or as still going."""
+
+    bar.setProperty("generationState", "complete" if completed else "active")
+    refresh_widget_style(bar)
+
+
 def card_margins() -> QMargins:
     """Return the margins inside a card or a group of controls."""
 
@@ -2067,7 +2074,7 @@ def _muon_generation_styles(p: MuFinderPalette) -> str:
     QWidget#clusterPositionsCard QLabel {{
         background: transparent;
     }}
-    QProgressBar#muonGenerationProgress {{
+    QProgressBar#muonGenerationProgress, QProgressBar#uepBatchProgress {{
         border: 1px solid {p.border};
         border-radius: {RADIUS.control}px;
         background: {p.bg_surface_alt};
@@ -2075,15 +2082,17 @@ def _muon_generation_styles(p: MuFinderPalette) -> str:
         text-align: center;
         min-height: 22px;
     }}
-    QProgressBar#muonGenerationProgress::chunk {{
+    QProgressBar#muonGenerationProgress::chunk, QProgressBar#uepBatchProgress::chunk {{
         background: {p.accent};
         border-radius: {RADIUS.control}px;
         margin: 1px;
     }}
-    QProgressBar#muonGenerationProgress[generationState="complete"] {{
+    QProgressBar#muonGenerationProgress[generationState="complete"],
+    QProgressBar#uepBatchProgress[generationState="complete"] {{
         color: #FFFFFF;
     }}
-    QProgressBar#muonGenerationProgress[generationState="complete"]::chunk {{
+    QProgressBar#muonGenerationProgress[generationState="complete"]::chunk,
+    QProgressBar#uepBatchProgress[generationState="complete"]::chunk {{
         background: {p.success};
     }}
     """
