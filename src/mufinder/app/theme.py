@@ -746,6 +746,10 @@ class _FocusRing(QWidget):
         for child in control.children():
             if isinstance(child, QWidget) and child is not self:
                 child.installEventFilter(self)
+                # A scroll area keeps its bars inside container widgets.
+                for grandchild in child.children():
+                    if isinstance(grandchild, QScrollBar):
+                        grandchild.installEventFilter(self)
         if isinstance(control, QTabBar):
             control.currentChanged.connect(self._follow_control)
         self._follow_control()

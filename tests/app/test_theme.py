@@ -1469,6 +1469,19 @@ def test_clicking_the_control_that_has_the_ring_removes_it(
     assert scene.ring() is None
 
 
+def test_clicking_a_scroll_bar_of_the_ringed_control_removes_the_ring(focus_scene) -> None:
+    table = QTableWidget(40, 2)
+    scene = focus_scene(table)
+    scene.tab_to_control()
+    assert scene.ring() is not None
+
+    QTest.mouseClick(table.verticalScrollBar(), Qt.MouseButton.LeftButton)
+    QApplication.processEvents()
+
+    assert table.hasFocus()
+    assert scene.ring() is None
+
+
 def test_focus_returning_from_a_dialog_keeps_the_ring(focus_scene) -> None:
     scene = focus_scene(QPushButton("Remove"))
     scene.tab_to_control()
