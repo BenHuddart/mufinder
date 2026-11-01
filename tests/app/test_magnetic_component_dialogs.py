@@ -6,11 +6,13 @@ from dataclasses import replace
 
 import numpy as np
 import pytest
+from PySide6.QtTest import QTest
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QDialog, QGridLayout, QMessageBox
 
 import mufinder.app.magnetic_component_dialogs as magnetic_component_dialogs_module
 from mufinder.app import workflow_table_utils
+from mufinder.app.magnetic_component_dialogs import _bounded_decimal
 from mufinder.app.magnetic_component_dialogs import (
     AtomPhaseDialog,
     MagneticComponentDialog,
@@ -805,3 +807,33 @@ def test_magnetic_preset_dialog_typed_vector_ignores_the_wavevector_unit(qapp) -
 #
 # B2 FeMn with Fe up and Mn down: at the tetrahedral site (1/2, 1/4, 0) two Fe
 # and two Mn tie at 1.603 Å, so two Contact neighbours split them.
+
+
+@pytest.mark.parametrize(
+    ("field", "typed", "message"),
+    [
+        ("_q_x", "4.5", "must be between -4 and 4"),
+        ("_phase", "10.5", "must be between -10 and 10"),
+        ("_cone_angle", "200", "must be between 0 and 180"),
+    ],
+)
+def test_an_out_of_range_component_value_is_refused_and_not_clamped(
+    qapp, field: str, typed: str, message: str
+) -> None:
+    dialog = MagneticComponentDialog(coo_structure())
+    edit = getattr(dialog, field)
+    dialog.show()
+    dialog.activateWindow()
+    edit.setEnabled(True)
+    edit.setFocus()
+    edit.selectAll()
+    qapp.processEvents()
+
+    QTest.keyClicks(edit, typed)
+    QTest.keyClick(edit, Qt.Key.Key_Tab)
+    qapp.processEvents()
+
+    assert edit.text() == typed
+    with pytest.raises(ValueError, match=message):
+        _bounded_decimal(edit.text(), "value", edit.minimum(), edit.maximum())
+    dialog.close()

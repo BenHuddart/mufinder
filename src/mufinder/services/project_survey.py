@@ -559,9 +559,9 @@ def _method_label(method: str | None) -> str:
         "manual": "placed by hand",
         "random": "random",
         "near_element": "near an element",
-        "uep_cluster": "UEP cluster",
-        "uep_cluster_member": "UEP cluster member",
-        "uep_batch_cluster": "UEP cluster",
+        "uep_cluster": "UEP site",
+        "uep_cluster_member": "UEP site member",
+        "uep_batch_cluster": "UEP site",
         "imported_legacy": "imported",
     }.get(method or "", method or "unknown method")
 

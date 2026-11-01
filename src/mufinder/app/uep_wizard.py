@@ -1211,6 +1211,13 @@ class _ManageViewerMuonsDialog(QDialog):
         current_layout = QVBoxLayout(current_group)
         current_layout.setContentsMargins(12, 12, 12, 12)
         current_layout.setSpacing(8)
+        self._cell_note = QLabel(
+            "Start rows are in the input structure's cell, Custom rows in the job's cell.",
+            current_group,
+        )
+        self._cell_note.setWordWrap(True)
+        style_hint_text(self._cell_note)
+        current_layout.addWidget(self._cell_note)
         self._current_table = QTreeWidget(current_group)
         self._current_table.setColumnCount(len(_VIEWER_MUON_CURRENT_HEADERS))
         self._current_table.setHeaderLabels(_VIEWER_MUON_CURRENT_HEADERS)
@@ -1633,13 +1640,17 @@ class _BatchZpeThread(QThread):
             successful_indexes = [
                 index for index, result in enumerate(self._optimizations) if result.success
             ]
+            minima = sum(
+                self._optimizations[index].classification.label == "minimum"
+                for index in successful_indexes
+            )
             if self.isInterruptionRequested():
                 return
             self.prepared.emit(
                 len(successful_indexes),
                 "\n".join(
                     [
-                        f"Optimized sites available for ZPE: {len(successful_indexes)}",
+                        f"Minima available for ZPE: {minima}",
                         "Evaluating harmonic zero-point energies from the optimized-site Hessians…",
                     ]
                 ),
@@ -1663,12 +1674,12 @@ class _BatchZpeThread(QThread):
                 updated,
                 "\n".join(
                     [
-                        f"Optimized sites available for ZPE: {len(successful_indexes)}",
+                        f"Minima available for ZPE: {minima}",
                         f"Stable minima with finite ZPE: {stable_minima}",
                         (
-                            "Sites with negative Hessian eigenvalues were retained without a ZPE because the optimized extremum is not a stable minimum."
+                            "Results with negative Hessian eigenvalues were retained without a ZPE because the optimized extremum is not a stable minimum."
                             if stable_minima < len(successful_indexes)
-                            else "All successful optimized sites produced a finite harmonic ZPE."
+                            else "All minima produced a finite harmonic ZPE."
                         ),
                     ]
                 ),
@@ -2736,7 +2747,7 @@ class UepAnalysisDialog(QDialog):
         dialog = _ManageViewerMuonsDialog(
             title="Add / Remove Muons",
             subtitle=(
-                "Add muon sites from the batch-search groups or define a custom fractional position for this viewer."
+                "Add muon sites from the batch-search groups or define a custom fractional position in the job's cell."
             ),
             parent=self,
             allow_isosurface_creation=(viewer_kind == "isosurface"),

@@ -176,7 +176,7 @@ Muon Sites: Generation
 ``Muon Sites -> Generation`` commits initial muon positions to the project by
 four methods: symmetry-aware random filling (by muon-muon separation or by a
 target number of positions), placement around atoms of a chosen element,
-manual fractional or Cartesian coordinates, and UEP cluster representatives.
+manual fractional or Cartesian coordinates, and UEP sites.
 Selected rows can be moved to the symmetry-equivalent position closest to an
 anchor (``Cluster Positions…``) or removed before relaxation jobs are created.
 Creating jobs asks for the charge state: positive muon, muonium, or both.

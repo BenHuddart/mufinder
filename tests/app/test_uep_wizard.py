@@ -3433,3 +3433,66 @@ def test_a_saved_viewer_muon_with_a_default_label_reads_in_the_new_words(qapp, m
     dialog._relabel_viewer_muons()
     assert entry.label == "My muon"
     dialog.close()
+
+
+def test_a_gaussian_width_of_zero_then_return_keeps_the_batch_results(qapp, monkeypatch) -> None:
+    dialog = _shown_dialog_with_two_sites(qapp, monkeypatch)
+    results = list(dialog._latest_batch_results)
+    width = dialog._source.gw_factor
+    field = dialog._batch_gw_factor_input
+    field.setFocus()
+    field.selectAll()
+    qapp.processEvents()
+
+    QTest.keyClicks(field, "0")
+    QTest.keyClick(field, Qt.Key.Key_Return)
+    qapp.processEvents()
+
+    assert field.text() == "0"
+    assert dialog._source.gw_factor == width
+    assert dialog._latest_batch_results == results
+    assert dialog._batch_table.topLevelItemCount() == 2
+    dialog.close()
+
+
+def test_the_zero_point_log_says_minima_and_counts_only_those(qapp, monkeypatch) -> None:
+    host = _no_symmetry_host()
+    first, second = _two_nearby_sites(host)
+    saddle = replace(second, classification=replace(second.classification, label="saddle"))
+    dialog = _dialog_with_endpoints(monkeypatch, [first, saddle], host)
+    _run_batch_zpe_inline(monkeypatch)
+    monkeypatch.setattr(
+        "mufinder.app.uep_wizard.calculate_optimization_zero_point_energy",
+        lambda _field, result: replace(
+            result,
+            zero_point_energy_ev=0.1 if result is first else None,
+            total_energy_ev=None,
+        ),
+    )
+    dialog._run_batch_search()
+
+    dialog._run_batch_zpe()
+
+    log = dialog._batch_summary.toPlainText()
+    assert "Minima available for ZPE: 1" in log
+    assert "Optimized sites" not in log
+    assert "Grouping: 1 minimum in 1 site" in log
+    dialog.close()
+
+
+def test_the_muon_dialog_says_which_cell_its_positions_are_in(qapp) -> None:
+    dialog = UepAnalysisDialog(
+        source_job_label="uep_source_row1",
+        source_structure_id="11111111-1111-1111-1111-111111111111",
+        source_structure=_source_structure_with_spins(),
+        den_fmt_path=_fixture_path("Si2.den_fmt"),
+        castep_path=_fixture_path("Si2.castep"),
+        cell_path=_fixture_path("Si2.cell"),
+    )
+    muon_dialog = dialog._create_viewer_muon_dialog(viewer_kind="slice")
+
+    assert muon_dialog._cell_note.text() == (
+        "Start rows are in the input structure's cell, Custom rows in the job's cell."
+    )
+    muon_dialog.close()
+    dialog.close()

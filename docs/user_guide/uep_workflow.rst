@@ -182,7 +182,8 @@ members stay available under each row and in the viewer.
 Every row's ``fX``, ``fY`` and ``fZ`` are in the cell of the structure the source job
 was configured on, the coordinates ``Muon Sites -> Generation`` receives, so in a job
 on a supercell they are in the input structure's cell and not the supercell's. The
-viewer still draws each muon where it sits in the job's cell.
+viewer still draws each muon where it sits in the job's cell, and a custom muon you
+type in ``Add / Remove Muons`` is in the job's cell, as that dialog says.
 
 All of this uses the classical energy, which every search has, so ``Calculate
 ZPE`` adds its columns without changing the groups or their order.
@@ -204,7 +205,8 @@ search that finds none adds no entry: the table stays empty, the progress bar re
 ``No minima found`` and the ``Search Log`` counts what was left out.
 
 A tolerance outside 0.001 to 10 Å is set to the nearest limit when you leave the
-field, and a blank field goes back to the tolerance in use.
+field, and a blank field goes back to the tolerance in use. Other number fields keep
+what you typed for their form to refuse.
 
 The ``UEP sites`` source of the Magnetic Fields page takes each site's
 lowest-energy start as the optimizer found it, not the image in the asymmetric unit:

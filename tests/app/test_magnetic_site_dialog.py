@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from PySide6.QtCore import Qt
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QDialog, QMessageBox
 
 from mufinder.app.magnetic_site_dialog import MuonSiteSelectionDialog
@@ -187,4 +189,25 @@ def test_a_project_without_uep_sites_says_so_in_plain_words(qapp, tmp_path) -> N
     _set_site_source(dialog, "uep_clustering")
 
     assert dialog._site_status.text() == "Muon site: no UEP sites available."
+    dialog.close()
+
+
+def test_a_custom_coordinate_typed_above_one_is_kept_and_not_moved_to_one(qapp, tmp_path) -> None:
+    """A coordinate of 1.25 is the site at 0.25; clamping it to 1.0 is another site."""
+
+    document = uep_cluster_document(tmp_path)
+    dialog = MuonSiteSelectionDialog(document, feo_host_structure())
+    _set_site_source(dialog, "custom")
+    dialog.show()
+    dialog.activateWindow()
+    dialog._custom_x.setFocus()
+    dialog._custom_x.selectAll()
+    qapp.processEvents()
+
+    QTest.keyClicks(dialog._custom_x, "1.25")
+    QTest.keyClick(dialog._custom_x, Qt.Key.Key_Tab)
+    qapp.processEvents()
+
+    assert dialog._custom_x.text() == "1.25"
+    assert dialog.selected_muon_site().fractional_position[0] == 1.25
     dialog.close()

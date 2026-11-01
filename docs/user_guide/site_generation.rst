@@ -25,7 +25,7 @@ Generation needs:
   host unit cell. Rows generated for a different host structure than the active
   one are dimmed and marked ``(stale)``; regenerate them or switch the active
   host back.
-- **For UEP cluster sources, a clustered UEP batch search.** See
+- **For UEP sites, a finished UEP batch search.** See
   :doc:`/user_guide/uep_workflow`.
 - **For running the relaxations, a working CASTEP setup.** Configure a local
   CASTEP executable or a cluster under ``Setup``, and load a keyword catalog
@@ -245,8 +245,8 @@ Manual positions
 MuFinder keeps the position as fractional coordinates in the active host cell,
 with Cartesian coordinates stored for display and downstream setup.
 
-UEP cluster sources
-~~~~~~~~~~~~~~~~~~~
+UEP site sources
+~~~~~~~~~~~~~~~~
 
 UEP analysis does not promote sites directly from the UEP wizard. After
 running a UEP batch search, whose minima are grouped when it ends (see
@@ -313,7 +313,7 @@ move, so the starts the run made are never lost, and the
 :doc:`/user_guide/journal` records the step.
 
 This is most useful when random generation has produced several candidates from
-related symmetry orbits, when UEP cluster representatives or manually entered
+related symmetry orbits, when UEP sites or manually entered
 positions are physically equivalent but appear in different parts of the unit
 cell, or when you want to compare subsequent relaxations without first
 disentangling equivalent-image choices in the output structures.
