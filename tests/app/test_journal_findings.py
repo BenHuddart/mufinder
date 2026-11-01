@@ -51,8 +51,8 @@ def test_a_grouped_uep_search_reaches_the_journal_through_its_state(window_docum
     state = {
         "batch_results": [{"start_position_ang": [0.0, 0.0, 0.0], "total_energy_ev": None}],
         "batch_summary_data": {
-            "clustering_method": "legacy_cartesian_hier",
-            "threshold_ang": 0.2,
+            "clustering_method": "symmetry_distance",
+            "threshold_ang": 0.25,
             "clusters": [
                 {
                     "cluster_index": 1,
@@ -70,7 +70,7 @@ def test_a_grouped_uep_search_reaches_the_journal_through_its_state(window_docum
 
     assert len(_findings(document, "uep_minima_found")) == 1
     entries = build_journal("Study", document.provenance).days[-1].entries
-    assert entries[-1].body == "UEP: 1 distinct minimum; lowest at (0.000, 0.500, 0.000)"
+    assert entries[-1].body == "UEP: 1 distinct site; lowest at (0.000, 0.500, 0.000)"
 
 
 def test_a_field_on_the_page_and_a_workspace_is_recorded_under_its_title(

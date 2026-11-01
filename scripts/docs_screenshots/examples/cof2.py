@@ -831,7 +831,7 @@ def _build_results(directory: Path, *, running_pristine: bool = False) -> Path:
         when_modal("ComparisonJobDialog", include_every_job)
         pristine.generate_comparison_requested.emit()
 
-        # UEP: one source row on the host, then a batch search and its clustering.
+        # UEP: one source row on the host, then a batch search.
         window._set_active_route("uep")
         window._uep_view._add_row()
         _spin_polarise(window._uep_view)
@@ -1137,15 +1137,6 @@ def _open_uep_analysis(window: MainWindow) -> QWidget:
     return next(iter(window._uep_analysis_dialogs.values()))
 
 
-def open_uep_clustering(window: MainWindow) -> QWidget:
-    """Open the UEP analysis of the source job, then its saved batch search's clustering."""
-
-    analysis = _open_uep_analysis(window)
-    analysis._open_clustering_dialog()
-    analysis.hide()
-    return analysis._clustering_dialog
-
-
 def open_uep_batch_search(window: MainWindow) -> QWidget:
     """Open the UEP analysis window on its batch search, with the saved minima listed."""
 
@@ -1342,11 +1333,6 @@ SCENES: dict[str, Scene] = {
         results_project,
         "uep",
         Floating(open_uep_batch_search, size=(1280, 820), prepare=frame_viewers),
-    ),
-    "uep_clustering_dialog": Scene(
-        results_project,
-        "uep",
-        Floating(open_uep_clustering, size=(1180, 760), prepare=frame_viewers),
     ),
     # Muon relaxations and their analysis.
     "muon_relaxations_page": Scene(

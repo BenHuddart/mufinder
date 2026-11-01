@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import pytest
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QValidator
+from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QVBoxLayout, QWidget
 
 from mufinder.app.decimal_input import DecimalLineEdit, VectorInput
 
@@ -123,3 +126,57 @@ def test_vector_input_boxes_keep_the_range_they_are_given(qapp) -> None:
     vector.setEnabled(False)
     assert not any(edit.isEnabled() for edit in vector.edits)
     vector.close()
+
+
+def _focused_field_with_neighbour(qapp, **keywords) -> tuple[QWidget, DecimalLineEdit]:
+    window = QWidget()
+    layout = QVBoxLayout(window)
+    field = DecimalLineEdit(window, minimum=0.001, maximum=10.0, decimals=4, **keywords)
+    layout.addWidget(field)
+    layout.addWidget(DecimalLineEdit(window))
+    window.show()
+    window.activateWindow()
+    field.setFocus()
+    field.clear()
+    qapp.processEvents()
+    return window, field
+
+
+@pytest.mark.parametrize("typed", ["100", "0.0001", "0", ""])
+@pytest.mark.parametrize("key", [Qt.Key.Key_Tab, Qt.Key.Key_Return])
+def test_a_field_keeps_what_was_typed_out_of_range_on_leaving_it(
+    qapp, key: Qt.Key, typed: str
+) -> None:
+    """Its form decides what to do: a silent correction would change the value it refuses."""
+
+    window, field = _focused_field_with_neighbour(qapp)
+    finished: list[str] = []
+    field.editingFinished.connect(lambda: finished.append(field.text()))
+
+    QTest.keyClicks(field, typed)
+    QTest.keyClick(field, key)
+    qapp.processEvents()
+
+    assert field.text() == typed
+    assert finished == []
+    window.close()
+
+
+@pytest.mark.parametrize(
+    ("typed", "shown"), [("100", "10"), ("0.0001", "0.001"), ("0", "0.001"), ("", "0.25")]
+)
+@pytest.mark.parametrize("key", [Qt.Key.Key_Tab, Qt.Key.Key_Return])
+def test_a_field_that_asks_is_corrected_on_leaving_it(
+    qapp, key: Qt.Key, typed: str, shown: str
+) -> None:
+    window, field = _focused_field_with_neighbour(qapp, restore_value=lambda: 0.25)
+    finished: list[str] = []
+    field.editingFinished.connect(lambda: finished.append(field.text()))
+
+    QTest.keyClicks(field, typed)
+    QTest.keyClick(field, key)
+    qapp.processEvents()
+
+    assert field.text() == shown
+    assert finished == [shown]
+    window.close()

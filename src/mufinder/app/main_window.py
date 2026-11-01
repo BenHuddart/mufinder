@@ -356,6 +356,7 @@ from mufinder.domain.routes import (
     magnetic_field_workspace_route,
 )
 from mufinder.services.study_findings import record_finding, record_uep_minima
+from mufinder.services.uep_grouping import uep_source_structure_id
 from mufinder.services.muon_sites_summary import (
     analysis_workspace_created_record,
     build_muon_sites_summary_snapshot,
@@ -1352,6 +1353,7 @@ class MainWindow(QMainWindow):
                 event.ignore()
                 return
             if answer == "save":
+                self._flush_uep_analysis_dialogs()
                 try:
                     self._project_service.save_project(self._document)
                 except (OSError, ValueError) as exc:
@@ -1426,6 +1428,15 @@ class MainWindow(QMainWindow):
             seen.add(viewer_id)
             try:
                 viewer.shutdown()
+            except RuntimeError:
+                continue
+
+    def _flush_uep_analysis_dialogs(self) -> None:
+        """Bring the document up to date with a regroup whose edit has not settled."""
+
+        for dialog in tuple(self._uep_analysis_dialogs.values()):
+            try:
+                dialog.flush_pending_state()
             except RuntimeError:
                 continue
 
@@ -1944,6 +1955,7 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "No project", "Create or open a project first.")
             return
 
+        self._flush_uep_analysis_dialogs()
         try:
             self._project_service.save_project(self._document)
         except (OSError, ValueError) as exc:
@@ -3129,6 +3141,7 @@ class MainWindow(QMainWindow):
     def _persist_document_ui_state(self, *, failure_message: str) -> None:
         if self._document is None:
             return
+        self._flush_uep_analysis_dialogs()
         try:
             self._project_service.save_project(self._document)
         except (OSError, ValueError) as exc:
@@ -8038,22 +8051,7 @@ class MainWindow(QMainWindow):
     def _uep_source_structure_id_for_job(self, job_id: UUID) -> UUID | None:
         if self._document is None:
             return None
-        for run in self._document.runs.values():
-            if run.job_id != job_id or run.definition_id is None:
-                continue
-            definition = self._document.calculations.get(run.definition_id)
-            if definition is not None and definition.input_structure_ids:
-                return definition.input_structure_ids[0]
-        for definition in self._uep_controller.definitions():
-            mapping = definition.parameters.get("job_ids_by_label", {})
-            if not isinstance(mapping, dict):
-                continue
-            if (
-                str(job_id) in {str(value) for value in mapping.values()}
-                and definition.input_structure_ids
-            ):
-                return definition.input_structure_ids[0]
-        return None
+        return uep_source_structure_id(self._document, job_id)
 
     def _active_uep_job_ids(self) -> set[UUID]:
         definition = self._uep_controller.active_definition()
@@ -8113,11 +8111,8 @@ class MainWindow(QMainWindow):
                 continue
             clustering_properties = {
                 "clustering_method": batch_summary.get("clustering_method"),
-                "clustering_hier_t": batch_summary.get("clustering_hier_t"),
-                "clustering_kmeans_k": batch_summary.get("clustering_kmeans_k"),
-                "clustering_linkage_method": batch_summary.get("clustering_linkage_method"),
-                "feature_mode": batch_summary.get("feature_mode"),
                 "threshold_ang": batch_summary.get("threshold_ang"),
+                "energy_tolerance_ev": batch_summary.get("energy_tolerance_ev"),
             }
             for cluster in clusters:
                 if not isinstance(cluster, dict):
@@ -8135,8 +8130,14 @@ class MainWindow(QMainWindow):
                     result = batch_results[result_index]
                     if not isinstance(result, dict):
                         return None
-                    fractional = result.get("optimized_fractional_position")
-                    cartesian = result.get("optimized_position_ang")
+                    # The group reports its representative in the asymmetric unit.
+                    fractional = cluster.get(
+                        "representative_fractional_position",
+                        result.get("optimized_fractional_position"),
+                    )
+                    cartesian = cluster.get(
+                        "representative_position_ang", result.get("optimized_position_ang")
+                    )
                     if not isinstance(fractional, (list, tuple)) or len(fractional) != 3:
                         return None
                     if not isinstance(cartesian, (list, tuple)) or len(cartesian) != 3:
@@ -8173,7 +8174,7 @@ class MainWindow(QMainWindow):
                         "fractional_position": [float(value) for value in fractional],
                         "cartesian_position": [float(value) for value in cartesian],
                         "generation_method": "uep_cluster",
-                        "label": f"UEP Cluster {cluster_index}",
+                        "label": f"UEP Site {cluster_index}",
                         "properties": properties,
                     }
 

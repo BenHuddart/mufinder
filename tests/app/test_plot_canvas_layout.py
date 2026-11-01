@@ -34,7 +34,6 @@ from mufinder.app.relaxation_analysis_widget import (
     DisplacementAnalysisDialog,
     RelaxationClusteringDialog,
 )
-from mufinder.app.uep_clustering_dialog import UepClusteringDialog
 from mufinder.castep_io.geometry_progress import parse_geometry_progress
 from mufinder.domain.models import Structure
 from mufinder.science.relaxation_analysis import RelaxedMuonSite
@@ -174,30 +173,6 @@ def _uep_optimization(
     )
 
 
-def _uep_clustering(state: dict[str, object]) -> QDialog:
-    host = Structure(
-        id=uuid4(),
-        label="Host",
-        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
-        species=["Si", "Si"],
-        fractional_positions=[[0.0, 0.0, 0.0], [0.25, 0.25, 0.25]],
-        properties={"pbc": [True, True, True]},
-    )
-    optimizations = [
-        _uep_optimization((0.10, 0.10, 0.10), 0.01),
-        _uep_optimization((0.12, 0.09, 0.11), 0.02),
-        _uep_optimization((0.65, 0.65, 0.65), 0.50),
-        _uep_optimization((0.66, 0.67, 0.64), 0.52),
-    ]
-    return UepClusteringDialog(
-        source_job_label="uep_source",
-        source_structure=host,
-        viewer_host_structure=host,
-        optimizations=optimizations,
-        initial_state=state,
-    )
-
-
 def _field_distribution() -> QDialog:
     class _Distribution:
         site_label = "site 1"
@@ -283,8 +258,6 @@ PLOT_DIALOGS: dict[str, Callable[[], QDialog]] = {
     "relaxation-clustering-hierarchical": lambda: _relaxation_clustering(1),
     "relaxation-clustering-kmeans": lambda: _relaxation_clustering(2),
     "relaxation-displacements": _displacements,
-    "uep-clustering-hierarchical": lambda: _uep_clustering({}),
-    "uep-clustering-kmeans": lambda: _uep_clustering({"method": "kmeans", "kmeans_k": 2}),
     "magnetic-field-distribution": _field_distribution,
     "magnetic-texture-magnitude-map": _texture_magnitude_map,
     "convergence-examiner": _convergence_examiner,

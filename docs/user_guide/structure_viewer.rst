@@ -4,7 +4,7 @@ Structure Viewer
 Every 3D view of a structure in MuFinder is the same viewer: the
 :doc:`/user_guide/host_structure` panel, the :doc:`/user_guide/supercells`
 preview, the ``Preview Muon Sites`` view of :doc:`/user_guide/site_generation`,
-the :doc:`/user_guide/uep_workflow` analysis and clustering windows, the
+the :doc:`/user_guide/uep_workflow` analysis window, the
 :doc:`/user_guide/structural_relaxation_analysis` workspaces and dialogs, the
 muon-sites summary, the phonon modes of :doc:`/user_guide/quantum_corrections`,
 the Magnetic Structure Builder of :doc:`/user_guide/magnetic_fields`, and the

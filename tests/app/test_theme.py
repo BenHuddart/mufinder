@@ -1020,7 +1020,7 @@ def _every_stylesheet() -> list[str]:
         theme_module.feature_dialog_stylesheet(
             include_scroll_area=True, emphasised_radio_buttons=True
         ),
-        theme_module.uep_clustering_toolbar_stylesheet(),
+        theme_module.clustering_toolbar_stylesheet(),
         theme_module.magnetic_fields_stylesheet(),
         theme_module.magnetic_structure_builder_stylesheet(),
     ]
@@ -1169,7 +1169,7 @@ def test_larger_desktop_text_scales_the_stylesheet_and_application_font(qapp, de
     rules = dict(_stylesheet_rules(qapp.styleSheet()))
     assert f"font-size: {round(28 * factor)}px" in rules["QLabel#homeHeroTitle"]
     assert f"font-size: {round(11 * factor)}px" in rules["QLabel#hintText"]
-    toolbar = theme_module.uep_clustering_toolbar_stylesheet()
+    toolbar = theme_module.clustering_toolbar_stylesheet()
     assert f"font-size: {round(13 * factor)}px" in toolbar
 
 
@@ -1646,11 +1646,11 @@ def test_ring_stands_out_on_a_row_button_in_a_selected_row(focus_scene, mode: st
 @pytest.mark.parametrize("mode", [theme_module.THEME_LIGHT, theme_module.THEME_DARK])
 def test_ring_stands_out_on_a_checked_accent_filled_button(focus_scene, mode: str) -> None:
     button = QPushButton("Cluster")
-    button.setObjectName("uepClusteringToolbarButton")
+    button.setObjectName("clusteringToolbarButton")
     button.setCheckable(True)
     button.setChecked(True)
     scene = focus_scene(button, mode)
-    button.setStyleSheet(theme_module.uep_clustering_toolbar_stylesheet())
+    button.setStyleSheet(theme_module.clustering_toolbar_stylesheet())
     QApplication.processEvents()
     scene.tab_to_control()
 

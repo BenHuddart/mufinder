@@ -13,7 +13,7 @@ MuFinder is a PySide6 desktop application for muon stopping-site workflows, CAST
 - Host-structure import, a reusable supercell editor, and project workflow management
 - Cut-off energy and k-point convergence testing with project-wide default settings
 - Pristine host relaxation with experiment-versus-DFT comparison tables and CSV export
-- Unperturbed electrostatic potential (UEP) screening with minimum clustering
+- Unperturbed electrostatic potential (UEP) screening with minima grouped into sites by symmetry
 - Muon candidate-site generation
 - Structural muon relaxation workflows with project-integrated result tracking,
 	clustering-based relaxation analysis, and import of relaxations from the legacy MuFinder

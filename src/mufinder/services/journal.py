@@ -935,6 +935,7 @@ def _eV_text(value: object) -> str:
 
 #: How a UEP grouping's method and its parameter read on a card.
 _UEP_GROUPING_TEXT: dict[str, tuple[str, str]] = {
+    "symmetry_distance": ("Grouped by symmetry within {value:g} Å", "threshold_ang"),
     "legacy_cartesian_hier": ("Grouped within {value:g} Å", "threshold_ang"),
     "hier": ("Hierarchical grouping, t = {value:g}", "clustering_hier_t"),
     "kmeans": ("K-means grouping, k = {value:g}", "clustering_kmeans_k"),
@@ -950,10 +951,10 @@ def _uep_grouping_text(grouping: object) -> str:
 
 
 def _uep_minima_entry(record: ProvenanceRecord) -> JournalEntry:
-    """``UEP: 3 distinct minima; lowest at (0.000, 0.500, 0.000)``."""
+    """``UEP: 3 distinct sites; lowest at (0.000, 0.500, 0.000)``."""
 
     minima = _mapping_rows(record, "minima")
-    count = plural(len(minima), "distinct minimum", "distinct minima")
+    count = plural(len(minima), "distinct site")
     position = _position_text(minima[0].get("fractional_position")) if minima else ""
     body = f"UEP: {count}; lowest at {position}" if position else f"UEP: {count}"
     energies = [
@@ -980,6 +981,8 @@ def _uep_minima_entry(record: ProvenanceRecord) -> JournalEntry:
         lines.append(f"{plural(starts, 'optimised start')} grouped")
     if text := _uep_grouping_text(record.parameters.get("grouping")):
         lines.append(text)
+    if excluded := _int_param(record, "excluded_count"):
+        lines.append(f"{plural(excluded, 'result')} left out as failed or not a minimum")
     if record.parameters.get("includes_zpe"):
         lines.append("Energies include the zero-point energy")
     entry = _entry(record, stamp_kind="success", title="UEP minima found", body=body)
@@ -987,7 +990,7 @@ def _uep_minima_entry(record: ProvenanceRecord) -> JournalEntry:
         entry,
         detail_lines=tuple(lines),
         table=JournalJobTable(
-            ("Minimum", "Position", "Starts", "ΔE (meV)"), rows, name="Minima of this batch search"
+            ("Site", "Position", "Starts", "ΔE (meV)"), rows, name="Sites of this batch search"
         ),
     )
 

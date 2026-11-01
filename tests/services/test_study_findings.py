@@ -135,8 +135,9 @@ def _uep_state(
             {"start_position_ang": [start, 0.0, 0.0], "total_energy_ev": total} for start in starts
         ],
         "batch_summary_data": {
-            "threshold_ang": 0.2,
-            "clustering_method": "legacy_cartesian_hier",
+            "threshold_ang": 0.25,
+            "clustering_method": "symmetry_distance",
+            "energy_tolerance_ev": 0.001,
             "clusters": [
                 {
                     "cluster_index": index,
@@ -168,7 +169,11 @@ def test_a_new_uep_grouping_records_its_minima_lowest_first(document) -> None:
     assert record.parameters["start_count"] == 2
     assert [row["minimum_energy_eV"] for row in record.parameters["minima"]] == [-1.5, -1.0]
     assert record.parameters["minima"][0]["fractional_position"] == [0.0, 0.5, 0.2]
-    assert record.parameters["includes_zpe"] is False
+    assert record.parameters["grouping"] == {
+        "clustering_method": "symmetry_distance",
+        "threshold_ang": 0.25,
+        "energy_tolerance_ev": 0.001,
+    }
 
 
 def test_a_uep_state_without_a_new_grouping_records_nothing(document) -> None:
@@ -181,20 +186,40 @@ def test_a_uep_state_without_a_new_grouping_records_nothing(document) -> None:
     assert not record_uep_minima(document, job, state, {**state, "current_tab": 2})
 
 
-def test_a_changed_uep_grouping_setting_is_new_even_with_the_same_clusters(document) -> None:
+def test_a_tolerance_that_gives_the_same_groups_records_nothing(document) -> None:
     job = _uep_job(document)
     state = _uep_state(-1.0)
     regrouped = _uep_state(-1.0)
     regrouped["batch_summary_data"]["threshold_ang"] = 0.3
 
     assert record_uep_minima(document, job, {}, state)
-    assert record_uep_minima(document, job, state, regrouped)
+    assert not record_uep_minima(document, job, state, regrouped)
 
-    thresholds = [
-        record.parameters["grouping"]["threshold_ang"]
-        for record in _actions(document, "uep_minima_found")
-    ]
-    assert thresholds == [0.2, 0.3]
+    assert len(_actions(document, "uep_minima_found")) == 1
+
+
+def test_a_tolerance_that_changes_the_groups_is_a_new_finding(document) -> None:
+    job = _uep_job(document)
+    state = _uep_state(-1.0, -1.5)
+    merged = _uep_state(-1.5)
+    merged["batch_summary_data"]["threshold_ang"] = 0.6
+
+    assert record_uep_minima(document, job, {}, state)
+    assert record_uep_minima(document, job, state, merged)
+
+    records = _actions(document, "uep_minima_found")
+    assert [len(record.parameters["minima"]) for record in records] == [2, 1]
+    assert records[-1].parameters["grouping"]["threshold_ang"] == 0.6
+
+
+def test_the_results_a_grouping_left_out_are_counted(document) -> None:
+    job = _uep_job(document)
+    state = _uep_state(-1.0, starts=(0.0, 1.0, 2.0, 3.0))
+    state["batch_summary_data"]["clusters"][0]["size"] = 3
+
+    assert record_uep_minima(document, job, {}, state)
+
+    assert _actions(document, "uep_minima_found")[0].parameters["excluded_count"] == 1
 
 
 def test_a_uep_summary_saved_without_a_method_is_not_a_new_grouping_when_restored(document) -> None:
@@ -212,13 +237,12 @@ def test_repeating_a_uep_search_from_the_same_starts_records_it_once(document) -
     assert record_uep_minima(document, job, {}, _uep_state(-1.0))
     # The grouping was cleared and made again.
     assert not record_uep_minima(document, job, {}, _uep_state(-1.0))
-    # Adding the ZPE gives new energies from the same starts.
-    assert record_uep_minima(document, job, _uep_state(-1.0), _uep_state(-0.8, total=-0.8))
-    assert _actions(document, "uep_minima_found")[-1].parameters["includes_zpe"] is True
+    # The zero-point energy leaves the classical energies of the groups alone.
+    assert not record_uep_minima(document, job, _uep_state(-1.0), _uep_state(-1.0, total=-0.8))
     # New random starts are a new search.
     assert record_uep_minima(document, job, {}, _uep_state(-1.0, starts=(2.0,)))
 
-    assert len(_actions(document, "uep_minima_found")) == 3
+    assert len(_actions(document, "uep_minima_found")) == 2
 
 
 # --- magnetic fields -----------------------------------------------------------

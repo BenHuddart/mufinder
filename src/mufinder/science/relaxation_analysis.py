@@ -10,6 +10,13 @@ import numpy as np
 
 from mufinder.domain.models import Structure
 from mufinder.science.atom_matching import match_structures
+from mufinder.science.feature_clustering import (
+    FeatureClusteringConfig,
+    FeatureClusteringResult,
+    FeatureClusteringSummary,
+    cluster_prepared_features,
+    prepare_feature_dataset,
+)
 from mufinder.science.lattice import (
     minimum_image_distance,
     nearest_image_cartesian_delta,
@@ -23,13 +30,6 @@ from mufinder.science.site_generation import (
 from mufinder.science.spglib_compat import SYMMETRY_TOLERANCE_ANG
 from mufinder.science.supercell_matching import NormalizedStructurePair, normalize_for_comparison
 from mufinder.science.uep import StationaryPointClassification, UepOptimizationResult
-from mufinder.science.uep_clustering import (
-    UepBatchSummary,
-    UepClusteringConfig,
-    UepClusteringResult,
-    cluster_prepared_uep_dataset,
-    prepare_uep_clustering_dataset,
-)
 
 
 class RelaxationAnalysisError(ValueError):
@@ -379,24 +379,45 @@ def _adjacency_within(distances: np.ndarray, tolerance_ang: float) -> np.ndarray
     return adjacency
 
 
+def _within_energy(sites: Sequence[RelaxedMuonSite], tolerance_ev: float) -> np.ndarray:
+    energies = np.asarray(
+        [np.nan if site.total_energy_ev is None else float(site.total_energy_ev) for site in sites],
+        dtype=float,
+    )
+    return np.abs(energies[:, None] - energies[None, :]) < float(tolerance_ev)
+
+
 def cluster_connected_components(
     sites: Sequence[RelaxedMuonSite],
     host_structure: Structure,
     *,
     tolerance_ang: float,
     symprec: float = SYMMETRY_TOLERANCE_ANG,
+    energy_tolerance_ev: float | None = None,
+    distance_matrix_ang: Sequence[Sequence[float]] | None = None,
 ) -> ConnectedComponentsResult:
-    """Cluster relaxed sites with the graph method described in MuFinder."""
+    """Cluster relaxed sites with the graph method described in MuFinder.
+
+    Two sites are linked when their :func:`symmetry_distance_matrix` distance is
+    under ``tolerance_ang`` and, given ``energy_tolerance_ev``, their total energies
+    also differ by less than that; a site without an energy is then linked to
+    nothing. ``distance_matrix_ang`` is that matrix for the sites in energy order
+    (:func:`normalize_site_energies`), for a caller that already measured it.
+    """
 
     ordered_sites = normalize_site_energies(sites)
     if tolerance_ang < 0.0:
         raise RelaxationAnalysisError("Distance tolerance must be non-negative.")
     count = len(ordered_sites)
     distances = np.asarray(
-        symmetry_distance_matrix(ordered_sites, host_structure, symprec=symprec),
+        symmetry_distance_matrix(ordered_sites, host_structure, symprec=symprec)
+        if distance_matrix_ang is None
+        else distance_matrix_ang,
         dtype=float,
-    )
+    ).reshape(count, count)
     adjacency = _adjacency_within(distances, tolerance_ang)
+    if energy_tolerance_ev is not None and count:
+        adjacency = adjacency * _within_energy(ordered_sites, energy_tolerance_ev).astype(int)
     raw_components = _connected_components(adjacency)
     labels = np.zeros(count, dtype=int)
     for raw_index, members in enumerate(raw_components, start=1):
@@ -624,12 +645,13 @@ def cluster_soprano_style(
     hierarchical_t: float = 0.3,
     kmeans_k: int = 4,
     symprec: float = SYMMETRY_TOLERANCE_ANG,
-) -> UepClusteringResult:
+) -> FeatureClusteringResult:
     """Cluster structural-relaxation endpoints with pymuon-suite-style features.
 
-    The features (energy and asymmetric-unit fractional position) are those
-    of the UEP clustering, scaled by :func:`floored_feature_scaling` rather
-    than plain min-max. The sites of one :func:`same_site_feature_groups`
+    The features are the energy and asymmetric-unit fractional position
+    (:mod:`mufinder.science.feature_clustering`), scaled by
+    :func:`floored_feature_scaling` rather than plain min-max. The sites of one
+    :func:`same_site_feature_groups`
     group are then compared as one point (their mean scaled features), so
     neither method can separate relaxations that differ by less than the
     physical floors, whatever ``t`` or ``k`` is. K-means asks for at most as
@@ -637,13 +659,13 @@ def cluster_soprano_style(
     the number it used.
     """
 
-    active = UepClusteringConfig(
+    active = FeatureClusteringConfig(
         clustering_method=str(method).strip().lower(),
         clustering_hier_t=float(hierarchical_t),
         clustering_kmeans_k=int(kmeans_k),
         symprec=float(symprec),
     )
-    prepared = prepare_uep_clustering_dataset(
+    prepared = prepare_feature_dataset(
         _fake_uep_optimizations(sites),
         source_structure=host_structure,
         config=active,
@@ -663,15 +685,15 @@ def cluster_soprano_style(
         )
         if active.clustering_method == "kmeans":
             active = replace(active, clustering_kmeans_k=min(int(kmeans_k), max(len(groups), 1)))
-            return cluster_prepared_uep_dataset(prepared, config=active, kmeans_point_groups=groups)
-    return cluster_prepared_uep_dataset(prepared, config=active)
+            return cluster_prepared_features(prepared, config=active, kmeans_point_groups=groups)
+    return cluster_prepared_features(prepared, config=active)
 
 
-def uep_summary_to_relaxation_clusters(
+def feature_summary_to_relaxation_clusters(
     sites: Sequence[RelaxedMuonSite],
-    summary: UepBatchSummary,
+    summary: FeatureClusteringSummary,
 ) -> tuple[RelaxationClusterSummary, ...]:
-    """Convert a UEP-style clustering summary into relaxation-analysis rows."""
+    """Convert a hierarchical or k-means clustering summary into relaxation-analysis rows."""
 
     ordered_sites = normalize_site_energies(sites)
     clusters: list[RelaxationClusterSummary] = []

@@ -266,19 +266,12 @@ candidates one by one.
 
    .. figure:: ../_generated/screenshots/uep_batch_search.webp
       :alt: The UEP analysis window's Batch Search tab after twelve random starts,
-            with every optimized site at the same classical energy.
+            with the twelve minima grouped into one site.
 
-      The batch search after twelve random starts.
+      The batch search after twelve random starts: every start reached one site.
 
-5. Click ``Clustering`` in the ``Sampling`` card to group the relaxed minima.
-
-.. figure:: ../_generated/screenshots/uep_clustering_dialog.webp
-   :alt: The UEP clustering window with a dendrogram of twelve relaxed sites
-         and the cluster energy spread.
-
-   The clustering of the batch-search minima.
-
-The cluster representatives can seed the ``UEP clusters`` generation method in
+The table lists the distinct sites as soon as the search ends, and their
+representatives can seed the ``UEP clusters`` generation method in
 the next stage. The UEP leaves the host atoms where they are, so in CoF₂ it
 misses the displacements around a positive muon; the relaxations below do not.
 See :doc:`/user_guide/uep_workflow`.

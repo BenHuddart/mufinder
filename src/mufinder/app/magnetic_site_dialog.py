@@ -273,6 +273,10 @@ class MuonSiteSelectionDialog(QDialog):
 
     def _populate_site_table(self) -> None:
         self._site_table.setRowCount(0)
+        # The same column holds a relaxed site's cluster and a UEP site's group.
+        self._site_table.horizontalHeaderItem(2).setText(
+            "Group" if self._site_source() == UEP_SITE_SOURCE else "Cluster"
+        )
         for option in self._site_options:
             row = self._site_table.rowCount()
             self._site_table.insertRow(row)
@@ -339,9 +343,8 @@ class MuonSiteSelectionDialog(QDialog):
             return
         option = self._selected_site_option()
         if option is None:
-            self._site_status.setText(
-                f"Muon site: no {site_source_label(source).lower()} sites available."
-            )
+            kind = "UEP" if source == UEP_SITE_SOURCE else site_source_label(source).lower()
+            self._site_status.setText(f"Muon site: no {kind} sites available.")
             return
         distortion_text = (
             " Distortion corrections are available for this representative."

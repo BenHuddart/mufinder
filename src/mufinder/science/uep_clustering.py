@@ -1,737 +1,393 @@
-"""Clustering of optimized UEP muon positions into candidate stopping sites.
+"""Group the minima of a UEP batch search into distinct muon sites.
 
-Two clusterers group the endpoints of ``mufinder.science.uep`` optimizations:
-a legacy hierarchical clustering in Cartesian space
-(``cluster_optimized_positions``) and the pymuon-suite-compatible clustering
-built on the optional Soprano dependency, which first prepares reusable
-features for a batch (``prepare_uep_clustering_dataset``) and then replays
-hierarchical or k-means clustering over them
-(``cluster_prepared_uep_dataset``). Clusters are numbered by ascending average
-classical energy.
+Random starts relax to exact stationary points of one smooth potential, so two
+results are one site when they lie on the same symmetry orbit. Only converged
+minima are grouped. Two minima are linked when one lies within a distance in
+ångström of any member of the other's symmetry orbit and their classical energies
+differ by less than a tolerance in eV, and the groups are the connected components
+of those links (:func:`~mufinder.science.relaxation_analysis.cluster_connected_components`).
+
+The classical energy is the one every search has, so a zero-point energy added
+later changes neither the groups nor their order. Groups are numbered from the
+lowest energy. No normalisation or batch statistic enters, so a group does not depend
+on which other sites the batch found.
 """
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from dataclasses import dataclass
-from math import isnan
+from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass, field
+from typing import Any
+from uuid import UUID
 
-from ase import Atoms
-from ase.calculators.singlepoint import SinglePointCalculator
 import numpy as np
-from scipy.cluster import hierarchy, vq
-from scipy.cluster.hierarchy import fcluster, linkage
-from scipy.spatial import distance as spdistance
 
-from mufinder.science.ase_bridge import structure_to_ase_atoms
-from mufinder.science.spglib_compat import SYMMETRY_TOLERANCE_ANG, configure_spglib_error_handling
-from mufinder.science.uep import UepError, UepOptimizationResult
+from mufinder.domain.text import plural
+from mufinder.science.lattice import lattice_cart_to_frac, lattice_frac_to_cart, wrap_fractional
+from mufinder.science.relaxation_analysis import (
+    RelaxedMuonSite,
+    cluster_connected_components,
+    symmetry_distance_matrix,
+)
+from mufinder.science.site_generation import asymmetric_unit_position
+from mufinder.science.spglib_compat import SYMMETRY_TOLERANCE_ANG, symmetry_detection_warning
+from mufinder.science.uep import UepError, UepOptimizationResult, triple_from_payload
 
+#: The tolerance a search is grouped at until the user changes it, well under the
+#: 0.8 Å minimum muon-muon distance of the starts.
+DEFAULT_GROUPING_TOLERANCE_ANG = 0.25
+#: Minima further apart in classical energy than this are distinct, however close.
+GROUPING_ENERGY_TOLERANCE_EV = 1e-3
+#: The ``clustering_method`` of a :class:`UepBatchSummary`.
+UEP_GROUPING_METHOD = "symmetry_distance"
+#: The start of the log line :func:`uep_grouping_report` writes.
+GROUPING_LOG_PREFIX = "Grouping: "
 
-_UEP_KMEANS_SEED = 0
+#: Log lines of an earlier search or grouping, replaced when a search is grouped again.
+_REPLACED_LOG_PREFIXES = (GROUPING_LOG_PREFIX, "Relaxed sites available for clustering:")
+#: The identifiers a minimum has no use for when it is treated as a relaxed site.
+_NO_ID = UUID(int=0)
+#: A position's sort key is rounded to this, so optimiser scatter does not decide the order.
+_ORDER_DECIMALS = 6
 
 
 @dataclass(frozen=True, slots=True)
 class UepClusterSummary:
-    """One cluster of optimized UEP stopping-site candidates."""
+    """One group of minima: one distinct muon site.
+
+    ``representative_index`` is the lowest-energy member. The representative
+    positions are that member's image in the asymmetric unit
+    (:func:`~mufinder.science.site_generation.asymmetric_unit_position`), and the energies
+    are classical.
+    """
 
     cluster_index: int
     size: int
     representative_index: int
     representative_position_ang: tuple[float, float, float]
     representative_fractional_position: tuple[float, float, float]
-    minimum_energy_ev: float | None
-    average_energy_ev: float | None
-    standard_deviation_ev: float | None
+    minimum_energy_ev: float
+    average_energy_ev: float
+    standard_deviation_ev: float
     member_indexes: tuple[int, ...]
-    representative_asymmetric_fractional_position: tuple[float, float, float] | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class UepClusterSimilaritySummary:
-    """Distance between two clusters in the raw pymuon-style feature space."""
-
-    left_cluster_index: int
-    right_cluster_index: int
-    distance: float
 
 
 @dataclass(frozen=True, slots=True)
 class UepBatchSummary:
-    """Clustered summary of a batch UEP search."""
+    """How a batch search was grouped and what that found, lowest energy first.
+
+    ``failed_count`` and ``non_minimum_count`` are the optimisations left out for
+    not converging or for ending on another kind of stationary point.
+    ``symmetry_warning`` says why the host's symmetry was not used, if it was not.
+    """
 
     threshold_ang: float
     clusters: tuple[UepClusterSummary, ...]
-    clustering_method: str = "legacy_cartesian_hier"
-    clustering_hier_t: float | None = None
-    clustering_kmeans_k: int | None = None
-    clustering_linkage_method: str | None = None
-    feature_mode: str = "legacy_cartesian_positions"
-    similarities: tuple[UepClusterSimilaritySummary, ...] = ()
+    clustering_method: str = UEP_GROUPING_METHOD
+    energy_tolerance_ev: float = GROUPING_ENERGY_TOLERANCE_EV
+    failed_count: int = 0
+    non_minimum_count: int = 0
+    symmetry_warning: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
-class UepClusteringConfig:
-    """Configuration for pymuon-suite-style clustering of optimized sites."""
+class UepMinimaDistances:
+    """The symmetry distances of a batch's minima, measured once for any number of groupings.
 
-    clustering_method: str = "hier"
-    clustering_hier_t: float = 0.3
-    clustering_kmeans_k: int = 4
-    clustering_linkage_method: str = "single"
-    symprec: float = SYMMETRY_TOLERANCE_ANG
-    feature_mode: str = "soprano_defect_asymmetric_fpos"
-
-
-@dataclass(frozen=True, slots=True)
-class UepClusteringResult:
-    """Full output of one Soprano-backed clustering pass.
-
-    ``cluster_labels`` gives each site its cluster's ``cluster_index`` from
-    ``summary``, its rank by mean classical energy. ``kmeans_centroids`` follow that
-    order: row ``i`` is the centroid of cluster ``i + 1``.
+    ``result_indexes`` gives the result of each row of ``matrix_ang``.
     """
 
-    config: UepClusteringConfig
-    cluster_labels: tuple[int, ...]
-    asymmetric_fractional_positions: tuple[tuple[float, float, float], ...]
-    genome_vectors: tuple[tuple[float, ...], ...]
-    normalized_genome_vectors: tuple[tuple[float, ...], ...]
-    summary: UepBatchSummary
-    linkage_matrix: tuple[tuple[float, float, float, float], ...] = ()
-    kmeans_centroids: tuple[tuple[float, ...], ...] = ()
+    result_indexes: tuple[int, ...]
+    matrix_ang: tuple[tuple[float, ...], ...]
+    symmetry_warning: str | None = field(default=None)
 
 
-@dataclass(frozen=True, slots=True)
-class UepPreparedClusteringDataset:
-    """Cached Soprano-derived clustering features for one relaxed-site batch."""
+def is_converged_minimum(result: UepOptimizationResult) -> bool:
+    """Return whether an optimisation converged on a true minimum with a finite energy."""
 
-    config: UepClusteringConfig
-    optimizations: tuple[UepOptimizationResult, ...]
-    asymmetric_fractional_positions: tuple[tuple[float, float, float], ...]
-    genome_vectors: tuple[tuple[float, ...], ...]
-    normalized_genome_vectors: tuple[tuple[float, ...], ...]
-    linkage_method: str
-    linkage_matrix: tuple[tuple[float, float, float, float], ...] = ()
+    return (
+        bool(result.success)
+        and result.classification.label == "minimum"
+        and bool(np.isfinite(result.classical_energy_ev))
+    )
 
 
-def cluster_optimized_positions(
-    optimizations: list[UepOptimizationResult] | tuple[UepOptimizationResult, ...],
+def _ordered_minima(
+    optimizations: Sequence[UepOptimizationResult], source_structure: Any
+) -> tuple[tuple[int, ...], tuple[RelaxedMuonSite, ...]]:
+    """The minima as relaxed sites in the source structure's cell, in an order of their own.
+
+    Positions are taken from the Cartesian result, because a source job may have run
+    on a supercell of the structure. The order depends only on the energies and
+    positions, so the result does not depend on the order of the input.
+    """
+
+    lattice = source_structure.lattice_vectors
+    rows = []
+    for index, result in enumerate(optimizations):
+        if not is_converged_minimum(result):
+            continue
+        fractional = wrap_fractional(lattice_cart_to_frac(result.optimized_position_ang, lattice))
+        order = (float(result.classical_energy_ev), *np.round(fractional, _ORDER_DECIMALS).tolist())
+        rows.append((order, index, fractional))
+    rows.sort(key=lambda row: (row[0], row[1]))
+    sites = tuple(
+        RelaxedMuonSite(
+            job_id=_NO_ID,
+            job_label=f"{rank:06d}",
+            charge_state="",
+            structure_id=_NO_ID,
+            site_id=None,
+            folded_fractional_position=(fractional[0], fractional[1], fractional[2]),
+            cartesian_position_ang=optimizations[index].optimized_position_ang,
+            total_energy_ev=float(optimizations[index].classical_energy_ev),
+        )
+        for rank, (_order, index, fractional) in enumerate(rows)
+    )
+    return tuple(index for _order, index, _fractional in rows), sites
+
+
+def measure_uep_minima(
+    optimizations: Sequence[UepOptimizationResult],
     *,
-    threshold_ang: float = 0.2,
+    source_structure: Any,
+    symprec: float = SYMMETRY_TOLERANCE_ANG,
+) -> UepMinimaDistances:
+    """Return the symmetry distances between a batch's converged minima."""
+
+    result_indexes, sites = _ordered_minima(optimizations, source_structure)
+    return UepMinimaDistances(
+        result_indexes=result_indexes,
+        matrix_ang=symmetry_distance_matrix(sites, source_structure, symprec=symprec),
+        symmetry_warning=symmetry_detection_warning(source_structure, symprec=symprec),
+    )
+
+
+def group_uep_minima(
+    optimizations: Sequence[UepOptimizationResult],
+    *,
+    source_structure: Any,
+    tolerance_ang: float = DEFAULT_GROUPING_TOLERANCE_ANG,
+    energy_tolerance_ev: float = GROUPING_ENERGY_TOLERANCE_EV,
+    symprec: float = SYMMETRY_TOLERANCE_ANG,
+    distances: UepMinimaDistances | None = None,
 ) -> UepBatchSummary:
-    """Cluster optimized UEP endpoints in Cartesian space."""
+    """Group a batch's converged minima into distinct sites.
 
-    if threshold_ang <= 0.0:
-        raise UepError("threshold_ang must be positive.")
-    if not optimizations:
-        return UepBatchSummary(
-            threshold_ang=float(threshold_ang),
-            clusters=(),
-            clustering_method="legacy_cartesian_hier",
-            clustering_hier_t=float(threshold_ang),
-            clustering_linkage_method="average",
-            feature_mode="legacy_cartesian_positions",
-        )
+    ``source_structure`` needs ``lattice_vectors``, ``species`` and
+    ``fractional_positions``. ``distances`` reuses an earlier
+    :func:`measure_uep_minima` of the same results, so regrouping at another tolerance
+    measures nothing; the results' minima are measured here when they differ from it.
+    """
 
-    positions = np.array([entry.optimized_position_ang for entry in optimizations], dtype=float)
-    if len(optimizations) == 1:
-        energy = _clustering_energy(optimizations[0])
-        summary = UepClusterSummary(
-            cluster_index=1,
-            size=1,
-            representative_index=0,
-            representative_position_ang=optimizations[0].optimized_position_ang,
-            representative_fractional_position=optimizations[0].optimized_fractional_position,
-            minimum_energy_ev=energy,
-            average_energy_ev=energy,
-            standard_deviation_ev=0.0,
-            member_indexes=(0,),
+    if tolerance_ang <= 0.0:
+        raise UepError("The grouping tolerance must be positive.")
+    if energy_tolerance_ev <= 0.0:
+        raise UepError("The grouping energy tolerance must be positive.")
+    result_indexes, sites = _ordered_minima(optimizations, source_structure)
+    if distances is None or distances.result_indexes != result_indexes:
+        distances = measure_uep_minima(
+            optimizations, source_structure=source_structure, symprec=symprec
         )
-        return UepBatchSummary(
-            threshold_ang=float(threshold_ang),
-            clusters=(summary,),
-            clustering_method="legacy_cartesian_hier",
-            clustering_hier_t=float(threshold_ang),
-            clustering_linkage_method="average",
-            feature_mode="legacy_cartesian_positions",
+    grouped = cluster_connected_components(
+        sites,
+        source_structure,
+        tolerance_ang=tolerance_ang,
+        symprec=symprec,
+        energy_tolerance_ev=energy_tolerance_ev,
+        distance_matrix_ang=distances.matrix_ang,
+    )
+    clusters = tuple(
+        _cluster_summary(
+            optimizations,
+            source_structure,
+            cluster_index=cluster.cluster_index,
+            representative_index=result_indexes[cluster.representative_index],
+            member_indexes=[result_indexes[member] for member in cluster.member_indexes],
+            symprec=symprec,
         )
-
-    linkage_matrix = linkage(positions, method="average")
-    labels = fcluster(linkage_matrix, t=float(threshold_ang), criterion="distance")
-    cluster_ids = sorted(set(int(value) for value in labels))
-
-    clusters: list[UepClusterSummary] = []
-    for cluster_index, cluster_id in enumerate(cluster_ids, start=1):
-        member_indexes = tuple(
-            index for index, label in enumerate(labels) if int(label) == cluster_id
-        )
-        members = [optimizations[index] for index in member_indexes]
-        numeric_energies = [_clustering_energy(entry) for entry in members]
-        representative_offset = min(
-            range(len(members)),
-            key=lambda member_index: (
-                _clustering_energy(members[member_index]),
-                member_index,
-            ),
-        )
-        representative_index = member_indexes[representative_offset]
-        representative = optimizations[representative_index]
-        minimum = min(numeric_energies) if numeric_energies else None
-        average = float(np.mean(numeric_energies)) if numeric_energies else None
-        deviation = float(np.std(numeric_energies)) if numeric_energies else None
-        clusters.append(
-            UepClusterSummary(
-                cluster_index=cluster_index,
-                size=len(member_indexes),
-                representative_index=representative_index,
-                representative_position_ang=representative.optimized_position_ang,
-                representative_fractional_position=representative.optimized_fractional_position,
-                minimum_energy_ev=minimum,
-                average_energy_ev=average,
-                standard_deviation_ev=deviation,
-                member_indexes=member_indexes,
-            )
-        )
-
-    normalized, _cluster_index_map = _renumber_cluster_summaries(clusters, optimizations)
+        for cluster in grouped.clusters
+    )
+    failed = sum(not result.success for result in optimizations)
     return UepBatchSummary(
-        threshold_ang=float(threshold_ang),
-        clusters=normalized,
-        clustering_method="legacy_cartesian_hier",
-        clustering_hier_t=float(threshold_ang),
-        clustering_linkage_method="average",
-        feature_mode="legacy_cartesian_positions",
+        threshold_ang=float(tolerance_ang),
+        clusters=clusters,
+        energy_tolerance_ev=float(energy_tolerance_ev),
+        failed_count=failed,
+        non_minimum_count=len(optimizations) - failed - len(result_indexes),
+        symmetry_warning=distances.symmetry_warning,
     )
 
 
-def _import_soprano_clustering():
-    try:
-        from soprano.analyse.phylogen import Gene, PhylogenCluster
-        from soprano.collection import AtomsCollection
-        from soprano.utils import compute_asymmetric_distmat
-    except ImportError as exc:  # pragma: no cover - exercised when dependency is unavailable.
-        raise UepError(
-            "pymuon-suite-compatible UEP clustering requires the optional 'Soprano' dependency."
-        ) from exc
-    return Gene, PhylogenCluster, AtomsCollection, compute_asymmetric_distmat
-
-
-def _clustering_energy(entry: UepOptimizationResult) -> float:
-    if entry.total_energy_ev is not None and not isnan(entry.total_energy_ev):
-        return float(entry.total_energy_ev)
-    if not isnan(entry.classical_energy_ev):
-        return float(entry.classical_energy_ev)
-    raise UepError(
-        "UEP clustering requires a finite classical or total energy for every optimization."
+def _cluster_summary(
+    optimizations: Sequence[UepOptimizationResult],
+    source_structure: Any,
+    *,
+    cluster_index: int,
+    representative_index: int,
+    member_indexes: Sequence[int],
+    symprec: float,
+) -> UepClusterSummary:
+    lattice = source_structure.lattice_vectors
+    fractional = asymmetric_unit_position(
+        lattice_cart_to_frac(optimizations[representative_index].optimized_position_ang, lattice),
+        lattice_vectors=lattice,
+        host_species=source_structure.species,
+        host_positions_frac=source_structure.fractional_positions,
+        symprec=symprec,
     )
+    cartesian = lattice_frac_to_cart(fractional, lattice)
+    energies = [float(optimizations[member].classical_energy_ev) for member in member_indexes]
+    return UepClusterSummary(
+        cluster_index=int(cluster_index),
+        size=len(member_indexes),
+        representative_index=int(representative_index),
+        representative_position_ang=(cartesian[0], cartesian[1], cartesian[2]),
+        representative_fractional_position=(fractional[0], fractional[1], fractional[2]),
+        minimum_energy_ev=min(energies),
+        average_energy_ev=float(np.mean(energies)),
+        standard_deviation_ev=float(np.std(energies)),
+        member_indexes=tuple(sorted(int(member) for member in member_indexes)),
+    )
+
+
+def position_in_source_cell(
+    result: UepOptimizationResult, source_structure: Any
+) -> tuple[float, float, float]:
+    """Return a result's fractional position in the source structure's cell, as tables read it.
+
+    Rounded to six places in [0, 1), like a group's representative, so 0.99999999 reads 0.
+    """
+
+    fractional = lattice_cart_to_frac(
+        result.optimized_position_ang, source_structure.lattice_vectors
+    )
+    rounded = np.mod(np.round(np.asarray(fractional, dtype=float), _ORDER_DECIMALS), 1.0)
+    return (float(rounded[0]), float(rounded[1]), float(rounded[2]))
 
 
 def relaxed_site_number_map(
-    optimizations: list[UepOptimizationResult] | tuple[UepOptimizationResult, ...],
+    optimizations: Sequence[UepOptimizationResult],
+    *,
+    included: Iterable[int] | None = None,
 ) -> dict[int, int]:
-    """Return 1-based relaxed-site numbers ordered globally by classical energy."""
+    """Return 1-based site numbers by classical energy, for the ``included`` result indexes."""
 
-    ordered_indexes = sorted(
-        range(len(optimizations)),
-        key=lambda idx: (
-            float(optimizations[idx].classical_energy_ev)
-            if not isnan(optimizations[idx].classical_energy_ev)
-            else float("inf"),
-            int(idx),
-        ),
-    )
-    return {
-        int(result_index): int(site_number)
-        for site_number, result_index in enumerate(ordered_indexes, start=1)
-    }
-
-
-def _cluster_average_classical_energy(
-    cluster: UepClusterSummary,
-    optimizations: list[UepOptimizationResult] | tuple[UepOptimizationResult, ...],
-) -> float:
-    classical_energies = [
-        float(optimizations[int(index)].classical_energy_ev)
-        for index in cluster.member_indexes
-        if not isnan(optimizations[int(index)].classical_energy_ev)
-    ]
-    if not classical_energies:
-        return float("inf")
-    return float(np.mean(classical_energies))
-
-
-def _cluster_minimum_classical_energy(
-    cluster: UepClusterSummary,
-    optimizations: list[UepOptimizationResult] | tuple[UepOptimizationResult, ...],
-) -> float:
-    classical_energies = [
-        float(optimizations[int(index)].classical_energy_ev)
-        for index in cluster.member_indexes
-        if not isnan(optimizations[int(index)].classical_energy_ev)
-    ]
-    if not classical_energies:
-        return float("inf")
-    return min(classical_energies)
-
-
-def _renumber_cluster_summaries(
-    clusters: list[UepClusterSummary],
-    optimizations: list[UepOptimizationResult] | tuple[UepOptimizationResult, ...],
-) -> tuple[tuple[UepClusterSummary, ...], dict[int, int]]:
+    indexes = range(len(optimizations)) if included is None else {int(index) for index in included}
     ordered = sorted(
-        clusters,
-        key=lambda cluster: (
-            _cluster_average_classical_energy(cluster, optimizations),
-            _cluster_minimum_classical_energy(cluster, optimizations),
-            int(cluster.cluster_index),
+        indexes,
+        key=lambda index: (
+            float(optimizations[index].classical_energy_ev)
+            if np.isfinite(optimizations[index].classical_energy_ev)
+            else float("inf"),
+            int(index),
         ),
     )
-    cluster_index_map = {
-        int(cluster.cluster_index): index + 1 for index, cluster in enumerate(ordered)
-    }
-    normalized = tuple(
-        UepClusterSummary(
-            cluster_index=index + 1,
-            size=cluster.size,
-            representative_index=cluster.representative_index,
-            representative_position_ang=cluster.representative_position_ang,
-            representative_fractional_position=cluster.representative_fractional_position,
-            minimum_energy_ev=cluster.minimum_energy_ev,
-            average_energy_ev=cluster.average_energy_ev,
-            standard_deviation_ev=cluster.standard_deviation_ev,
-            member_indexes=cluster.member_indexes,
-            representative_asymmetric_fractional_position=cluster.representative_asymmetric_fractional_position,
-        )
-        for index, cluster in enumerate(ordered)
+    return {int(index): number for number, index in enumerate(ordered, start=1)}
+
+
+def uep_grouping_report(summary: UepBatchSummary) -> str:
+    """Return the search log's account of a grouping, including what it left out."""
+
+    minima = sum(cluster.size for cluster in summary.clusters)
+    text = (
+        f"{GROUPING_LOG_PREFIX}{plural(minima, 'minimum', 'minima')} in "
+        f"{plural(len(summary.clusters), 'site')}, within {summary.threshold_ang:g} Å and "
+        f"{summary.energy_tolerance_ev * 1000.0:g} meV."
+        if summary.clusters
+        else f"{GROUPING_LOG_PREFIX}no minima found."
     )
-    return normalized, cluster_index_map
-
-
-def _renumber_cluster_similarity_summaries(
-    similarities: tuple[UepClusterSimilaritySummary, ...],
-    cluster_index_map: dict[int, int],
-) -> tuple[UepClusterSimilaritySummary, ...]:
-    remapped: list[UepClusterSimilaritySummary] = []
-    for similarity in similarities:
-        left_index = cluster_index_map.get(
-            int(similarity.left_cluster_index), int(similarity.left_cluster_index)
-        )
-        right_index = cluster_index_map.get(
-            int(similarity.right_cluster_index), int(similarity.right_cluster_index)
-        )
-        ordered_left, ordered_right = sorted((left_index, right_index))
-        remapped.append(
-            UepClusterSimilaritySummary(
-                left_cluster_index=int(ordered_left),
-                right_cluster_index=int(ordered_right),
-                distance=float(similarity.distance),
+    left_out = []
+    if summary.failed_count:
+        left_out.append(plural(summary.failed_count, "failed optimisation"))
+    if summary.non_minimum_count:
+        left_out.append(
+            plural(
+                summary.non_minimum_count,
+                "result that is not a minimum",
+                "results that are not minima",
             )
         )
-    return tuple(
-        sorted(
-            remapped,
-            key=lambda item: (item.distance, item.left_cluster_index, item.right_cluster_index),
-        )
-    )
+    if left_out:
+        text += f" Left out {' and '.join(left_out)}."
+    if summary.symmetry_warning:
+        text += f" {summary.symmetry_warning}"
+    return text
 
 
-def _asymmetric_images_centre(
-    optimizations: list[UepOptimizationResult] | tuple[UepOptimizationResult, ...],
-) -> np.ndarray:
-    reference_index = min(
-        range(len(optimizations)), key=lambda idx: (_clustering_energy(optimizations[idx]), idx)
-    )
-    reference = np.asarray(
-        optimizations[reference_index].optimized_fractional_position, dtype=float
-    )
-    # Avoid high-symmetry centres, which Soprano warns can produce unstable image selection.
-    jitter = np.array((1.61803398875e-6, 2.41421356237e-6, 3.14159265359e-6), dtype=float)
-    return (reference + jitter) % 1.0
+def uep_search_log(existing: str, summary: UepBatchSummary) -> str:
+    """Return a search log with its account of the grouping brought up to date."""
 
-
-def _muonated_atoms_for_clustering(
-    host_atoms: Atoms,
-    optimization: UepOptimizationResult,
-    *,
-    index: int,
-) -> Atoms:
-    scaled_positions = np.vstack(
-        [
-            host_atoms.get_scaled_positions(wrap=True),
-            np.asarray(optimization.optimized_fractional_position, dtype=float),
-        ]
-    )
-    structure = Atoms(
-        host_atoms.get_chemical_symbols() + ["H"],
-        scaled_positions=scaled_positions,
-        cell=host_atoms.cell.copy(),
-        pbc=True,
-        info={"name": f"uep_{index + 1}"},
-    )
-    structure.calc = SinglePointCalculator(structure, energy=_clustering_energy(optimization))
-    return structure
-
-
-def _cluster_similarity_summaries(
-    cluster_groups: list[np.ndarray],
-    genome_vectors: np.ndarray,
-) -> tuple[UepClusterSimilaritySummary, ...]:
-    if len(cluster_groups) < 2:
-        return ()
-    centres = np.array(
-        [np.average(genome_vectors[group], axis=0) for group in cluster_groups], dtype=float
-    )
-    distances = np.linalg.norm(centres[:, None] - centres[None, :], axis=-1)
-    pairs: list[UepClusterSimilaritySummary] = []
-    for left_index in range(len(cluster_groups) - 1):
-        for right_index in range(left_index + 1, len(cluster_groups)):
-            pairs.append(
-                UepClusterSimilaritySummary(
-                    left_cluster_index=left_index + 1,
-                    right_cluster_index=right_index + 1,
-                    distance=float(distances[left_index, right_index]),
-                )
-            )
-    return tuple(
-        sorted(
-            pairs,
-            key=lambda item: (item.distance, item.left_cluster_index, item.right_cluster_index),
-        )
-    )
-
-
-def _validate_clustering_config(config: UepClusteringConfig) -> UepClusteringConfig:
-    active = config or UepClusteringConfig()
-    method = active.clustering_method.strip().lower()
-    if method not in {"hier", "kmeans"}:
-        raise UepError("clustering_method must be 'hier' or 'kmeans'.")
-    if active.clustering_hier_t <= 0.0:
-        raise UepError("clustering_hier_t must be positive.")
-    if active.clustering_kmeans_k <= 0:
-        raise UepError("clustering_kmeans_k must be positive.")
-    return UepClusteringConfig(
-        clustering_method=method,
-        clustering_hier_t=float(active.clustering_hier_t),
-        clustering_kmeans_k=int(active.clustering_kmeans_k),
-        clustering_linkage_method=str(active.clustering_linkage_method).strip().lower() or "single",
-        symprec=float(active.symprec),
-        feature_mode=active.feature_mode,
-    )
-
-
-def prepare_uep_clustering_dataset(
-    optimizations: list[UepOptimizationResult] | tuple[UepOptimizationResult, ...],
-    *,
-    source_structure: object,
-    config: UepClusteringConfig | None = None,
-) -> UepPreparedClusteringDataset:
-    """Prepare reusable Soprano-derived clustering features for a relaxed-site batch."""
-
-    configure_spglib_error_handling()
-    active = _validate_clustering_config(config or UepClusteringConfig())
-    if not optimizations:
-        return UepPreparedClusteringDataset(
-            config=active,
-            optimizations=(),
-            asymmetric_fractional_positions=(),
-            genome_vectors=(),
-            normalized_genome_vectors=(),
-            linkage_method=active.clustering_linkage_method,
-            linkage_matrix=(),
-        )
-
-    Gene, PhylogenCluster, AtomsCollection, compute_asymmetric_distmat = (
-        _import_soprano_clustering()
-    )
-    host_atoms = structure_to_ase_atoms(source_structure, error=UepError)
-    collection = AtomsCollection(
-        [
-            _muonated_atoms_for_clustering(host_atoms, optimization, index=index)
-            for index, optimization in enumerate(optimizations)
-        ]
-    )
-    images_centre = _asymmetric_images_centre(optimizations)
-
-    def _parse_asymmetric_fpos(coll):
-        points = coll.all.get_scaled_positions()[:, -1, :]
-        _, images = compute_asymmetric_distmat(
-            host_atoms,
-            points,
-            return_images=True,
-            images_centre=images_centre,
-            symprec=active.symprec,
-        )
-        return images
-
-    genes = [
-        Gene("energy", 1.0, {}),
-        Gene("mufinder_defect_asymmetric_fpos", 1.0, parser=_parse_asymmetric_fpos),
+    lines = [
+        line
+        for line in existing.splitlines()
+        if line.strip() and not line.startswith(_REPLACED_LOG_PREFIXES)
     ]
-    clusterer = PhylogenCluster(collection, genes=genes)
-    genome_vectors, _ = clusterer.get_genome_vectors()
-    normalized_vectors, _ = clusterer.get_genome_vectors_norm()
-    linkage_matrix = np.empty((0, 4), dtype=float)
-    if len(optimizations) > 1:
-        linkage_matrix = np.asarray(
-            clusterer.get_linkage(method=active.clustering_linkage_method),
-            dtype=float,
-        )
-    return UepPreparedClusteringDataset(
-        config=active,
-        optimizations=tuple(optimizations),
-        asymmetric_fractional_positions=tuple(
-            tuple(float(value) for value in row.tolist())
-            for row in np.asarray(genome_vectors[:, 1:4], dtype=float)
-        ),
-        genome_vectors=tuple(
-            tuple(float(value) for value in row.tolist())
-            for row in np.asarray(genome_vectors, dtype=float)
-        ),
-        normalized_genome_vectors=tuple(
-            tuple(float(value) for value in row.tolist())
-            for row in np.asarray(normalized_vectors, dtype=float)
-        ),
-        linkage_method=active.clustering_linkage_method,
-        linkage_matrix=tuple(
-            tuple(float(value) for value in row.tolist())
-            for row in np.asarray(linkage_matrix, dtype=float)
-        ),
+    return "\n".join([*lines, uep_grouping_report(summary)])
+
+
+def _cluster_summary_from_dict(payload: object) -> UepClusterSummary | None:
+    if not isinstance(payload, Mapping):
+        return None
+    position = triple_from_payload(payload.get("representative_position_ang"))
+    fractional = triple_from_payload(payload.get("representative_fractional_position"))
+    members = payload.get("member_indexes")
+    if position is None or fractional is None or not isinstance(members, (list, tuple)):
+        return None
+    return UepClusterSummary(
+        cluster_index=int(payload["cluster_index"]),
+        size=int(payload["size"]),
+        representative_index=int(payload["representative_index"]),
+        representative_position_ang=position,
+        representative_fractional_position=fractional,
+        minimum_energy_ev=float(payload["minimum_energy_ev"]),
+        average_energy_ev=float(payload["average_energy_ev"]),
+        standard_deviation_ev=float(payload["standard_deviation_ev"]),
+        member_indexes=tuple(int(member) for member in members),
     )
 
 
-def _linkage_matrix_for_prepared(
-    prepared: UepPreparedClusteringDataset,
-    *,
-    method: str,
-) -> np.ndarray:
-    if len(prepared.optimizations) <= 1:
-        return np.empty((0, 4), dtype=float)
-    if method == prepared.linkage_method and prepared.linkage_matrix:
-        return np.asarray(prepared.linkage_matrix, dtype=float)
-    normalized_vectors = np.asarray(prepared.normalized_genome_vectors, dtype=float)
-    condensed = spdistance.pdist(normalized_vectors, metric="euclidean")
-    return np.asarray(hierarchy.linkage(condensed, method=method), dtype=float)
+def uep_batch_summary_from_dict(payload: object) -> UepBatchSummary | None:
+    """Read a saved grouping; ``None`` when it is malformed or used a retired method."""
 
-
-def dendrogram_node_clusters(
-    cluster_labels: Sequence[int],
-    linkage_matrix: Sequence[Sequence[float]],
-) -> dict[int, int | None]:
-    """Return the cluster of every dendrogram node, ``None`` for a node spanning several.
-
-    Nodes are numbered as in SciPy: leaves ``0`` to ``n - 1`` by site index,
-    then row ``i`` of the linkage matrix as node ``n + i``. A node belongs to a
-    cluster when all its leaves do.
-    """
-
-    count = len(cluster_labels)
-    nodes: dict[int, int | None] = {index: int(label) for index, label in enumerate(cluster_labels)}
-    for row_index, row in enumerate(linkage_matrix):
-        left = nodes[int(row[0])]
-        right = nodes[int(row[1])]
-        nodes[count + row_index] = left if left is not None and left == right else None
-    return nodes
-
-
-def _cluster_groups_from_labels(labels: np.ndarray) -> list[np.ndarray]:
-    groups: list[np.ndarray] = []
-    for cluster_id in sorted(set(int(value) for value in labels)):
-        groups.append(np.where(labels == cluster_id)[0].astype(int))
-    return groups
-
-
-def _build_clustering_result(
-    prepared: UepPreparedClusteringDataset,
-    *,
-    config: UepClusteringConfig,
-    cluster_groups: list[np.ndarray],
-    linkage_matrix: np.ndarray | None = None,
-    kmeans_centroids: np.ndarray | None = None,
-) -> UepClusteringResult:
-    method = config.clustering_method
-    optimizations = prepared.optimizations
-    genome_vectors = np.asarray(prepared.genome_vectors, dtype=float)
-    asymmetric_positions = np.asarray(prepared.asymmetric_fractional_positions, dtype=float)
-    clusters: list[UepClusterSummary] = []
-    for cluster_index, members in enumerate(cluster_groups, start=1):
-        group = np.asarray(members, dtype=int)
-        if group.size == 0:
-            continue
-        member_indexes = tuple(int(value) for value in group.tolist())
-        cluster_members = [optimizations[index] for index in member_indexes]
-        finite_total_energies = [
-            float(member.total_energy_ev)
-            for member in cluster_members
-            if member.total_energy_ev is not None and not isnan(member.total_energy_ev)
-        ]
-        representative_index = min(
-            member_indexes, key=lambda idx: (_clustering_energy(optimizations[idx]), idx)
-        )
-        representative = optimizations[representative_index]
-        clusters.append(
-            UepClusterSummary(
-                cluster_index=cluster_index,
-                size=len(member_indexes),
-                representative_index=representative_index,
-                representative_position_ang=representative.optimized_position_ang,
-                representative_fractional_position=representative.optimized_fractional_position,
-                minimum_energy_ev=min(finite_total_energies) if finite_total_energies else None,
-                average_energy_ev=float(np.mean(finite_total_energies))
-                if finite_total_energies
-                else None,
-                standard_deviation_ev=float(np.std(finite_total_energies))
-                if finite_total_energies
-                else None,
-                member_indexes=member_indexes,
-                representative_asymmetric_fractional_position=tuple(
-                    float(value) for value in asymmetric_positions[representative_index].tolist()
-                ),
-            )
-        )
-
-    normalized_clusters, cluster_index_map = _renumber_cluster_summaries(clusters, optimizations)
-    site_labels = [0] * len(optimizations)
-    for cluster in normalized_clusters:
-        for member in cluster.member_indexes:
-            site_labels[member] = cluster.cluster_index
-    centroids = (
-        np.empty((0, 0), dtype=float)
-        if kmeans_centroids is None
-        else kmeans_centroids[
-            [group - 1 for group in sorted(cluster_index_map, key=cluster_index_map.__getitem__)]
-        ]
-    )
-    summary = UepBatchSummary(
-        threshold_ang=float(config.clustering_hier_t if method == "hier" else 0.0),
-        clusters=normalized_clusters,
-        clustering_method=method,
-        clustering_hier_t=float(config.clustering_hier_t),
-        clustering_kmeans_k=(int(len(cluster_groups)) if method == "kmeans" else None),
-        clustering_linkage_method=config.clustering_linkage_method if method == "hier" else None,
-        feature_mode=config.feature_mode,
-        similarities=_renumber_cluster_similarity_summaries(
-            _cluster_similarity_summaries(cluster_groups, genome_vectors),
-            cluster_index_map,
-        ),
-    )
-    return UepClusteringResult(
-        config=config,
-        cluster_labels=tuple(site_labels),
-        asymmetric_fractional_positions=prepared.asymmetric_fractional_positions,
-        genome_vectors=prepared.genome_vectors,
-        normalized_genome_vectors=prepared.normalized_genome_vectors,
-        linkage_matrix=tuple(
-            tuple(float(value) for value in row.tolist())
-            for row in np.asarray(
-                np.empty((0, 4), dtype=float) if linkage_matrix is None else linkage_matrix,
-                dtype=float,
-            )
-        ),
-        kmeans_centroids=tuple(tuple(float(value) for value in row.tolist()) for row in centroids),
-        summary=summary,
-    )
-
-
-def cluster_prepared_uep_dataset(
-    prepared: UepPreparedClusteringDataset,
-    *,
-    config: UepClusteringConfig | None = None,
-    kmeans_point_groups: Sequence[Sequence[int]] | None = None,
-) -> UepClusteringResult:
-    """Replay pymuon-suite-style clustering over a prepared relaxed-site dataset.
-
-    ``kmeans_point_groups`` makes k-means cluster one point per group (the
-    group's first member) and give every member its group's label, so repeated
-    points neither weight the clustering nor let it pick one centroid twice.
-    """
-
-    active = _validate_clustering_config(config or prepared.config)
-    method = active.clustering_method
-    if not prepared.optimizations:
-        return UepClusteringResult(
-            config=active,
-            cluster_labels=(),
-            asymmetric_fractional_positions=(),
-            genome_vectors=(),
-            normalized_genome_vectors=(),
-            linkage_matrix=(),
-            kmeans_centroids=(),
-            summary=UepBatchSummary(
-                threshold_ang=float(active.clustering_hier_t if method == "hier" else 0.0),
-                clusters=(),
-                clustering_method=method,
-                clustering_hier_t=float(active.clustering_hier_t),
-                clustering_kmeans_k=(
-                    int(active.clustering_kmeans_k) if method == "kmeans" else None
-                ),
-                clustering_linkage_method=active.clustering_linkage_method
-                if method == "hier"
-                else None,
-                feature_mode=active.feature_mode,
-                similarities=(),
+    if not isinstance(payload, Mapping) or payload.get("clustering_method") != UEP_GROUPING_METHOD:
+        return None
+    raw_clusters = payload.get("clusters")
+    if not isinstance(raw_clusters, (list, tuple)):
+        return None
+    try:
+        clusters = tuple(_cluster_summary_from_dict(entry) for entry in raw_clusters)
+        if any(cluster is None for cluster in clusters):
+            return None
+        warning = payload.get("symmetry_warning")
+        return UepBatchSummary(
+            threshold_ang=float(payload["threshold_ang"]),
+            clusters=clusters,  # type: ignore[arg-type]
+            energy_tolerance_ev=float(
+                payload.get("energy_tolerance_ev", GROUPING_ENERGY_TOLERANCE_EV)
             ),
+            failed_count=int(payload.get("failed_count", 0)),
+            non_minimum_count=int(payload.get("non_minimum_count", 0)),
+            symmetry_warning=None if warning is None else str(warning),
         )
-
-    if method == "hier":
-        if len(prepared.optimizations) == 1:
-            cluster_groups = [np.array([0], dtype=int)]
-            linkage_matrix = np.empty((0, 4), dtype=float)
-        else:
-            linkage_matrix = _linkage_matrix_for_prepared(
-                prepared, method=active.clustering_linkage_method
-            )
-            cluster_groups = _cluster_groups_from_labels(
-                hierarchy.fcluster(
-                    linkage_matrix,
-                    t=max(float(active.clustering_hier_t), 1e-12),
-                    criterion="distance",
-                ).astype(int)
-            )
-        return _build_clustering_result(
-            prepared,
-            config=active,
-            cluster_groups=cluster_groups,
-            linkage_matrix=linkage_matrix,
-        )
-
-    cluster_count = int(active.clustering_kmeans_k)
-    if cluster_count > len(prepared.optimizations):
-        raise UepError("clustering_kmeans_k must not exceed the number of optimized sites.")
-    normalized_vectors = np.asarray(prepared.normalized_genome_vectors, dtype=float)
-    points = (
-        normalized_vectors
-        if kmeans_point_groups is None
-        else normalized_vectors[[int(group[0]) for group in kmeans_point_groups]]
-    )
-    centroids, _distortion = vq.kmeans(
-        points,
-        cluster_count,
-        seed=_UEP_KMEANS_SEED,
-    )
-    zero_based_labels, _distances = vq.vq(normalized_vectors, centroids)
-    cluster_groups = [
-        np.where(zero_based_labels == index)[0].astype(int)
-        for index in range(int(np.max(zero_based_labels)) + 1)
-    ]
-    return _build_clustering_result(
-        prepared,
-        config=active,
-        cluster_groups=cluster_groups,
-        kmeans_centroids=np.asarray(centroids, dtype=float),
-    )
+    except (KeyError, TypeError, ValueError):
+        return None
 
 
-def cluster_uep_optimizations(
-    optimizations: list[UepOptimizationResult] | tuple[UepOptimizationResult, ...],
-    *,
-    source_structure: object,
-    config: UepClusteringConfig | None = None,
-) -> UepClusteringResult:
-    """Cluster optimized UEP endpoints using the Soprano machinery used by pymuon-suite."""
-
-    prepared = prepare_uep_clustering_dataset(
-        optimizations,
-        source_structure=source_structure,
-        config=config,
-    )
-    return cluster_prepared_uep_dataset(prepared, config=config)
+__all__ = [
+    "DEFAULT_GROUPING_TOLERANCE_ANG",
+    "GROUPING_ENERGY_TOLERANCE_EV",
+    "GROUPING_LOG_PREFIX",
+    "UEP_GROUPING_METHOD",
+    "UepBatchSummary",
+    "UepClusterSummary",
+    "UepMinimaDistances",
+    "group_uep_minima",
+    "is_converged_minimum",
+    "measure_uep_minima",
+    "position_in_source_cell",
+    "relaxed_site_number_map",
+    "uep_batch_summary_from_dict",
+    "uep_grouping_report",
+    "uep_search_log",
+]

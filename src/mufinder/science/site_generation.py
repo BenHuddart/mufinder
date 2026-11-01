@@ -179,6 +179,37 @@ def closest_symmetry_equivalent_position(
     return equivalents[int(np.argmin(distances))]
 
 
+#: Decimal places of a position reported in the asymmetric unit: enough that
+#: optimiser scatter neither moves it to another image nor reads 0.99999999 for 0.
+_ASYMMETRIC_UNIT_DECIMALS = 6
+
+
+def asymmetric_unit_position(
+    position_frac: Sequence[float],
+    *,
+    lattice_vectors: Sequence[Sequence[float]],
+    host_species: Sequence[str],
+    host_positions_frac: Sequence[Sequence[float]],
+    symprec: float = SYMMETRY_TOLERANCE_ANG,
+) -> list[float]:
+    """Return the one image that stands for a position's whole symmetry orbit.
+
+    It is the image with the smallest fractional coordinates, compared in the order
+    x, y, z, in [0, 1) and rounded to six places, so every member of an orbit
+    reports the same position.
+    """
+
+    images = symmetry_equivalent_positions(
+        position_frac,
+        lattice_vectors=lattice_vectors,
+        host_species=host_species,
+        host_positions_frac=host_positions_frac,
+        symprec=symprec,
+    )
+    rounded = np.mod(np.round(np.asarray(images, dtype=float), _ASYMMETRIC_UNIT_DECIMALS), 1.0)
+    return [float(value) for value in min(rounded.tolist())]
+
+
 def _symmetry_multiplicity(
     *,
     lattice_vectors: Sequence[Sequence[float]],

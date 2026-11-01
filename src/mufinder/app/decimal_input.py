@@ -14,6 +14,25 @@ from mufinder.app.theme import style_inline_group
 _AXES = ("x", "y", "z")
 
 
+class _ClampingValidator(QDoubleValidator):
+    """Correct the text of a field that asked for it when the user leaves the field.
+
+    ``QLineEdit`` calls ``fixup`` on leaving a field whose text is not acceptable, and
+    finishes editing only if that makes it so. A number out of range goes to the
+    nearest limit, and blank or unparsable text to the field's ``restore_value``.
+    """
+
+    def __init__(self, line_edit: "DecimalLineEdit", bottom: float, top: float, decimals: int):
+        super().__init__(bottom, top, decimals, line_edit)
+        self._line_edit = line_edit
+
+    def fixup(self, text: str) -> str:  # noqa: N802 - Qt API naming.
+        parsed = self._line_edit._parse(text)
+        if parsed is None:
+            parsed = self._line_edit._restore_value()
+        return self._line_edit._format_value(self._line_edit._clamp(parsed))
+
+
 class DecimalLineEdit(QLineEdit):
     """Line edit with float validation and a QDoubleSpinBox-like API subset.
 
@@ -21,6 +40,14 @@ class DecimalLineEdit(QLineEdit):
     given (``"1.0"`` stays ``"1.0"``, ``""`` stays blank) rather than
     reformatted, for forms that read the typed text. ``standard_notation``
     refuses exponents such as ``1e-3``; by default they are accepted.
+
+    Text the validator does not accept stays in the field when the user leaves it, and
+    no ``editingFinished`` is emitted: a number out of range or a blank field is left for
+    the form to refuse or to read as unset, while ``value()`` returns the clamped value.
+    Only a field given ``restore_value`` is corrected on leaving: a number out of range
+    goes to the nearest limit, and blank or unparsable text to that value. A field whose
+    number is a setting with a value always in use can ask for this; one whose number the
+    user must get right should not, because the correction changes it without a message.
     """
 
     valueChanged = Signal(float)
@@ -35,14 +62,20 @@ class DecimalLineEdit(QLineEdit):
         decimals: int = 8,
         standard_notation: bool = False,
         placeholder: str = "",
+        restore_value: Callable[[], float] | None = None,
     ) -> None:
         super().__init__(parent)
+        self._restore_value = restore_value
         self._minimum = float(minimum)
         self._maximum = float(maximum)
         self._decimals = max(0, int(decimals))
         self._single_step = 0.1
         self._last_value = 0.0
-        self._validator = QDoubleValidator(self._minimum, self._maximum, self._decimals, self)
+        self._validator = (
+            QDoubleValidator(self._minimum, self._maximum, self._decimals, self)
+            if restore_value is None
+            else _ClampingValidator(self, self._minimum, self._maximum, self._decimals)
+        )
         self._validator.setNotation(
             QDoubleValidator.Notation.StandardNotation
             if standard_notation
@@ -113,12 +146,11 @@ class DecimalLineEdit(QLineEdit):
         self.valueChanged.emit(value)
 
     def _snap_to_range(self) -> None:
-        """Show the clamped value when an out-of-range number is left in the field.
+        """Show the clamped value if editing finishes with an out-of-range number.
 
-        ``value()`` already clamps, so without this the field could display, say,
-        ``0.0001`` while every reader used the minimum ``0.001``. Like a
-        ``QDoubleSpinBox``, the text is corrected when editing finishes. Blank or
-        unparsable text is left alone: some callers treat a blank field as unset.
+        Qt finishes editing only for text the validator accepts, so this does not run
+        for a number typed out of range: that stays in the field (see the class).
+        Blank or unparsable text is left alone: some callers treat a blank field as unset.
         """
 
         parsed = self._parse(self.text())

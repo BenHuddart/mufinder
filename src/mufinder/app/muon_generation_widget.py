@@ -253,10 +253,10 @@ class MuonGenerationWidget(QWidget):
         # (see _set_uep_cluster_rows), so this table opts out of the shared
         # stretch-to-fill default in favor of Qt's interactive resize mode.
         self._uep_cluster_table = create_workflow_table(
-            ("Source", "Cluster", "Size", "Class", "E (eV)", "fX", "fY", "fZ"),
+            ("Source", "Site", "Size", "Class", "E (eV)", "fX", "fY", "fZ"),
             default_resize_mode=QHeaderView.ResizeMode.Interactive,
             stretch_last_section=False,
-            accessible_name="UEP Clusters",
+            accessible_name="UEP sites",
         )
         self._uep_cluster_table.setFixedHeight(128)
         self._uep_cluster_table.setSizePolicy(
@@ -354,7 +354,7 @@ class MuonGenerationWidget(QWidget):
         uep_layout = QVBoxLayout(uep_page)
         uep_layout.setContentsMargins(0, 0, 0, 0)
         uep_layout.setSpacing(4)
-        uep_hint = QLabel("Select clustered UEP rows to add as generated sites.")
+        uep_hint = QLabel("Select UEP sites to add as generated sites.")
         uep_hint.setWordWrap(True)
         style_section_subtitle(uep_hint)
         uep_layout.addWidget(uep_hint)

@@ -41,9 +41,6 @@ FINGERPRINT_KEY = "input_fingerprint"
 #: The ``parameters`` key of what a finding is about, within its action.
 SUBJECT_KEY = "finding_subject"
 
-#: The method of a UEP grouping saved without one.
-_UEP_DISTANCE_GROUPING = "legacy_cartesian_hier"
-
 
 def input_fingerprint(*inputs: object) -> str:
     """Return a stable digest of what a result was calculated from."""
@@ -82,21 +79,12 @@ def record_finding(document: ProjectDocument, record: ProvenanceRecord) -> bool:
     return True
 
 
-def _uep_grouping_settings(summary: Mapping[str, Any]) -> dict[str, Any]:
-    """How a UEP search was grouped; a summary saved without a method used the distance one."""
-
-    settings = {
-        key: summary.get(key)
-        for key in ("threshold_ang", "clustering_hier_t", "clustering_kmeans_k")
-    }
-    return {
-        "clustering_method": summary.get("clustering_method", _UEP_DISTANCE_GROUPING),
-        **settings,
-    }
-
-
 def _uep_grouping_signature(state: object) -> list[object] | None:
-    """How a UEP analysis state's search was grouped and what that found."""
+    """What a UEP analysis state's search grouped into.
+
+    The tolerance is not part of it, so a tolerance that gives the same groups is
+    not a new finding.
+    """
 
     summary = state.get("batch_summary_data") if isinstance(state, Mapping) else None
     clusters = summary.get("clusters") if isinstance(summary, Mapping) else None
@@ -111,7 +99,7 @@ def _uep_grouping_signature(state: object) -> list[object] | None:
         for cluster in clusters
         if isinstance(cluster, Mapping)
     ]
-    return [_uep_grouping_settings(summary), found]
+    return found
 
 
 def record_uep_minima(
@@ -120,14 +108,14 @@ def record_uep_minima(
     previous_state: Mapping[str, Any] | None,
     state: Mapping[str, Any],
 ) -> bool:
-    """Record the grouped minima of a UEP batch search when ``state`` holds a new grouping.
+    """Record the grouped minima of a UEP batch search when ``state`` holds new groups.
 
-    The distinct minima exist once the search's optimised positions are grouped,
-    so the grouping is what concludes a search. The state changes for many other
-    reasons, such as a turned camera; those record nothing. The fingerprint is the
-    job, the optimisation's start positions, the grouping's settings and what it
-    found, because the state does not keep the search settings that were used and
-    adding the ZPE changes the energies from the same starts.
+    A search is grouped as it ends, so the grouping is what concludes it. The state
+    changes for many other reasons, such as a turned camera or a tolerance that
+    gives the same groups; those record nothing, and the zero-point energy changes
+    neither the groups nor their classical energies. The fingerprint is the job, the
+    optimisation's start positions and what the grouping found, because the state
+    does not keep the search settings that were used.
     """
 
     signature = _uep_grouping_signature(state)
@@ -144,7 +132,10 @@ def record_uep_minima(
             item["cluster_index"],
         ),
     )
-    grouping = _uep_grouping_settings(summary)
+    grouping = {
+        key: summary.get(key)
+        for key in ("clustering_method", "threshold_ang", "energy_tolerance_ev")
+    }
     starts = [result.get("start_position_ang") for result in results if isinstance(result, Mapping)]
     return record_finding(
         document,
@@ -158,12 +149,9 @@ def record_uep_minima(
                 "start_count": len(results),
                 "minima": minima,
                 "grouping": grouping,
-                "includes_zpe": any(
-                    isinstance(result, Mapping) and result.get("total_energy_ev") is not None
-                    for result in results
-                ),
+                "excluded_count": len(results) - sum(item["size"] or 0 for item in minima),
                 SUBJECT_KEY: str(job.id),
-                FINGERPRINT_KEY: input_fingerprint(str(job.id), starts, grouping, signature),
+                FINGERPRINT_KEY: input_fingerprint(str(job.id), starts, signature),
             },
             job_id=job.id,
         ),

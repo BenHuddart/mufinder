@@ -52,6 +52,7 @@ from mufinder.services.project_summary import (
     muon_relaxation_row_jobs,
     relaxation_analysis_workspaces,
 )
+from mufinder.services.uep_grouping import UEP_ANALYSIS_STATES_KEY, uep_source_structure_id
 from mufinder.services.source_candidates import (
     coerce_fractional_triplet,
     completed_muon_relaxation_sources,
@@ -66,7 +67,6 @@ from mufinder.workflow.muon_site import MUON_RELAXATION_DEFINITION_CALC_TYPE
 from mufinder.workflow.hyperfine import HYPERFINE_SET_CALC_TYPE
 from mufinder.workflow.quantum import QUANTUM_PHONON_SET_CALC_TYPE
 
-UEP_ANALYSIS_STATES_KEY = "uep_analysis_states"
 
 Fractional = tuple[float, float, float]
 
@@ -161,7 +161,7 @@ def _uep_layers(document: ProjectDocument, host: Structure) -> list[SurveyLayer]
         clusters = summary.get("clusters") if isinstance(summary, Mapping) else None
         if job is None or not isinstance(clusters, list):
             continue
-        source_id = _uep_source_structure_id(document, job)
+        source_id = uep_source_structure_id(document, job.id)
         if (
             source_id is not None
             and source_id != host.id
@@ -179,7 +179,7 @@ def _uep_layers(document: ProjectDocument, host: Structure) -> list[SurveyLayer]
                 continue
             members = _int(cluster.get("size")) or len(_list(cluster.get("member_indexes"))) or 1
             energy = _float(cluster.get("minimum_energy_ev"))
-            detail = f"UEP minimum {_int(cluster.get('cluster_index')) or len(markers) + 1}"
+            detail = f"UEP site {_int(cluster.get('cluster_index')) or len(markers) + 1}"
             if energy is not None:
                 detail += f" · {energy:.3f} eV"
             markers.append(
@@ -508,18 +508,6 @@ def _wyckoff_labels(result: Mapping[str, object]) -> dict[int, str]:
     return labels
 
 
-def _uep_source_structure_id(document: ProjectDocument, job: Job) -> UUID | None:
-    for definition in document.calculations.values():
-        if definition.workflow_stage != WorkflowStage.UEP:
-            continue
-        mapping = definition.parameters.get("job_ids_by_label")
-        if isinstance(mapping, Mapping) and str(job.id) in {
-            str(value) for value in mapping.values()
-        }:
-            return definition.input_structure_ids[0] if definition.input_structure_ids else None
-    return None
-
-
 def _derived_from(document: ProjectDocument, structure_id: UUID) -> UUID | None:
     structure = document.structures.get(structure_id)
     return structure.parent_structure_id if structure is not None else None
@@ -571,9 +559,9 @@ def _method_label(method: str | None) -> str:
         "manual": "placed by hand",
         "random": "random",
         "near_element": "near an element",
-        "uep_cluster": "UEP cluster",
-        "uep_cluster_member": "UEP cluster member",
-        "uep_batch_cluster": "UEP cluster",
+        "uep_cluster": "UEP site",
+        "uep_cluster_member": "UEP site member",
+        "uep_batch_cluster": "UEP site",
         "imported_legacy": "imported",
     }.get(method or "", method or "unknown method")
 

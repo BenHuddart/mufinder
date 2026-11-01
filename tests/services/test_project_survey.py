@@ -14,6 +14,7 @@ from mufinder.services.magnetic_field_results import (
     store_magnetic_field_results,
 )
 from mufinder.services.project_service import ProjectService
+from mufinder.services import project_survey
 from mufinder.services.project_survey import (
     SurveyMarkerKind,
     discovered_sites_layer,
@@ -369,3 +370,9 @@ def test_magnetic_layer_marks_fields_at_uep_sites_as_estimates(tmp_path: Path) -
     for layer in layers:
         assert layer.markers[0].label == "≈0.213 T"
         assert layer.markers[0].detail.endswith("unrelaxed UEP site estimate")
+
+
+def test_a_generated_uep_candidate_reads_as_a_uep_site(tmp_path) -> None:
+    assert project_survey._method_label("uep_cluster") == "UEP site"
+    assert project_survey._method_label("uep_batch_cluster") == "UEP site"
+    assert project_survey._method_label("random") == "random"

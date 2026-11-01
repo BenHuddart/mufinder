@@ -5,7 +5,7 @@ Generation
 muon structural relaxations, and ``Muon Sites -> Relaxations`` is where you
 configure and run those relaxations. On the Generation page you create one row
 per candidate position, by random sampling, by attaching a muon to a chosen
-element, by typing coordinates, or by taking clustered UEP results. You then
+element, by typing coordinates, or by taking the sites of a UEP search. You then
 stage the rows as CASTEP relaxation jobs. Every generated row enters the same
 downstream relaxation workflow, whichever method created it.
 
@@ -25,7 +25,7 @@ Generation needs:
   host unit cell. Rows generated for a different host structure than the active
   one are dimmed and marked ``(stale)``; regenerate them or switch the active
   host back.
-- **For UEP cluster sources, a clustered UEP batch search.** See
+- **For UEP sites, a finished UEP batch search.** See
   :doc:`/user_guide/uep_workflow`.
 - **For running the relaxations, a working CASTEP setup.** Configure a local
   CASTEP executable or a cluster under ``Setup``, and load a keyword catalog
@@ -245,35 +245,35 @@ Manual positions
 MuFinder keeps the position as fractional coordinates in the active host cell,
 with Cartesian coordinates stored for display and downstream setup.
 
-UEP cluster sources
-~~~~~~~~~~~~~~~~~~~
+UEP site sources
+~~~~~~~~~~~~~~~~
 
 UEP analysis does not promote sites directly from the UEP wizard. After
-running a UEP batch search and clustering the optimized points (see
+running a UEP batch search, whose minima are grouped when it ends (see
 :doc:`/user_guide/uep_workflow`):
 
 1. Choose ``UEP clusters`` as the ``Method``.
-2. In the table, select the clustered rows to add; the viewer previews their
+2. In the table, select the rows to add; the viewer previews their
    positions over the host structure.
 3. Click ``Generate Sites``.
 
-The table lists one row per saved cluster representative, with the columns
-``Source`` (the source job), ``Cluster``, ``Size``, ``Class`` (the
+The table lists one row per group of the saved search, with the columns
+``Source`` (the source job), ``Site``, ``Size``, ``Class`` (the
 stationary-point classification), ``E (eV)`` (the classical energy) and ``fX``,
 ``fY``, ``fZ``.
 
-Each row uses the optimized position of the cluster representative member, not
-an averaged position or geometric centroid. The representative is the member
-selected by the UEP clustering summary as the lowest-energy member of that
-cluster, using total energy when ZPE-corrected total energies are available and
-classical UEP energy otherwise. Individual non-representative cluster members
-are retained in the UEP analysis state but are not shown in this version of the
+Each row uses the position of the group's representative in the asymmetric unit,
+not an averaged position or geometric centroid. The representative is the
+member of the group with the lowest classical UEP energy. Individual
+non-representative members are retained in the UEP analysis state but are not shown in this version of the
 generation table.
 
 Generating stores the selected rows as normal generated sites for full
-structural relaxation. MuFinder also keeps the source job, cluster identity,
-representative member index, classification, energies, and clustering settings
-with each site, and prevents the same UEP cluster row from being added twice.
+structural relaxation. MuFinder also keeps the source job, site number,
+representative member index, classification, energies, and grouping settings
+with each site, and prevents the same UEP site from being added twice. A new site
+is labelled ``UEP Site <n>``; one created before searches were grouped this way keeps
+its ``UEP Cluster <n>`` label and what it recorded.
 
 Tidying generated rows
 ----------------------
@@ -313,7 +313,7 @@ move, so the starts the run made are never lost, and the
 :doc:`/user_guide/journal` records the step.
 
 This is most useful when random generation has produced several candidates from
-related symmetry orbits, when UEP cluster representatives or manually entered
+related symmetry orbits, when UEP sites or manually entered
 positions are physically equivalent but appear in different parts of the unit
 cell, or when you want to compare subsequent relaxations without first
 disentangling equivalent-image choices in the output structures.
@@ -445,7 +445,7 @@ the starts can be quoted and reproduced. The run holds:
   positions were excluded. Attached: the element, muons per atom, the
   muon-element distance, the muon-atom distance and the 2.6 Å neighbour cutoff
   used to find directions. Custom: the coordinate system and coordinates. UEP:
-  the source UEP jobs and their clustering settings.
+  the source UEP jobs and their grouping settings.
 - **The random seed.** A random run draws a seed when none is given and records
   it, so the same seed and inputs give the same starts. The seed is shown in
   the Journal entry and in the run's description, not on the Generation page.

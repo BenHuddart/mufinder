@@ -447,19 +447,42 @@ Compatibility ledger
      - Public import path. Keep until the callers that catch ``UepError``
        around these readers catch ``ChargeDensityInputError`` instead; then
        drop both wrappers.
-   * - ``UepClusterSummary`` / ``UepClusterSimilaritySummary`` /
-       ``UepBatchSummary`` / ``UepClusteringConfig`` / ``UepClusteringResult``
-       / ``UepPreparedClusteringDataset`` / ``cluster_optimized_positions`` /
-       ``relaxed_site_number_map`` / ``prepare_uep_clustering_dataset`` /
-       ``cluster_prepared_uep_dataset`` / ``cluster_uep_optimizations``
-     - ``mufinder.science.uep``
-     - Names that live in ``mufinder.science.uep_clustering``. Because that
-       module imports ``mufinder.science.uep``, the module-level
-       ``__getattr__`` in ``uep`` resolves them lazily. No in-repo caller
-       reaches them through ``uep``; MuFinder code and tests import them from
-       ``mufinder.science.uep_clustering``. Not persisted.
-     - Public import alias. Keep the ``__getattr__`` hook for one minor
-       release (through 0.6.x); then drop it.
+   * - ``batch_summary_data`` with a retired ``clustering_method``
+       (``hier``, ``kmeans``, ``legacy_cartesian_hier``, or none) and
+       ``clustering_window_state``
+     - UEP analysis states in ``ui_state``, read by
+       ``mufinder.services.uep_grouping`` (``regroup_saved_uep_searches``) when a
+       project loads and by ``mufinder.app.uep_wizard`` when its window opens
+     - Older projects saved the Soprano clustering of a batch search, with its
+       ``clustering_hier_t``, ``clustering_kmeans_k``,
+       ``clustering_linkage_method``, ``feature_mode`` and ``similarities``, and the
+       state of its clustering window. Such a search is regrouped from its stored
+       ``batch_results`` at the default tolerance, and its selection, which named the
+       old clusters, and the window's state are dropped. The next save writes the
+       new form. A search whose results are malformed, or whose structure is gone,
+       keeps what it has and stays a retired summary until it is searched again.
+     - Read-side repair. Keep until a saved-project schema version bump
+       includes a migration that regroups stored searches, or until the batch
+       results become durable results.
+   * - ``hier`` and ``kmeans`` grouping values on sites, generation runs and
+       Journal records
+     - ``MuonSite.properties`` of sites made from UEP clusters;
+       ``GenerationRun.parameters["grouping"]``; ``uep_minima_found`` provenance.
+       Read by ``mufinder.services.generation_runs``
+       (``_UEP_CLUSTERING_NAMES``) and ``mufinder.services.journal``
+       (``_UEP_GROUPING_TEXT``)
+     - Sites generated from an older clustering keep the source job, cluster
+       index, member index and clustering settings they recorded, and those are
+       history, so they are not regrouped. Their methods sentence and Journal entry
+       still name the old method, and an old Journal record's ``includes_zpe`` is
+       still read. A Magnetic Fields selection saved as ``UEP cluster <n>`` keeps
+       that text until it is chosen again, and still matches today's ``UEP site <n>``
+       (``same_muon_site``); ``site_source`` stays ``uep_clustering``. Such a site also keeps its ``UEP Cluster <n>`` label, where a
+       new one reads ``UEP Site <n>``, and the field names ``cluster_index``,
+       ``cluster_size``, ``clusters``, ``uep_cluster`` and ``uep_source_key`` stay
+       as they are in new records.
+     - Current project data, not deprecated. These records say how a past result
+       was made and are not rewritten.
    * - ``clusters/<name>/default_queue_name`` without
        ``clusters/<name>/queues``
      - ``mufinder.cluster_setup`` (``load_cluster_configs``)
@@ -1040,8 +1063,27 @@ The Magnetic Fields page no longer offers a stored muon site whose
 version of the UEP workflow wrote and that nothing writes now. Such a site
 stays in the project: it loads unchanged, the duplicate-site check of site
 generation still reads it, and the project survey and the muon generation
-table still label it as a UEP site. It is left off the ``UEP clustering`` source of
+table still label it as a UEP site. It is left off the ``UEP sites`` source of
 ``Select Muon Site`` (``UEP_CLUSTER_SITE_METHODS`` in
 ``mufinder.services.magnetic_field_sites``), so no shim or schema migration is
 needed; a field calculation for that position uses a custom site, or a site
 generated again with the ``UEP clusters`` method.
+
+The hierarchical and k-means clustering of relaxed sites lives in
+``mufinder.science.feature_clustering`` and keeps no import alias in
+``mufinder.science.uep_clustering``, which now holds the grouping of UEP minima:
+only MuFinder's own code and tests imported these names, and no project stores
+them. ``UepClusterSimilaritySummary`` is ``FeatureClusterSimilarity``,
+``UepClusteringConfig`` is ``FeatureClusteringConfig``, ``UepClusteringResult`` is
+``FeatureClusteringResult``, ``UepPreparedClusteringDataset`` is
+``PreparedFeatureDataset``, ``prepare_uep_clustering_dataset`` is
+``prepare_feature_dataset`` and ``cluster_prepared_uep_dataset`` is
+``cluster_prepared_features``; ``dendrogram_node_clusters`` keeps its name. In
+``mufinder.science.relaxation_analysis``, ``uep_summary_to_relaxation_clusters`` is
+``feature_summary_to_relaxation_clusters``.
+
+``cluster_optimized_positions``, ``cluster_uep_optimizations`` and
+``mufinder.services.uep_optimize_job.summarize_batch_results`` are gone, with no
+replacement of the same shape: group a batch with ``group_uep_minima``. So is the
+lazy ``__getattr__`` in ``mufinder.science.uep`` that resolved the clustering names
+from there; its one minor release of grace ended with 0.6.x.

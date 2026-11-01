@@ -130,7 +130,7 @@ The survey follows the selected waypoint and shows that stage's results:
    * - Stage
      - Shown
    * - UEP
-     - The clustered UEP minima of each source job, as dashed circles.
+     - The UEP sites of each source job, as dashed circles.
    * - Generation
      - The candidate sites on the active host.
    * - Relaxations

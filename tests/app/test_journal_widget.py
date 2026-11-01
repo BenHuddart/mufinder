@@ -838,7 +838,7 @@ _COMPARED_SITE = {
                     {"size": 1, "fractional_position": [0, 0, 0], "minimum_energy_eV": -1.0}
                 ],
             },
-            "Minima of this batch search",
+            "Sites of this batch search",
             2,
         ),
         (

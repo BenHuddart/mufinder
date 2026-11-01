@@ -94,7 +94,7 @@ datas += _optional_collect_data_files("muesr")
 datas += _optional_collect_data_files("soprano")
 datas += collect_data_files("pyvista")
 datas += collect_data_files("vtkmodules")
-# The UEP clustering dialog imports Soprano's phylogenetic clustering stack lazily
+# Relaxed-site clustering imports Soprano's phylogenetic clustering stack lazily
 # when the batch-search clustering window is opened.
 # Magnetic-field calculations import muesr/muLFC only when a calculation starts.
 optional_hiddenimports = (["lfclib"] if _module_is_available("lfclib") else []) + (

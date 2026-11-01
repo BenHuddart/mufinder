@@ -140,8 +140,9 @@ policy, move the reusable part into the appropriate shared layer:
   orbits) in
   ``mufinder.science.spglib_compat``, conversion to ASE ``Atoms`` in
   ``mufinder.science.ase_bridge``, the UEP field in ``mufinder.science.uep``,
-  clustering of its optimized positions in
-  ``mufinder.science.uep_clustering``, pairing a relaxed muon supercell with
+  grouping of its optimized positions into sites in
+  ``mufinder.science.uep_clustering``, hierarchical and k-means clustering of
+  relaxed sites in ``mufinder.science.feature_clustering``, pairing a relaxed muon supercell with
   its pristine host for finite-cell distortion corrections in
   ``mufinder.science.muon_distortion``, the hyperfine sign convention, unit
   conversions and spin density at the muon in ``mufinder.science.hyperfine``
@@ -509,11 +510,11 @@ defined by two of these modules, and a pinned count may only fall.
      - Embedded matplotlib plots (``create_plot_canvas``, ``PlotFrame``; see Plot
        canvas policy).
    * - ``mufinder.app.cluster_dendrogram``
-     - The hierarchical clustering dendrogram the UEP and relaxation clustering
-       dialogs both draw (``draw_cluster_dendrogram``), its links coloured by
+     - The hierarchical clustering dendrogram of the relaxation clustering dialog
+       (``draw_cluster_dendrogram``), its links coloured by
        ``cluster_color_map`` from the node clusters that
-       ``dendrogram_node_clusters`` in ``mufinder.science.uep_clustering`` works
-       out.
+       ``dendrogram_node_clusters`` in ``mufinder.science.feature_clustering`` works
+       out, and its navigation toolbar (``ClusterDendrogramToolbar``).
    * - ``mufinder.app.convergence_plot``
      - The convergence plot the examiner dialog and the pinned overview cards
        both draw (``draw_convergence_plot``) from a sweep's saved ``plot_data``
@@ -789,7 +790,7 @@ defined by two of these modules, and a pinned count may only fall.
        ``ProjectService`` delegates to it under the same method names.
    * - ``mufinder.services.site_generation_service``
      - Candidate muon-site generation for each method (manual, random by
-       separation or count, attached to an element, UEP cluster rows),
+       separation or count, attached to an element, UEP sites),
        clustering generated sites near an anchor, removing and staging
        generated sites, and the generated-site statuses. Each entry point
        changes the document in memory and returns its provenance records in a
@@ -873,7 +874,13 @@ defined by two of these modules, and a pinned count may only fall.
        hierarchical and k-means methods over energy and asymmetric-unit
        position with each feature's span floored at a physical scale
        (``cluster_soprano_style``, ``floored_feature_scaling``,
-       ``distinct_feature_count``); also anchoring and displacement analysis.
+       ``distinct_feature_count``, over ``mufinder.science.feature_clustering``);
+       also anchoring and displacement analysis.
+   * - ``mufinder.science.uep_clustering``
+     - Grouping the minima of a UEP batch search into distinct sites
+       (``group_uep_minima``), on ``cluster_connected_components`` with an energy
+       limit. The minima's distances are measured once (``measure_uep_minima``), so
+       regrouping at another tolerance is cheap.
    * - ``mufinder.science.nuclear_relaxation``
      - Nuclear dipolar second moments: isotope data, the lattice sums for each
        mode (``calculate_nuclear_relaxation``) and the moment tensors that give
@@ -1750,7 +1757,7 @@ Rules for plot widgets:
   stays interactive, and it returns when the window or dialog closes. While
   it is out, any navigation toolbar the dialog had on that canvas is switched
   out of pan/zoom and disabled, so only one set of tools drives the canvas, and
-  drag handlers of their own (like the UEP dendrogram cut line) should stand
+  drag handlers of their own should stand
   down whenever the canvas's ``widgetlock`` is held. The
   window is a dialog-type window (``POP_OUT_WINDOW_FLAGS``): many plot dialogs
   run with ``exec()``, and while a modal dialog runs macOS keeps an ordinary
@@ -1891,7 +1898,7 @@ Saving is split between autosave and manual save:
   but does not prompt, so unsaved analysis-session state is discarded; save
   first.
 - The manual-save bucket holds exploratory UI state: UEP wizard tab choices,
-  clustering-window state, viewer camera and orientation, bond and spin
+  viewer camera and orientation, bond and spin
   visibility, and slice and isosurface display settings.
 
 ``Save Project`` is therefore the action that commits the current analysis
@@ -2041,8 +2048,8 @@ each platform's native look:
   summary is recomputed only while the page is visible.
 - Embedded plots keep their labels inside the plot area at every window size
   (see Plot canvas policy). The plots that share a window with other content,
-  namely the relaxation clustering and displacement plots, the UEP clustering
-  plots and the pinned convergence plots, have
+  namely the relaxation clustering and displacement plots and the pinned
+  convergence plots, have
   a pop-out button in their top-right corner. Their original spot shows a
   ``Show here`` button while the plot is out, and the plot returns when its
   window is closed, when Escape is pressed in it, or when the dialog closes.
