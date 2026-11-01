@@ -12,7 +12,13 @@ import pytest
 from PySide6.QtCore import QCoreApplication, QEvent, QItemSelectionModel, Qt
 from PySide6.QtGui import QKeySequence
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QHeaderView, QTableWidgetItem, QTreeWidgetItem
+from PySide6.QtWidgets import (
+    QApplication,
+    QHeaderView,
+    QTableWidgetItem,
+    QTreeWidgetItem,
+    QWidget,
+)
 
 import mufinder.app.main_window as main_window_module
 import mufinder.app.workflow_table_utils as workflow_table_utils
@@ -20,6 +26,7 @@ from mufinder.app import selection_snapshot as selection_snapshot_module
 from mufinder.app.selection_snapshot import SelectionScope
 from mufinder.app.journal_widget import JournalWidget
 from mufinder.app.main_window import MainWindow
+from mufinder.app.theme import _FOCUS_RING_NAME, apply_theme
 from mufinder.castep_setup import CastepSetup
 from mufinder.domain.cluster import ClusterConfig
 from mufinder.app.convergence_types import ConvergenceConfig
@@ -36,6 +43,7 @@ from tests.support.dashboard import (
     open_more_menu,
 )
 from tests.support.main_window import open_project_with_host, select_route
+from tests.support.reset_menu import FakeMenu
 
 
 def test_dashboard_flush_is_coalesced_across_a_completion_burst(
@@ -1453,6 +1461,147 @@ def test_dashboard_rows_show_stage_status_where_and_cores(main_window, tmp_path)
     window.close()
 
 
+def _press(key, *modifiers) -> None:
+    """Send a real key press to whatever has keyboard focus now."""
+
+    target = QApplication.focusWidget()
+    assert target is not None
+    combined = Qt.KeyboardModifier.NoModifier
+    for modifier in modifiers:
+        combined |= modifier
+    QTest.keyClick(target, key, combined)
+    QApplication.processEvents()
+
+
+def _shown_dashboard(window, tmp_path, statuses):
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "focus.mufinder", "Focus")
+    jobs = [
+        _add_dashboard_job(service, doc, f"j{index}", status)
+        for index, status in enumerate(statuses)
+    ]
+    window._document = doc
+    window._refresh_jobs_table()
+    window.resize(1400, 1000)
+    window.show()
+    window.activateWindow()
+    QTest.qWaitForWindowActive(window)
+    QApplication.processEvents()
+    return jobs
+
+
+def _focus_cell(window, row, column) -> None:
+    table = window._jobs_table
+    table.setCurrentCell(row, column)
+    table.setFocus(Qt.FocusReason.OtherFocusReason)
+    QApplication.processEvents()
+
+
+def test_dashboard_tab_reaches_the_action_button_and_the_menu_button(main_window, tmp_path):
+    window = main_window
+    _shown_dashboard(window, tmp_path, [JobStatus.FAILED, JobStatus.FAILED])
+    table = window._jobs_table
+    try:
+        _focus_cell(window, 0, window._JOB_CORES_COLUMN)
+
+        _press(Qt.Key.Key_Tab)
+        assert QApplication.focusWidget() is action_button(window, 0)
+
+        _press(Qt.Key.Key_Tab)
+        assert QApplication.focusWidget() is more_button(window, 0)
+
+        # Past the row's last control, focus goes back to the table's next cell.
+        _press(Qt.Key.Key_Tab)
+        assert QApplication.focusWidget() is table
+        assert (table.currentRow(), table.currentColumn()) == (1, window._JOB_LABEL_COLUMN)
+    finally:
+        window.hide()
+
+
+def test_dashboard_shift_tab_comes_back_through_the_menu_button_first(main_window, tmp_path):
+    window = main_window
+    _shown_dashboard(window, tmp_path, [JobStatus.FAILED, JobStatus.FAILED])
+    table = window._jobs_table
+    try:
+        _focus_cell(window, 1, window._JOB_LABEL_COLUMN)
+
+        _press(Qt.Key.Key_Tab, Qt.KeyboardModifier.ShiftModifier)
+        assert QApplication.focusWidget() is more_button(window, 0)
+
+        _press(Qt.Key.Key_Tab, Qt.KeyboardModifier.ShiftModifier)
+        assert QApplication.focusWidget() is action_button(window, 0)
+
+        _press(Qt.Key.Key_Tab, Qt.KeyboardModifier.ShiftModifier)
+        assert QApplication.focusWidget() is table
+        assert (table.currentRow(), table.currentColumn()) == (0, window._JOB_CORES_COLUMN)
+    finally:
+        window.hide()
+
+
+def test_dashboard_tab_leaves_a_clicked_control_from_its_own_row(main_window, tmp_path):
+    """A click focuses a button without moving the table's current cell."""
+
+    window = main_window
+    _shown_dashboard(window, tmp_path, [JobStatus.FAILED, JobStatus.FAILED, JobStatus.FAILED])
+    table = window._jobs_table
+    try:
+        _focus_cell(window, 0, window._JOB_LABEL_COLUMN)
+        more_button(window, 1).setFocus(Qt.FocusReason.MouseFocusReason)
+        QApplication.processEvents()
+
+        _press(Qt.Key.Key_Tab)
+
+        assert QApplication.focusWidget() is table
+        assert (table.currentRow(), table.currentColumn()) == (2, window._JOB_LABEL_COLUMN)
+    finally:
+        window.hide()
+
+
+@pytest.mark.parametrize("key", [Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space])
+def test_dashboard_keyboard_runs_the_action_button_and_the_menu_button(
+    main_window, tmp_path, monkeypatch, key
+):
+    window = main_window
+    (job,) = _shown_dashboard(window, tmp_path, [JobStatus.FAILED])
+    inspected: list[list[object]] = []
+    monkeypatch.setattr(
+        window, "_on_inspect_from_dashboard", lambda ids: inspected.append(list(ids))
+    )
+    FakeMenu.instances = []
+    monkeypatch.setattr(main_window_module, "QMenu", FakeMenu)
+    try:
+        _focus_cell(window, 0, window._JOB_CORES_COLUMN)
+
+        _press(Qt.Key.Key_Tab)
+        _press(key)
+        assert inspected == [[job.id]]
+        assert FakeMenu.instances == []
+
+        _press(Qt.Key.Key_Tab)
+        _press(key)
+        assert len(FakeMenu.instances) == 1
+    finally:
+        window.hide()
+
+
+def test_dashboard_focus_ring_shows_on_both_controls(main_window, tmp_path):
+    window = main_window
+    apply_theme(QApplication.instance(), "light")
+    _shown_dashboard(window, tmp_path, [JobStatus.FAILED])
+    try:
+        _focus_cell(window, 0, window._JOB_CORES_COLUMN)
+        for button_at in (action_button, more_button):
+            _press(Qt.Key.Key_Tab)
+            rings = [
+                child
+                for child in button_at(window, 0).findChildren(QWidget, _FOCUS_RING_NAME)
+                if child.isVisible()
+            ]
+            assert rings, f"no focus ring on {button_at.__name__}"
+    finally:
+        window.hide()
+
+
 def test_dashboard_table_is_not_editable(main_window):
     assert (
         main_window._jobs_table.editTriggers()
@@ -1747,7 +1896,12 @@ def test_dashboard_delete_keys_cancel_active_jobs_and_dismiss_the_rest(
         lambda _parent, *prompt: prompts.append(prompt) or True,
     )
     events: list[object] = []
-    monkeypatch.setattr(window, "_cancel_jobs", lambda jobs: events.append(("cancel", jobs)))
+
+    def fake_cancel(jobs):
+        events.append(("cancel", jobs))
+        window.statusBar().showMessage(f"Cancellation requested for {len(jobs)} jobs")
+
+    monkeypatch.setattr(window, "_cancel_jobs", fake_cancel)
     reset: list[object] = []
     monkeypatch.setattr(window, "_reset_failed_jobs", lambda *a, **k: reset.append(a))
 
@@ -1767,6 +1921,10 @@ def test_dashboard_delete_keys_cancel_active_jobs_and_dismiss_the_rest(
     ]
     assert events == [("cancel", [running, queued])]
     assert all(job.dismissed_at is not None for job in (failed, stopped, cancelled))
+    assert (
+        window.statusBar().currentMessage()
+        == "Cancellation requested for 2 jobs; dismissed 3 jobs from the dashboard"
+    )
     # Delete never resets a job or deletes its records.
     assert reset == []
     assert all(job.id in doc.jobs for job in (running, queued, failed, stopped, cancelled))
@@ -1782,14 +1940,17 @@ def test_dashboard_delete_keys_are_bound_to_both_keys(main_window) -> None:
 @pytest.mark.parametrize(
     ("status", "expected_prompt"),
     [
-        (JobStatus.RUNNING, ("Cancel jobs", "Cancel 1 job?", "", "Cancel 1 job", "Keep running")),
+        (
+            JobStatus.RUNNING,
+            ("Cancel job", "Cancel job 'job_0_running'?", "", "Cancel job", "Keep running"),
+        ),
         (
             JobStatus.FAILED,
             (
-                "Dismiss jobs",
-                "Dismiss 1 job from the dashboard?",
-                "Dismissed jobs stay in the project; their workflow rows can still resubmit them.",
-                "Dismiss 1 job",
+                "Dismiss job",
+                "Dismiss job 'job_0_failed' from the dashboard?",
+                "The job stays in the project; its workflow row can still resubmit it.",
+                "Dismiss job",
             ),
         ),
     ],
@@ -2273,8 +2434,8 @@ def test_main_window_dashboard_menu_confirms_cancel_and_dismiss(
     menu.action("Dismiss (1 of 2)").triggered.emit()
 
     assert calls == [("cancel", [running.id]), ("dismiss", [failed.id])]
-    assert prompts[0] == ("Cancel jobs", "Cancel 1 job?", "", "Cancel 1 job", "Keep running")
-    assert prompts[2][1] == "Dismiss 1 job from the dashboard?"
+    assert prompts[0] == ("Cancel job", "Cancel job 'j0'?", "", "Cancel job", "Keep running")
+    assert prompts[2][1] == "Dismiss job 'j1' from the dashboard?"
     window.close()
 
 

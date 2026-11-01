@@ -2704,6 +2704,8 @@ class MainWindow(QMainWindow):
 
         primary = SelectionSnapshotPushButton()
         primary.selection_snapshot_key = job.id
+        # Outside a dialog a push button takes Return and Enter only when told to.
+        primary.setAutoDefault(True)
         self._apply_job_primary_action(primary, job)
         primary.clicked.connect(
             lambda _checked=False, jid=job.id, btn=primary: self._dispatch_dashboard_action(
@@ -2713,6 +2715,7 @@ class MainWindow(QMainWindow):
         more = SelectionSnapshotPushButton("⋯")
         more.selection_snapshot_key = job.id
         more.setObjectName("jobRowMoreButton")
+        more.setAutoDefault(True)
         more.setToolTip("More actions")
         more.setAccessibleName(f"More actions for {job.label}")
         more.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Preferred)
@@ -3796,21 +3799,8 @@ class MainWindow(QMainWindow):
         clicked_job = self._document.jobs.get(job_id)
         clicked_label = clicked_job.label if clicked_job is not None else str(job_id)
         single_confirmations = {
-            "cancel": lambda: workflow_table_utils.confirm_destructive(
-                self,
-                "Cancel job",
-                f"Cancel job '{clicked_label}'?",
-                "",
-                "Cancel job",
-                "Keep running",
-            ),
-            "dismiss": lambda: workflow_table_utils.confirm_destructive(
-                self,
-                "Dismiss job",
-                f"Dismiss job '{clicked_label}' from the dashboard?",
-                "The job stays in the project; its workflow row can still resubmit it.",
-                "Dismiss job",
-            ),
+            "cancel": lambda: self._confirm_cancel_and_dismiss([clicked_label], []),
+            "dismiss": lambda: self._confirm_cancel_and_dismiss([], [clicked_label]),
         }
 
         target_ids = resolve_target_keys(
@@ -4059,19 +4049,19 @@ class MainWindow(QMainWindow):
             return
         # Cancel and Dismiss act immediately, so they are confirmed here; Reset
         # asks its own clean-up question, which has a Cancel.
-        phrase = plural(len(job_ids), "job")
-        if kind == "cancel" and not workflow_table_utils.confirm_destructive(
-            self, "Cancel jobs", f"Cancel {phrase}?", "", f"Cancel {phrase}", "Keep running"
-        ):
-            return
-        if kind == "dismiss" and not workflow_table_utils.confirm_destructive(
-            self,
-            "Dismiss jobs",
-            f"Dismiss {phrase} from the dashboard?",
-            "Dismissed jobs stay in the project; their workflow rows can still resubmit them.",
-            f"Dismiss {phrase}",
-        ):
-            return
+        if kind in {"cancel", "dismiss"} and self._document is not None:
+            labels = [
+                job.label
+                for job_id in job_ids
+                if (job := self._document.jobs.get(job_id)) is not None
+            ]
+            confirmed = (
+                self._confirm_cancel_and_dismiss(labels, [])
+                if kind == "cancel"
+                else self._confirm_cancel_and_dismiss([], labels)
+            )
+            if not confirmed:
+                return
         self._dashboard_action_handler(kind)(list(job_ids))
 
     def _on_cancel_from_dashboard(self, job_ids: list[UUID]) -> None:
@@ -4159,24 +4149,55 @@ class MainWindow(QMainWindow):
         dismissable_jobs = [job for job in jobs if self._dashboard_action_applies("dismiss", job)]
         if not active_jobs and not dismissable_jobs:
             return
-        if not self._confirm_dashboard_delete_key(
-            cancel_count=len(active_jobs), dismiss_count=len(dismissable_jobs)
+        if not self._confirm_cancel_and_dismiss(
+            [job.label for job in active_jobs], [job.label for job in dismissable_jobs]
         ):
             return
+        # Each action reports in the status bar; together, report both.
+        status_bar = self.statusBar()
+        status_bar.clearMessage()
+        reports: list[str] = []
         if active_jobs:
             self._cancel_jobs(active_jobs)
+            reports.append(status_bar.currentMessage())
+            status_bar.clearMessage()
         if dismissable_jobs:
             self._on_dismiss_from_dashboard([job.id for job in dismissable_jobs])
+            reports.append(status_bar.currentMessage())
+        reports = [report for report in reports if report]
+        if len(reports) == 2:
+            status_bar.showMessage(f"{reports[0]}; {reports[1][0].lower()}{reports[1][1:]}")
+        elif reports:
+            status_bar.showMessage(reports[0])
 
-    def _confirm_dashboard_delete_key(self, *, cancel_count: int, dismiss_count: int) -> bool:
-        """Ask once before Delete/Backspace cancels and dismisses the selected jobs."""
+    def _confirm_cancel_and_dismiss(
+        self, cancel_labels: Sequence[str], dismiss_labels: Sequence[str]
+    ) -> bool:
+        """Ask once before cancelling and dismissing dashboard jobs; a lone job is named."""
 
-        cancel_phrase = plural(cancel_count, "job")
-        dismiss_phrase = plural(dismiss_count, "job")
+        if len(cancel_labels) + len(dismiss_labels) == 1:
+            if cancel_labels:
+                return workflow_table_utils.confirm_destructive(
+                    self,
+                    "Cancel job",
+                    f"Cancel job '{cancel_labels[0]}'?",
+                    "",
+                    "Cancel job",
+                    "Keep running",
+                )
+            return workflow_table_utils.confirm_destructive(
+                self,
+                "Dismiss job",
+                f"Dismiss job '{dismiss_labels[0]}' from the dashboard?",
+                "The job stays in the project; its workflow row can still resubmit it.",
+                "Dismiss job",
+            )
+        cancel_phrase = plural(len(cancel_labels), "job")
+        dismiss_phrase = plural(len(dismiss_labels), "job")
         dismiss_note = (
             "Dismissed jobs stay in the project; their workflow rows can still resubmit them."
         )
-        if not dismiss_count:
+        if not dismiss_labels:
             return workflow_table_utils.confirm_destructive(
                 self,
                 "Cancel jobs",
@@ -4185,7 +4206,7 @@ class MainWindow(QMainWindow):
                 f"Cancel {cancel_phrase}",
                 "Keep running",
             )
-        if not cancel_count:
+        if not cancel_labels:
             return workflow_table_utils.confirm_destructive(
                 self,
                 "Dismiss jobs",
@@ -4198,7 +4219,7 @@ class MainWindow(QMainWindow):
             "Cancel and dismiss jobs",
             f"Cancel {cancel_phrase} and dismiss {dismiss_phrase} from the dashboard?",
             dismiss_note,
-            f"Cancel {cancel_count}, dismiss {dismiss_count}",
+            f"Cancel {len(cancel_labels)}, dismiss {len(dismiss_labels)}",
             "Keep them",
         )
 

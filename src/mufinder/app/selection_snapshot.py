@@ -36,6 +36,7 @@ import shiboken6
 from PySide6.QtCore import QEvent, QItemSelection, QItemSelectionModel, QObject, Qt, QTimer
 from PySide6.QtGui import QKeyEvent, QMouseEvent, QWheelEvent
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QHBoxLayout,
     QMessageBox,
@@ -242,16 +243,59 @@ class RowControlsCell(QWidget):
     cell. ``row_controls`` is what ``SelectionFeedback`` marks as multi-row
     targets. Focus on a control in here is not focus on the cell widget, so it
     does not collapse a multi-row selection.
+
+    Tab moves through the controls like cells of the table. The view hands focus
+    to a cell widget only when that widget takes focus, and takes it back only
+    from the cell widget itself, so this cell does both for its controls.
     """
 
     def __init__(self, *controls: QWidget, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.row_controls: tuple[QWidget, ...] = controls
+        self.setFocusPolicy(Qt.FocusPolicy.TabFocus)
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(SPACING.xs)
         for control in controls:
             layout.addWidget(control)
+
+    def focusInEvent(self, event) -> None:  # noqa: N802 - Qt API naming.
+        # The view moved its current cell here. Shift+Tab arrives at the last control.
+        backward = bool(QApplication.keyboardModifiers() & Qt.KeyboardModifier.ShiftModifier)
+        if backward:
+            self.row_controls[-1].setFocus(Qt.FocusReason.BacktabFocusReason)
+        else:
+            self.row_controls[0].setFocus(Qt.FocusReason.TabFocusReason)
+
+    def focusNextPrevChild(self, next: bool) -> bool:  # noqa: A002, N802 - Qt API naming.
+        focused = QApplication.focusWidget()
+        if focused in self.row_controls:
+            target = self.row_controls.index(focused) + (1 if next else -1)
+            if 0 <= target < len(self.row_controls):
+                self.row_controls[target].setFocus(
+                    Qt.FocusReason.TabFocusReason if next else Qt.FocusReason.BacktabFocusReason
+                )
+                return True
+        table = self._owning_table()
+        if table is not None:
+            # A click focuses a control without moving the view's current cell.
+            for row in range(table.rowCount()):
+                for column in range(table.columnCount()):
+                    if table.cellWidget(row, column) is self:
+                        table.selectionModel().setCurrentIndex(
+                            table.model().index(row, column),
+                            QItemSelectionModel.SelectionFlag.NoUpdate,
+                        )
+            table.setFocus(
+                Qt.FocusReason.TabFocusReason if next else Qt.FocusReason.BacktabFocusReason
+            )
+        return super().focusNextPrevChild(next)
+
+    def _owning_table(self) -> QTableWidget | None:
+        parent = self.parentWidget()
+        while parent is not None and not isinstance(parent, QTableWidget):
+            parent = parent.parentWidget()
+        return parent
 
 
 class SelectionSnapshotComboBox(_SnapshotMixin, ElidingComboBox):

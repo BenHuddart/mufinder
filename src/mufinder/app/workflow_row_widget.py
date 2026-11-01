@@ -885,22 +885,34 @@ class RowTableWidget(QWidget):
         return self._submission_keys_at_rows(rows, table=table)
 
     def select_rows_for_keys(self, keys: Collection[object]) -> bool:
-        """Select the rows with ``keys`` in every table; False when there are none.
+        """Make the rows with ``keys`` the selection of every table; False when there are none.
 
         Rows can span tables (one per charge state); the first table holding one
-        is left on show, so it is revealed last.
+        is left on show, and a table holding none loses any earlier selection.
+        With no match at all, nothing changes.
         """
 
-        found = False
-        for table in reversed(self._all_tables()):
-            rows = [
-                row
-                for row in range(table.rowCount())
-                if self._label_at_row(row, table=table)
-                and self._submission_key_at_row(row, table=table) in keys
-            ]
-            found = select_and_reveal_table_rows(table, rows) or found
-        return found
+        rows_by_table = [
+            (
+                table,
+                [
+                    row
+                    for row in range(table.rowCount())
+                    if self._label_at_row(row, table=table)
+                    and self._submission_key_at_row(row, table=table) in keys
+                ],
+            )
+            for table in self._all_tables()
+        ]
+        if not any(rows for _table, rows in rows_by_table):
+            return False
+        # Reversed, so the first table with a match is revealed last.
+        for table, rows in reversed(rows_by_table):
+            if rows:
+                select_and_reveal_table_rows(table, rows)
+            else:
+                table.clearSelection()
+        return True
 
     def _refresh_empty_rows_state(self) -> None:
         if self._empty_rows_label is None:

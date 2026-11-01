@@ -303,7 +303,8 @@ Each row has these columns:
 
 ``Action``
    One button for what the job most likely needs, and a ``⋯`` menu with the
-   rest (see `Acting on jobs`_).
+   rest (see `Acting on jobs`_). Tab and Shift+Tab reach both, and Return, Enter
+   or Space press them.
 
 Double-click a row to show its stage's page with the job's row selected. The
 dashboard has no filter controls; select rows to act on them, as in `Working
@@ -426,7 +427,8 @@ when it is partial (``Reset… (2 of 3)``).
 
 Pressing Delete or Backspace with dashboard rows selected cancels the active
 jobs and dismisses the failed, stopped and cancelled ones, after one summary
-that states both; refusing it leaves every selected job untouched. It never
+that states both and names a lone job; refusing it leaves every selected job
+untouched. The status bar then reports both. It never
 resets a job or deletes its records: ``Reset…`` is in the menus only.
 
 A ``Cancel`` or ``Dismiss`` on a single row asks for confirmation; on a
