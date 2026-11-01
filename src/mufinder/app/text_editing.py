@@ -45,7 +45,7 @@ class TextEditingShortcutFilter(QObject):
         """Move the filter from the widget that lost focus to the one that gained it.
 
         A completer's popup takes the keys while it is open, so the filter
-        watches the focused widget's completer popup too.
+        watches the focused widget's completer popup too, when it has one.
         """
 
         for watched in _watched_objects(old):
@@ -78,7 +78,11 @@ def _watched_objects(widget: QWidget | None) -> list[QWidget]:
     watched: list[QWidget] = [widget]
     completer = widget.completer() if isinstance(widget, (QLineEdit, QComboBox)) else None
     if completer is not None and isValid(completer):
-        watched.append(completer.popup())
+        # An inline completer, the default of an editable combo box, has no
+        # popup: it completes in the line edit, which the filter already covers.
+        popup = completer.popup()
+        if popup is not None:
+            watched.append(popup)
     return watched
 
 
