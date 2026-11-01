@@ -250,7 +250,10 @@ equivalent sites and approximant translations). The rules it follows:
   :class:`~mufinder.science.nuclear_relaxation.NuclearWidthTensors`.
   :func:`~mufinder.science.nuclear_relaxation.calculate_nuclear_width_tensors`
   sums the moment tensors ``S = Σ w/r⁶``, ``M_ij = Σ w r̂_i r̂_j/r⁶`` and
-  ``M_ijkl = Σ w r̂_i r̂_j r̂_k r̂_l/r⁶`` once, after which the transverse-field
+  ``M_ijkl = Σ w r̂_i r̂_j r̂_k r̂_l/r⁶`` once, explicitly to
+  :data:`~mufinder.science.nuclear_relaxation.NUCLEAR_SUM_RADIUS_A` (further for
+  sparse nuclei) and with the continuum tail ``4π n_w / (3 R³)`` and its isotropic share of each tensor
+  beyond it, after which the transverse-field
   width ``σ²(n̂) ∝ 9 n_i n_j n_k n_l M_ijkl − 6 n_i n_j M_ij + S`` and the
   zero-field widths follow for any direction without another lattice sum.
 - **Powder.** ``polycrystalline=True`` averages over grain orientations. In zero

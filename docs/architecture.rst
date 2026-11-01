@@ -882,7 +882,8 @@ defined by two of these modules, and a pinned count may only fall.
        limit. The minima's distances are measured once (``measure_uep_minima``), so
        regrouping at another tolerance is cheap.
    * - ``mufinder.science.nuclear_relaxation``
-     - Nuclear dipolar second moments: isotope data, the lattice sums for each
+     - Nuclear dipolar second moments: isotope data, one vectorised lattice sum
+       to ``NUCLEAR_SUM_RADIUS_A`` plus the analytic continuum tail, for each
        mode (``calculate_nuclear_relaxation``) and the moment tensors that give
        the single-crystal widths along any direction from one sum
        (``calculate_nuclear_width_tensors``, ``NuclearWidthTensors``).

@@ -178,7 +178,7 @@ def test_auto_nuclear_width_damps_each_field_direction_with_its_own_tf_width() -
         species=["H"],
         fractional_positions=[[0.0, 0.0, 0.0]],
     )
-    tensors = calculate_nuclear_width_tensors(host, (0.3, 0.4, 0.2), radius=10.0)
+    tensors = calculate_nuclear_width_tensors(host, (0.3, 0.4, 0.2))
     sites = [_field((0.1, 0.0, 0.0), label="x"), _field((0.0, 0.1, 0.0), label="y")]
 
     result = calculate_polarisation(
@@ -202,7 +202,7 @@ def test_auto_nuclear_width_damps_each_sample_even_within_one_magnitude_bin() ->
         fractional_positions=[[0.0, 0.0, 0.0]],
     )
     # Midway between two protons 3.4 Å apart: σ² runs from 0.0005 to 0.48 μs⁻².
-    tensors = calculate_nuclear_width_tensors(host, (0.5, 0.0, 0.0), radius=10.0)
+    tensors = calculate_nuclear_width_tensors(host, (0.5, 0.0, 0.0))
     directions = fibonacci_sphere(4000)
     fields = 0.1 * directions
     times = np.linspace(0.0, 4.0, 401)

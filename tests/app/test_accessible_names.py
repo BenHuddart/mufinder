@@ -36,6 +36,7 @@ from PySide6.QtWidgets import (
 
 from mufinder.app.energy_barriers_widget import EnergyBarrierNebResultRow, EnergyBarrierSourceRow
 from mufinder.app.hyperfine_coupling_widget import HyperfineResultRow, HyperfineSourceRow
+from mufinder.app.magnetic_analysis_dialogs import NuclearRelaxationDialog
 from mufinder.app.quantum_corrections_widget import QuantumResultRow, QuantumSourceRow
 from mufinder.domain.charge_states import MUONIUM_CHARGE_STATE, POSITIVE_MUON_CHARGE_STATE
 from mufinder.services.magnetic_field_results import (
@@ -238,6 +239,29 @@ def test_unnamed_control_budget_is_not_stale(unnamed_controls_by_page) -> None:
     }
 
     assert not stale, f"Lower these budgets to the page's count (budget, count): {stale}"
+
+
+def test_nuclear_relaxation_dialog_names_its_fields_and_combos(qapp) -> None:
+    # A form-row buddy is not enough here: these report empty or their current value.
+    dialog = NuclearRelaxationDialog(muon_site=None, distortion_available=False)
+    dialog.show()
+    qapp.processEvents()
+    try:
+        assert [_describe(w) for w in _counted_controls(dialog) if _is_unnamed(w, set())] == []
+        names = {
+            widget.accessibleName()
+            for widget in dialog.findChildren(QWidget)
+            if isinstance(widget, (QLineEdit, QComboBox)) and widget.isVisible()
+        }
+        assert names == {
+            "Field regime",
+            "Sample",
+            "Crystal-axis direction x",
+            "Crystal-axis direction y",
+            "Crystal-axis direction z",
+        }
+    finally:
+        dialog.close()
 
 
 def test_census_counts_an_unnamed_control_until_it_is_named_or_labelled(
