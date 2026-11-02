@@ -9,11 +9,18 @@ from uuid import uuid4
 
 import numpy as np
 import pytest
-from PySide6.QtCore import QItemSelectionModel, Qt, QTimer
+from PySide6.QtCore import QCoreApplication, QEvent, QItemSelectionModel, Qt, QTimer
 from PySide6.QtGui import QDoubleValidator
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QAbstractItemView, QApplication, QDialog, QProgressDialog
+from PySide6.QtWidgets import (
+    QAbstractItemView,
+    QApplication,
+    QDialog,
+    QProgressDialog,
+    QWidget,
+)
 
+import mufinder.app.demagnetizing_dialogs as demagnetizing_dialogs_module
 import mufinder.app.magnetic_field_widget as magnetic_field_widget_module
 import mufinder.services.magnetic_field_calculation as magnetic_field_calculation_module
 import mufinder.science.magnetic_fields as magnetic_fields_module
@@ -924,6 +931,9 @@ def test_magnetic_field_widget_opens_advanced_demag_dialog(qapp, tmp_path, monke
     service.add_structure(document, feo_host_structure())
 
     class _Dialog:
+        def deleteLater(self):
+            pass
+
         def __init__(self, sample, parent=None, *, lattice_vectors=None):
             assert sample.shape == "ellipsoid"
             assert lattice_vectors == feo_host_structure().lattice_vectors
@@ -1080,6 +1090,31 @@ def test_calculation_failing_after_a_reload_leaves_the_reloaded_results_alone(
     assert cleared == []
     assert saved == []
     assert "reloaded during the calculation" in widget._calculation_status.text()
+    widget.close()
+
+
+def test_advanced_demag_dialog_is_deleted_once_it_has_been_read(qapp, monkeypatch) -> None:
+    monkeypatch.setattr(
+        demagnetizing_dialogs_module.DemagnetizingFieldAdvancedDialog,
+        "exec",
+        lambda _self: QDialog.DialogCode.Rejected,
+    )
+
+    class _Preview(QWidget):
+        def set_sample(self, *_args):
+            pass
+
+        def shutdown(self):
+            pass
+
+    monkeypatch.setattr(demagnetizing_dialogs_module, "_DemagnetizingPyVistaCanvas", _Preview)
+    widget = MagneticFieldWidget()
+
+    widget._open_advanced_demag_dialog()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    qapp.processEvents()
+
+    assert widget.findChildren(demagnetizing_dialogs_module.DemagnetizingFieldAdvancedDialog) == []
     widget.close()
 
 

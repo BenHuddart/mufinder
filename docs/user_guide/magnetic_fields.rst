@@ -1224,29 +1224,41 @@ the largest error in a factor is:
      - 3
      - 4
      - 5
+     - 6
+     - 7
      - 8
+     - 9
      - 10
      - 13
      - 26
    * - Largest error
-     - 0.054
+     - 0.055
      - 0.033
      - 0.022
-     - 0.016
+     - 0.017
      - 0.013
+     - 0.011
+     - 0.009
      - 0.008
+     - 0.007
      - 0.006
      - 0.003
      - 0.001
 
 The window warns when the narrow side of the outline's bounding box is below 8
-voxels; it does not look for slender features inside the box, such as a thin
-ring. A ``Rectangular prism`` has a closed form and is exact for a rectangular
-sample.
+voxels, where the largest error passes about 0.01. There is no step there: a
+rectangle 8 voxels across is not warned about and can be off by 0.008, against
+0.009 at 7. A ``Rectangular prism`` has a closed form and is exact for a
+rectangular sample.
+
+The warning reads only the bounding box, so it cannot see a slender shape inside
+a wide box. Measured on slivers at 30 and 45 degrees and on rings, the largest
+error in a factor is about 0.07 for a feature about 1 voxel wide, 0.04 at 2 to 3
+voxels, and 0.02 at 5 to 7. A photo of such a sample gets no warning.
 
 A plate's longest edge can be at most 10000 times its thickness. By then an
-``Infinite plate`` is within 0.0006 of a square plate's factor along the normal,
-and the refusal gives the figure for the plate in hand. The quick ``Infinite
+``Infinite plate`` is within 0.0007 of a square plate's factor along the normal,
+and the refusal gives the figure, rounded up, for the plate in hand. The quick ``Infinite
 plate`` has its normal along ``c``, so for a plate oriented otherwise choose a
 ``Rectangular prism``, which keeps the orientation. The limit on the time taken
 also refuses a needle or rod whose length is more than about 2000 times its

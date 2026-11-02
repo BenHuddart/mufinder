@@ -162,6 +162,167 @@ def test_demagnetizing_dialog_reports_a_cancelled_tensor(qapp, monkeypatch) -> N
     dialog.close()
 
 
+def _cancelling_dialog(monkeypatch, sample, lattice_vectors=None):
+    """A dialog whose first Fourier tensor is cancelled; returns it and the list of runs."""
+
+    runs = []
+    answers = [BlockingCallCancelled("cancelled")]
+
+    def run(_parent, op, **_kwargs):
+        runs.append(1)
+        if answers:
+            raise answers.pop()
+        return op()
+
+    monkeypatch.setattr(demagnetizing_dialogs_module, "run_blocking_call", run)
+    return _demag_dialog(monkeypatch, sample=sample, lattice_vectors=lattice_vectors), runs
+
+
+def test_cancelled_tensor_is_tried_again_when_the_shape_changes_and_changes_back(
+    qapp, monkeypatch
+) -> None:
+    dialog, runs = _cancelling_dialog(monkeypatch, photo_plate_sample())
+    assert dialog._tensor_label.text().endswith("its calculation was cancelled")
+
+    dialog._shape.setCurrentIndex(dialog._shape.findData("ellipsoid"))
+    assert dialog._use_button.isEnabled()
+    dialog._shape.setCurrentIndex(dialog._shape.findData("image_plate"))
+
+    assert runs == [1, 1]
+    assert "Tr N = 1.00000" in dialog._tensor_label.text()
+    assert dialog._use_button.isEnabled()
+    dialog.close()
+
+
+def test_cancelled_tensor_is_tried_again_when_the_same_shape_is_picked_again(
+    qapp, monkeypatch
+) -> None:
+    dialog, runs = _cancelling_dialog(monkeypatch, photo_plate_sample())
+
+    # Choosing the item the combo box already shows emits activated and nothing else.
+    dialog._shape.activated.emit(dialog._shape.currentIndex())
+
+    assert runs == [1, 1]
+    assert "Tr N = 1.00000" in dialog._tensor_label.text()
+    dialog.close()
+
+
+def test_cancelling_after_a_change_of_shape_does_not_start_it_again(qapp, monkeypatch) -> None:
+    runs = []
+
+    def run(_parent, _op, **_kwargs):
+        runs.append(1)
+        raise BlockingCallCancelled("cancelled")
+
+    dialog = _demag_dialog(monkeypatch)
+    plate = dialog._shape.findData("image_plate")
+    dialog._plate_sample = photo_plate_sample()
+    monkeypatch.setattr(demagnetizing_dialogs_module, "run_blocking_call", run)
+
+    # A pick changes the index, which calculates, and then emits activated.
+    dialog._shape.setCurrentIndex(plate)
+    dialog._shape.activated.emit(plate)
+
+    assert runs == [1]
+    assert dialog._tensor_label.text().endswith("its calculation was cancelled")
+    dialog.close()
+
+
+def test_cancelled_tensor_is_tried_again_when_the_outline_is_used_again(qapp, monkeypatch) -> None:
+    plate = photo_plate_sample()
+    dialog, runs = _cancelling_dialog(monkeypatch, plate)
+
+    class _Photo:
+        def __init__(self, *_args):
+            pass
+
+        def exec(self):
+            return QDialog.DialogCode.Accepted
+
+        def selected_sample(self):
+            return plate
+
+        def deleteLater(self):
+            pass
+
+    monkeypatch.setattr(demagnetizing_dialogs_module, "SamplePhotoDialog", _Photo)
+    dialog._open_photo_dialog()
+
+    assert runs == [1, 1]
+    assert "Tr N = 1.00000" in dialog._tensor_label.text()
+    dialog.close()
+
+
+def test_orientation_edit_does_not_restart_a_cancelled_tensor(qapp, monkeypatch) -> None:
+    dialog, runs = _cancelling_dialog(monkeypatch, photo_plate_sample(), _HEXAGONAL_LATTICE)
+
+    dialog._orientation_mode.setCurrentIndex(dialog._orientation_mode.findData("directions"))
+    _set_indices(dialog._normal_inputs, (1, 0, 0))
+
+    assert runs == [1]
+    dialog.close()
+
+
+@pytest.mark.parametrize(
+    "sample",
+    [
+        DemagnetizingSample(shape="ellipsoid"),
+        DemagnetizingSample.image_plate(np.ones((64, 64), dtype=bool), (5.0, 5.0), 1e-5),
+        DemagnetizingSample.image_plate(np.ones((64, 64), dtype=bool), (1.0, 0.02), 0.002),
+    ],
+    ids=["ellipsoid", "refused", "narrow"],
+)
+def test_demagnetizing_dialog_minimum_size_squashes_no_control(qapp, monkeypatch, sample) -> None:
+    dialog = _demag_dialog(monkeypatch, sample=sample, lattice_vectors=_HEXAGONAL_LATTICE)
+    dialog.show()
+    minimum = dialog.minimumSize()
+    dialog.resize(minimum)
+    qapp.processEvents()
+
+    assert (dialog.width(), dialog.height()) == (minimum.width(), minimum.height())
+    assert dialog.minimumSizeHint().width() <= minimum.width()
+    squashed = [
+        (type(control).__name__, control.height(), control.sizeHint().height())
+        for control in (dialog._orientation_mode, *dialog._normal_inputs, *dialog._in_plane_inputs)
+        if control.height() < control.sizeHint().height()
+    ]
+    assert squashed == []
+    # The tensor fits on one line, as on opening.
+    metrics = dialog._tensor_label.fontMetrics()
+    assert dialog._tensor_label.width() >= metrics.horizontalAdvance(
+        "N = [[0.00000, -0.00000, -0.00000], [-0.00000, 0.00000, -0.00000], "
+        "[-0.00000, -0.00000, 0.00000]]"
+    )
+    dialog.close()
+
+
+def test_demagnetizing_canvas_releases_its_mesh_when_shut_down(qapp, monkeypatch) -> None:
+    pyvista = pytest.importorskip("pyvista")
+
+    class _FakePlotter(QWidget):
+        def __init__(self, parent=None, **kwargs):
+            super().__init__(parent)
+
+        def set_background(self, *args, **kwargs):
+            pass
+
+        enable_parallel_projection = clear = add_point_labels = render = set_background
+        add_mesh = reset_camera = shutdown = set_background
+
+    monkeypatch.setattr(
+        demagnetizing_dialogs_module, "_pyvista_modules", lambda: (pyvista, _FakePlotter)
+    )
+    canvas = demagnetizing_dialogs_module._DemagnetizingPyVistaCanvas()
+    canvas.set_sample(photo_plate_sample())
+    assert canvas._voxel_mesh_cache is not None
+
+    canvas.shutdown()
+
+    assert canvas._voxel_mesh_cache is None
+    assert canvas._sample is None
+    canvas.close()
+
+
 def test_demagnetizing_dialog_warns_about_a_narrow_saved_outline(qapp, monkeypatch) -> None:
     plate = DemagnetizingSample.image_plate(np.ones((64, 64), dtype=bool), (1.0, 0.02), 0.002)
 
@@ -199,6 +360,9 @@ def test_demagnetizing_advanced_dialog_takes_the_plate_from_the_photo_dialog(
     plate = photo_plate_sample(photo=PlatePhoto(path="/photos/crystal.png"))
 
     class _PhotoDialog:
+        def deleteLater(self):
+            pass
+
         def __init__(self, sample, parent=None):
             assert sample.shape == "image_plate"
 
@@ -236,6 +400,9 @@ def test_demagnetizing_advanced_dialog_keeps_a_cancelled_photo_dialog_out(
     qapp, monkeypatch
 ) -> None:
     class _PhotoDialog:
+        def deleteLater(self):
+            pass
+
         def __init__(self, sample, parent=None):
             pass
 

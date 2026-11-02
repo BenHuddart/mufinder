@@ -939,7 +939,9 @@ def _plate_refusal(sample: DemagnetizingSample) -> str:
     width, height = sample.plate_size
     thickness = float(sample.plate_thickness)
     if min(width, height) >= _INFINITE_PLATE_MIN_RATIO * thickness:
-        off_by = 1.0 - demagnetizing_factors_rectangular_prism((width, height, thickness))[2]
+        off_by = _rounded_up(
+            1.0 - demagnetizing_factors_rectangular_prism((width, height, thickness))[2]
+        )
         return (
             f"the plate is too thin: its longest edge can be at most {_THINNEST_PLATE_RATIO} "
             f"times its thickness. Choose Infinite plate, which has its normal along c and is "
@@ -972,6 +974,13 @@ def _fourier_box(
     ]
     step = _spacing3(spacing)
     return voxels, step, _checked_box(voxels.shape, step, padding)
+
+
+def _rounded_up(value: float) -> float:
+    """Return ``value`` rounded up to one significant figure, so that "within" it holds."""
+
+    scale = 10.0 ** math.floor(math.log10(max(value, 1e-300)))
+    return math.ceil(max(value, 1e-300) / scale) * scale
 
 
 def _checked_box(

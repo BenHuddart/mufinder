@@ -1386,9 +1386,12 @@ class MagneticFieldWidget(QWidget):
                 None if self._host_structure is None else self._host_structure.lattice_vectors
             ),
         )
-        if dialog.exec() != QDialog.DialogCode.Accepted:
-            return
-        self._demag_sample = dialog.selected_sample()
+        try:
+            if dialog.exec() != QDialog.DialogCode.Accepted:
+                return
+            self._demag_sample = dialog.selected_sample()
+        finally:
+            dialog.deleteLater()
         self._advanced_demag_radio.setChecked(True)
         self._refresh_demag_summary()
         self._on_form_setting_changed()

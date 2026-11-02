@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 import hashlib
+import re
 
 import numpy as np
 import pytest
@@ -901,7 +902,7 @@ def test_photo_plate_too_thin_is_refused_naming_the_infinite_plate(thickness: fl
 
 
 @pytest.mark.parametrize(
-    ("size", "figure"), [((1.0, 1.0), "0.0005"), ((1.0, 0.1), "0.002")], ids=["square", "ribbon"]
+    ("size", "figure"), [((1.0, 1.0), "0.0006"), ((1.0, 0.1), "0.003")], ids=["square", "ribbon"]
 )
 def test_refusal_gives_the_infinite_plate_s_error_for_the_plate_in_hand(
     size: tuple[float, float], figure: str
@@ -910,6 +911,23 @@ def test_refusal_gives_the_infinite_plate_s_error_for_the_plate_in_hand(
 
     with pytest.raises(DemagnetizationError, match=f"within {figure} .*Rectangular prism"):
         sample_fourier_box(plate)
+
+
+@pytest.mark.parametrize(
+    "size",
+    [(5.0, 5.0), (5.0, 3.54), (1.0, 1.0), (1.0, 0.1), (2.0, 0.7)],
+    ids=["5x5", "5x3.54", "1x1", "ribbon", "2x0.7"],
+)
+def test_refusal_figure_is_rounded_up_so_within_holds(size: tuple[float, float]) -> None:
+    thickness = max(size) / 12_000.0
+    plate = DemagnetizingSample.image_plate(np.ones((64, 64), dtype=bool), size, thickness)
+    true_error = 1.0 - demagnetizing_factors_rectangular_prism((*size, thickness))[2]
+
+    with pytest.raises(DemagnetizationError, match=r"within ([0-9.e-]+) for") as refused:
+        sample_fourier_box(plate)
+
+    stated = float(re.search(r"within ([0-9.e-]+) for", str(refused.value)).group(1))
+    assert true_error <= stated <= 2.0 * true_error
 
 
 def test_plate_at_the_thin_limit_is_not_refused_for_rounding_its_edges() -> None:

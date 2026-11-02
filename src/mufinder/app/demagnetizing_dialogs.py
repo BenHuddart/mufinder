@@ -70,6 +70,12 @@ ADVANCED_DEMAG_SHAPES = frozenset(
 
 # The preview draws at most this many voxels, skipping evenly through larger grids.
 _PREVIEW_MAX_VOXELS = 400_000
+_WIDEST_TENSOR_LINE = (
+    "N = [[0.00000, -0.00000, -0.00000], [-0.00000, 0.00000, -0.00000], "
+    "[-0.00000, -0.00000, 0.00000]]"
+)
+# The tensor and its trace, and a wrapped warning; or a wrapped refusal.
+_TENSOR_LABEL_LINES = 4
 
 
 DEMAG_ORIENTATION_OPTIONS: tuple[tuple[str, str], ...] = (
@@ -249,6 +255,9 @@ class _DemagnetizingPyVistaCanvas(QWidget):
         """Release the render window; a theme change after this draws nothing."""
 
         self._closed = True
+        # A surface at 256 voxels along the edge is megabytes, and the dialog may outlive this.
+        self._voxel_mesh_cache = None
+        self._sample = None
         _shutdown_pyvista_widget(self._plotter)
 
     def _voxel_mesh(self, sample: DemagnetizingSample):
@@ -439,6 +448,11 @@ class DemagnetizingFieldAdvancedDialog(StructureViewerDialog):
 
         self._tensor_label = QLabel("", self)
         self._tensor_label.setWordWrap(True)
+        # Wrapping must not let the window narrow until the tensor breaks or controls squash:
+        # the tensor keeps its line, and room is kept for a refusal or a warning beneath it.
+        metrics = self._tensor_label.fontMetrics()
+        self._tensor_label.setMinimumWidth(metrics.horizontalAdvance(_WIDEST_TENSOR_LINE))
+        self._tensor_label.setMinimumHeight(_TENSOR_LABEL_LINES * metrics.lineSpacing())
         self._tensor_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         style_hint_text(self._tensor_label)
 
@@ -501,7 +515,9 @@ class DemagnetizingFieldAdvancedDialog(StructureViewerDialog):
         layout.addLayout(body)
         layout.addWidget(buttons)
 
-        self._shape.currentIndexChanged.connect(self._sync)
+        self._picked_shape_index = self._shape.currentIndex()
+        self._shape.currentIndexChanged.connect(self._on_shape_changed)
+        self._shape.activated.connect(self._on_shape_picked)
         for widget in (
             self._ellipsoid_a,
             self._ellipsoid_b,
@@ -517,6 +533,7 @@ class DemagnetizingFieldAdvancedDialog(StructureViewerDialog):
         self._sync()
         # The dialog opens with its preview drawn.
         self._draw_pending_preview()
+        self._fix_minimum_size()
 
     def selected_sample(self) -> DemagnetizingSample:
         """Return the configured sample, oriented when ``Crystal directions`` is chosen.
@@ -574,11 +591,27 @@ class DemagnetizingFieldAdvancedDialog(StructureViewerDialog):
             ),
         )
 
+    def _on_shape_changed(self, *_args: object) -> None:
+        self._cancelled_shape = None
+        self._sync()
+
+    def _on_shape_picked(self, index: int) -> None:
+        """Try a cancelled tensor again when its shape is picked again; a change already has."""
+
+        picked_again = index == self._picked_shape_index
+        self._picked_shape_index = index
+        if picked_again:
+            self._on_shape_changed()
+
     def _open_photo_dialog(self) -> None:
         dialog = SamplePhotoDialog(self._plate_sample, self)
-        if dialog.exec() != QDialog.DialogCode.Accepted:
-            return
-        self._plate_sample = dialog.selected_sample()
+        try:
+            if dialog.exec() != QDialog.DialogCode.Accepted:
+                return
+            self._plate_sample = dialog.selected_sample()
+        finally:
+            dialog.deleteLater()
+        self._cancelled_shape = None
         self._sync()
 
     def done(self, result: int) -> None:
@@ -592,6 +625,13 @@ class DemagnetizingFieldAdvancedDialog(StructureViewerDialog):
         self._preview_timer.stop()
         self._pending_preview = None
         super().closeEvent(event)
+
+    def _fix_minimum_size(self) -> None:
+        """Keep the window tall enough to give every control the height it asks for."""
+
+        layout = self.layout()
+        layout.activate()
+        self.setMinimumHeight(layout.totalSizeHint().height())
 
     def _ellipsoid_page(self) -> QWidget:
         page = QWidget(self)
