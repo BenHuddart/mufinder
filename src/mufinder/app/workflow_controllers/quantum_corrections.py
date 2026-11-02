@@ -618,15 +618,19 @@ class QuantumCorrectionsController(WorkflowJobController):
     ) -> None:
         """Store an accepted Configure dialog on every row ``keys`` name.
 
-        ``extras`` are the dialog's workflow values (the farm count). A mixed parameter the user left alone keeps each row's own
-        stored value.
+        ``extras`` are the dialog's workflow values; without ``num_farms``, the farm
+        count was left alone and each row keeps its own. A mixed parameter the user left
+        alone keeps each row's own stored value.
         """
 
-        payload = row_settings_payload(result.values, result.advanced_names, extras)
         definition = self.ensure_definition(keys)
         if definition is None:
             return
         for key in keys:
+            own_farms = num_farms_from_extras(workflow_row_configuration(definition, key)[2])
+            payload = row_settings_payload(
+                result.values, result.advanced_names, {"num_farms": own_farms, **extras}
+            )
             store_workflow_row_configuration(
                 definition, key, batch_row_payload(definition, key, payload, result.untouched_mixed)
             )
@@ -658,14 +662,7 @@ class QuantumCorrectionsController(WorkflowJobController):
         )
         if result is None:
             return
-        if "num_farms" in result.extras:
-            self.apply_configuration(request.keys, result, result.extras)
-            return
-        # The farm count was left alone, so each row keeps its own.
-        definition = self.active_definition()
-        for key in request.keys:
-            extras = workflow_row_configuration(definition, key)[2]
-            self.apply_configuration([key], result, {"num_farms": num_farms_from_extras(extras)})
+        self.apply_configuration(request.keys, result, result.extras)
 
     def rename_source(self, key: str, label: str) -> bool:
         """Rename a source's muon site from its editable label cell.

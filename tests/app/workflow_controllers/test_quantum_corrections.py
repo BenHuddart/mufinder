@@ -1645,9 +1645,12 @@ def test_quantum_controller_configure_keeps_differing_farm_counts_unless_changed
         "run_source_configure_dialog",
         lambda _build, _request, **_kwargs: replace(configure_result(), extras=extras),
     )
-    controller = _quantum_document_controller(service, document, output_root)
+    persisted: list[str] = []
+    controller = _quantum_document_controller(service, document, output_root, persisted=persisted)
 
     controller.configure_sources([key_a, key_b])
+
+    assert len(persisted) == 1
 
     farms = {
         name: workflow_row_configuration(definition, key)[2]["num_farms"]
