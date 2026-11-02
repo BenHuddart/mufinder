@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 from PySide6.QtGui import QImage
 from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QLabel
 
 import mufinder.app.sample_photo_dialog as photo_module
 from mufinder.app.sample_photo_dialog import SamplePhotoDialog, load_greyscale_image
@@ -15,6 +16,7 @@ from mufinder.science.demagnetization import (
     DemagnetizationError,
     DemagnetizingSample,
     PlatePhoto,
+    demagnetizing_factors_rectangular_prism,
     demagnetizing_tensor,
 )
 
@@ -83,6 +85,64 @@ def test_photo_dialog_segments_a_dark_plate_and_matches_its_aspect(qapp, tmp_pat
     dialog.close()
 
 
+def test_photo_dialog_names_the_controls_without_a_form_label(qapp) -> None:
+    dialog = SamplePhotoDialog()
+
+    assert dialog._path.accessibleName() == "Photo path"
+    assert dialog._threshold_slider.accessibleName() == "Threshold"
+    assert dialog._height.accessibleName() == "Height (along b)"
+    dialog.close()
+
+
+def test_photo_dialog_offers_no_resolution_settings(qapp) -> None:
+    dialog = SamplePhotoDialog()
+
+    labels = {label.text() for label in dialog.findChildren(QLabel)}
+
+    assert not labels & {"Fourier grid", "Voxels through thickness", "Padding", "Smoothing"}
+    assert {"Width (along a)", "Height (along b)", "Thickness (along c)"} <= labels
+    dialog.close()
+
+
+def test_photo_dialog_gives_a_thin_plate_within_half_a_percent_of_aharoni(qapp, tmp_path) -> None:
+    grey = np.full((300, 300), 220, dtype=np.uint8)
+    grey[50:250, 50:250] = 40
+    dialog = SamplePhotoDialog()
+    assert dialog.load_photo(_write_png(tmp_path / "square.png", grey))
+    dialog._width.setValue(5.0)
+    dialog._match_photo_aspect()
+    dialog._thickness.setValue(0.1)
+
+    tensor = demagnetizing_tensor(dialog.selected_sample())
+
+    assert tensor[2, 2] == pytest.approx(
+        demagnetizing_factors_rectangular_prism((5.0, 5.0, 0.1))[2], rel=0.005
+    )
+    assert np.trace(tensor) == pytest.approx(1.0, abs=1e-12)
+    dialog.close()
+
+
+def test_photo_dialog_opens_a_plate_saved_with_the_retired_settings(qapp, tmp_path) -> None:
+    path = _plate_photo(tmp_path)
+    plate = DemagnetizingSample.image_plate(
+        np.ones((60, 30), dtype=bool), (6.0, 3.0), 0.2, photo=PlatePhoto(path=str(path))
+    )
+    saved = {
+        **plate.to_json(),
+        "fourier_grid": 128,
+        "thickness_voxels": 3,
+        "padding": 3.0,
+        "smoothing": 1.0,
+    }
+
+    dialog = SamplePhotoDialog(DemagnetizingSample.from_json(saved))
+
+    assert dialog._thickness.value() == pytest.approx(0.2)
+    assert dialog.selected_sample() == plate
+    assert dialog._use_button.isEnabled()
+    dialog.close()
+
+
 def test_photo_dialog_threshold_invert_and_holes_change_the_outline(qapp, tmp_path) -> None:
     dialog = SamplePhotoDialog()
     dialog.load_photo(_plate_photo(tmp_path, hole=True))
@@ -128,10 +188,6 @@ def test_photo_dialog_reopens_a_saved_plate_with_its_settings(qapp, tmp_path) ->
         np.ones((60, 30), dtype=bool),
         (6.0, 3.0),
         0.2,
-        fourier_grid=64,
-        thickness_voxels=3,
-        padding=3.0,
-        smoothing=0.5,
         photo=PlatePhoto(path=str(path), threshold=150.0, invert=False, fill_holes=False),
     )
 
@@ -140,10 +196,6 @@ def test_photo_dialog_reopens_a_saved_plate_with_its_settings(qapp, tmp_path) ->
     assert dialog._threshold_slider.value() == 150
     assert not dialog._fill_holes.isChecked()
     assert (dialog._width.value(), dialog._height.value()) == pytest.approx((6.0, 3.0))
-    assert dialog._grid.value() == 64
-    assert dialog._layers.value() == 3
-    assert dialog._padding.value() == pytest.approx(3.0)
-    assert dialog._smoothing.value() == pytest.approx(0.5)
     assert dialog.selected_sample() == seed
     dialog.close()
 
@@ -210,28 +262,46 @@ def test_photo_dialog_choose_cancelled_changes_nothing(qapp, monkeypatch) -> Non
     dialog.close()
 
 
-def test_photo_dialog_reports_the_fft_box_and_refuses_one_too_large(qapp, tmp_path) -> None:
+def test_photo_dialog_refuses_a_plate_too_thin_naming_the_infinite_plate(qapp, tmp_path) -> None:
     dialog = SamplePhotoDialog()
     dialog.load_photo(_plate_photo(tmp_path))
     dialog._width.setValue(6.0)
     dialog._match_photo_aspect()
     dialog._thickness.setValue(0.1)
-    dialog._grid.setValue(64)
 
-    assert dialog._box_status.text().startswith("The FFT box is 160 x 160 x 150,")
+    assert dialog._box_status.text() == ""
     assert dialog._use_button.isEnabled()
 
     dialog._thickness.setValue(0.0001)
-    dialog._layers.setValue(64)
 
-    assert "Cannot calculate: the FFT box would hold" in dialog._box_status.text()
-    assert "lower the Fourier grid" in dialog._box_status.text()
+    assert dialog._box_status.text().startswith("Cannot calculate: the plate is too thin")
+    assert "Infinite plate" in dialog._box_status.text()
     assert not dialog._use_button.isEnabled()
 
-    dialog._layers.setValue(1)
-    dialog._thickness.setValue(0.5)
-    assert dialog._box_status.text().startswith("The FFT box is")
+    # A rod from an end-on photo is not refused.
+    dialog._thickness.setValue(500.0)
     assert dialog._use_button.isEnabled()
+    dialog.close()
+
+
+def test_photo_dialog_warns_when_the_outline_is_few_voxels_across(qapp, tmp_path) -> None:
+    dialog = SamplePhotoDialog()
+    dialog.load_photo(_plate_photo(tmp_path))
+    dialog._width.setValue(1.0)
+    dialog._height.setValue(0.03)
+    dialog._thickness.setValue(0.003)
+    assert dialog._box_status.text() == ""
+
+    dialog._height.setValue(0.02)
+
+    assert dialog._box_status.text().startswith("The outline is only 5 voxels across")
+    assert "off by up to about 0.02" in dialog._box_status.text()
+    # It is a warning: the plate can still be used.
+    assert dialog._use_button.isEnabled()
+
+    dialog._height.setValue(0.004)
+    assert dialog._box_status.text().startswith("The outline is only 1 voxel across")
+    assert "off by up to about 0.06" in dialog._box_status.text()
     dialog.close()
 
 

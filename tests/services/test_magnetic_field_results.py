@@ -33,6 +33,10 @@ from mufinder.services.magnetic_field_results import (
     store_magnetic_field_results,
     store_polarisation_result,
     uses_older_method,
+    PLATE_METHOD_VERSION,
+    PLATE_METHOD_VERSION_KEY,
+    field_result_uses_older_method,
+    magnetic_field_owner_form,
 )
 from mufinder.services.project_service import ProjectService
 
@@ -114,6 +118,85 @@ def test_attach_restores_the_form_the_page_stored(tmp_path: Path) -> None:
 )
 def test_a_result_is_older_by_its_stored_version(result, older) -> None:
     assert uses_older_method(result) is older
+
+
+_CURRENT = {"results": [1], CALCULATION_VERSION_KEY: CALCULATION_METHOD_VERSION}
+
+
+@pytest.mark.parametrize(
+    ("form", "older"),
+    [
+        ({"demag_shape": "image_plate"}, True),
+        ({"demag_shape": "none"}, False),
+        ({"demag_shape": "sphere"}, False),
+        ({"demag_shape": "infinite_plate"}, False),
+        ({"demag_shape": "rectangular_prism"}, False),
+        ({"demag_shape": "voxel_grid", "demag_sample": {"padding": 2.5, "smoothing": 0.0}}, False),
+        ({"demag_shape": "voxel_grid", "demag_sample": {}}, False),
+        ({"demag_shape": "voxel_grid", "demag_sample": {"padding": 3.0}}, True),
+        ({"demag_shape": "voxel_grid", "demag_sample": {"smoothing": 0.5}}, True),
+        # Not what the form holds now: the advanced sample is kept but not selected.
+        ({"demag_shape": "sphere", "demag_sample": {"shape": "image_plate"}}, False),
+        (None, False),
+    ],
+)
+def test_a_result_with_no_plate_version_is_decided_by_its_saved_sample(form, older) -> None:
+    assert field_result_uses_older_method(_CURRENT, form) is older
+
+
+@pytest.mark.parametrize(
+    ("recorded", "older"),
+    [
+        (PLATE_METHOD_VERSION, False),
+        (PLATE_METHOD_VERSION + 1, False),
+        (PLATE_METHOD_VERSION - 1, True),
+        ("2", True),
+        (True, True),
+    ],
+)
+def test_a_recorded_plate_version_decides_whatever_the_form_holds(recorded, older) -> None:
+    result = {**_CURRENT, PLATE_METHOD_VERSION_KEY: recorded}
+
+    assert field_result_uses_older_method(result, {"demag_shape": "image_plate"}) is older
+    assert field_result_uses_older_method(result, {"demag_shape": "none"}) is older
+
+
+def test_an_older_calculation_version_is_older_with_or_without_a_plate() -> None:
+    assert field_result_uses_older_method({"results": [1]}, {"demag_shape": "none"})
+    assert field_result_uses_older_method(
+        {"results": [1], PLATE_METHOD_VERSION_KEY: PLATE_METHOD_VERSION}, None
+    )
+    assert not field_result_uses_older_method({}, {"demag_shape": "image_plate"})
+
+
+def test_a_plate_version_is_stored_and_comes_back(tmp_path: Path) -> None:
+    document = _document(tmp_path)
+    fields = {
+        **_form()["magnetic_field_results"],
+        CALCULATION_VERSION_KEY: CALCULATION_METHOD_VERSION,
+        PLATE_METHOD_VERSION_KEY: PLATE_METHOD_VERSION,
+    }
+
+    store_magnetic_field_results(
+        document, MAGNETIC_FIELD_PAGE_OWNER, {"magnetic_field_results": fields}
+    )
+
+    record = magnetic_field_result(document, MAGNETIC_FIELD_PAGE_OWNER, MAGNETIC_FIELD_RESULT_TYPE)
+    assert record.data[PLATE_METHOD_VERSION_KEY] == PLATE_METHOD_VERSION
+    attached = attach_magnetic_field_results(document, MAGNETIC_FIELD_PAGE_OWNER, {})
+    assert attached["magnetic_field_results"][PLATE_METHOD_VERSION_KEY] == PLATE_METHOD_VERSION
+
+
+def test_the_owner_form_comes_from_the_page_or_its_workspace(tmp_path: Path) -> None:
+    document = _document(tmp_path)
+    document.ui_state["magnetic_field_form"] = {"demag_shape": "sphere"}
+    document.ui_state["magnetic_field_workspaces"] = [
+        {"id": "w1", "form": {"demag_shape": "image_plate"}}
+    ]
+
+    assert magnetic_field_owner_form(document, MAGNETIC_FIELD_PAGE_OWNER)["demag_shape"] == "sphere"
+    assert magnetic_field_owner_form(document, "w1")["demag_shape"] == "image_plate"
+    assert magnetic_field_owner_form(document, "gone") is None
 
 
 def test_each_record_keeps_the_version_its_result_was_calculated_with(tmp_path: Path) -> None:

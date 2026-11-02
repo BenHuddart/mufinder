@@ -28,11 +28,13 @@ from mufinder.app.atomic_structure_viewer import (
     _pyvista_modules,
     _shutdown_pyvista_widget,
 )
+from mufinder.app.blocking_call import BlockingCallCancelled, run_blocking_call
 from mufinder.app.magnetic_component_dialogs import DecimalTriple, direction_group, direction_inputs
 from mufinder.app.sample_photo_dialog import (
     PREVIEW_DEBOUNCE_MS,
     SamplePhotoDialog,
     demag_length_input,
+    narrow_outline_warning,
 )
 from mufinder.app.theme import (
     current_palette,
@@ -40,9 +42,11 @@ from mufinder.app.theme import (
     style_section_subtitle,
     style_section_title,
 )
+from mufinder.app.viewer_dialog import StructureViewerDialog
 from mufinder.science.demagnetization import (
     DemagnetizationError,
     DemagnetizingSample,
+    FourierDemagnetizingResult,
     SampleOrientation,
     fourier_demagnetizing_result,
     principal_demagnetizing_tensor,
@@ -67,6 +71,12 @@ ADVANCED_DEMAG_SHAPES = frozenset(
 
 # The preview draws at most this many voxels, skipping evenly through larger grids.
 _PREVIEW_MAX_VOXELS = 400_000
+_WIDEST_TENSOR_LINE = (
+    "N = [[0.00000, -0.00000, -0.00000], [-0.00000, 0.00000, -0.00000], "
+    "[-0.00000, -0.00000, 0.00000]]"
+)
+# The tensor and its trace, and a wrapped warning; or a wrapped refusal.
+_TENSOR_LABEL_LINES = 4
 
 
 DEMAG_ORIENTATION_OPTIONS: tuple[tuple[str, str], ...] = (
@@ -119,6 +129,7 @@ class _DemagnetizingPyVistaCanvas(QWidget):
         # orientation only rotates it.
         self._voxel_mesh_cache: tuple[DemagnetizingSample, object] | None = None
         self._refreshing_theme = False
+        self._closed = False
         self._style_signature = self._style_signature_for_current_palette()
         # auto_update=False disables pyvistaqt's always-on render_timer; we
         # render explicitly (draw_idle/plotter.render), so the ~5Hz timer is
@@ -218,7 +229,8 @@ class _DemagnetizingPyVistaCanvas(QWidget):
         plotter = getattr(self, "_plotter", None)
         signature = self._style_signature_for_current_palette()
         if (
-            self._refreshing_theme
+            getattr(self, "_closed", True)
+            or self._refreshing_theme
             or plotter is None
             or signature == getattr(self, "_style_signature", None)
             or event.type()
@@ -241,6 +253,12 @@ class _DemagnetizingPyVistaCanvas(QWidget):
             self._refreshing_theme = False
 
     def shutdown(self) -> None:
+        """Release the render window; a theme change after this draws nothing."""
+
+        self._closed = True
+        # A surface at 256 voxels along the edge is megabytes, and the dialog may outlive this.
+        self._voxel_mesh_cache = None
+        self._sample = None
         _shutdown_pyvista_widget(self._plotter)
 
     def _voxel_mesh(self, sample: DemagnetizingSample):
@@ -261,8 +279,9 @@ class _DemagnetizingPyVistaCanvas(QWidget):
     def _build_voxel_mesh(self, sample: DemagnetizingSample):
         try:
             if sample.shape == "image_plate":
-                sample = replace(sample, thickness_voxels=1)
-            model = sample.voxel_model()
+                model = sample.plate_outline_model()
+            else:
+                model = sample.voxel_model()
         except DemagnetizationError:
             return None
         mask, spacing = model.mask, np.asarray(model.spacing, dtype=float)
@@ -332,7 +351,7 @@ class _DemagnetizingPyVistaCanvas(QWidget):
         )
 
 
-class DemagnetizingFieldAdvancedDialog(QDialog):
+class DemagnetizingFieldAdvancedDialog(StructureViewerDialog):
     """Advanced demagnetizing-field shape and tensor settings."""
 
     def __init__(
@@ -399,6 +418,8 @@ class DemagnetizingFieldAdvancedDialog(QDialog):
         # rotation saved without crystal directions, or directions with no host.
         self._seed = sample
         self._principal: tuple[DemagnetizingSample, np.ndarray] | None = None
+        self._fourier_result: FourierDemagnetizingResult | None = None
+        self._cancelled_shape: DemagnetizingSample | None = None
         self._orientation_mode = QComboBox(self)
         for key, label in DEMAG_ORIENTATION_OPTIONS:
             self._orientation_mode.addItem(label, key)
@@ -417,16 +438,28 @@ class DemagnetizingFieldAdvancedDialog(QDialog):
         self._in_plane_inputs = direction_inputs(
             sample.in_plane_uvw or (1.0, 0.0, 0.0), placeholders="uvw"
         )
+        for edit, name in zip(
+            (*self._normal_inputs, *self._in_plane_inputs),
+            ("Normal h", "Normal k", "Normal l", "In-plane u", "In-plane v", "In-plane w"),
+            strict=True,
+        ):
+            edit.setAccessibleName(name)
         self._orientation_hint = QLabel("", self)
         self._orientation_hint.setWordWrap(True)
         style_hint_text(self._orientation_hint)
 
         self._tensor_label = QLabel("", self)
+        self._tensor_label.setWordWrap(True)
+        # Wrapping must not let the window narrow until the tensor breaks or controls squash:
+        # the tensor keeps its line, and room is kept for a refusal or a warning beneath it.
+        metrics = self._tensor_label.fontMetrics()
+        self._tensor_label.setMinimumWidth(metrics.horizontalAdvance(_WIDEST_TENSOR_LINE))
+        self._tensor_label.setMinimumHeight(_TENSOR_LABEL_LINES * metrics.lineSpacing())
         self._tensor_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         style_hint_text(self._tensor_label)
 
         try:
-            self._preview = _DemagnetizingPyVistaCanvas(self)
+            self._preview = self.hold_viewer(_DemagnetizingPyVistaCanvas(self))
         except RuntimeError as exc:
             self._preview = QLabel(str(exc), self)
             self._preview.setWordWrap(True)
@@ -484,7 +517,9 @@ class DemagnetizingFieldAdvancedDialog(QDialog):
         layout.addLayout(body)
         layout.addWidget(buttons)
 
-        self._shape.currentIndexChanged.connect(self._sync)
+        self._picked_shape_index = self._shape.currentIndex()
+        self._shape.currentIndexChanged.connect(self._on_shape_changed)
+        self._shape.activated.connect(self._on_shape_picked)
         for widget in (
             self._ellipsoid_a,
             self._ellipsoid_b,
@@ -500,6 +535,7 @@ class DemagnetizingFieldAdvancedDialog(QDialog):
         self._sync()
         # The dialog opens with its preview drawn.
         self._draw_pending_preview()
+        self._fix_minimum_size()
 
     def selected_sample(self) -> DemagnetizingSample:
         """Return the configured sample, oriented when ``Crystal directions`` is chosen.
@@ -557,15 +593,31 @@ class DemagnetizingFieldAdvancedDialog(QDialog):
             ),
         )
 
+    def _on_shape_changed(self, *_args: object) -> None:
+        self._cancelled_shape = None
+        self._sync()
+
+    def _on_shape_picked(self, index: int) -> None:
+        """Try a cancelled tensor again when its shape is picked again; a change already has."""
+
+        picked_again = index == self._picked_shape_index
+        self._picked_shape_index = index
+        if picked_again:
+            self._on_shape_changed()
+
     def _open_photo_dialog(self) -> None:
         dialog = SamplePhotoDialog(self._plate_sample, self)
-        if dialog.exec() != QDialog.DialogCode.Accepted:
-            return
-        self._plate_sample = dialog.selected_sample()
+        try:
+            if dialog.exec() != QDialog.DialogCode.Accepted:
+                return
+            self._plate_sample = dialog.selected_sample()
+        finally:
+            dialog.deleteLater()
+        self._cancelled_shape = None
         self._sync()
 
     def done(self, result: int) -> None:
-        """Close the dialog; a preview still waiting for edits to pause is not drawn."""
+        """Close the dialog and shut its preview; one waiting for edits to pause is not drawn."""
 
         self._preview_timer.stop()
         self._pending_preview = None
@@ -574,9 +626,14 @@ class DemagnetizingFieldAdvancedDialog(QDialog):
     def closeEvent(self, event) -> None:  # noqa: N802
         self._preview_timer.stop()
         self._pending_preview = None
-        if isinstance(self._preview, _DemagnetizingPyVistaCanvas):
-            self._preview.shutdown()
         super().closeEvent(event)
+
+    def _fix_minimum_size(self) -> None:
+        """Keep the window tall enough to give every control the height it asks for."""
+
+        layout = self.layout()
+        layout.activate()
+        self.setMinimumHeight(layout.totalSizeHint().height())
 
     def _ellipsoid_page(self) -> QWidget:
         page = QWidget(self)
@@ -662,8 +719,32 @@ class DemagnetizingFieldAdvancedDialog(QDialog):
         """Return the shape's principal tensor, reused while only the orientation changes."""
 
         shape = replace(sample, rotation=None, normal_hkl=None, in_plane_uvw=None)
+        if shape == self._cancelled_shape:
+            # Editing the orientation does not start again what the user cancelled.
+            raise BlockingCallCancelled("the tensor of this shape was cancelled")
         if self._principal is None or self._principal[0] != shape:
-            self._principal = (shape, principal_demagnetizing_tensor(shape))
+            # A plate far thinner than it is wide takes seconds, so a Fourier shape runs off
+            # the GUI thread, with a busy dialog once it takes noticeably long.
+            try:
+                result = (
+                    run_blocking_call(
+                        self,
+                        lambda: fourier_demagnetizing_result(shape),
+                        title="Advanced Demagnetizing Field",
+                        description="Calculating the demagnetizing tensor…",
+                        cancellable=True,
+                    )
+                    if shape.uses_fourier_method
+                    else None
+                )
+            except BlockingCallCancelled:
+                self._cancelled_shape = shape
+                raise
+            self._fourier_result = result
+            self._principal = (
+                shape,
+                principal_demagnetizing_tensor(shape) if result is None else result.tensor,
+            )
         return self._principal[1]
 
     def _sync(self, *_args: object) -> None:
@@ -686,6 +767,9 @@ class DemagnetizingFieldAdvancedDialog(QDialog):
             return
         try:
             tensor = sample.rotate(self._principal_tensor(sample))
+        except BlockingCallCancelled:
+            self._tensor_label.setText("Tensor unavailable: its calculation was cancelled")
+            self._use_button.setEnabled(False)
         except DemagnetizationError as exc:
             self._tensor_label.setText(f"Tensor unavailable: {exc}")
             self._use_button.setEnabled(False)
@@ -698,13 +782,18 @@ class DemagnetizingFieldAdvancedDialog(QDialog):
                 f"[{tensor[1, 0]:.5f}, {tensor[1, 1]:.5f}, {tensor[1, 2]:.5f}], "
                 f"[{tensor[2, 0]:.5f}, {tensor[2, 1]:.5f}, {tensor[2, 2]:.5f}]]"
             )
-            if sample.uses_fourier_method:
-                result = fourier_demagnetizing_result(sample)
+            if self._fourier_result is not None and sample.uses_fourier_method:
+                # Kept from the worker: asking again could recalculate here on the GUI thread.
+                result = self._fourier_result
                 box = " x ".join(str(n) for n in result.box_shape)
                 text += (
                     f"\nTr N = {result.trace:.5f} from {result.voxel_count} voxels in a "
                     f"{box} FFT box."
                 )
+                if shape == "image_plate":
+                    warning = narrow_outline_warning(sample)
+                    if warning:
+                        text += f"\n{warning}"
             self._tensor_label.setText(text)
             self._use_button.setEnabled(True)
         self._schedule_preview(sample)

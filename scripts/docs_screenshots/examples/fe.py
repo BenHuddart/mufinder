@@ -91,7 +91,6 @@ MEASURED_MAGNETISATION_MU_B = 2.0  # μB per Fe: a sample short of saturation, i
 PLATE_PHOTO_SIZE = (480, 640)  # pixels, rows x columns
 PLATE_WIDTH = 5.0  # along a, the width of the outline's bounding box
 PLATE_THICKNESS = 0.1
-PLATE_GRID = 64
 
 
 def fe_host() -> Structure:
@@ -176,7 +175,6 @@ def fe_plate_project(name: str) -> ProjectBuilder:
             segmentation.in_plane_mask(),
             (PLATE_WIDTH, PLATE_WIDTH * segmentation.aspect_ratio),
             PLATE_THICKNESS,
-            fourier_grid=PLATE_GRID,
             photo=PlatePhoto(path=str(photo_path)),
         )
         form = {**_OCTAHEDRAL, "demag_shape": "image_plate", "demag_sample": plate.to_json()}

@@ -60,9 +60,7 @@ def custom_muon_site(
 def photo_plate_sample(**fields):
     x = (np.arange(40) + 0.5) / 40 * 2.0 - 1.0
     outline = x[:, None] ** 2 + x[None, :] ** 2 <= 1.0
-    return DemagnetizingSample.image_plate(
-        outline, (5.0, 5.0), 0.2, fourier_grid=32, padding=2.0, **fields
-    )
+    return DemagnetizingSample.image_plate(outline, (5.0, 5.0), 0.2, **fields)
 
 
 def two_row_helix_model() -> MagneticStructureModel:

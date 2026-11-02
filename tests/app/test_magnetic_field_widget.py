@@ -9,11 +9,18 @@ from uuid import uuid4
 
 import numpy as np
 import pytest
-from PySide6.QtCore import QItemSelectionModel, Qt, QTimer
+from PySide6.QtCore import QCoreApplication, QEvent, QItemSelectionModel, Qt, QTimer
 from PySide6.QtGui import QDoubleValidator
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QAbstractItemView, QApplication, QDialog, QProgressDialog
+from PySide6.QtWidgets import (
+    QAbstractItemView,
+    QApplication,
+    QDialog,
+    QProgressDialog,
+    QWidget,
+)
 
+import mufinder.app.demagnetizing_dialogs as demagnetizing_dialogs_module
 import mufinder.app.magnetic_field_widget as magnetic_field_widget_module
 import mufinder.services.magnetic_field_calculation as magnetic_field_calculation_module
 import mufinder.science.magnetic_fields as magnetic_fields_module
@@ -47,6 +54,9 @@ from mufinder.services.magnetic_field_results import (
     MAGNETIC_FIELD_PAGE_OWNER,
     MAGNETIC_FIELD_RESULT_TYPE,
     OLDER_METHOD_RESULTS_NOTE,
+    PLATE_METHOD_VERSION,
+    PLATE_METHOD_VERSION_KEY,
+    field_result_uses_older_method,
     attach_magnetic_field_results,
     magnetic_field_result,
     magnetic_field_results,
@@ -1206,6 +1216,9 @@ def test_magnetic_field_widget_opens_advanced_demag_dialog(qapp, tmp_path, monke
     service.add_structure(document, feo_host_structure())
 
     class _Dialog:
+        def deleteLater(self):
+            pass
+
         def __init__(self, sample, parent=None, *, lattice_vectors=None):
             assert sample.shape == "ellipsoid"
             assert lattice_vectors == feo_host_structure().lattice_vectors
@@ -1282,6 +1295,286 @@ def test_magnetic_field_widget_restores_advanced_demag_state(qapp, tmp_path) -> 
     assert options.demag_sample is not None
     assert options.demag_sample.prism_lengths == pytest.approx((2.0, 4.0, 6.0))
     assert "Rectangular prism" in widget._advanced_demag_summary.text()
+    widget.close()
+
+
+def test_refused_calculation_saves_that_the_old_results_are_gone(
+    qapp, tmp_path, monkeypatch
+) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "refused.mufinder", "Refused")
+    service.add_structure(document, feo_host_structure())
+
+    class _Result:
+        site_label = "Mu1"
+        total = (0.1, 0.0, 0.0)
+        magnitude = 0.1
+        distortion = None
+
+    calculated: list[object] = [(_Result(),)]
+
+    def _calculate(*_args, **_kwargs):
+        if isinstance(calculated[0], Exception):
+            raise calculated[0]
+        return calculated[0]
+
+    monkeypatch.setattr(
+        magnetic_field_calculation_module,
+        "classify_magnetic_model",
+        lambda *_args, **_kwargs: "commensurate",
+    )
+    monkeypatch.setattr(
+        magnetic_field_calculation_module, "calculate_commensurate_fields", _calculate
+    )
+    widget = MagneticFieldWidget()
+    widget.set_document(document)
+    widget.set_model(MagneticStructureModel(components=(z_moment_component("one", "One", 0),)))
+    widget._selected_muon_site = custom_muon_site((0.25, 0.5, 0.75))
+    widget._sync_enabled_state()
+    saved: list[dict] = []
+    widget.form_state_changed.connect(saved.append)
+    widget.calculate_fields()
+    assert saved[-1]["magnetic_field_results"] is not None
+
+    calculated[0] = ValueError("the plate is too thin")
+    widget.calculate_fields()
+
+    assert widget._calculation_status.text() == "Calculation failed: the plate is too thin"
+    assert widget._result_table.rowCount() == 0
+    # The cleared results are saved, so the earlier ones do not come back on reopening.
+    assert saved[-1]["magnetic_field_results"] is None
+    widget.close()
+
+
+def test_calculation_failing_after_a_reload_leaves_the_reloaded_results_alone(
+    qapp, tmp_path, monkeypatch
+) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "reloaded.mufinder", "Reloaded")
+    service.add_structure(document, feo_host_structure())
+    widget = MagneticFieldWidget()
+    widget.set_document(document)
+    widget.set_model(MagneticStructureModel(components=(z_moment_component("one", "One", 0),)))
+    widget._selected_muon_site = custom_muon_site((0.25, 0.5, 0.75))
+    widget._sync_enabled_state()
+
+    def _reload_then_fail(*_args, **_kwargs):
+        widget._page_reloads += 1
+        raise ValueError("the plate is too thin")
+
+    monkeypatch.setattr(
+        magnetic_field_widget_module, "run_prepared_magnetic_field_calculation", _reload_then_fail
+    )
+    cleared: list[bool] = []
+    monkeypatch.setattr(widget, "_clear_results", lambda **_kw: cleared.append(True))
+    saved: list[dict] = []
+    widget.form_state_changed.connect(saved.append)
+
+    widget.calculate_fields()
+
+    assert cleared == []
+    assert saved == []
+    assert "reloaded during the calculation" in widget._calculation_status.text()
+    widget.close()
+
+
+def _stored_field_state(**extra) -> dict[str, object]:
+    return {
+        "kind": "commensurate",
+        "results": [
+            {
+                "site_label": "site 1",
+                "muon_position": [0.5, 0.0, 0.75],
+                "total_T": [1.0, 0.0, 0.0],
+                "magnitude_T": 1.0,
+            }
+        ],
+        "site_source": "custom",
+        CALCULATION_VERSION_KEY: CALCULATION_METHOD_VERSION,
+        **extra,
+    }
+
+
+def test_a_stored_plate_result_reads_as_older_and_a_fresh_one_records_the_plate_method(
+    qapp, tmp_path, monkeypatch
+) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "plate-version.mufinder", "Plate version")
+    service.add_structure(document, feo_host_structure())
+    page = _calculating_widget(document, monkeypatch)
+    plate = photo_plate_sample()
+    page.set_form_state(
+        {
+            "demag_shape": "image_plate",
+            "demag_sample": plate.to_json(),
+            "magnetic_field_results": _stored_field_state(),
+        }
+    )
+    assert not page._older_method_note.isHidden()
+    assert page._older_method_note.text() == OLDER_METHOD_RESULTS_NOTE
+
+    page._selected_muon_site = custom_muon_site((0.25, 0.5, 0.75))
+    page.calculate_fields()
+
+    assert page._older_method_note.isHidden()
+    fresh = page.collect_state()["magnetic_field_results"]
+    assert fresh[PLATE_METHOD_VERSION_KEY] == PLATE_METHOD_VERSION
+    assert page.field_options().demag_sample == plate
+    page.close()
+
+
+@pytest.mark.parametrize("shape", ["none", "sphere", "infinite_plate", "rectangular_prism"])
+def test_a_stored_result_with_no_plate_stays_current_and_a_fresh_one_records_no_plate_method(
+    qapp, tmp_path, monkeypatch, shape
+) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "no-plate.mufinder", "No plate")
+    service.add_structure(document, feo_host_structure())
+    page = _calculating_widget(document, monkeypatch)
+    page.set_form_state(
+        {
+            "demag_shape": shape,
+            "demag_sample": DemagnetizingSample(shape=shape).to_json(),
+            "magnetic_field_results": _stored_field_state(),
+        }
+    )
+    assert page._result_table.rowCount() == 1
+    assert page._older_method_note.isHidden()
+
+    page._selected_muon_site = custom_muon_site((0.25, 0.5, 0.75))
+    page.calculate_fields()
+
+    assert page._older_method_note.isHidden()
+    assert PLATE_METHOD_VERSION_KEY not in page.collect_state()["magnetic_field_results"]
+    page.close()
+
+
+def test_a_voxel_grid_result_stays_older_through_a_save_until_it_is_calculated(
+    qapp, tmp_path, monkeypatch
+) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "voxel.mufinder", "Voxel")
+    service.add_structure(document, feo_host_structure())
+    page = _calculating_widget(document, monkeypatch)
+    grid = DemagnetizingSample.voxel_grid(np.ones((3, 3, 3), dtype=bool), 1.0)
+    page.set_form_state(
+        {
+            "demag_shape": "voxel_grid",
+            "demag_sample": {**grid.to_json(), "padding": 3.0, "smoothing": 0.5},
+            "magnetic_field_results": _stored_field_state(),
+        }
+    )
+    assert not page._older_method_note.isHidden()
+
+    # Saved and read back, as closing a dialog or pinning a workspace does.
+    saved = page.collect_state()
+    assert saved["demag_sample"]["padding"] == 3.0
+    assert field_result_uses_older_method(saved["magnetic_field_results"], saved)
+    page.set_form_state(saved)
+    assert not page._older_method_note.isHidden()
+
+    page._selected_muon_site = custom_muon_site((0.25, 0.5, 0.75))
+    page.calculate_fields()
+
+    assert page._older_method_note.isHidden()
+    assert "padding" not in page.collect_state()["demag_sample"]
+    page.close()
+
+
+def test_leaving_a_plate_and_calculating_clears_the_older_mark(qapp, tmp_path, monkeypatch) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "left-plate.mufinder", "Left plate")
+    service.add_structure(document, feo_host_structure())
+    page = _calculating_widget(document, monkeypatch)
+    page.set_form_state(
+        {
+            "demag_shape": "image_plate",
+            "demag_sample": photo_plate_sample().to_json(),
+            "magnetic_field_results": _stored_field_state(),
+        }
+    )
+    assert not page._older_method_note.isHidden()
+
+    page._sphere_radio.setChecked(True)
+    page._selected_muon_site = custom_muon_site((0.25, 0.5, 0.75))
+    page.calculate_fields()
+
+    assert page._older_method_note.isHidden()
+    page.close()
+
+
+def test_missing_dependency_clears_the_page_but_not_the_saved_results(
+    qapp, tmp_path, monkeypatch
+) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "dependency.mufinder", "Dependency")
+    service.add_structure(document, feo_host_structure())
+    widget = MagneticFieldWidget()
+    widget.set_document(document)
+    widget.set_model(MagneticStructureModel(components=(z_moment_component("one", "One", 0),)))
+    widget._selected_muon_site = custom_muon_site((0.25, 0.5, 0.75))
+    widget._sync_enabled_state()
+
+    def _missing(*_args, **_kwargs):
+        raise magnetic_field_widget_module.MagneticFieldDependencyError("muesr is not installed")
+
+    monkeypatch.setattr(
+        magnetic_field_widget_module, "run_prepared_magnetic_field_calculation", _missing
+    )
+    saved: list[dict] = []
+    widget.form_state_changed.connect(saved.append)
+
+    widget.calculate_fields()
+
+    assert widget._calculation_status.text().startswith("Results unavailable:")
+    assert saved == []
+    widget.close()
+
+
+def test_advanced_demag_dialog_is_deleted_once_it_has_been_read(qapp, monkeypatch) -> None:
+    monkeypatch.setattr(
+        demagnetizing_dialogs_module.DemagnetizingFieldAdvancedDialog,
+        "exec",
+        lambda _self: QDialog.DialogCode.Rejected,
+    )
+
+    class _Preview(QWidget):
+        def set_sample(self, *_args):
+            pass
+
+        def shutdown(self):
+            pass
+
+    monkeypatch.setattr(demagnetizing_dialogs_module, "_DemagnetizingPyVistaCanvas", _Preview)
+    widget = MagneticFieldWidget()
+
+    widget._open_advanced_demag_dialog()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    qapp.processEvents()
+
+    assert widget.findChildren(demagnetizing_dialogs_module.DemagnetizingFieldAdvancedDialog) == []
+    widget.close()
+
+
+def test_magnetic_field_form_saved_with_the_retired_plate_settings_loads(qapp, tmp_path) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "retired-plate.mufinder", "Retired Plate")
+    service.add_structure(document, feo_host_structure())
+    plate = photo_plate_sample()
+    saved = {
+        **plate.to_json(),
+        "fourier_grid": 128,
+        "thickness_voxels": 3,
+        "padding": 4.0,
+        "smoothing": 2.0,
+    }
+
+    widget = MagneticFieldWidget()
+    widget.set_document(document)
+    widget.set_form_state({"demag_shape": "image_plate", "demag_sample": saved})
+
+    assert widget.field_options().demag_sample == plate
+    assert widget.collect_state()["demag_sample"] == plate.to_json()
     widget.close()
 
 

@@ -163,10 +163,38 @@ Compatibility ledger
      - The function returns the exact closed-form tensor of a rectangular
        prism, so the two keyword arguments of its sampled predecessor are
        ignored; passing either raises a ``DeprecationWarning``. One test checks
-       the warning. The persisted ``fourier_grid`` and ``padding`` fields of a
-       ``DemagnetizingSample`` stay current: the Fourier method uses them.
+       the warning.
      - Deprecated public arguments. Keep for one minor release (through 0.9.x)
        or until the next major release, whichever comes first; then drop them.
+   * - ``fourier_grid``, ``thickness_voxels``, ``padding`` and ``smoothing``
+       keys of a saved demagnetizing sample
+     - ``demag_sample`` in the ``magnetic_field_form`` and
+       ``magnetic_field_workspaces`` UI state; ``DemagnetizingSample.from_json``
+       (``mufinder.science.demagnetization``)
+     - A sample stored its Fourier resolution and Gaussian filter before they
+       were fixed. The keys are read and ignored, so a saved plate or voxel grid
+       loads and takes the fixed resolution and no filter when it is next
+       calculated, or is refused if its proportions are too extreme. Saves write
+       none of them, except a voxel grid's ``padding`` and ``smoothing`` while
+       results calculated with them are still stored, since those keys are what
+       mark such results as older. A result already stored keeps its numbers. An
+       incommensurate distribution also records the sample's summary, with these
+       keys if it had them; a commensurate result records no sample.
+     - Read-side repair. Ignoring an unknown key needs no code; keep this entry
+       until a saved-project schema version bump includes a migration that drops
+       the keys from stored forms.
+   * - ``plate_method_version`` key of a field result and a simulation source
+     - ``data`` of a ``magnetic_field`` result, ``magnetic_field_results`` in a
+       form, and each source of a polarisation simulation
+       (``mufinder.services.magnetic_field_results``, ``PLATE_METHOD_VERSION``)
+     - Written for a field result calculated with a ``Plate from photo``, and for
+       every source of a simulation, where 0 means its fields used no plate. A
+       field record or source without it was written before the key existed, or
+       is a field record with no plate, and reads the sample in its owner's saved
+       form: a plate from a photo, or a voxel grid saved with another padding or
+       with smoothing, is older. Additive, so no migration.
+     - Current project data, not deprecated. It may not be dropped without a
+       schema migration that first records which results used a plate.
    * - ``generate_random_sites_by_distance``
      - ``mufinder.science.site_generation``, also exported from
        ``mufinder.science``
@@ -920,6 +948,17 @@ projects still load through the calc-type shim in the ledger above.
 - ``expand_quantum_singlepoint_jobs`` (``mufinder.workflow.quantum``):
   Quantum Corrections runs one phonon job per row, which converges its own
   ground state; call ``expand_quantum_phonon_jobs``.
+
+The demagnetizing settings below were removed without a deprecation period
+when the Fourier resolution was fixed and the filter retired. Ignoring an
+argument would change a result without saying so, so passing one raises
+``TypeError``. Saved values are covered by the ledger entry above.
+
+- The ``fourier_grid``, ``thickness_voxels``, ``padding`` and ``smoothing``
+  fields of ``DemagnetizingSample`` (``mufinder.science.demagnetization``): a
+  plate's voxels follow from its size and the box from ``FOURIER_PADDING``.
+- The ``smoothing`` argument of ``voxel_demagnetizing_tensor``, which has no
+  replacement. ``padding`` stays, with ``FOURIER_PADDING`` as its default.
 
 The Quantum Corrections phonon-method helpers below were removed without a
 deprecation period when the workflow moved to finite displacement only. Keeping

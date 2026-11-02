@@ -912,12 +912,10 @@ outline from the photo:
    bounding box and the ``Thickness (along c)``. Choosing a photo sets the
    height from the width and the outline's aspect ratio; ``Match photo`` does
    so again after the width changes.
-6. Set the resolution: ``Fourier grid`` voxels span the longer in-plane edge,
-   ``Voxels through thickness`` the thickness, and ``Padding`` and
-   ``Smoothing`` are described in `How the Fourier method works`_. The line
-   under the fields gives the FFT box these settings need, or says the box is
-   too large to calculate, in which case ``Use Outline`` stays disabled.
-7. Click ``Use Outline``, then ``Use Shape``.
+   The line under the fields warns when the outline is fewer than 8 voxels
+   across, and says when the plate cannot be calculated, in which case ``Use
+   Outline`` stays disabled (see `How the Fourier method works`_).
+6. Click ``Use Outline``, then ``Use Shape``.
 
 The photo's ``x`` axis is the sample ``a`` axis, its ``y`` axis, up the photo,
 the ``b`` axis, and the plate normal the ``c`` axis, so ``Orientation`` places
@@ -936,12 +934,13 @@ under the fields, and ``Use Outline`` stays disabled until the threshold or
 
 .. figure:: ../_generated/screenshots/fe_photographed_plate.webp
    :alt: The Advanced Demagnetizing Field window with Plate from photo chosen,
-         the tensor of the platelet with N along c of 0.92469 and its trace 1,
+         the tensor of the platelet with N along c of 0.92620 and its trace 1,
          and the voxelised platelet in the preview.
 
    The same platelet as a ``Plate from photo`` of bcc iron, aligned with the
    crystal axes. The line under the tensor gives its trace, the number of
-   voxels and the FFT box.
+   voxels and the FFT box. The window calculates off the main thread and shows a
+   busy dialog with a ``Cancel`` button if this takes noticeably long.
 
 MuFinder saves the outline with the project, at up to 256 pixels along its
 longer side, with the photo's path and the segmentation settings. The tensor
@@ -1159,26 +1158,113 @@ shape that is not an ellipsoid the local tensor varies from point to point,
 most near edges and corners, so the field at a muon near a surface differs
 from the averaged value.
 
-``Padding``
-   The FFT treats the box as periodic, so the sample sits in a lattice of its
-   own images. The box spans ``Padding`` times the longest sample edge along
-   every axis, not along each axis separately: a thin plate padded only
-   through its thickness would sit in a stack of plates one thickness apart
-   and behave like bulk. ``Padding`` is at least 2. At 2.5, the default,
-   voxelised prisms from 20 x 20 x 1 plates to 1 x 1 x 20 needles, with 1 to
-   64 voxels along an edge, give every factor within 0.002 of the prism's
-   closed form.
-``Smoothing``
-   The width, in voxels along each axis, of a Gaussian filter
-   :math:`\exp(-\sigma^2 k^2 / 2)` on :math:`D(\mathbf{k})`, which damps
-   the ringing of a sharp outline. It removes part of the shape's spectrum, so
-   ``Tr N`` falls below 1 by the part removed; refining the grid at the same
-   width in voxels brings it back towards 1. 0, the default, turns it off.
+The resolution is fixed, so a calculation has no numerical settings:
 
-A box of more than 16.8 million voxels is refused with a message naming the
-settings to lower. A thin plate needs many voxels through the box: a
-5 x 4 x 0.1 plate one voxel thick at a 64-voxel grid and padding 2 needs 100
-voxels along ``c`` to span 10.
+Padding
+   The FFT treats the box as periodic, so the sample sits in a lattice of its
+   own images. The box spans 2.5 times the longest sample edge along every
+   axis, not along each axis separately: a thin plate padded only through its
+   thickness would sit in a stack of plates one thickness apart and behave like
+   bulk.
+Voxels of a plate from a photo
+   256 voxels span the sample's longest edge, thickness included, and the other
+   edges take the same voxel edge, rounded and at least 1 voxel, so the voxels
+   are close to cubes. The layers of a plate are identical, so its shape
+   amplitude is the outline's times that of a column of layers, and the sum
+   takes one 2-D FFT and a loop along :math:`k_z`. It is the same number as the
+   FFT of the whole box, to rounding, in a fraction of the time and memory.
+
+The trace is a check on the calculation: a tensor whose ``Tr N`` differs from 1
+by more than 1 % is refused rather than used.
+
+These plates, against their closed forms, show what to expect. Compact plates
+are limited by the padding, and thin ones by their single flat layer:
+
+.. list-table::
+   :header-rows: 1
+
+   * - Thickness / longest in-plane edge
+     - Square plate, largest error in a factor
+     - Circular plate, largest error in a factor
+   * - 1/10000
+     - 0.00019
+     - 0.00004
+   * - 1/1000
+     - 0.00052
+     - 0.00038
+   * - 1/50
+     - 0.00009
+     - 0.00011
+   * - 1/10
+     - 0.00058
+     - 0.00030
+   * - 1/2
+     - 0.00184
+     - 0.00096
+   * - 1
+     - 0.00000
+     - 0.00095
+   * - 3/2
+     - 0.00152
+     - 0.00148
+   * - 10
+     - 0.00006
+     - 0.00025
+
+An outline a few voxels across is coarser, since 256 voxels along the longest
+edge leave few across a narrow side. Over rectangles 1 x b, from b to b/20 thick,
+the largest error in a factor is:
+
+.. list-table::
+   :header-rows: 1
+
+   * - Voxels across b
+     - 1
+     - 2
+     - 3
+     - 4
+     - 5
+     - 6
+     - 7
+     - 8
+     - 9
+     - 10
+     - 13
+     - 26
+   * - Largest error
+     - 0.055
+     - 0.033
+     - 0.022
+     - 0.017
+     - 0.013
+     - 0.011
+     - 0.009
+     - 0.008
+     - 0.007
+     - 0.006
+     - 0.003
+     - 0.001
+
+The window warns when the narrow side of the outline's bounding box is below 8
+voxels, where the largest error passes about 0.01. There is no step there: a
+rectangle 8 voxels across is not warned about and can be off by 0.008, against
+0.009 at 7. A ``Rectangular prism`` has a closed form and is exact for a
+rectangular sample.
+
+The warning reads only the bounding box, so it cannot see a slender shape inside
+a wide box. Measured on slivers at 30 and 45 degrees and on rings, the largest
+error in a factor is about 0.07 for a feature about 1 voxel wide, 0.04 at 2 to 3
+voxels, and 0.02 at 5 to 7. A photo of such a sample gets no warning.
+
+A plate's longest edge can be at most 10000 times its thickness. By then an
+``Infinite plate`` is within 0.0007 of a square plate's factor along the normal,
+and the refusal gives the figure, rounded up, for the plate in hand. The quick ``Infinite
+plate`` has its normal along ``c``, so for a plate oriented otherwise choose a
+``Rectangular prism``, which keeps the orientation. The limit on the time taken
+also refuses a needle or rod whose length is more than about 2000 times its
+width. A ``Voxel grid`` from the Python API takes the FFT of the whole box, which
+holds at most 268 million voxels and about 4 GB; a larger box, or an allocation
+that fails, is refused.
 
 .. _magnetic-fields-distortion-corrections:
 
@@ -1516,6 +1602,13 @@ status on the Magnetic Fields page and in the results of the ``Dipolar Tensor``
 and ``Nuclear Relaxation`` dialogs.
 
 The line means the numbers shown may differ from what the same inputs give now.
+A correction marks only the results it touches. The tensor of a ``Plate from
+photo`` has its own version, which a field result records when it used such a
+plate, so a field result calculated with any other sample is not marked by a
+change to it. A field result from before that version was recorded reads the
+sample saved with it: a ``Plate from photo``, or a voxel grid saved with another
+padding or with smoothing, is older, and anything else is not. Dipolar tensor and
+nuclear relaxation results do not use the sample.
 MuFinder never rewrites or recalculates them on its own, so they stay exactly as
 calculated, and saving, reopening or saving a workspace keeps them and the line.
 The calculation's ``Calculate`` button replaces them with new numbers and clears

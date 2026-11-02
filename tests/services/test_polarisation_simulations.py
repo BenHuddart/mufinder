@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -14,6 +15,9 @@ from mufinder.science.polarisation import PolarisationError, calculate_polarisat
 from mufinder.science.polarisation_simulation import PolarisationSettings, simulate_polarisation
 from mufinder.services.magnetic_field_results import (
     CALCULATION_METHOD_VERSION,
+    PLATE_METHOD_NOT_USED,
+    PLATE_METHOD_VERSION,
+    PLATE_METHOD_VERSION_KEY,
     CALCULATION_VERSION_KEY,
     MAGNETIC_FIELD_PAGE_OWNER,
     UEP_SITE_SOURCE,
@@ -109,17 +113,68 @@ def _current_fields() -> dict[str, object]:
 def test_a_simulation_records_the_method_of_the_fields_it_ran_from(document) -> None:
     older = _simulate_page(document)
     assert older.sources[0].calculation_version is None
-    assert older_method_sources(older) == list(older.sources)
+    assert older_method_sources(older, document) == list(older.sources)
 
     # Recalculating the fields leaves the stored traces old: stale, and still older.
     _store_fields(document, MAGNETIC_FIELD_PAGE_OWNER, _current_fields())
     stored = polarisation_simulation(document, older.simulation_id)
     assert stale_sources(document, stored) == list(stored.sources)
-    assert older_method_sources(stored) == list(stored.sources)
+    assert older_method_sources(stored, document) == list(stored.sources)
 
     current = _simulate_page(document)
     assert current.sources[0].calculation_version == CALCULATION_METHOD_VERSION
-    assert older_method_sources(current) == []
+    assert older_method_sources(current, document) == []
+
+
+def test_a_simulation_of_a_plate_is_marked_and_one_without_is_not(document) -> None:
+    document.ui_state["magnetic_field_form"] = {"demag_shape": "sphere"}
+    _store_fields(document, MAGNETIC_FIELD_PAGE_OWNER, _current_fields())
+    no_plate = _simulate_page(document)
+    assert no_plate.sources[0].plate_method_version == PLATE_METHOD_NOT_USED
+    assert older_method_sources(no_plate, document) == []
+    # Choosing a plate afterwards does not change what this simulation ran from.
+    document.ui_state["magnetic_field_form"] = {"demag_shape": "image_plate"}
+    assert older_method_sources(no_plate, document) == []
+    assert SimulationSource.from_json(no_plate.sources[0].to_json()) == no_plate.sources[0]
+
+    # Fields from before the plate method was recorded, under a plate from a photo.
+    document.ui_state["magnetic_field_form"] = {"demag_shape": "image_plate"}
+    old_plate = _simulate_page(document)
+    assert old_plate.sources[0].plate_method_version == 1
+    assert older_method_sources(old_plate, document) == list(old_plate.sources)
+
+    # Once it has run, the mark follows the simulation and not the form.
+    document.ui_state["magnetic_field_form"] = {"demag_shape": "sphere"}
+    stored = polarisation_simulation(document, old_plate.simulation_id)
+    assert older_method_sources(stored, document) == list(stored.sources)
+
+    _store_fields(
+        document,
+        MAGNETIC_FIELD_PAGE_OWNER,
+        {**_current_fields(), PLATE_METHOD_VERSION_KEY: PLATE_METHOD_VERSION},
+    )
+    document.ui_state["magnetic_field_form"] = {"demag_shape": "image_plate"}
+    fresh = _simulate_page(document)
+    assert fresh.sources[0].plate_method_version == PLATE_METHOD_VERSION
+    assert older_method_sources(fresh, document) == []
+
+
+def test_a_simulation_saved_before_the_plate_method_decides_from_the_saved_form(document) -> None:
+    record = SimpleNamespace(
+        sources=[
+            SimulationSource(
+                MAGNETIC_FIELD_PAGE_OWNER,
+                "id",
+                "Page",
+                calculation_version=CALCULATION_METHOD_VERSION,
+            )
+        ]
+    )
+    document.ui_state["magnetic_field_form"] = {"demag_shape": "sphere"}
+
+    assert older_method_sources(record, document) == []
+    document.ui_state["magnetic_field_form"] = {"demag_shape": "image_plate"}
+    assert older_method_sources(record, document) == list(record.sources)
 
 
 def test_removed_sources_are_those_with_no_fields_left(document) -> None:
@@ -150,7 +205,7 @@ def test_a_recorded_method_version_survives_save_and_reopen(document) -> None:
     reloaded = service.load_project(document.project_root)
 
     assert polarisation_simulation(reloaded, record.simulation_id).sources == record.sources
-    assert older_method_sources(polarisation_simulation_summaries(reloaded)[0]) == []
+    assert older_method_sources(polarisation_simulation_summaries(reloaded)[0], reloaded) == []
 
 
 def test_a_simulation_stored_with_no_version_counts_as_older(document) -> None:
@@ -164,7 +219,7 @@ def test_a_simulation_stored_with_no_version_counts_as_older(document) -> None:
     assert stored.data["sources"][0][CALCULATION_VERSION_KEY] == CALCULATION_METHOD_VERSION
     del stored.data["sources"][0][CALCULATION_VERSION_KEY]
 
-    assert len(older_method_sources(polarisation_simulation_summaries(document)[0])) == 1
+    assert len(older_method_sources(polarisation_simulation_summaries(document)[0], document)) == 1
 
 
 def test_field_sources_list_the_page_then_each_workspace(document) -> None:
