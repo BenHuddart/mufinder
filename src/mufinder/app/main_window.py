@@ -8923,11 +8923,20 @@ class MainWindow(QMainWindow):
 
         outcome = remove_imported_relaxations(document, plan, batch_id=batch_id)
         removed, errors = outcome.removed, outcome.errors
+        if not removed:
+            QMessageBox.warning(
+                self,
+                "Cannot remove safely",
+                "Nothing was removed:\n\n" + "\n".join(f"- {line}" for line in errors),
+            )
+            return
+        # Only what actually went: a row whose job stayed keeps its binding.
+        gone = [ref for ref in plan.targets if ref.job_id not in document.jobs]
         definition = self._muon_relaxation_controller.active_definition()
         if definition is not None:
-            detach_rows_from_definition(definition, plan.targets)
+            detach_rows_from_definition(definition, gone)
             self._muon_relaxation_view.set_form_state(
-                self._muon_relaxation_form_state_without(plan.targets)
+                self._muon_relaxation_form_state_without(gone)
             )
             document.ui_state["muon_relaxation_form"] = self._muon_relaxation_view.collect_state()
 

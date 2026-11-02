@@ -1418,6 +1418,40 @@ class TestRemovalDeletesOnlyItsOwnFolder:
         assert "Errno" not in warned[0]
         assert "could not be deleted" in window.statusBar().currentMessage()
 
+    def test_a_folder_that_turns_unsafe_after_confirming_keeps_the_rows(
+        self,
+        window: MainWindow,
+        tmp_path: Path,
+        host_structure: Structure,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from mufinder.services import relaxation_import_removal
+
+        outcomes, output_root, warned = self._project(window, tmp_path, host_structure, monkeypatch)
+        item = outcomes[1].imported[0]
+        definition = window._muon_relaxation_controller.active_definition()
+        before = _tree(output_root)
+        real = relaxation_import_removal.unsafe_directories
+        calls: list[int] = []
+
+        def _unsafe_on_the_second_look(*args):
+            calls.append(1)
+            return real(*args) if len(calls) == 1 else ("Imported: its folder changed",)
+
+        monkeypatch.setattr(
+            relaxation_import_removal, "unsafe_directories", _unsafe_on_the_second_look
+        )
+
+        window._on_remove_imported_relaxations()
+
+        assert _tree(output_root) == before
+        assert item.site_id in window._document.sites
+        assert f"positivemuon:{item.label}" in definition.parameters["job_ids_by_label"]
+        rows = definition.parameters["configuration"]["rows"]
+        assert any(row["site_id"] == str(item.site_id) for row in rows)
+        assert warned and "its folder changed" in warned[0]
+        assert not window.statusBar().currentMessage().startswith("Removed")
+
     def test_a_native_job_whose_seed_leaves_its_folder_is_refused_on_every_route(
         self,
         window: MainWindow,
