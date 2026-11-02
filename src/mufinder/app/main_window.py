@@ -61,7 +61,6 @@ from PySide6.QtWidgets import (
     QSplitter,
     QStackedWidget,
     QStatusBar,
-    QTableWidget,
     QTableWidgetItem,
     QToolButton,
     QTreeWidget,
@@ -346,6 +345,7 @@ from mufinder.services.local_runner import LocalJobRunner
 from mufinder.app import workflow_table_utils
 from mufinder.app.selection_snapshot import (
     RowControlsCell,
+    RowControlsTable,
     SelectionSnapshotPushButton,
     resolve_target_keys,
 )
@@ -1131,7 +1131,7 @@ class MainWindow(QMainWindow):
         self._main_stack.addWidget(self._quantum_corrections_view)
         self._main_stack.addWidget(self._journal_view)
 
-        self._jobs_table = QTableWidget(0, 7)
+        self._jobs_table = RowControlsTable(0, 7)
         self._jobs_table.setHorizontalHeaderLabels(
             ["Job", "Stage", "Status", "Where", "Runtime", "Cores", "Action"]
         )
@@ -4146,6 +4146,9 @@ class MainWindow(QMainWindow):
                 else plural(len(jobs) - len(keys), "job has", "jobs have")
             )
             self.statusBar().showMessage(f"{subject} no row on {name} now")
+        else:
+            # An earlier "no row" message no longer describes what is on screen.
+            self.statusBar().clearMessage()
 
     def _on_continue_relaxation_from_dashboard(self, job_ids: list[UUID]) -> None:
         """Open "Continue relaxation…" for one job, through its workflow row."""
