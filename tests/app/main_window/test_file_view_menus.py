@@ -627,6 +627,32 @@ def test_read_only_user_change_asks_and_a_failed_save_blocks(
     assert critical == ["Save blocked"]
 
 
+def test_an_upgrade_left_half_written_blocks_the_close(
+    window: MainWindow,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    answered_choices: list,
+) -> None:
+    root = _project(tmp_path)
+    _edit_json(root / "project.json", schema_version=1)
+    critical = _record_critical(monkeypatch)
+    assert window.open_project(root)
+
+    def _half_written(_document) -> None:
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(window._project_service, "save_tidying", _half_written)
+
+    assert window.close() is False
+
+    assert critical == ["Save blocked"]
+    assert window.isVisible()
+    # The next close asks, and its save finishes the upgrade.
+    assert window.close() is True
+    assert len(answered_choices) == 1
+    assert ProjectService().load_project(root).project.name == "Alpha"
+
+
 # --- New Project ----------------------------------------------------------------
 
 

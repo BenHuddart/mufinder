@@ -1926,7 +1926,9 @@ Saving is split between autosave and manual save:
   whatever else differs from disk. If durable state waiting for its coalesced
   autosave cannot be written, the window stays open. If the only thing to write is
   what loading upgraded or tidied, or the project home's stage, which moves with
-  every page visited, a failed write closes anyway and the next open redoes it.
+  every page visited, a failed write closes anyway and the next open redoes it,
+  unless the manifest already took the new schema version: entities left in the old
+  format would be read as current, so that keeps the window open too.
   Opening a different project flushes the autosave but does not prompt, so
   unsaved analysis-session state is discarded; save first.
 - The manual-save bucket holds exploratory UI state: UEP wizard tab choices,

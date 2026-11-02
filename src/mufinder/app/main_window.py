@@ -1412,15 +1412,12 @@ class MainWindow(QMainWindow):
                 self._resume_after_abandoned_close()
                 event.ignore()
                 return
-            if answer == "tidy":
+            if answer in ("save", "tidy"):
                 try:
-                    self._project_service.save_project(self._document)
-                except (OSError, ValueError) as exc:
-                    # Opening the project next time makes it again, so nothing is lost.
-                    _LOG.info("Closed without writing a tidied project: %s", exc)
-            elif answer == "save":
-                try:
-                    self._project_service.save_project(self._document)
+                    if answer == "tidy":
+                        self._project_service.save_tidying(self._document)
+                    else:
+                        self._project_service.save_project(self._document)
                 except (OSError, ValueError) as exc:
                     event.ignore()
                     self._close_save_failed = True

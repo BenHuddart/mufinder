@@ -543,3 +543,60 @@ def test_a_failed_save_leaves_a_load_upgrade_to_do_next_time(tmp_path: Path) -> 
     assert service.unsaved_changes(service.load_project(document.project_root)) is (
         UnsavedChanges.TIDYING
     )
+
+
+def _reopened_after_downgrade(tmp_path: Path, service: ProjectService) -> ProjectDocument:
+    document = _saved_project(tmp_path, service)
+    store = ProjectStore(document.project_root)
+    manifest = store.read_json(store.project_manifest_path)
+    manifest["schema_version"] = 1
+    store.write_json(store.project_manifest_path, manifest)
+    return service.load_project(document.project_root)
+
+
+def test_deleting_an_entity_a_migration_changed_is_routine(tmp_path: Path, monkeypatch) -> None:
+    service = ProjectService()
+    document, job, _result = _populated_document(service, tmp_path / "deleted.mufinder")
+    monkeypatch.setattr(
+        "mufinder.services.project_service.migrate_project_payloads",
+        lambda *_args: {("jobs", str(job.id))},
+    )
+    reopened = service.load_project(document.project_root)
+
+    del reopened.jobs[job.id]
+
+    assert service.unsaved_changes(reopened) is UnsavedChanges.ROUTINE
+
+
+def test_saving_tidying_swallows_a_failure_that_left_the_disk_alone(
+    tmp_path: Path, monkeypatch
+) -> None:
+    service = ProjectService()
+    reopened = _reopened_after_downgrade(tmp_path, service)
+
+    def _refuse(*_args, **_kwargs) -> None:
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(ProjectStore, "write_json", _refuse)
+
+    service.save_tidying(reopened)
+
+    assert service.unsaved_changes(reopened) is UnsavedChanges.TIDYING
+
+
+def test_saving_tidying_reports_an_upgrade_left_half_written(tmp_path: Path, monkeypatch) -> None:
+    service = ProjectService()
+    reopened = _reopened_after_downgrade(tmp_path, service)
+    store = ProjectStore(reopened.project_root)
+    write_json = ProjectStore.write_json
+
+    def _manifest_only(self, path, payload) -> None:
+        if path != store.project_manifest_path:
+            raise OSError(28, "No space left on device")
+        write_json(self, path, payload)
+
+    monkeypatch.setattr(ProjectStore, "write_json", _manifest_only)
+    reopened.ui_state["tidied"] = True
+
+    with pytest.raises(OSError):
+        service.save_tidying(reopened)

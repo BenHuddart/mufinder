@@ -278,9 +278,9 @@ class ProjectService:
         self._settled_ui_state: dict[str, _SettledUiState] = {}
         self._manifest_hashes: dict[str, str] = {}
         # project_root -> what loading upgraded and no save has written yet: each entity
-        # key with its hash as loaded, and whether the schema version moved.
+        # key with its hash as loaded, and the schema version it was loaded from.
         self._upgraded_entities: dict[str, dict[tuple[str, str, str], str]] = {}
-        self._upgraded_schema: set[str] = set()
+        self._upgraded_from_schema: dict[str, int] = {}
         # (project_root, entity_type, entity_id) -> hash of the canonical
         # serialized payload last persisted for that entity. "entity_id" is the
         # entity UUID string for real entities, and a sentinel ("ui_state") for
@@ -344,7 +344,7 @@ class ProjectService:
         self._settled_ui_state.pop(root_key, None)
         self._manifest_hashes.pop(root_key, None)
         self._upgraded_entities.pop(root_key, None)
-        self._upgraded_schema.discard(root_key)
+        self._upgraded_from_schema.pop(root_key, None)
 
     def create_project(self, project_root: Path, name: str) -> ProjectDocument:
         """Create a new project document and persist baseline files."""
@@ -448,7 +448,7 @@ class ProjectService:
             self._content_hashes.pop(ui_key, None)
         self._manifest_hashes[root_key] = self._manifest_hash(document)
         if stored_version != stored_schema_version(manifest):
-            self._upgraded_schema.add(root_key)
+            self._upgraded_from_schema[root_key] = stored_version
         self._upgraded_entities[root_key] = {
             (root_key, entity_type, entity_id): self._payload_hash(to_jsonable(entity))
             for entity_type, entities in self._entity_groups(document)
@@ -542,7 +542,7 @@ class ProjectService:
         self._settled_ui_state[root_key] = _SettledUiState.of(ui_payload, ui_digest)
         self._manifest_hashes[root_key] = self._manifest_hash(document)
         self._upgraded_entities.pop(root_key, None)
-        self._upgraded_schema.discard(root_key)
+        self._upgraded_from_schema.pop(root_key, None)
 
         trace.log_summary(extra=f"entity_files_written={written} entity_files_skipped={skipped}")
 
@@ -578,11 +578,39 @@ class ProjectService:
         if (
             ui_state_moved
             or ui_key not in self._content_hashes
-            or root_key in self._upgraded_schema
+            or root_key in self._upgraded_from_schema
             or self._upgraded_entities.get(root_key)
         ):
             return UnsavedChanges.TIDYING
         return UnsavedChanges.NONE
+
+    def save_tidying(self, document: ProjectDocument) -> None:
+        """Save a project whose ``unsaved_changes`` are only ``TIDYING``, if the disk allows.
+
+        A failure that left the project as it was is only logged, since the next open
+        does the same work again. A failure after the manifest took a new schema version
+        is raised: the entities still in the old format would be read as current.
+        """
+
+        try:
+            self.save_project(document)
+        except (OSError, ValueError) as exc:
+            if self._upgrade_half_written(document):
+                raise
+            _LOG.info("Left a tidied project unwritten: %s", exc)
+
+    def _upgrade_half_written(self, document: ProjectDocument) -> bool:
+        root_key = self._resolved_root(document.project_root)
+        loaded_from = self._upgraded_from_schema.get(root_key)
+        if loaded_from is None:
+            return False
+        store = ProjectStore(document.project_root)
+        try:
+            return (
+                stored_schema_version(store.read_json(store.project_manifest_path)) != loaded_from
+            )
+        except (OSError, ValueError):
+            return True
 
     def _manifest_hash(self, document: ProjectDocument) -> str:
         """Hash the manifest without ``modified_at``, which every save bumps."""
@@ -607,7 +635,7 @@ class ProjectService:
                     return True
         return any(
             key[0] == root_key and key[1] != self._UI_STATE_ENTITY_TYPE and key not in live_keys
-            for key in self._content_hashes
+            for key in (*self._content_hashes, *upgraded)
         )
 
     def append_provenance(self, document: ProjectDocument, record: ProvenanceRecord) -> None:
