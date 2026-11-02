@@ -10,9 +10,10 @@ from __future__ import annotations
 
 import math
 import time
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -98,7 +99,6 @@ class _FakeQuantumView:
 
     def __init__(self) -> None:
         self.sources: list[list] = []
-        self.results: list[list] = []
         self.site_scopes: list[dict] = []
 
     def set_site_scope(self, **kwargs) -> None:
@@ -107,14 +107,17 @@ class _FakeQuantumView:
     def set_sources(self, rows) -> None:
         self.sources.append(list(rows))
 
-    def set_results(self, rows) -> None:
-        self.results.append(list(rows))
+    def window(self) -> None:
+        return None
 
 
 def _stub_quantum_deps(**overrides) -> QuantumCorrectionsDeps:
     base = dict(
         handle_structure_host_mismatch=lambda _mismatch: True,
         handle_site_host_mismatch=lambda _mismatch: True,
+        refresh_site_label_views=lambda: None,
+        show_warning=lambda _title, _text: None,
+        shutting_down=lambda: False,
     )
     base.update(overrides)
     return QuantumCorrectionsDeps(**base)
@@ -162,152 +165,31 @@ def test_quantum_controller_refresh_view_without_document_clears_tables() -> Non
     )
     controller.refresh_view()
     assert view.sources == [[]]
-    assert view.results == [[]]
 
 
-def test_quantum_controller_refresh_view_populates_result_row_status(tmp_path: Path) -> None:
-    """A completed phonon result becomes a result row whose ``status`` mirrors the
-    producing job's status, so the results table can colour it with the shared palette."""
-
-    from mufinder.domain.models import Result
-
-    service = ProjectService()
-    document = service.create_project(tmp_path / "q.mufinder", "Q")
-    job = _quantum_job(service, document, "quantum_phonon_s", QUANTUM_PHONON_CALC_TYPE)
-    job.status = JobStatus.COMPLETED
+def _store_phonon_result(
+    document: ProjectDocument, job: Job, data: dict, created_at: datetime | None = None
+) -> Result:
     run = CalculationRun(job_id=job.id, status=JobStatus.COMPLETED)
     document.runs[run.id] = run
-    result = Result(
-        result_type=QUANTUM_PHONON_CALC_TYPE,
-        calculation_run_id=run.id,
-        data={"muon_zpe_total_eV": 0.1},
-    )
-    document.results[result.id] = result
-
-    view = _FakeQuantumView()
-    controller = QuantumCorrectionsController(
-        make_context(document=document, project_service=service), _stub_quantum_deps(), view
-    )
-    controller.refresh_view()
-
-    assert len(view.results[-1]) == 1
-    result_row = view.results[-1][0]
-    assert result_row.label == "quantum_phonon_s"
-    assert result_row.status == "completed"
-
-
-@pytest.mark.parametrize("completion_order", [(0, 1, 2, 3, 4), (4, 3, 2, 1, 0), (2, 4, 0, 3, 1)])
-def test_quantum_controller_result_rows_keep_one_order_whatever_the_completion_order(
-    tmp_path: Path, completion_order: tuple[int, ...]
-) -> None:
-    """Results are stored in the order their jobs finish; the table lists them by job
-    label with numbers compared as numbers, a rerun job's results oldest first,
-    and results whose job is gone last, so the same results always show in the
-    same order."""
-
-    service = ProjectService()
-    document = service.create_project(tmp_path / "q.mufinder", "Q")
-    jobs = {
-        label: _quantum_job(service, document, label, QUANTUM_PHONON_CALC_TYPE)
-        for label in ("quantum_phonon_site_10", "Quantum_phonon_site_2")
-    }
-    start = datetime(2026, 1, 1, tzinfo=timezone.utc)
-    stored = [
-        # (job label or None for a job that is gone, minutes after start)
-        ("quantum_phonon_site_10", 0),
-        (None, 1),
-        ("Quantum_phonon_site_2", 3),
-        ("Quantum_phonon_site_2", 2),
-        (None, 4),
-    ]
-    results: list[Result] = []
-    for label, minutes in stored:
-        run = CalculationRun(status=JobStatus.COMPLETED)
-        if label is not None:
-            run.job_id = jobs[label].id
-        document.runs[run.id] = run
-        results.append(
-            Result(
-                result_type=QUANTUM_PHONON_CALC_TYPE,
-                calculation_run_id=run.id,
-                created_at=start + timedelta(minutes=minutes),
-            )
-        )
-    for index in completion_order:
-        document.results[results[index].id] = results[index]
-
-    view = _FakeQuantumView()
-    controller = QuantumCorrectionsController(
-        make_context(document=document, project_service=service), _stub_quantum_deps(), view
-    )
-    controller.refresh_view()
-
-    assert [row.key for row in view.results[-1]] == [
-        str(results[index].id) for index in (3, 2, 0, 1, 4)
-    ]
-
-
-def _refreshed_result_keys(document: ProjectDocument, service: ProjectService) -> list[str]:
-    view = _FakeQuantumView()
-    controller = QuantumCorrectionsController(
-        make_context(document=document, project_service=service), _stub_quantum_deps(), view
-    )
-    controller.refresh_view()
-    return [row.key for row in view.results[-1]]
-
-
-def _store_phonon_result(document: ProjectDocument, job: Job, created_at: datetime) -> Result:
-    run = CalculationRun(job_id=job.id, status=JobStatus.COMPLETED)
-    document.runs[run.id] = run
-    result = Result(
-        result_type=QUANTUM_PHONON_CALC_TYPE, calculation_run_id=run.id, created_at=created_at
-    )
+    result = Result(result_type=QUANTUM_PHONON_CALC_TYPE, calculation_run_id=run.id, data=data)
+    if created_at is not None:
+        result.created_at = created_at
     document.results[result.id] = result
     return result
 
 
-def test_quantum_controller_result_rows_read_a_naive_stamp_as_utc(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A rerun result stamped without a time zone, as an older project may hold, is read
-    as UTC whatever the machine's time zone, so the job's results stay oldest first."""
+def _displayed_result_row(tmp_path: Path, data: dict):
+    """Return the row ``refresh_view`` shows for one site with this stored phonon payload."""
 
     service = ProjectService()
-    document = service.create_project(tmp_path / "q.mufinder", "Q")
-    job = _quantum_job(service, document, "quantum_phonon_s", QUANTUM_PHONON_CALC_TYPE)
-    later = _store_phonon_result(document, job, datetime(2026, 1, 1, 12, 0))
-    earlier = _store_phonon_result(document, job, datetime(2026, 1, 1, 11, 30, tzinfo=timezone.utc))
-    # Read as local time at UTC+05:30, the naive 12:00 would be 06:30 UTC.
-    monkeypatch.setenv("TZ", "Asia/Kolkata")
-    time.tzset()
-    try:
-        keys = _refreshed_result_keys(document, service)
-    finally:
-        monkeypatch.undo()
-        time.tzset()
-
-    assert keys == [str(earlier.id), str(later.id)]
-
-
-def test_quantum_controller_result_rows_keep_each_job_together_when_labels_compare_equal(
-    tmp_path: Path,
-) -> None:
-    """Jobs whose labels differ only in case keep their results together rather than
-    interleaving them by time."""
-
-    service = ProjectService()
-    document = service.create_project(tmp_path / "q.mufinder", "Q")
-    upper = _quantum_job(service, document, "Site_1", QUANTUM_PHONON_CALC_TYPE)
-    lower = _quantum_job(service, document, "site_1", QUANTUM_PHONON_CALC_TYPE)
-    start = datetime(2026, 1, 1, tzinfo=timezone.utc)
-    results = [
-        _store_phonon_result(document, job, start + timedelta(minutes=minutes))
-        for minutes, job in enumerate((lower, upper, lower, upper))
-    ]
-
-    assert _refreshed_result_keys(document, service) == [
-        str(results[index].id) for index in (1, 3, 0, 2)
-    ]
+    document, definition, candidates, output_root = _seed_quantum_document(service, tmp_path)
+    key = next(iter(candidates))
+    job = _bind_phonon(service, document, definition, key, status=JobStatus.COMPLETED)
+    _store_phonon_result(document, job, data)
+    controller = _quantum_document_controller(service, document, output_root)
+    controller.refresh_view()
+    return next(row for row in controller._view.sources[-1] if row.key == key)
 
 
 def _displayed_witness(tmp_path: Path, data: dict) -> str:
@@ -316,24 +198,355 @@ def _displayed_witness(tmp_path: Path, data: dict) -> str:
     return _displayed_result_row(tmp_path, data).witness
 
 
-def _displayed_result_row(tmp_path: Path, data: dict):
-    """Return the result row ``refresh_view`` shows for one stored phonon payload."""
-
-    from mufinder.domain.models import Result
+def test_quantum_controller_shows_the_corrected_energy_of_sites_with_a_result(
+    tmp_path: Path,
+) -> None:
+    """Hand-checked on the GdRu2Si2 numbers: site B is dE +0.257 with ZPE 0.654 against
+    site A's 0.558, so dE + ZPE is 0.257 + 0.654 - 0.558 = +0.353 eV, and a site with no
+    result shows a dash."""
 
     service = ProjectService()
-    document = service.create_project(tmp_path / "q.mufinder", "Q")
-    job = _quantum_job(service, document, "quantum_phonon_s", QUANTUM_PHONON_CALC_TYPE)
-    run = CalculationRun(job_id=job.id, status=JobStatus.COMPLETED)
-    document.runs[run.id] = run
-    result = Result(result_type=QUANTUM_PHONON_CALC_TYPE, calculation_run_id=run.id, data=data)
-    document.results[result.id] = result
-    view = _FakeQuantumView()
-    controller = QuantumCorrectionsController(
-        make_context(document=document, project_service=service), _stub_quantum_deps(), view
-    )
+    document, definition, candidates, output_root = _seed_quantum_document(service, tmp_path)
+    key_a, key_b = list(candidates)
+    document.sites[candidates[key_a].site.id].total_energy_eV = -100.0
+    document.sites[candidates[key_b].site.id].total_energy_eV = -99.743
+    controller = _quantum_document_controller(service, document, output_root)
+    controller.set_show_every_site(True)
+    rows = {row.key: row for row in controller._view.sources[-1]}
+    assert rows[key_a].relative_energy == "0.000"
+    assert rows[key_b].relative_energy == "+0.257"
+    assert rows[key_b].corrected_energy == "–"
+    assert rows[key_b].result_id == ""
+
+    job_a = _bind_phonon(service, document, definition, key_a, status=JobStatus.COMPLETED)
+    _store_phonon_result(document, job_a, {"muon_zpe_total_eV": 0.558})
     controller.refresh_view()
-    return view.results[-1][0]
+    rows = {row.key: row for row in controller._view.sources[-1]}
+    assert (rows[key_a].zpe, rows[key_a].corrected_energy) == ("0.558", "0.000")
+    assert (rows[key_b].zpe, rows[key_b].corrected_energy) == ("–", "–")
+
+    job_b = _bind_phonon(service, document, definition, key_b, status=JobStatus.COMPLETED)
+    result_b = _store_phonon_result(document, job_b, {"muon_zpe_total_eV": 0.654})
+    controller.refresh_view()
+    rows = {row.key: row for row in controller._view.sources[-1]}
+    assert (rows[key_a].zpe, rows[key_a].corrected_energy) == ("0.558", "0.000")
+    assert (rows[key_b].zpe, rows[key_b].corrected_energy) == ("0.654", "+0.353")
+    assert rows[key_b].result_id == str(result_b.id)
+    assert rows[key_b].status == "completed"
+
+
+def test_quantum_controller_flags_a_stored_warning_without_changing_the_numbers(
+    tmp_path: Path,
+) -> None:
+    """A saddle's non-positive muon mode is left out of the ZPE and warned about when stored.
+
+    Hand-checked: 0.257 + 0.654 - 0.558 = +0.353 still reads +0.353, with the warning beside it.
+    """
+
+    warning = "Selected muon-dominated modes include non-positive frequencies."
+    service = ProjectService()
+    document, definition, candidates, output_root = _seed_quantum_document(service, tmp_path)
+    key_a, key_b = list(candidates)
+    document.sites[candidates[key_a].site.id].total_energy_eV = -100.0
+    document.sites[candidates[key_b].site.id].total_energy_eV = -99.743
+    job_a = _bind_phonon(service, document, definition, key_a, status=JobStatus.COMPLETED)
+    job_b = _bind_phonon(service, document, definition, key_b, status=JobStatus.COMPLETED)
+    _store_phonon_result(document, job_a, {"muon_zpe_total_eV": 0.558})
+    _store_phonon_result(
+        document, job_b, {"muon_zpe_total_eV": 0.654, "phonon_warnings": [warning, 7, ""]}
+    )
+    controller = _quantum_document_controller(service, document, output_root)
+    controller.refresh_view()
+
+    rows = {row.key: row for row in controller._view.sources[-1]}
+    assert rows[key_a].warnings == ()
+    assert rows[key_b].warnings == (warning,)
+    assert (rows[key_b].zpe, rows[key_b].corrected_energy) == ("0.654", "+0.353")
+    assert rows[key_a].corrected_energy == "0.000"
+
+
+def _two_sites_with_results(service, tmp_path, *, data_b=None, recorded_b=True):
+    """Sites A and B at dE 0 and +0.257, with ZPEs 0.558 and 0.654 unless ``data_b`` replaces B's."""
+
+    document, definition, candidates, output_root = _seed_quantum_document(service, tmp_path)
+    key_a, key_b = list(candidates)
+    document.sites[candidates[key_a].site.id].total_energy_eV = -100.0
+    document.sites[candidates[key_b].site.id].total_energy_eV = -99.743
+    job_a = _bind_phonon(service, document, definition, key_a, status=JobStatus.COMPLETED)
+    job_b = _bind_phonon(
+        service,
+        document,
+        definition,
+        key_b,
+        status=JobStatus.COMPLETED,
+        recorded_source=recorded_b,
+    )
+    _store_phonon_result(document, job_a, {"muon_zpe_total_eV": 0.558})
+    _store_phonon_result(document, job_b, data_b or {"muon_zpe_total_eV": 0.654})
+    controller = _quantum_document_controller(service, document, output_root)
+    return document, definition, controller, key_a, key_b, job_b
+
+
+def _rows_by_key(controller) -> dict:
+    controller.refresh_view()
+    return {row.key: row for row in controller._view.sources[-1]}
+
+
+def test_a_zpe_from_an_earlier_relaxation_run_is_marked_and_cannot_set_the_zero(
+    tmp_path: Path,
+) -> None:
+    """A's run moves on, so A leaves the ranking and B, at +0.353 from A before, becomes the zero."""
+
+    service = ProjectService()
+    document, definition, controller, key_a, key_b, _job = _two_sites_with_results(
+        service, tmp_path
+    )
+    assert _rows_by_key(controller)[key_b].corrected_energy == "+0.353"
+
+    definition.parameters["phonon_source_run_ids_by_label"][key_a] = str(uuid4())
+    rows = _rows_by_key(controller)
+
+    assert (rows[key_a].zpe, rows[key_a].zpe_mark) == ("0.558", "earlier")
+    assert rows[key_a].corrected_energy == "–"
+    assert rows[key_a].result_id != ""
+    assert any("earlier geometry" in note for note in rows[key_a].notes)
+    assert rows[key_b].corrected_energy == "0.000"
+    assert rows[key_b].zpe_mark == ""
+
+
+def test_a_zpe_whose_source_run_cannot_be_told_stays_out_of_the_ranking(tmp_path: Path) -> None:
+    """An old record with no stamps: the sum might mix geometries, so it states no ranking."""
+
+    service = ProjectService()
+    _document, _definition, controller, key_a, key_b, _job = _two_sites_with_results(
+        service, tmp_path, recorded_b=False
+    )
+
+    rows = _rows_by_key(controller)
+
+    assert (rows[key_b].zpe, rows[key_b].zpe_mark) == ("0.654", "unconfirmed")
+    assert rows[key_b].corrected_energy == "–"
+    assert any("does not record" in note for note in rows[key_b].notes)
+    assert rows[key_a].corrected_energy == "0.000"
+
+
+def test_an_old_record_is_read_from_its_timestamps(tmp_path: Path) -> None:
+    service = ProjectService()
+    document, _definition, controller, _key_a, key_b, job_b = _two_sites_with_results(
+        service, tmp_path, recorded_b=False
+    )
+    candidate = next(item for item in controller.candidates() if item.key == key_b)
+    start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    document.runs[candidate.run.id].completed_at = start
+    job_b.created_at = start + timedelta(hours=1)
+    job_b.submitted_at = start + timedelta(hours=2)
+
+    row = _rows_by_key(controller)[key_b]
+    assert (row.zpe_mark, row.corrected_energy) == ("", "+0.353")
+
+    document.runs[candidate.run.id].completed_at = start + timedelta(hours=3)
+    row = _rows_by_key(controller)[key_b]
+    assert (row.zpe_mark, row.corrected_energy) == ("earlier", "–")
+
+
+def test_materialize_records_the_run_it_read_and_keeps_it_across_a_later_run(
+    tmp_path: Path,
+) -> None:
+    service = ProjectService()
+    document, definition, candidates, output_root = _seed_quantum_document(service, tmp_path)
+    key = next(iter(candidates))
+    run_id = candidates[key].run.id
+    controller = _quantum_document_controller(service, document, output_root)
+
+    (job,) = controller.materialize([key])
+
+    assert definition.parameters["phonon_source_run_ids_by_label"] == {key: str(run_id)}
+    job.status = JobStatus.COMPLETED
+    _store_phonon_result(document, job, {"muon_zpe_total_eV": 0.5})
+    # Another row's Configure must not move this row's record.
+    controller.ensure_definition(list(candidates))
+    assert definition.parameters["phonon_source_run_ids_by_label"] == {key: str(run_id)}
+    assert _rows_by_key(controller)[key].zpe_mark == ""
+
+
+def test_a_saddle_reads_from_the_zero_of_the_unflagged_sites(tmp_path: Path) -> None:
+    """Hand-checked: A's sum -99.442 is the zero, so saddle B at -99.743 + 0.100 reads -0.201.
+
+    Before the rule B would have been the zero, and A would have read +0.201.
+    """
+
+    service = ProjectService()
+    _document, _definition, controller, key_a, key_b, _job = _two_sites_with_results(
+        service,
+        tmp_path,
+        data_b={"muon_zpe_total_eV": 0.1, "muon_zpe_modes": [{"frequency_cm": -300.0}]},
+    )
+
+    rows = _rows_by_key(controller)
+
+    assert rows[key_a].corrected_energy == "0.000"
+    assert rows[key_b].corrected_energy == "-0.201"
+    assert rows[key_b].zpe == "0.100"
+    assert not any("zero is the lowest of them" in note for note in rows[key_b].notes)
+
+
+def test_a_group_of_only_saddles_falls_back_to_them_and_says_so(tmp_path: Path) -> None:
+    service = ProjectService()
+    document, definition, candidates, output_root = _seed_quantum_document(service, tmp_path)
+    key_a, key_b = list(candidates)
+    document.sites[candidates[key_a].site.id].total_energy_eV = -100.0
+    document.sites[candidates[key_b].site.id].total_energy_eV = -99.743
+    for key, zpe in ((key_a, 0.558), (key_b, 0.654)):
+        job = _bind_phonon(service, document, definition, key, status=JobStatus.COMPLETED)
+        _store_phonon_result(
+            document,
+            job,
+            {"muon_zpe_total_eV": zpe, "muon_zpe_modes": [{"frequency_cm": -300.0}]},
+        )
+    controller = _quantum_document_controller(service, document, output_root)
+
+    rows = _rows_by_key(controller)
+
+    assert rows[key_a].corrected_energy == "0.000"
+    assert rows[key_b].corrected_energy == "+0.353"
+    for key in (key_a, key_b):
+        assert any("zero is the lowest of them" in note for note in rows[key].notes)
+
+
+def test_quantum_controller_keeps_a_row_for_a_result_whose_site_is_gone(tmp_path: Path) -> None:
+    """Hand-checked: the sites rank 0.000 and +0.353 as if the 0.100 eV orphan were not there."""
+
+    service = ProjectService()
+    document, definition, candidates, output_root = _seed_quantum_document(service, tmp_path)
+    key_a, key_b = list(candidates)
+    document.sites[candidates[key_a].site.id].total_energy_eV = -100.0
+    document.sites[candidates[key_b].site.id].total_energy_eV = -99.743
+    job_a = _bind_phonon(service, document, definition, key_a, status=JobStatus.COMPLETED)
+    job_b = _bind_phonon(service, document, definition, key_b, status=JobStatus.COMPLETED)
+    _store_phonon_result(document, job_a, {"muon_zpe_total_eV": 0.558})
+    _store_phonon_result(document, job_b, {"muon_zpe_total_eV": 0.654})
+    orphan_job = _quantum_job(service, document, "quantum_phonon_old", QUANTUM_PHONON_CALC_TYPE)
+    orphan_job.status = JobStatus.COMPLETED
+    start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    _store_phonon_result(document, orphan_job, {"muon_zpe_total_eV": 0.9}, start)
+    orphan = _store_phonon_result(
+        document,
+        orphan_job,
+        {"muon_zpe_total_eV": 0.1, "w1_entanglement_witness": -0.25, "w1_definition": "p"},
+        start + timedelta(minutes=1),
+    )
+    jobless_run = CalculationRun(status=JobStatus.COMPLETED)
+    document.runs[jobless_run.id] = jobless_run
+    jobless = Result(
+        result_type=QUANTUM_PHONON_CALC_TYPE,
+        calculation_run_id=jobless_run.id,
+        data={"muon_zpe_total_eV": 0.2},
+    )
+    document.results[jobless.id] = jobless
+    controller = _quantum_document_controller(service, document, output_root)
+    controller.set_show_every_site(True)
+
+    rows = controller._view.sources[-1]
+    assert [row.corrected_energy for row in rows[:2]] == ["0.000", "+0.353"]
+    first, second = rows[2:]
+    assert first.label == "quantum_phonon_old (no eligible site)"
+    assert (first.key, first.result_id) == ("", str(orphan.id))
+    assert (first.zpe, first.witness) == ("0.100", "-0.250")
+    assert (first.relative_energy, first.corrected_energy) == ("–", "–")
+    assert first.status == "completed"
+    assert second.label == "Quantum phonon (no eligible site)"
+    assert second.result_id == str(jobless.id)
+    assert controller.phonon_result(first.result_id) is orphan
+
+
+def test_quantum_controller_leaves_an_earlier_run_of_a_listed_job_out_of_the_table(
+    tmp_path: Path,
+) -> None:
+    """A row's own job running again shows on that row; its old result gets no second row."""
+
+    service = ProjectService()
+    document, definition, candidates, output_root = _seed_quantum_document(service, tmp_path)
+    key = next(iter(candidates))
+    job = _bind_phonon(service, document, definition, key, status=JobStatus.RUNNING)
+    _store_phonon_result(document, job, {"muon_zpe_total_eV": 0.5})
+    controller = _quantum_document_controller(service, document, output_root)
+    controller.refresh_view()
+
+    assert all(row.key for row in controller._view.sources[-1])
+
+
+def test_quantum_controller_gives_a_row_only_to_a_completed_job_with_no_site(
+    tmp_path: Path,
+) -> None:
+    service = ProjectService()
+    document, _definition, _candidates, output_root = _seed_quantum_document(service, tmp_path)
+    job = _quantum_job(service, document, "quantum_phonon_old", QUANTUM_PHONON_CALC_TYPE)
+    job.status = JobStatus.RUNNING
+    _store_phonon_result(document, job, {"muon_zpe_total_eV": 0.5})
+    controller = _quantum_document_controller(service, document, output_root)
+    controller.refresh_view()
+    assert all(row.key for row in controller._view.sources[-1])
+
+    job.status = JobStatus.COMPLETED
+    controller.refresh_view()
+    assert [row.zpe for row in controller._view.sources[-1] if not row.key] == ["0.500"]
+
+
+def test_quantum_controller_ignores_a_phonon_result_with_no_payload(tmp_path: Path) -> None:
+    service = ProjectService()
+    document, definition, candidates, output_root = _seed_quantum_document(service, tmp_path)
+    key = next(iter(candidates))
+    job = _bind_phonon(service, document, definition, key, status=JobStatus.COMPLETED)
+    result = _store_phonon_result(document, job, {})
+    result.data = None
+    controller = _quantum_document_controller(service, document, output_root)
+    controller.refresh_view()
+
+    row = next(row for row in controller._view.sources[-1] if row.key == key)
+    assert row.result_id == ""
+
+
+def test_quantum_controller_shows_no_result_while_the_job_is_not_completed(
+    tmp_path: Path,
+) -> None:
+    """A job running again no longer stands behind an earlier run's numbers."""
+
+    service = ProjectService()
+    document, definition, candidates, output_root = _seed_quantum_document(service, tmp_path)
+    key = next(iter(candidates))
+    job = _bind_phonon(service, document, definition, key, status=JobStatus.RUNNING)
+    _store_phonon_result(document, job, {"muon_zpe_total_eV": 0.5})
+    controller = _quantum_document_controller(service, document, output_root)
+    controller.refresh_view()
+
+    row = next(row for row in controller._view.sources[-1] if row.key == key)
+    assert (row.zpe, row.corrected_energy, row.result_id) == ("–", "–", "")
+
+
+def test_quantum_controller_reads_the_newest_result_with_a_naive_stamp_as_utc(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A rerun result stamped without a time zone, as an older project may hold, is read
+    as UTC whatever the machine's time zone, so the newest result of the job shows."""
+
+    service = ProjectService()
+    document, definition, candidates, output_root = _seed_quantum_document(service, tmp_path)
+    key = next(iter(candidates))
+    job = _bind_phonon(service, document, definition, key, status=JobStatus.COMPLETED)
+    later = _store_phonon_result(document, job, {}, datetime(2026, 1, 1, 12, 0))
+    _store_phonon_result(document, job, {}, datetime(2026, 1, 1, 11, 30, tzinfo=timezone.utc))
+    controller = _quantum_document_controller(service, document, output_root)
+    # Read as local time at UTC+05:30, the naive 12:00 would be 06:30 UTC.
+    monkeypatch.setenv("TZ", "Asia/Kolkata")
+    time.tzset()
+    try:
+        controller.refresh_view()
+    finally:
+        monkeypatch.undo()
+        time.tzset()
+
+    row = next(row for row in controller._view.sources[-1] if row.key == key)
+    assert row.result_id == str(later.id)
 
 
 _STORED_MODES = [
@@ -350,7 +563,7 @@ def test_quantum_controller_refresh_view_shows_a_current_witness_as_stored(tmp_p
         "w1_definition": "participation_minus_3",
     }
 
-    assert _displayed_witness(tmp_path, data) == "-0.25"
+    assert _displayed_witness(tmp_path, data) == "-0.250"
 
 
 def test_quantum_controller_refresh_view_recomputes_a_witness_stored_before_its_definition(
@@ -362,14 +575,14 @@ def test_quantum_controller_refresh_view_recomputes_a_witness_stored_before_its_
     old_form = -math.sqrt(3.0 - 2.4)
     data = {"muon_zpe_modes": _STORED_MODES, "w1_entanglement_witness": old_form}
 
-    assert _displayed_witness(tmp_path, data) == f"{2.4 - 3.0:.4g}"
+    assert _displayed_witness(tmp_path, data) == "-0.600"
 
 
 def test_quantum_controller_refresh_view_shows_an_old_witness_without_modes_as_stored(
     tmp_path: Path,
 ) -> None:
-    assert _displayed_witness(tmp_path, {"w1_entanglement_witness": -0.5}) == "-0.5"
-    assert _displayed_witness(tmp_path, {"muon_zpe_total_eV": 0.1}) == ""
+    assert _displayed_witness(tmp_path, {"w1_entanglement_witness": -0.5}) == "-0.500"
+    assert _displayed_witness(tmp_path, {"muon_zpe_total_eV": 0.1}) == "–"
 
 
 def test_quantum_controller_refresh_view_shows_muon_modes_and_stored_widths(
@@ -394,8 +607,8 @@ def test_quantum_controller_refresh_view_shows_muon_modes_and_stored_widths(
 
     assert row.zpe == "0.579"
     assert row.muon_modes == "2742.0, 3226.0, 3226.0"
-    assert row.widths == "0.23, 0.21, 0.21"
-    assert row.witness == "-0.14"
+    assert row.widths == "0.23 0.21 0.21"
+    assert row.witness == "-0.140"
 
 
 def test_quantum_controller_refresh_view_computes_widths_for_a_payload_without_width(
@@ -407,7 +620,7 @@ def test_quantum_controller_refresh_view_computes_widths_for_a_payload_without_w
     row = _displayed_result_row(tmp_path, {"muon_zpe_modes": _STORED_MODES})
 
     assert row.muon_modes == "1600.0, 2500.0, 3600.0"
-    assert row.widths == ", ".join(
+    assert row.widths == " ".join(
         f"{mode_width_angstrom(mode['frequency_cm']):.2f}" for mode in _STORED_MODES
     )
 
@@ -417,7 +630,7 @@ def test_quantum_controller_refresh_view_leaves_mode_cells_blank_without_modes(
 ) -> None:
     row = _displayed_result_row(tmp_path, {"muon_zpe_total_eV": "not a number"})
 
-    assert (row.zpe, row.muon_modes, row.widths) == ("", "", "")
+    assert (row.zpe, row.muon_modes, row.widths) == ("–", "", "–")
 
 
 def test_quantum_controller_pre_submit_check_blocks_submission(tmp_path: Path) -> None:
@@ -705,12 +918,18 @@ def _bind_phonon(
     key: str,
     *,
     status: JobStatus = JobStatus.DEFINED,
+    recorded_source: bool = True,
 ) -> Job:
-    """Bind a phonon job in ``status`` to the row ``key``."""
+    """Bind a phonon job in ``status`` to the row ``key``, read from the row's current run."""
 
     phonon = _quantum_job(service, document, f"quantum_phonon_{key}", QUANTUM_PHONON_CALC_TYPE)
     phonon.status = status
     definition.parameters["phonon_job_ids_by_label"][key] = str(phonon.id)
+    if recorded_source:
+        source_run = document.sites[UUID(key)].relaxation_run_id
+        definition.parameters.setdefault("phonon_source_run_ids_by_label", {})[key] = str(
+            source_run
+        )
     return phonon
 
 
@@ -941,7 +1160,8 @@ def test_quantum_controller_row_lifecycle_from_ready_to_a_completed_result(tmp_p
 
     source_row = next(row for row in view.sources[-1] if row.key == key)
     assert source_row.status == "completed"
-    assert [row.label for row in view.results[-1]] == ["quantum_phonon_siteA"]
+    assert source_row.result_id == str(result.id)
+    assert source_row.zpe == "0.200"
 
 
 def test_quantum_controller_refresh_view_always_shows_the_farm_count(tmp_path: Path) -> None:
@@ -957,7 +1177,7 @@ def test_quantum_controller_refresh_view_always_shows_the_farm_count(tmp_path: P
 
     rows = {row.key: row for row in view.sources[-1]}
     assert (rows[first].num_farms_display, rows[first].status) == ("1", "ready")
-    assert (rows[second].num_farms_display, rows[second].configured) == ("4", True)
+    assert rows[second].num_farms_display == "4"
 
 
 def test_quantum_controller_submit_cluster_reaches_cluster_backend(tmp_path: Path) -> None:
@@ -1251,8 +1471,8 @@ def test_quantum_controller_keeps_a_completed_dfpt_rows_result(tmp_path: Path) -
 
     controller.refresh_view()
 
-    ((result_row,),) = view.results[-1:]
-    assert result_row.label == phonon.label
+    result_row = next(row for row in view.sources[-1] if row.key == keys[0])
+    assert result_row.result_id == str(result.id)
     assert result_row.status == "completed"
     assert controller.build_states()[keys[0]].status == "completed"
     assert controller.phonon_result(str(result.id)) is result
@@ -1292,7 +1512,7 @@ def test_quantum_controller_keeps_a_completed_legacy_pairs_phonon_result(tmp_pat
     assert controller.jobs_for_keys([key]) == [phonon]
     assert controller.materialize([key]) == []
     controller.refresh_view()
-    assert [row.key for row in view.results[-1]] == [str(result.id)]
+    assert [row.result_id for row in view.sources[-1] if row.key == key] == [str(result.id)]
     assert controller.phonon_result(str(result.id)) is result
 
 
@@ -1476,14 +1696,25 @@ def test_quantum_controller_renames_a_source_site(tmp_path: Path) -> None:
     service = ProjectService()
     document, _definition, candidates, output_root = _seed_quantum_document(service, tmp_path)
     key, candidate = next(iter(candidates.items()))
-    controller = _quantum_document_controller(service, document, output_root)
+    refreshed: list[str] = []
+    persisted: list[str] = []
+    controller = _quantum_document_controller(
+        service,
+        document,
+        output_root,
+        deps=_stub_quantum_deps(refresh_site_label_views=lambda: refreshed.append("other pages")),
+        persisted=persisted,
+    )
 
     assert controller.rename_source(key, "  ") is False
     assert controller.rename_source(key, "siteA") is False
     assert controller.rename_source("missing", "renamed") is False
     assert candidate.site.label == "siteA"
+    assert refreshed == []
     assert controller.rename_source(key, " renamed ") is True
     assert document.sites[candidate.site.id].label == "renamed"
+    assert refreshed == ["other pages"]
+    assert persisted == ["Quantum Corrections site label was updated, but autosave failed."]
 
 
 def test_quantum_controller_resolves_the_phonon_analysis_input(tmp_path: Path) -> None:
@@ -1514,6 +1745,101 @@ def test_quantum_controller_resolves_the_phonon_analysis_input(tmp_path: Path) -
     phonon_path.parent.mkdir(parents=True, exist_ok=True)
     phonon_path.write_text(_QUANTUM_PHONON_TEXT, encoding="utf-8")
     assert controller.phonon_analysis_input(result) == (phonon_path, "quantum_phonon_siteA")
+
+
+def test_quantum_controller_names_the_analysis_window_after_the_site_and_charge_state(
+    tmp_path: Path,
+) -> None:
+    service = ProjectService()
+    document, definition, candidates, output_root = _seed_quantum_document(service, tmp_path)
+    key = next(iter(candidates))
+    job = _bind_phonon(service, document, definition, key, status=JobStatus.COMPLETED)
+    phonon_path = output_root / "site.phonon"
+    phonon_path.parent.mkdir(parents=True, exist_ok=True)
+    phonon_path.write_text(_QUANTUM_PHONON_TEXT, encoding="utf-8")
+    result = _store_phonon_result(document, job, {"phonon_file": str(phonon_path)})
+    controller = _quantum_document_controller(service, document, output_root)
+
+    assert controller.phonon_analysis_input(result) == (phonon_path, "siteA, positive muon")
+
+
+def test_quantum_controller_rename_does_nothing_while_shutting_down(tmp_path: Path) -> None:
+    service = ProjectService()
+    document, _definition, candidates, output_root = _seed_quantum_document(service, tmp_path)
+    key, candidate = next(iter(candidates.items()))
+    controller = _quantum_document_controller(
+        service, document, output_root, deps=_stub_quantum_deps(shutting_down=lambda: True)
+    )
+
+    assert controller.rename_source(key, "renamed") is False
+    assert candidate.site.label == "siteA"
+
+
+@pytest.mark.parametrize(
+    ("extras", "expected"),
+    [
+        ({}, {"a": 4, "b": 1}),
+        ({"num_farms": 1}, {"a": 1, "b": 1}),
+        ({"num_farms": 2}, {"a": 2, "b": 2}),
+    ],
+    ids=["left-alone", "set-to-one", "set-to-two"],
+)
+def test_quantum_controller_configure_keeps_differing_farm_counts_unless_changed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, extras: dict, expected: dict[str, int]
+) -> None:
+    from mufinder.app.workflow_config_codecs import workflow_row_configuration
+    from mufinder.app.workflow_controllers import quantum_corrections as module
+
+    service = ProjectService()
+    document, definition, candidates, output_root = _seed_quantum_document(service, tmp_path)
+    key_a, key_b = list(candidates)
+    store_workflow_row_configuration(definition, key_a, {"num_farms": 4})
+    store_workflow_row_configuration(definition, key_b, {"num_farms": 1})
+    monkeypatch.setattr(
+        module,
+        "run_source_configure_dialog",
+        lambda _build, _request, **_kwargs: replace(configure_result(), extras=extras),
+    )
+    persisted: list[str] = []
+    controller = _quantum_document_controller(service, document, output_root, persisted=persisted)
+
+    controller.configure_sources([key_a, key_b])
+
+    assert len(persisted) == 1
+
+    farms = {
+        name: workflow_row_configuration(definition, key)[2]["num_farms"]
+        for name, key in (("a", key_a), ("b", key_b))
+    }
+    assert farms == expected
+
+
+def test_quantum_controller_says_why_an_analysis_cannot_open(qapp, tmp_path: Path) -> None:
+    service = ProjectService()
+    document, definition, candidates, output_root = _seed_quantum_document(service, tmp_path)
+    key = next(iter(candidates))
+    job = _bind_phonon(service, document, definition, key, status=JobStatus.COMPLETED)
+    phonon_path = output_root / "broken.phonon"
+    phonon_path.parent.mkdir(parents=True, exist_ok=True)
+    phonon_path.write_text("not a phonon file", encoding="utf-8")
+    missing = _store_phonon_result(document, job, {})
+    broken = _store_phonon_result(document, job, {"phonon_file": str(phonon_path)})
+    infos: list[tuple[str, str]] = []
+    controller = _quantum_document_controller(
+        service,
+        document,
+        output_root,
+        deps=_stub_quantum_deps(show_warning=lambda title, text: infos.append((title, text))),
+    )
+
+    controller.open_analysis("not-a-uuid")
+    assert infos == []
+    controller.open_analysis(str(missing.id))
+    controller.open_analysis(str(broken.id))
+
+    assert [title for title, _text in infos] == ["Phonon analysis unavailable"] * 2
+    assert "does not reference a phonon file" in infos[0][1]
+    assert controller.analysis_dialog(broken.id) is None
 
 
 def test_quantum_controller_validate_artifacts_checks_phonon_jobs_only(tmp_path: Path) -> None:

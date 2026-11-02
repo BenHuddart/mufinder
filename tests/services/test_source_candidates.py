@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import SimpleNamespace
+from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
 import pytest
@@ -56,6 +57,9 @@ from mufinder.services.source_candidates import (
     quantum_source_key,
     quantum_source_label,
     quantum_source_labels_by_key,
+    PhononZpeSource,
+    phonon_zpe_source_state,
+    quantum_source_corrected_relative_energies,
     quantum_source_relative_energies,
     relaxation_sources_for_labels,
     selected_energy_barrier_endpoint_keys,
@@ -239,6 +243,160 @@ def test_quantum_source_relative_energies_group_by_charge_state_and_cell(
     assert relative[str(b.id)] == pytest.approx(0.5)
     assert relative[str(supercell.id)] == pytest.approx(0.0)
     assert relative[str(muonium.id)] == pytest.approx(0.0)
+
+
+def test_quantum_source_corrected_energies_add_the_zpe_within_each_group(
+    document: ProjectDocument,
+) -> None:
+    """Hand-checked: E + ZPE, less the lowest such sum with the same charge state and cell.
+
+    A and B are the GdRu2Si2 sites to three decimals: dE +0.257, ZPE 0.558 and 0.654, so
+    B is (-10.000 + 0.257 + 0.654) - (-10.000 + 0.558) = +0.353 eV above A.
+    """
+
+    a = _add_relaxed_source(document, "A", energy=-10.0)
+    b = _add_relaxed_source(document, "B", energy=-9.743)
+    unrun = _add_relaxed_source(document, "unrun", energy=-11.0)
+    no_energy = _add_relaxed_source(document, "no energy", energy=None)
+    supercell = _add_relaxed_source(document, "S", energy=-40.0, extra_species=("Si", "Si"))
+    muonium_low = _add_relaxed_source(
+        document, "M1", energy=-8.0, charge_state=MUONIUM_CHARGE_STATE
+    )
+    muonium_high = _add_relaxed_source(
+        document, "M2", energy=-8.1, charge_state=MUONIUM_CHARGE_STATE
+    )
+
+    corrected = quantum_source_corrected_relative_energies(
+        eligible_quantum_source_candidates(document),
+        {
+            str(a.id): 0.558,
+            str(b.id): 0.654,
+            str(no_energy.id): 0.5,
+            str(supercell.id): 0.6,
+            # The lower classical site carries 0.3 eV more ZPE: the order swaps.
+            str(muonium_low.id): 0.5,
+            str(muonium_high.id): 0.8,
+        },
+    )
+
+    assert corrected.values[str(a.id)] == pytest.approx(0.0)
+    assert corrected.values[str(b.id)] == pytest.approx(0.353)
+    assert corrected.values[str(unrun.id)] is None
+    assert corrected.values[str(no_energy.id)] is None
+    assert corrected.values[str(supercell.id)] == pytest.approx(0.0)
+    assert corrected.values[str(muonium_low.id)] == pytest.approx(0.0)
+    assert corrected.values[str(muonium_high.id)] == pytest.approx(0.2)
+    assert corrected.zero_from_flagged == frozenset()
+
+
+def test_a_flagged_site_cannot_set_the_zero_of_its_group(document: ProjectDocument) -> None:
+    """Hand-checked: A's sum -9.442 is the zero, so saddle S at -9.8 + 0.2 = -9.6 reads -0.158.
+
+    Without the rule S would be the zero and A would read +0.158.
+    """
+
+    a = _add_relaxed_source(document, "A", energy=-10.0)
+    b = _add_relaxed_source(document, "B", energy=-9.743)
+    saddle = _add_relaxed_source(document, "S", energy=-9.8)
+
+    corrected = quantum_source_corrected_relative_energies(
+        eligible_quantum_source_candidates(document),
+        {str(a.id): 0.558, str(b.id): 0.654, str(saddle.id): 0.2},
+        flagged_keys={str(saddle.id)},
+    )
+
+    assert corrected.values[str(a.id)] == pytest.approx(0.0)
+    assert corrected.values[str(b.id)] == pytest.approx(0.353)
+    assert corrected.values[str(saddle.id)] == pytest.approx(-0.158)
+    assert corrected.zero_from_flagged == frozenset()
+
+
+def test_a_group_of_only_flagged_sites_falls_back_to_them(document: ProjectDocument) -> None:
+    """Hand-checked within muonium: (-8.0 + 0.5) - (-8.1 + 0.2) = +0.4; the other group is unaffected."""
+
+    plain = _add_relaxed_source(document, "A", energy=-10.0)
+    low = _add_relaxed_source(document, "M1", energy=-8.1, charge_state=MUONIUM_CHARGE_STATE)
+    high = _add_relaxed_source(document, "M2", energy=-8.0, charge_state=MUONIUM_CHARGE_STATE)
+
+    corrected = quantum_source_corrected_relative_energies(
+        eligible_quantum_source_candidates(document),
+        {str(plain.id): 0.5, str(low.id): 0.2, str(high.id): 0.5},
+        flagged_keys={str(low.id), str(high.id)},
+    )
+
+    assert corrected.values[str(plain.id)] == pytest.approx(0.0)
+    assert corrected.values[str(low.id)] == pytest.approx(0.0)
+    assert corrected.values[str(high.id)] == pytest.approx(0.4)
+    assert corrected.zero_from_flagged == {str(low.id), str(high.id)}
+
+
+_T0 = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+
+
+def _state_of(
+    document, site, *, recorded=None, created=_T0, submitted=None, relaxed=None, job_relaxed=None
+):
+    candidate = next(
+        item for item in eligible_quantum_source_candidates(document) if item.key == str(site.id)
+    )
+    candidate.run.completed_at = relaxed
+    candidate.job.completed_at = job_relaxed
+    phonon = Job(label="phonon", created_at=created, submitted_at=submitted)
+    return phonon_zpe_source_state(candidate, phonon, recorded), candidate
+
+
+def test_a_recorded_source_run_decides_whatever_the_timestamps(document: ProjectDocument) -> None:
+    site = _add_relaxed_source(document, "A", energy=-10.0)
+    later = _T0 + timedelta(hours=1)
+    _state, candidate = _state_of(document, site)
+
+    state, _ = _state_of(
+        document, site, recorded=str(candidate.run.id), submitted=_T0, relaxed=later
+    )
+    assert state is PhononZpeSource.CURRENT
+    state, _ = _state_of(document, site, recorded=str(uuid4()), created=later, relaxed=_T0)
+    assert state is PhononZpeSource.EARLIER
+
+
+def test_an_unrecorded_source_run_is_settled_only_where_the_timestamps_prove_it(
+    document: ProjectDocument,
+) -> None:
+    site = _add_relaxed_source(document, "A", energy=-10.0)
+    hour = timedelta(hours=1)
+
+    # Finished before the job existed: every input the job ever wrote read this run.
+    state, _ = _state_of(document, site, created=_T0 + hour, relaxed=_T0)
+    assert state is PhononZpeSource.CURRENT
+    # Finished after the job's last submission: the job cannot have read it. A naive stamp is UTC.
+    state, _ = _state_of(document, site, submitted=_T0.replace(tzinfo=None), relaxed=_T0 + hour)
+    assert state is PhononZpeSource.EARLIER
+    # The relaxation job's own stamp stands in for its run's.
+    state, _ = _state_of(document, site, submitted=_T0, relaxed=None, job_relaxed=_T0 + hour)
+    assert state is PhononZpeSource.EARLIER
+    # Finished between the two: a resubmission need not have rewritten the inputs.
+    state, _ = _state_of(document, site, submitted=_T0 + 2 * hour, relaxed=_T0 + hour)
+    assert state is PhononZpeSource.UNCONFIRMED
+
+
+@pytest.mark.parametrize("submitted", [None, _T0 + timedelta(hours=2)], ids=["unsent", "sent"])
+def test_a_source_run_with_no_relaxation_stamp_is_unconfirmed(
+    document: ProjectDocument, submitted
+) -> None:
+    site = _add_relaxed_source(document, "A", energy=-10.0)
+
+    state, _ = _state_of(document, site, submitted=submitted, relaxed=None)
+
+    assert state is PhononZpeSource.UNCONFIRMED
+
+
+def test_a_source_run_after_an_unsent_job_was_created_is_unconfirmed(
+    document: ProjectDocument,
+) -> None:
+    site = _add_relaxed_source(document, "A", energy=-10.0)
+
+    state, _ = _state_of(document, site, relaxed=_T0 + timedelta(hours=1))
+
+    assert state is PhononZpeSource.UNCONFIRMED
 
 
 def test_quantum_source_labels_deduplicate_in_candidate_order(document: ProjectDocument) -> None:

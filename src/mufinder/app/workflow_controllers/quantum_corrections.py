@@ -23,10 +23,12 @@ Gamma-point phonons in the same run.
   phonon job whose ``.phonon`` is missing or unparseable;
   :meth:`QuantumCorrectionsController.build_result` contributes the muon ZPE,
   phonon eigenvalues, mode participations and the ``w1`` entanglement witness.
-- **Configure.** :meth:`QuantumCorrectionsController.configure_request` and
-  :meth:`QuantumCorrectionsController.apply_configuration` back the Configure
-  dialog, which is editable while every selected row is ready and otherwise
-  opens read-only with the reason.
+  :meth:`QuantumCorrectionsController.open_analysis` opens the analysis window.
+- **Configure.** :meth:`QuantumCorrectionsController.configure_sources` runs the
+  Configure dialog from :meth:`QuantumCorrectionsController.configure_request`
+  and stores it through :meth:`QuantumCorrectionsController.apply_configuration`;
+  it is editable while every selected row is ready and otherwise opens read-only
+  with the reason.
 - **Recovery.** A failed, stopped or cancelled phonon job goes back to
   ``defined`` through the shared failed-job reset.
   :meth:`QuantumCorrectionsController.directory_companions` lets that reset
@@ -46,6 +48,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
+from functools import partial
 from pathlib import Path
 from uuid import UUID
 
@@ -65,7 +68,9 @@ from mufinder.services.job_artifacts import ParsedJobArtifacts
 from mufinder.services.job_results import parse_numeric
 from mufinder.services.quantum_results import (
     W1_DEFINITION,
+    has_non_positive_muon_mode,
     mode_widths_from_result_data,
+    phonon_warnings_from_result_data,
     w1_from_result_data,
 )
 from mufinder.services.job_paths import (
@@ -78,12 +83,15 @@ from mufinder.services.muon_sites_summary import (
     set_show_every_relaxed_site,
 )
 from mufinder.services.source_candidates import (
+    PhononZpeSource,
     QuantumSourceCandidate,
     charge_state_for_job,
     charge_state_label_for_job,
     eligible_quantum_source_candidates,
+    phonon_zpe_source_state,
     quantum_seed_name_for_key,
     quantum_source_candidate_by_key,
+    quantum_source_corrected_relative_energies,
     quantum_source_label,
     quantum_source_relative_energies,
     serialize_quantum_sources,
@@ -91,6 +99,7 @@ from mufinder.services.source_candidates import (
 )
 from mufinder.castep_io.param_parser import ParamParseError, parse_param_assignments
 from mufinder.science.quantum_phonons import (
+    PhononParseError,
     muon_mass_warning,
     muon_zpe,
     w1_entanglement_witness,
@@ -108,9 +117,10 @@ from mufinder.workflow.quantum import (
 from mufinder.workflow.types import JobSpec
 
 from mufinder.app.adapter_common import build_workflow_settings_template
+from mufinder.app.quantum_analysis_dialog import QuantumPhononAnalysisDialog
 from mufinder.app.quantum_corrections_widget import (
+    NO_VALUE_TEXT,
     QuantumCorrectionsWidget,
-    QuantumResultRow,
     QuantumSourceRow,
 )
 from mufinder.app.relaxation_types import RelaxationRunState
@@ -131,7 +141,12 @@ from mufinder.app.workflow_controllers.base import (
     dedupe_jobs,
     locked_configuration_reason,
 )
-from mufinder.app.workflow_dialogs import SourceConfigureRequest, SourceConfigureResult
+from mufinder.app.workflow_dialogs import (
+    QuantumCorrectionsConfigDialog,
+    SourceConfigureRequest,
+    SourceConfigureResult,
+    run_source_configure_dialog,
+)
 from mufinder.app.workflow_parameters import (
     build_workflow_parameter_surface,
     merge_species_options,
@@ -154,6 +169,8 @@ _LEGACY_METHOD_TO_CASTEP = {
 _DEFAULT_ELEC_ENERGY_TOL = ValueWithUnit(1e-9, "eV")
 _PHONON_JOB_MAPPING = "phonon_job_ids_by_label"
 _SEED_MAPPING = "job_seed_names_by_label"
+#: The relaxation run each row's phonon inputs were last written from.
+_SOURCE_RUN_MAPPING = "phonon_source_run_ids_by_label"
 
 
 def _legacy_method_value(value: object) -> str:
@@ -185,20 +202,23 @@ def _fresh_seed_name(seed_name: str, *, output_root: Path, taken: set[str]) -> s
     return candidate
 
 
-def _format_zpe_ev(value: object) -> str:
-    """Format the muon ZPE for the ``ZPE (eV)`` column: three decimals, no unit."""
+def _format_three_decimals(value: float | None, *, signed: bool = False) -> str:
+    """Format a number to three decimals: ``–`` without one, and an unsigned ``0.000`` at zero."""
 
-    number = parse_numeric(value)
-    return "" if number is None else f"{number:.3f}"
+    if value is None:
+        return NO_VALUE_TEXT
+    if round(value, 3) == 0:
+        return "0.000"
+    return f"{value:+.3f}" if signed else f"{value:.3f}"
 
 
 def _muon_mode_texts(data: Mapping[str, object]) -> tuple[str, str]:
-    """Return the ``Muon modes (cm⁻¹)`` and ``Width (Å)`` texts of a phonon payload.
+    """Return the muon-mode frequencies and ``Widths (Å)`` texts of a phonon payload.
 
-    The selected ``muon_zpe_modes`` frequencies (one decimal) and their
-    zero-point widths (two decimals, from
-    :func:`~mufinder.services.quantum_results.mode_widths_from_result_data`)
-    are listed comma-separated, both in ascending frequency order.
+    The selected ``muon_zpe_modes`` frequencies (one decimal, comma-separated) and
+    their zero-point widths (two decimals, space-separated, from
+    :func:`~mufinder.services.quantum_results.mode_widths_from_result_data`), both
+    in ascending frequency order.
     """
 
     modes = data.get("muon_zpe_modes")
@@ -215,36 +235,46 @@ def _muon_mode_texts(data: Mapping[str, object]) -> tuple[str, str]:
     )
     return (
         ", ".join(f"{frequency:.1f}" for frequency, _width in pairs),
-        ", ".join(f"{width:.2f}" for _frequency, width in pairs),
+        " ".join(f"{width:.2f}" for _frequency, width in pairs),
     )
 
 
-def _result_order(job: Job | None, result: Result) -> tuple[object, ...]:
-    """Return the sort key of a phonon result's row in the Completed Results table.
+def _ranking_notes(source: PhononZpeSource, zero_from_flagged: bool) -> tuple[str, ...]:
+    """Return the row tooltip's lines on why its ``dE + ZPE`` reads as it does."""
 
-    Rows are ordered by job label with numbers compared as numbers, then (for
-    labels that compare equal, such as ``Site_1`` and ``site_1``) by the exact
-    label and job id, so each job's rows stay together; a job's own results go
-    oldest first, then by result id. A result whose job is gone comes last. The
-    order never depends on the order the jobs finished in. A naive
-    ``created_at`` from an older project is read as UTC.
-    """
+    notes: list[str] = []
+    if source is PhononZpeSource.EARLIER:
+        notes.append(
+            "This ZPE is from an earlier geometry: the site's relaxation has run again since, "
+            "so it is not ranked."
+        )
+    elif source is PhononZpeSource.UNCONFIRMED:
+        notes.append(
+            "This project does not record which relaxation this ZPE came from, so it is not ranked."
+        )
+    elif zero_from_flagged:
+        notes.append(
+            "Every ranked site in this group has a non-positive muon mode, so the zero is the "
+            "lowest of them."
+        )
+    return tuple(notes)
 
-    label = job.label if job is not None else ""
-    return (
-        job is None,
-        natural_sort_key(label),
-        label,
-        str(job.id) if job is not None else "",
-        as_aware_utc(result.created_at),
-        str(result.id),
-    )
 
+def _result_cells(result: Result) -> dict[str, object]:
+    """Return a row's fields read from its stored phonon result, ``dE + ZPE`` aside."""
 
-def _format_relative_energy(value: float | None) -> str:
-    """Format a source's energy relative to its comparable minimum for the ``dE (eV)`` column."""
-
-    return "" if value is None else f"{float(value):.5f}"
+    data = result.data if isinstance(result.data, dict) else {}
+    muon_modes, widths = _muon_mode_texts(data)
+    return {
+        "zpe": _format_three_decimals(parse_numeric(data.get("muon_zpe_total_eV"))),
+        "widths": widths or NO_VALUE_TEXT,
+        # A payload stored before ``w1_definition`` holds the witness in an earlier
+        # form; ``w1_from_result_data`` recomputes it as ``P - 3``.
+        "witness": _format_three_decimals(w1_from_result_data(data)),
+        "muon_modes": muon_modes,
+        "result_id": str(result.id),
+        "warnings": phonon_warnings_from_result_data(data),
+    }
 
 
 def _legacy_method_notice(rows: list[tuple[str, str]]) -> tuple[str, str]:
@@ -283,13 +313,18 @@ class QuantumCorrectionsDeps:
     """The window-side handles the quantum-corrections controller needs.
 
     The host-mismatch handlers ask whether to switch the active host (shared
-    with every host-guarded workflow). Everything else the controller reads from the shared
-    :class:`~mufinder.app.workflow_controllers.base.WorkflowControllerContext`
+    with every host-guarded workflow). ``refresh_site_label_views`` refreshes the
+    other pages that list a renamed site, ``show_warning`` says why an analysis window
+    cannot open, and ``shutting_down`` stops a rename saving during teardown. Everything else the controller reads from
+    the shared :class:`~mufinder.app.workflow_controllers.base.WorkflowControllerContext`
     or the service layer.
     """
 
     handle_structure_host_mismatch: Callable[[object], bool]
     handle_site_host_mismatch: Callable[[object], bool]
+    refresh_site_label_views: Callable[[], None]
+    show_warning: Callable[[str, str], object]
+    shutting_down: Callable[[], bool]
 
 
 @dataclass(frozen=True)
@@ -321,6 +356,7 @@ class QuantumCorrectionsController(WorkflowJobController):
         super().__init__(context)
         self._deps = deps
         self._view = view
+        self._analysis_dialogs: dict[UUID, QuantumPhononAnalysisDialog] = {}
 
     # --- sources and jobs ---
 
@@ -608,15 +644,19 @@ class QuantumCorrectionsController(WorkflowJobController):
     ) -> None:
         """Store an accepted Configure dialog on every row ``keys`` name.
 
-        ``extras`` are the dialog's workflow values (the farm count). A mixed parameter the user left alone keeps each row's own
-        stored value.
+        ``extras`` are the dialog's workflow values; without ``num_farms``, the farm
+        count was left alone and each row keeps its own. A mixed parameter the user left
+        alone keeps each row's own stored value.
         """
 
-        payload = row_settings_payload(result.values, result.advanced_names, extras)
         definition = self.ensure_definition(keys)
         if definition is None:
             return
         for key in keys:
+            own_farms = num_farms_from_extras(workflow_row_configuration(definition, key)[2])
+            payload = row_settings_payload(
+                result.values, result.advanced_names, {"num_farms": own_farms, **extras}
+            )
             store_workflow_row_configuration(
                 definition, key, batch_row_payload(definition, key, payload, result.untouched_mixed)
             )
@@ -625,13 +665,41 @@ class QuantumCorrectionsController(WorkflowJobController):
             failure_message="Quantum Corrections configuration was updated, but autosave failed."
         )
 
+    def configure_sources(self, keys: Sequence[str]) -> None:
+        """Run the Configure dialog on the rows ``keys`` name and store what it accepts."""
+
+        request = self.configure_request([str(key) for key in keys])
+        if request is None:
+            return
+        result = run_source_configure_dialog(
+            partial(
+                QuantumCorrectionsConfigDialog,
+                specs=self.parameter_specs(),
+                num_farms=request.num_farms,
+                intro_text=request.intro_text,
+                read_only=request.read_only,
+                species_options=request.species_options,
+                parent=self._view.window(),
+            ),
+            request,
+            extras=lambda dialog: (
+                {"num_farms": dialog.num_farms()} if dialog.num_farms_edited() else {}
+            ),
+        )
+        if result is None:
+            return
+        self.apply_configuration(request.keys, result, result.extras)
+
     def rename_source(self, key: str, label: str) -> bool:
         """Rename a source's muon site from its editable label cell.
 
         Returns whether the label changed. A blank or unchanged label restores
-        the cell; an unknown key does nothing.
+        the cell; an unknown key does nothing. A new label also reaches the other
+        pages that list the site, and is saved.
         """
 
+        if self._deps.shutting_down():
+            return False
         candidate = self.candidate_by_key(key)
         if candidate is None:
             return False
@@ -641,6 +709,10 @@ class QuantumCorrectionsController(WorkflowJobController):
             return False
         candidate.site.label = normalized
         self.refresh_view()
+        self._deps.refresh_site_label_views()
+        self._context.persist_ui_state(
+            failure_message="Quantum Corrections site label was updated, but autosave failed."
+        )
         return True
 
     def phonon_result(self, result_id: str) -> Result | None:
@@ -659,11 +731,12 @@ class QuantumCorrectionsController(WorkflowJobController):
         return result
 
     def phonon_analysis_input(self, result: Result) -> tuple[Path, str]:
-        """Return the ``.phonon`` file and job label the analysis window opens on.
+        """Return the ``.phonon`` file and the name the analysis window opens on.
 
-        Raises ``ValueError`` with a user-facing reason when the result names no
-        phonon file or the file is gone. A relative path is read from the
-        project root.
+        The name is the site's and charge state's (see :meth:`site_title`), or the
+        job's label for a result whose site is gone. Raises ``ValueError`` with a
+        user-facing reason when the result names no phonon file or the file is
+        gone. A relative path is read from the project root.
         """
 
         document = self._context.document()
@@ -675,7 +748,7 @@ class QuantumCorrectionsController(WorkflowJobController):
             phonon_path = document.project_root / phonon_path
         if not phonon_path.exists():
             raise ValueError(f"Could not find phonon file:\n{phonon_path}")
-        job_label = "Quantum phonon"
+        title = "Quantum phonon"
         if document is not None:
             run = (
                 document.runs.get(result.calculation_run_id)
@@ -688,8 +761,71 @@ class QuantumCorrectionsController(WorkflowJobController):
                 else None
             )
             if job is not None:
-                job_label = job.label
-        return phonon_path, job_label
+                _definition, key = self.definition_and_key_for_job(job)
+                title = (self.site_title(key) if key is not None else "") or job.label
+        return phonon_path, title
+
+    def site_title(self, key: str) -> str:
+        """Return how the row ``key`` names its site and charge state, ``""`` for no such row."""
+
+        candidate = self.candidate_by_key(key)
+        if candidate is None:
+            return ""
+        document = self._context.document()
+        scope = downstream_site_scope(document, QUANTUM_CORRECTIONS_SCOPE, self.candidates())
+        label = scope.pinned_label(key) or candidate.site.label or candidate.job.label
+        charge = charge_state_label_for_job(candidate.job)
+        return f"{label}, {charge}" if charge else label
+
+    def analysis_dialog(self, result_id: UUID) -> QuantumPhononAnalysisDialog | None:
+        """Return the analysis window open on the result ``result_id``, if any."""
+
+        return self._analysis_dialogs.get(result_id)
+
+    def open_analysis(self, result_id: str) -> None:
+        """Open the analysis window of a completed result, or raise the one already open."""
+
+        result = self.phonon_result(result_id)
+        if result is None:
+            return
+        existing = self._analysis_dialogs.get(result.id)
+        if existing is not None:
+            if existing.isVisible():
+                existing.raise_()
+                existing.activateWindow()
+                return
+            self._analysis_dialogs.pop(result.id, None)
+            existing.deleteLater()
+
+        try:
+            phonon_path, title = self.phonon_analysis_input(result)
+            dialog = QuantumPhononAnalysisDialog(
+                phonon_path=str(phonon_path),
+                site_label=title,
+                result_data=result.data if isinstance(result.data, dict) else {},
+                parent=self._view.window(),
+            )
+        except (ValueError, PhononParseError) as exc:
+            self._deps.show_warning("Phonon analysis unavailable", str(exc))
+            return
+        except Exception as exc:  # noqa: BLE001
+            self._deps.show_warning(
+                "Phonon analysis unavailable", f"Could not open the analysis window: {exc}"
+            )
+            return
+
+        # A closed window is deleted later, by when the result may have a new one.
+        dialog.destroyed.connect(
+            lambda *_args, opened=result.id, window=dialog: (
+                self._analysis_dialogs.pop(opened, None)
+                if self._analysis_dialogs.get(opened) is window
+                else None
+            )
+        )
+        self._analysis_dialogs[result.id] = dialog
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
 
     # --- submission contract ---
     #
@@ -916,6 +1052,7 @@ class QuantumCorrectionsController(WorkflowJobController):
 
         phonon_mapping = _definition_mapping(definition, _PHONON_JOB_MAPPING)
         seed_mapping = _definition_mapping(definition, _SEED_MAPPING)
+        source_runs = _definition_mapping(definition, _SOURCE_RUN_MAPPING)
         # Load-bearing: ``phonon_job_for_key`` falls back to reading
         # ``job_ids_by_label``, so keep the phonon mapping aliased there.
         definition.parameters["job_ids_by_label"] = phonon_mapping
@@ -935,11 +1072,13 @@ class QuantumCorrectionsController(WorkflowJobController):
                     _write_job_directory(
                         spec, output_root, seed_name=self.seed_name_for_key(definition, key)
                     )
+                    source_runs[key] = spec.provenance["source_relaxation_run_id"]
                 created.append(existing)
                 continue
             seed_name = self._seed_for_new_job(definition, key, output_root=output_root)
             seed_mapping[key] = seed_name
             _write_job_directory(spec, output_root, seed_name=seed_name)
+            source_runs[key] = spec.provenance["source_relaxation_run_id"]
             job = self._context.project_service.add_job(
                 document,
                 label=spec.name,
@@ -1086,28 +1225,40 @@ class QuantumCorrectionsController(WorkflowJobController):
     # --- view contract ---
 
     def refresh_view(self) -> None:
-        """Rebuild the quantum-corrections source and result tables.
+        """Rebuild the table: one row per listed site, with its result's columns.
 
         Unlike the row-table widgets, which build rows from
         ``set_runtime_states``, the quantum widget takes pre-built
-        :class:`~mufinder.app.quantum_corrections_widget.QuantumSourceRow` /
-        :class:`~mufinder.app.quantum_corrections_widget.QuantumResultRow` lists, so
-        the row building lives here. Source rows follow
-        :meth:`candidates`; result rows follow :func:`_result_order`.
+        :class:`~mufinder.app.quantum_corrections_widget.QuantumSourceRow` lists, so
+        the row building lives here.
         """
 
         document = self._context.document()
         if document is None:
             self._view.set_site_scope(show_every_site=False)
             self._view.set_sources([])
-            self._view.set_results([])
             return
 
         source_rows: list[QuantumSourceRow] = []
+        listed_job_ids: set[UUID] = set()
         quantum_states = self.build_states()
         candidates = self.candidates()
-        relative_energies = quantum_source_relative_energies(candidates)
         definition = self.active_definition()
+        newest = self._newest_phonon_results()
+        results = self._site_results(definition, candidates, newest)
+        relative_energies = quantum_source_relative_energies(candidates)
+        sources = self._zpe_sources(definition, candidates, results)
+        corrected = quantum_source_corrected_relative_energies(
+            candidates,
+            {
+                key: parse_numeric(result.data.get("muon_zpe_total_eV"))
+                for key, result in results.items()
+                if sources[key] is PhononZpeSource.CURRENT
+            },
+            flagged_keys={
+                key for key, result in results.items() if has_non_positive_muon_mode(result.data)
+            },
+        )
         # The pinned list keeps every row this workflow already tracks, so a
         # configured or submitted site never drops out of the table.
         tracked_keys = [
@@ -1122,57 +1273,138 @@ class QuantumCorrectionsController(WorkflowJobController):
         for candidate in scope.scoped_candidates(candidates, keep_keys=tracked_keys):
             state = quantum_states.get(candidate.key)
             _params, _advanced, extras = workflow_row_configuration(definition, candidate.key)
-            source_rows.append(
-                QuantumSourceRow(
-                    key=candidate.key,
-                    label=candidate.site.label or candidate.job.label,
-                    charge_state=charge_state_label_for_job(candidate.job),
-                    relative_energy=_format_relative_energy(relative_energies.get(candidate.key)),
-                    displacements=str(3 * len(candidate.structure.species)),
-                    source_job=candidate.job.label,
-                    num_farms_display=str(num_farms_from_extras(extras)),
-                    status=getattr(state, "status", "ready") or "ready",
-                    configured=workflow_row_configuration_exists(definition, candidate.key),
-                    pinned_label=scope.pinned_label(candidate.key),
-                )
+            row = QuantumSourceRow(
+                key=candidate.key,
+                label=candidate.site.label or candidate.job.label,
+                charge_state=charge_state_label_for_job(candidate.job),
+                relative_energy=_format_three_decimals(
+                    relative_energies.get(candidate.key), signed=True
+                ),
+                displacements=str(3 * len(candidate.structure.species)),
+                source_job=candidate.job.label,
+                num_farms_display=str(num_farms_from_extras(extras)),
+                status=getattr(state, "status", "ready") or "ready",
+                pinned_label=scope.pinned_label(candidate.key),
             )
+            result = results.get(candidate.key)
+            if result is not None:
+                source = sources[candidate.key]
+                row = replace(
+                    row,
+                    corrected_energy=_format_three_decimals(
+                        corrected.values.get(candidate.key), signed=True
+                    ),
+                    zpe_mark="" if source is PhononZpeSource.CURRENT else source.value,
+                    notes=_ranking_notes(source, candidate.key in corrected.zero_from_flagged),
+                    **_result_cells(result),
+                )
+            source_rows.append(row)
+            job = self.phonon_job_for_key(definition, candidate.key)
+            if job is not None:
+                listed_job_ids.add(job.id)
+        self._view.set_sources(source_rows + self._rows_without_a_site(newest, listed_job_ids))
 
-        ordered_rows: list[tuple[tuple[object, ...], QuantumResultRow]] = []
+    def _newest_phonon_results(self) -> dict[UUID, Result]:
+        """Return the newest phonon result of each job, or a result with no job under its own id.
+
+        A result with no payload has nothing to show. A naive ``created_at`` from an
+        older project is read as UTC.
+        """
+
+        document = self._context.document()
+        if document is None:
+            return {}
+        newest: dict[UUID, Result] = {}
         for result in document.results.values():
-            if result.result_type != QUANTUM_PHONON_CALC_TYPE:
+            if result.result_type != QUANTUM_PHONON_CALC_TYPE or not isinstance(result.data, dict):
                 continue
-            job: Job | None = None
-            job_status = "completed"
             run = (
                 document.runs.get(result.calculation_run_id)
                 if result.calculation_run_id is not None
                 else None
             )
-            if run is not None and run.job_id is not None:
-                job = document.jobs.get(run.job_id)
-                if job is not None:
-                    job_status = job.status.value
-            data = result.data if isinstance(result.data, dict) else {}
-            muon_modes, widths = _muon_mode_texts(data)
-            # A payload stored before ``w1_definition`` holds the witness in an
-            # earlier form; ``w1_from_result_data`` recomputes it as ``P - 3``.
-            witness = w1_from_result_data(data)
-            row = QuantumResultRow(
-                key=str(result.id),
-                label=(job.label if job is not None else "") or "Quantum phonon",
-                zpe=_format_zpe_ev(data.get("muon_zpe_total_eV")),
-                muon_modes=muon_modes,
-                widths=widths,
-                witness="" if witness is None else f"{witness:.4g}",
-                status=job_status,
-            )
-            ordered_rows.append((_result_order(job, result), row))
+            owner = run.job_id if run is not None and run.job_id is not None else result.id
+            current = newest.get(owner)
+            if current is None or as_aware_utc(result.created_at) > as_aware_utc(
+                current.created_at
+            ):
+                newest[owner] = result
+        return newest
 
-        # Results are stored in the order their jobs finished, so give the table
-        # an order of its own (see ``_result_order``).
-        result_rows = [row for _order, row in sorted(ordered_rows, key=lambda pair: pair[0])]
-        self._view.set_sources(source_rows)
-        self._view.set_results(result_rows)
+    def _site_results(
+        self,
+        definition: CalculationDefinition | None,
+        candidates: Sequence[QuantumSourceCandidate],
+        newest: Mapping[UUID, Result],
+    ) -> dict[str, Result]:
+        """Return each site's phonon result: the newest of its job, while that job is completed.
+
+        A job that is running again or has been reset no longer stands behind the
+        numbers of an earlier run.
+        """
+
+        results: dict[str, Result] = {}
+        for candidate in candidates:
+            job = self.phonon_job_for_key(definition, candidate.key)
+            if job is None or job.status != JobStatus.COMPLETED or job.id not in newest:
+                continue
+            results[candidate.key] = newest[job.id]
+        return results
+
+    def _zpe_sources(
+        self,
+        definition: CalculationDefinition | None,
+        candidates: Sequence[QuantumSourceCandidate],
+        results: Mapping[str, Result],
+    ) -> dict[str, PhononZpeSource]:
+        """Return which relaxation of its site each result's phonon job read."""
+
+        recorded = (
+            definition.parameters.get(_SOURCE_RUN_MAPPING) if definition is not None else None
+        )
+        sources: dict[str, PhononZpeSource] = {}
+        for candidate in candidates:
+            job = self.phonon_job_for_key(definition, candidate.key)
+            if candidate.key in results and job is not None:
+                sources[candidate.key] = phonon_zpe_source_state(
+                    candidate,
+                    job,
+                    recorded.get(candidate.key) if isinstance(recorded, dict) else None,
+                )
+        return sources
+
+    def _rows_without_a_site(
+        self, newest: Mapping[UUID, Result], listed_job_ids: set[UUID]
+    ) -> list[QuantumSourceRow]:
+        """Return a read-only row for each result that no listed site's job stands behind.
+
+        It has no energy to rank; it keeps its numbers and its analysis window. A job
+        that is running again or was reset no longer stands behind its result, and the
+        Job Dashboard shows it, so it gets no row.
+        """
+
+        document = self._context.document()
+        if document is None:
+            return []
+        rows: list[tuple[tuple[object, ...], QuantumSourceRow]] = []
+        for owner, result in newest.items():
+            job = document.jobs.get(owner)
+            if owner in listed_job_ids or (job is not None and job.status != JobStatus.COMPLETED):
+                continue
+            label = (job.label if job is not None else "") or "Quantum phonon"
+            row = QuantumSourceRow(
+                key="",
+                label=f"{label} (no eligible site)",
+                charge_state=NO_VALUE_TEXT,
+                relative_energy=NO_VALUE_TEXT,
+                displacements="",
+                source_job="",
+                num_farms_display=NO_VALUE_TEXT,
+                status="completed",
+                **_result_cells(result),
+            )
+            rows.append(((job is None, natural_sort_key(label), str(result.id)), row))
+        return [row for _order, row in sorted(rows, key=lambda pair: pair[0])]
 
 
 def _stored_source_keys(config: dict, definition: CalculationDefinition) -> list[str]:

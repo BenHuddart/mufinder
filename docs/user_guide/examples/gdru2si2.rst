@@ -187,11 +187,11 @@ both. The phonon job of each pinned site (see
 
 .. figure:: ../../_generated/screenshots/gdru2si2_quantum_corrections.webp
    :alt: The Quantum Corrections page with both pinned sites completed with
-         4 farms, and their phonon results: site 2 with a ZPE of 0.654 eV,
-         modes 2129.8, 4019.8 and 4396.9 cm-1 and w1 -0.008175, and site 1
-         with 0.558 eV, modes 1136.3, 3225.0 and 4632.8 cm-1 and w1 -0.007937.
+         4 farms: site 1 with a ZPE of 0.558 eV and w1 -0.008, and site 2 with
+         dE +0.257 eV, a ZPE of 0.654 eV, dE + ZPE +0.353 eV and w1 -0.008.
 
-   The paper's phonons of the two sites.
+   The paper's phonons of the two sites. Counting zero-point energy widens the gap
+   between them from 0.257 to 0.353 eV.
 
 MuFinder takes the three Γ modes with the largest muon participation, which for
 both sites are the three highest of the 123, and reproduces the paper's values:

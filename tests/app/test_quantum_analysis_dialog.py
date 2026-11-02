@@ -68,7 +68,7 @@ Mode Ion                X                                   Y                   
 def _open_dialog(tmp_path: Path, job_label: str = "quantum_phonon_site"):
     phonon_path = tmp_path / "site.phonon"
     phonon_path.write_text(PHONON_TEXT, encoding="utf-8")
-    return QuantumPhononAnalysisDialog(phonon_path=str(phonon_path), job_label=job_label)
+    return QuantumPhononAnalysisDialog(phonon_path=str(phonon_path), site_label=job_label)
 
 
 def _show_tab(dialog: QuantumPhononAnalysisDialog, title: str) -> QTabWidget:
@@ -205,7 +205,7 @@ def test_quantum_analysis_dialog_tables_use_splitters_not_width_locks(qapp, tmp_
     phonon_path = tmp_path / "site.phonon"
     phonon_path.write_text(PHONON_TEXT, encoding="utf-8")
     dialog = QuantumPhononAnalysisDialog(
-        phonon_path=str(phonon_path), job_label="quantum_phonon_splitters"
+        phonon_path=str(phonon_path), site_label="quantum_phonon_splitters"
     )
     _show_every_tab(dialog)
 
@@ -233,7 +233,7 @@ def test_quantum_phonon_analysis_dialog_lists_modes_and_calculates_pair_matrices
 
     dialog = QuantumPhononAnalysisDialog(
         phonon_path=str(phonon_path),
-        job_label="quantum_phonon_site",
+        site_label="quantum_phonon_site",
     )
     _show_every_tab(dialog)
 
@@ -338,7 +338,7 @@ def test_quantum_analysis_phonon_mode_viewer_animates_and_resets(
     phonon_path = tmp_path / "site.phonon"
     phonon_path.write_text(PHONON_TEXT, encoding="utf-8")
     dialog = QuantumPhononAnalysisDialog(
-        phonon_path=str(phonon_path), job_label="quantum_phonon_site"
+        phonon_path=str(phonon_path), site_label="quantum_phonon_site"
     )
 
     equilibrium = np.asarray(dialog._phonon_structure.fractional_positions, dtype=float)
@@ -416,7 +416,7 @@ def test_muon_coupling_help_describes_w2_as_harmonic_witness_estimate(
     phonon_path = tmp_path / "site.phonon"
     phonon_path.write_text(PHONON_TEXT, encoding="utf-8")
     dialog = QuantumPhononAnalysisDialog(
-        phonon_path=str(phonon_path), job_label="quantum_phonon_site"
+        phonon_path=str(phonon_path), site_label="quantum_phonon_site"
     )
 
     help_dialog = _open_help_dialog_from_tab(qapp, dialog, monkeypatch, 1)
@@ -454,7 +454,7 @@ def test_quantum_analysis_dialog_has_no_mass_banner_for_a_correct_run(qapp, tmp_
     phonon_path.write_text(PHONON_TEXT, encoding="utf-8")
 
     dialog = QuantumPhononAnalysisDialog(
-        phonon_path=str(phonon_path), job_label="quantum_phonon_site"
+        phonon_path=str(phonon_path), site_label="quantum_phonon_site"
     )
 
     assert dialog.muon_mass_warning is None
@@ -472,7 +472,7 @@ def test_quantum_analysis_dialog_banners_a_hydrogen_mass_muon(qapp, tmp_path: Pa
     )
 
     dialog = QuantumPhononAnalysisDialog(
-        phonon_path=str(phonon_path), job_label="quantum_phonon_site"
+        phonon_path=str(phonon_path), site_label="quantum_phonon_site"
     )
 
     assert dialog.muon_mass_warning is not None

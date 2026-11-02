@@ -80,17 +80,16 @@ class QuantumPhononAnalysisDialog(StructureViewerDialog):
         self,
         *,
         phonon_path: str,
-        job_label: str,
+        site_label: str,
         result_data: dict[str, object] | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self.setObjectName("quantumPhononAnalysisDialog")
-        self.setWindowTitle(f"Quantum Analysis - {job_label}")
+        self.setWindowTitle(site_label)
         self.resize(clamped_size(self, 1320, 760))
 
         self._phonon_path = phonon_path
-        self._job_label = job_label
         self._result_data = dict(result_data or {})
         self._calculation = parse_phonon_path(phonon_path)
         self._selected_muon_modes = select_muon_modes(self._calculation)
@@ -98,7 +97,7 @@ class QuantumPhononAnalysisDialog(StructureViewerDialog):
         self._phonon_mode_rows: list[PhononModeAnalysisRow] = []
         self._phonon_structure = structure_from_phonon_calculation(
             self._calculation,
-            label=f"{job_label} phonon structure",
+            label=f"{site_label} phonon structure",
         )
         self._phonon_lattice = np.asarray(self._phonon_structure.lattice_vectors, dtype=float)
         self._phonon_fractional_positions = np.asarray(
@@ -121,7 +120,7 @@ class QuantumPhononAnalysisDialog(StructureViewerDialog):
         layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(8)
 
-        title = QLabel(job_label)
+        title = QLabel(site_label)
         style_section_title(title)
         layout.addWidget(title)
 

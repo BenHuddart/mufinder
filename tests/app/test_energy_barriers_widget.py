@@ -5,24 +5,17 @@ from functools import partial
 import pytest
 from PySide6.QtCore import QEvent, QSize, Qt
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QPushButton, QTabWidget
+from PySide6.QtWidgets import QTabWidget
 
 from mufinder.app import energy_barriers_widget as energy_barriers_widget_module
 from mufinder.app import workflow_table_utils
 from mufinder.app.atomic_structure_viewer import AtomicStructureViewer
-from mufinder.app import selection_snapshot as selection_snapshot_module
-from mufinder.app.selection_snapshot import SelectionScope
 from mufinder.app.theme import status_brush
 from mufinder.app.energy_barriers_widget import (
     EnergyBarrierEndpointRow,
     EnergyBarrierPreviewImageRow,
     EnergyBarrierSourceRow,
     EnergyBarriersWidget,
-)
-from mufinder.app.quantum_corrections_widget import (
-    QuantumCorrectionsWidget,
-    QuantumResultRow,
-    QuantumSourceRow,
 )
 from tests.support.reset_menu import install_fake_menu, open_reset_menu
 from tests.support.structures import host_structure
@@ -35,165 +28,6 @@ _sample_structure = partial(
     species=("Si", "Si", "H:mu"),
     positions=((0.0, 0.0, 0.0), (0.5, 0.5, 0.5), (0.25, 0.25, 0.25)),
 )
-
-
-def test_quantum_widget_emits_configure_for_source_row(qapp) -> None:
-    widget = QuantumCorrectionsWidget()
-    widget.set_sources(
-        [
-            QuantumSourceRow(
-                key="site-a",
-                label="Site A",
-                charge_state="Muonium",
-                relative_energy="0.0 eV",
-                displacements="9",
-                source_job="relax_a",
-                num_farms_display="",
-                status="ready",
-            )
-        ]
-    )
-
-    configured: list[str] = []
-    widget.configure_requested.connect(configured.append)
-
-    button = widget._sources_table.cellWidget(0, 7)
-    assert isinstance(button, QPushButton)
-    assert button.text() == "Configure…"
-
-    button.click()
-
-    assert configured == [["site-a"]]
-
-
-def test_quantum_widget_batch_configure_emits_selected_source_keys(qapp) -> None:
-    widget = QuantumCorrectionsWidget()
-    widget.set_sources(
-        [
-            QuantumSourceRow(
-                key="site-a",
-                label="Site A",
-                charge_state="Muonium",
-                relative_energy="0.0 eV",
-                displacements="9",
-                source_job="relax_a",
-                num_farms_display="",
-                status="ready",
-            ),
-            QuantumSourceRow(
-                key="site-b",
-                label="Site B",
-                charge_state="Muonium",
-                relative_energy="0.1 eV",
-                displacements="12",
-                source_job="relax_b",
-                num_farms_display="",
-                status="ready",
-            ),
-        ]
-    )
-    configured: list[object] = []
-    widget.configure_requested.connect(configured.append)
-
-    widget._sources_table.selectRow(0)
-    widget._sources_table.selectRow(1)
-    widget._emit_batch_configure()
-
-    assert configured == [["site-b"]]
-
-
-def test_quantum_widget_uses_shared_status_text_colors(qapp) -> None:
-    widget = QuantumCorrectionsWidget()
-    widget.set_sources(
-        [
-            QuantumSourceRow(
-                key="site-a",
-                label="Site A",
-                charge_state="Muonium",
-                relative_energy="0.0 eV",
-                displacements="9",
-                source_job="relax_a",
-                num_farms_display="4",
-                status="running",
-            )
-        ]
-    )
-
-    status_item = widget._sources_table.item(0, 6)
-
-    assert status_item is not None
-    assert status_item.foreground().color().name() == status_brush("running").color().name()
-
-
-def test_quantum_widget_shows_the_farm_count_without_a_stage_column(qapp) -> None:
-    widget = QuantumCorrectionsWidget()
-    widget.set_sources(
-        [
-            QuantumSourceRow(
-                key="site-a",
-                label="Site A",
-                charge_state="Muonium",
-                relative_energy="0.0 eV",
-                displacements="9",
-                source_job="relax_a",
-                num_farms_display="4",
-                status="ready",
-            )
-        ]
-    )
-
-    headers = [
-        widget._sources_table.horizontalHeaderItem(column).text()
-        for column in range(widget._sources_table.columnCount())
-    ]
-    assert headers == [
-        "Site",
-        "Charge",
-        "dE (eV)",
-        "Displacements",
-        "Source Job",
-        "Farms",
-        "Status",
-        "Parameters",
-    ]
-    assert widget._sources_table.item(0, 5).text() == "4"
-
-
-def test_quantum_widget_emits_analysis_for_completed_result(qapp) -> None:
-    widget = QuantumCorrectionsWidget()
-    widget.set_results(
-        [
-            QuantumResultRow(
-                key="result-a",
-                label="phonon_a",
-                zpe="0.100",
-                muon_modes="1600.0, 2500.0, 3600.0",
-                widths="0.18, 0.15, 0.12",
-                witness="-0.1",
-                status="completed",
-            )
-        ]
-    )
-
-    launched: list[str] = []
-    widget.analysis_requested.connect(launched.append)
-
-    assert widget._results_table.horizontalHeaderItem(2).text() == "Muon modes (cm⁻¹)"
-    assert widget._results_table.horizontalHeaderItem(5).text() == "Status"
-
-    # Status is column 5; it uses the shared per-status palette.
-    status_item = widget._results_table.item(0, 5)
-    assert status_item is not None
-    assert status_item.text() == "completed"
-    assert status_item.foreground().color().name() == status_brush("completed").color().name()
-
-    button = widget._results_table.cellWidget(0, 6)
-    assert isinstance(button, QPushButton)
-    assert button.text() == "Launch Analysis"
-
-    button.click()
-
-    assert launched == ["result-a"]
 
 
 def _path_row(key: str = "path-a", hop: str = "A → B", **fields) -> EnergyBarrierSourceRow:
@@ -827,53 +661,6 @@ def test_reaction_coordinate_profile_click_selects_nearest_point(qapp) -> None:
     assert selected == [2]
 
 
-def test_quantum_source_configure_applies_to_snapshot_rows(
-    qapp, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from mufinder.app.selection_snapshot import SelectionSnapshotPushButton
-
-    widget = QuantumCorrectionsWidget()
-    widget.set_sources(
-        [
-            QuantumSourceRow(
-                key="site-a",
-                label="A",
-                charge_state="M",
-                relative_energy="0 eV",
-                displacements="9",
-                source_job="j",
-                num_farms_display="",
-                status="ready",
-            ),
-            QuantumSourceRow(
-                key="site-b",
-                label="B",
-                charge_state="M",
-                relative_energy="0.1 eV",
-                displacements="9",
-                source_job="j",
-                num_farms_display="",
-                status="ready",
-            ),
-        ]
-    )
-    configured: list[object] = []
-    widget.configure_requested.connect(configured.append)
-    monkeypatch.setattr(
-        selection_snapshot_module,
-        "ask_selection_scope",
-        lambda *a, **kw: SelectionScope.ALL_SELECTED,
-    )
-
-    btn = widget._sources_table.cellWidget(0, 7)
-    assert isinstance(btn, SelectionSnapshotPushButton)
-    btn.selection_snapshot_rows = (0, 1)
-    btn.clicked.emit()
-
-    assert len(configured) == 1
-    assert set(configured[0]) == {"site-a", "site-b"}
-
-
 def test_energy_barriers_widget_shows_task_farm_column(qapp) -> None:
     """The path table surfaces each path's configured farm count.
 
@@ -1005,103 +792,6 @@ def test_energy_barriers_remove_selected_confirms_with_path_wording(
     )
 
 
-def _quantum_rows(*statuses: str) -> list[QuantumSourceRow]:
-    return [
-        QuantumSourceRow(
-            key=f"site-{index}",
-            label=f"Site {index}",
-            charge_state="Muonium",
-            relative_energy="0.0 eV",
-            displacements="9",
-            source_job=f"relax_{index}",
-            num_farms_display="",
-            status=status,
-        )
-        for index, status in enumerate(statuses)
-    ]
-
-
-def test_quantum_run_buttons_run_all_rows_when_nothing_is_selected(qapp) -> None:
-    widget = QuantumCorrectionsWidget()
-    widget.set_sources(_quantum_rows("ready", "ready"))
-    local: list[list[str]] = []
-    cluster: list[list[str]] = []
-    widget.submit_local_requested.connect(local.append)
-    widget.submit_cluster_requested.connect(cluster.append)
-
-    assert widget._submit_local_button.text() == "Run All Locally"
-    assert widget._submit_local_button.isEnabled()
-    widget._submit_local_button.click()
-    widget._submit_cluster_button.click()
-    assert local == [["site-0", "site-1"]]
-    assert cluster == [["site-0", "site-1"]]
-
-    widget._sources_table.selectRow(1)
-    assert widget._submit_local_button.text() == "Run Selected Locally"
-    assert widget._selection_count_label.text() == "1 selected"
-    widget._submit_local_button.click()
-    assert local[-1] == ["site-1"]
-
-
-def test_quantum_row_menu_offers_the_shared_failed_job_reset_and_no_remove(
-    qapp, monkeypatch: pytest.MonkeyPatch, confirmed_destructive_actions
-) -> None:
-    from tests.support.reset_menu import install_fake_menu, open_reset_menu
-
-    widget = QuantumCorrectionsWidget()
-    widget.set_sources(_quantum_rows("failed", "running", "cancelled"))
-    cancelled: list[object] = []
-    reset: list[object] = []
-    widget.cancel_requested.connect(cancelled.append)
-    widget.reset_failed_requested.connect(reset.append)
-    install_fake_menu(monkeypatch)
-    widget._sources_table.selectAll()
-
-    menu = open_reset_menu(widget._sources_table)
-
-    texts = [action.text for action in menu.actions]
-    assert [text.split(" (")[0] for text in texts] == [
-        "Run Local",
-        "Run on Cluster",
-        "Cancel",
-        "Inspect Failure",
-        "Reset Failed Jobs…",
-        "Configure…",
-        "Open Containing Folder",
-        "Export Inputs/Outputs…",
-    ]
-    assert "Reset Failed Jobs… (2 of 3)" in texts
-    menu.action("Cancel (1 of 3)").triggered.emit()
-    assert cancelled == [["site-1"]]
-    # Opening the menu fired the enabled reset: only the failed and cancelled rows go.
-    assert reset == [["site-0", "site-2"]]
-
-
-def test_quantum_reset_failed_button_follows_the_selection(
-    qapp, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from tests.support.reset_menu import install_fake_menu, open_reset_menu
-
-    widget = QuantumCorrectionsWidget()
-    widget.set_sources(_quantum_rows("failed", "completed", "stopped"))
-    emitted: list[object] = []
-    widget.reset_failed_requested.connect(emitted.append)
-    install_fake_menu(monkeypatch)
-
-    assert widget._reset_failed_button.text() == "Reset Failed Jobs…"
-    assert widget._reset_failed_button.isEnabled() is False
-
-    widget._sources_table.selectRow(1)
-    assert widget._reset_failed_button.isEnabled() is False
-    menu = open_reset_menu(widget._sources_table, row=1)
-    assert menu is not None and menu.action("Reset Failed Jobs…").enabled is False
-
-    widget._sources_table.selectAll()
-    assert widget._reset_failed_button.isEnabled() is True
-    widget._reset_failed_button.click()
-    assert emitted == [["site-0", "site-2"]]
-
-
 def test_energy_barriers_run_all_when_nothing_selected_and_shared_menu(
     qapp, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1155,19 +845,6 @@ def test_energy_barriers_run_all_when_nothing_selected_and_shared_menu(
     assert inspected == [["path-a", "path-b"]]
 
 
-def _quantum_source(key: str) -> QuantumSourceRow:
-    return QuantumSourceRow(
-        key=key,
-        label=key,
-        charge_state="Muonium",
-        relative_energy="0.0 eV",
-        displacements="9",
-        source_job=f"relax_{key}",
-        num_farms_display="",
-        status="ready",
-    )
-
-
 def _path_source(key: str) -> EnergyBarrierSourceRow:
     return EnergyBarrierSourceRow(
         key=key,
@@ -1180,13 +857,6 @@ def _path_source(key: str) -> EnergyBarrierSourceRow:
 @pytest.mark.parametrize(
     ("widget_type", "make_row", "configure_signal", "run_signal", "run_button"),
     [
-        (
-            QuantumCorrectionsWidget,
-            _quantum_source,
-            "configure_requested",
-            "submit_local_requested",
-            "_submit_local_button",
-        ),
         (
             EnergyBarriersWidget,
             _path_source,
@@ -1216,26 +886,3 @@ def test_source_table_widgets_share_targeting_and_action_state(
 
     assert run == [["first", "second"]]
     assert configured == [["second"]]
-
-
-def test_source_table_selects_rows_by_key(qapp) -> None:
-    widget = QuantumCorrectionsWidget()
-    widget.set_sources(
-        [
-            QuantumSourceRow(
-                key=key,
-                label=key,
-                charge_state="Muonium",
-                relative_energy="0.0 eV",
-                displacements="9",
-                source_job="relax",
-                num_farms_display="",
-                status="failed",
-            )
-            for key in ("site-a", "site-b")
-        ]
-    )
-
-    assert widget.select_rows_for_keys(["no-such-site"]) is False
-    assert widget.select_rows_for_keys(["site-b"]) is True
-    assert widget.selected_source_keys() == ["site-b"]

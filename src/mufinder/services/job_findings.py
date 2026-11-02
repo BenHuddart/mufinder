@@ -24,7 +24,11 @@ from mufinder.services.project_document import (
     definition_row_jobs,
     definitions_for_stage,
 )
-from mufinder.services.quantum_results import mode_widths_from_result_data, w1_from_result_data
+from mufinder.services.quantum_results import (
+    mode_widths_from_result_data,
+    phonon_warnings_from_result_data,
+    w1_from_result_data,
+)
 from mufinder.services.source_candidates import (
     QuantumSourceCandidate,
     charge_state_for_job,
@@ -110,7 +114,6 @@ def _quantum_corrected_record(
         else []
     )
     modes = data.get("muon_zpe_modes")
-    raw_warnings = data.get("phonon_warnings")
     return ProvenanceRecord(
         action="quantum_corrected",
         workflow_stage=WorkflowStage.QUANTUM_CORRECTIONS,
@@ -129,7 +132,7 @@ def _quantum_corrected_record(
             else [],
             "mode_widths_A": list(mode_widths_from_result_data(data)),
             "w1": w1_from_result_data(data),
-            "warnings": list(raw_warnings) if isinstance(raw_warnings, list) else [],
+            "warnings": list(phonon_warnings_from_result_data(data)),
             "comparison": comparison,
             "ordering_changed": _ordering_changed(comparison),
             SUBJECT_KEY: key,

@@ -85,3 +85,17 @@ def test_mode_widths_from_result_data_computes_a_missing_width_from_the_frequenc
 def test_mode_widths_from_result_data_is_empty_without_modes() -> None:
     assert mode_widths_from_result_data({}) == ()
     assert mode_widths_from_result_data({"muon_zpe_modes": None}) == ()
+
+
+def test_a_payload_is_flagged_by_a_non_positive_muon_mode_or_its_stored_warning() -> None:
+    from mufinder.science.quantum_phonons import NON_POSITIVE_MUON_MODES_WARNING
+    from mufinder.services.quantum_results import has_non_positive_muon_mode
+
+    assert has_non_positive_muon_mode({"muon_zpe_modes": [{"frequency_cm": -300.0}]})
+    assert has_non_positive_muon_mode({"muon_zpe_modes": [{"frequency_cm": 0.0}]})
+    assert has_non_positive_muon_mode({"phonon_warnings": [NON_POSITIVE_MUON_MODES_WARNING]})
+
+    assert not has_non_positive_muon_mode({"muon_zpe_modes": [{"frequency_cm": 300.0}]})
+    # The wrong muon mass is flagged on the row, but it does not make the geometry a saddle.
+    assert not has_non_positive_muon_mode({"phonon_warnings": ["Check the muon mass."]})
+    assert not has_non_positive_muon_mode({})

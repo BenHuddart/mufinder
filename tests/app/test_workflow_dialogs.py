@@ -5,6 +5,7 @@ from functools import partial
 
 import numpy as np
 import pytest
+from PySide6.QtTest import QTest
 from PySide6.QtCore import QCoreApplication, QEvent
 from PySide6.QtWidgets import QDialog, QWidget
 
@@ -474,3 +475,26 @@ def test_run_source_configure_dialog_builds_each_editor_once(qapp, monkeypatch, 
     assert "cut_off_energy" in result.untouched_mixed
     # The shared parameter order still leads the dialog.
     assert list(dialog._rows)[:4] == list(workflow_basic_parameter_names())[:4]
+
+
+def test_quantum_dialog_counts_typing_the_shown_farm_count_as_an_edit(qapp) -> None:
+    dialog = QuantumCorrectionsConfigDialog(specs=[], num_farms=1)
+
+    dialog._num_farms_spin.selectAll()
+    QTest.keyClicks(dialog._num_farms_spin.lineEdit(), "1")
+
+    assert dialog.num_farms() == 1
+    assert dialog.num_farms_edited() is True
+    dialog.deleteLater()
+
+
+def test_quantum_dialog_reports_an_edited_farm_count_even_back_at_its_first_value(qapp) -> None:
+    dialog = QuantumCorrectionsConfigDialog(specs=[], num_farms=1)
+    assert dialog.num_farms_edited() is False
+
+    dialog._num_farms_spin.setValue(3)
+    dialog._num_farms_spin.setValue(1)
+
+    assert dialog.num_farms_edited() is True
+    assert dialog.num_farms() == 1
+    dialog.deleteLater()

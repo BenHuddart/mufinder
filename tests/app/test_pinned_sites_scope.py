@@ -10,6 +10,7 @@ from PySide6.QtWidgets import QCheckBox, QDialog, QPushButton
 
 from mufinder.app.magnetic_site_dialog import MuonSiteSelectionDialog
 from mufinder.app.pinned_sites_scope import (
+    CHANGE_ON_MUON_SITES_TEXT,
     GO_TO_MUON_SITES_TEXT,
     SHOW_EVERY_RELAXED_SITE_TEXT,
     PinnedSitesScopeBar,
@@ -111,7 +112,7 @@ def test_quantum_corrections_lists_the_pinned_sites_by_default(qapp, tmp_path: P
         window._refresh_quantum_corrections_view()
 
         assert _quantum_site_labels(window) == ["8c · cluster 1", "4b · cluster 2"]
-        assert window._quantum_corrections_view._source_label.text() == "Pinned muon sites (2)"
+        assert window._quantum_corrections_view._source_label.text() == ("2 pinned from Muon Sites")
     finally:
         window.close()
 
@@ -127,7 +128,7 @@ def test_quantum_corrections_show_every_relaxed_site_toggle_persists(qapp, tmp_p
 
         assert show_every_relaxed_site(doc, QUANTUM_CORRECTIONS_SCOPE)
         assert sorted(_quantum_site_labels(window)) == ["high", "low_a", "low_b"]
-        assert window._quantum_corrections_view._source_label.text() == "Eligible relaxed sites (3)"
+        assert window._quantum_corrections_view._source_label.text() == "3 relaxed sites"
 
         _scope_checkbox(window._quantum_corrections_view).click()
 
@@ -148,7 +149,11 @@ def test_quantum_corrections_without_a_pin_links_to_the_muon_sites_page(
         assert _quantum_site_labels(window) == []
         assert window._quantum_corrections_view._site_scope.notice_text() == NO_PINNED_SITES_NOTICE
 
-        _muon_sites_link(window._quantum_corrections_view).click()
+        next(
+            button
+            for button in window._quantum_corrections_view.findChildren(QPushButton)
+            if button.text() == CHANGE_ON_MUON_SITES_TEXT
+        ).click()
 
         assert window._main_stack.currentWidget() is window._muon_sites_summary_view
     finally:

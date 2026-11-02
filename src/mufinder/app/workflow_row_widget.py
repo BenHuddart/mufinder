@@ -1794,12 +1794,12 @@ class RelaxedSiteSourceTableWidget(SourceTableWidget):
         if self._source_rows_valid and list(rows) == self._source_rows:
             return
         self._source_rows_valid = True
-        self._update_source_label(len(rows))
         self._updating_sources = True
         try:
             self._set_source_rows(rows)
         finally:
             self._updating_sources = False
+        self._update_source_label(len(rows))
 
     def set_site_scope(self, *, show_every_site: bool, notice: str = "") -> None:
         """Show whether every relaxed site is listed, and the pinned-sites notice."""
@@ -1844,3 +1844,13 @@ class RelaxedSiteSourceTableWidget(SourceTableWidget):
         if not (0 <= row < len(self._source_rows)):
             return
         getattr(self, "source_label_renamed").emit(self._source_rows[row].key, item.text())
+        # A rejected label leaves the rows unchanged, so nothing rebuilds the cell.
+        if 0 <= row < len(self._source_rows):
+            current = self._sources_table.item(row, 0)
+            shown = str(self.source_row_values(self._source_rows[row])[0])
+            if current is not None and current.text() != shown:
+                self._updating_sources = True
+                try:
+                    current.setText(shown)
+                finally:
+                    self._updating_sources = False

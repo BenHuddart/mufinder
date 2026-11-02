@@ -206,7 +206,6 @@ from mufinder.app.project_home_trail import (
 )
 from mufinder.app.hyperfine_coupling_widget import HyperfineCouplingWidget
 from mufinder.app.recent_project_button import RecentProjectButton
-from mufinder.app.quantum_analysis_dialog import QuantumPhononAnalysisDialog
 from mufinder.app.quantum_corrections_widget import (
     QuantumCorrectionsWidget,
 )
@@ -241,7 +240,6 @@ from mufinder.app.workflow_config_codecs import (
 )
 from mufinder.app.workflow_dialogs import (
     HyperfineCouplingConfigDialog,
-    QuantumCorrectionsConfigDialog,
     run_source_configure_dialog,
 )
 from mufinder.app.workflow_parameters import (
@@ -415,7 +413,6 @@ from mufinder.services.ssh_client import (
     save_trusted_host_key,
 )
 from mufinder.science.hyperfine import HyperfineError
-from mufinder.science.quantum_phonons import PhononParseError
 from mufinder.science.site_generation import SiteGenerationError
 from mufinder.science.uep import (
     UepError,
@@ -672,7 +669,6 @@ class MainWindow(QMainWindow):
         self._queue_refreshes_pending = 0
         self._magnetic_field_workspace_widgets: dict[str, MagneticFieldWidget] = {}
         self._uep_analysis_dialogs: dict[UUID, UepAnalysisDialog] = {}
-        self._quantum_analysis_dialogs: dict[UUID, QuantumPhononAnalysisDialog] = {}
         self._muon_generation_thread: _MuonGenerationThread | None = None
         # The document a running generation was prepared from; its sites are
         # applied only to that document.
@@ -1059,12 +1055,6 @@ class MainWindow(QMainWindow):
             self._on_use_hyperfine_in_magnetic_fields
         )
         self._quantum_corrections_view = QuantumCorrectionsWidget()
-        self._quantum_corrections_view.configure_requested.connect(
-            self._on_configure_quantum_corrections_source
-        )
-        self._quantum_corrections_view.source_label_renamed.connect(
-            self._on_quantum_corrections_source_label_renamed
-        )
         # Quantum-corrections controller: one phonon job per relaxed site. Built
         # here (after its view exists) and appended to the registry so completed
         # castep_quantum_phonon jobs (and an older project's
@@ -1091,8 +1081,17 @@ class MainWindow(QMainWindow):
         self._connect_workflow_row_actions(
             self._quantum_corrections_view, self._quantum_corrections_controller
         )
+        self._quantum_corrections_view.configure_requested.connect(
+            self._quantum_corrections_controller.configure_sources
+        )
+        self._quantum_corrections_view.source_label_renamed.connect(
+            self._quantum_corrections_controller.rename_source
+        )
         self._quantum_corrections_view.analysis_requested.connect(
-            self._on_launch_quantum_phonon_analysis
+            self._quantum_corrections_controller.open_analysis
+        )
+        self._quantum_corrections_view.open_energy_barriers_requested.connect(
+            lambda: self._set_active_route("energy_barriers")
         )
         self._energy_barriers_view: EnergyBarriersWidget | None = None
         # Energy-barriers (NEB) controller. Its view is created lazily (only when
@@ -6124,7 +6123,14 @@ class MainWindow(QMainWindow):
                 mismatch
             ),
             handle_site_host_mismatch=lambda mismatch: self._handle_site_host_mismatch(mismatch),
+            refresh_site_label_views=self._refresh_views_after_quantum_site_rename,
+            show_warning=lambda title, text: QMessageBox.warning(self, title, text),
+            shutting_down=lambda: self._shutting_down,
         )
+
+    def _refresh_views_after_quantum_site_rename(self) -> None:
+        self._refresh_hyperfine_coupling_view()
+        self._refresh_energy_barriers_view()
 
     def _build_energy_barriers_deps(self) -> EnergyBarriersDeps:
         """Build the energy-barriers (NEB) controller's deps: its window dialogs."""
@@ -9588,38 +9594,6 @@ class MainWindow(QMainWindow):
             f"Configured {len(config.rows)} muon-relaxation jobs; input files will be generated on submission"
         )
 
-    def _on_configure_quantum_corrections_source(self, payload: object) -> None:
-        controller = self._quantum_corrections_controller
-        request = controller.configure_request(_ordered_string_list(payload))
-        if request is None:
-            return
-        result = run_source_configure_dialog(
-            partial(
-                QuantumCorrectionsConfigDialog,
-                specs=controller.parameter_specs(),
-                num_farms=request.num_farms,
-                intro_text=request.intro_text,
-                read_only=request.read_only,
-                species_options=request.species_options,
-                parent=self,
-            ),
-            request,
-            extras=lambda dialog: {"num_farms": dialog.num_farms()},
-        )
-        if result is not None:
-            controller.apply_configuration(request.keys, result, result.extras)
-
-    def _on_quantum_corrections_source_label_renamed(self, key: str, label: str) -> None:
-        if self._document is None or self._shutting_down:
-            return
-        if not self._quantum_corrections_controller.rename_source(key, label):
-            return
-        self._refresh_hyperfine_coupling_view()
-        self._refresh_energy_barriers_view()
-        self._persist_document_ui_state(
-            failure_message="Quantum Corrections site label was updated, but autosave failed."
-        )
-
     def _on_configure_hyperfine_coupling_source(self, payload: object) -> None:
         controller = self._hyperfine_coupling_controller
         request = controller.configure_request(_ordered_string_list(payload))
@@ -9732,50 +9706,6 @@ class MainWindow(QMainWindow):
         if skipped:
             message += "\n\nSkipped:\n" + "\n".join(skipped)
         QMessageBox.information(self, title, message)
-
-    def _on_launch_quantum_phonon_analysis(self, result_id: str) -> None:
-        controller = self._quantum_corrections_controller
-        result = controller.phonon_result(result_id)
-        if result is None:
-            return
-
-        existing = self._quantum_analysis_dialogs.get(result.id)
-        if existing is not None:
-            if existing.isVisible():
-                existing.show()
-                existing.raise_()
-                existing.activateWindow()
-                return
-            self._quantum_analysis_dialogs.pop(result.id, None)
-
-        try:
-            phonon_path, job_label = controller.phonon_analysis_input(result)
-        except ValueError as exc:
-            QMessageBox.warning(self, "Phonon analysis unavailable", str(exc))
-            return
-        try:
-            dialog = QuantumPhononAnalysisDialog(
-                phonon_path=str(phonon_path),
-                job_label=job_label,
-                result_data=result.data if isinstance(result.data, dict) else {},
-                parent=self,
-            )
-        except PhononParseError as exc:
-            QMessageBox.warning(self, "Phonon analysis unavailable", str(exc))
-            return
-        except Exception as exc:  # noqa: BLE001
-            QMessageBox.warning(
-                self, "Phonon analysis unavailable", f"Could not open the analysis window: {exc}"
-            )
-            return
-
-        dialog.destroyed.connect(
-            lambda *_args, result_id=result.id: self._quantum_analysis_dialogs.pop(result_id, None)
-        )
-        self._quantum_analysis_dialogs[result.id] = dialog
-        dialog.show()
-        dialog.raise_()
-        dialog.activateWindow()
 
     def _on_uep_source_structure_selection_requested(self, payload: object) -> None:
         if self._document is None:

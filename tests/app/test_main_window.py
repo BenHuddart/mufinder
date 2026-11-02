@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
 import mufinder.app.magnetic_field_widget as magnetic_field_widget_module
 import mufinder.services.magnetic_field_calculation as magnetic_field_calculation_module
 import mufinder.app.main_window as main_window_module
+import mufinder.app.workflow_controllers.quantum_corrections as quantum_controller_module
 import mufinder.app.workflow_controllers.energy_barriers as energy_barriers_controller_module
 import mufinder.services.job_artifacts as job_artifacts_module
 import mufinder.castep_io.schema as schema_module
@@ -752,68 +753,17 @@ def test_main_window_launches_quantum_phonon_analysis_for_result(
         def activateWindow(self) -> None:
             return None
 
-    monkeypatch.setattr(main_window_module, "QuantumPhononAnalysisDialog", _FakeDialog)
+    monkeypatch.setattr(quantum_controller_module, "QuantumPhononAnalysisDialog", _FakeDialog)
 
-    window._on_launch_quantum_phonon_analysis(str(result.id))
+    controller = window._quantum_corrections_controller
+    controller.open_analysis(str(result.id))
 
     assert len(constructed) == 1
     assert constructed[0]["phonon_path"] == str(phonon_path)
-    assert constructed[0]["job_label"] == "quantum_phonon_siteA"
+    # This job is bound to no site, so the window falls back on its label.
+    assert constructed[0]["site_label"] == "quantum_phonon_siteA"
     assert constructed[0]["result_data"] == result.data
-    assert window._quantum_analysis_dialogs[result.id].shown is True
-
-    window.close()
-
-
-def test_main_window_quantum_completed_results_show_muon_modes(qapp, tmp_path: Path) -> None:
-    window = MainWindow()
-
-    service = ProjectService()
-    doc = service.create_project(tmp_path / "quantum_results_doc.mufinder", "Quantum Results")
-    window._document = doc
-
-    phonon_path = doc.project_root / "files" / "quantum_corrections" / "site.phonon"
-    phonon_path.parent.mkdir(parents=True, exist_ok=True)
-    phonon_path.write_text(PHONON_TEXT, encoding="utf-8")
-
-    job = Job(
-        label="quantum_phonon_siteA",
-        workflow_stage=WorkflowStage.QUANTUM_CORRECTIONS,
-        calc_type=QUANTUM_PHONON_CALC_TYPE,
-        status=JobStatus.COMPLETED,
-    )
-    run = CalculationRun(job_id=job.id, status=JobStatus.COMPLETED)
-    result = Result(
-        calculation_run_id=run.id,
-        result_type=QUANTUM_PHONON_CALC_TYPE,
-        data={
-            "phonon_file": str(phonon_path),
-            "muon_zpe_total_eV": 0.1,
-            "w1_entanglement_witness": -0.25,
-            "w1_definition": "participation_minus_3",
-            "muon_zpe_modes": [
-                {"mode_index": 6, "frequency_cm": 3600.0, "participation": 0.9, "width_A": 0.12},
-                {"mode_index": 4, "frequency_cm": 1600.0, "participation": 0.9, "width_A": 0.18},
-                {"mode_index": 5, "frequency_cm": 2500.0, "participation": 0.95, "width_A": 0.15},
-            ],
-            "phonon_mode_eigenvalues_cm": [100.0, 400.0, 900.0, 1600.0, 2500.0, 3600.0],
-        },
-    )
-    run.result_id = result.id
-    doc.jobs[job.id] = job
-    doc.runs[run.id] = run
-    doc.results[result.id] = result
-
-    window._refresh_quantum_corrections_view()
-
-    results_table = window._quantum_corrections_view._results_table
-    assert [results_table.item(0, column).text() for column in range(5)] == [
-        "quantum_phonon_siteA",
-        "0.100",
-        "1600.0, 2500.0, 3600.0",
-        "0.18, 0.15, 0.12",
-        "-0.25",
-    ]
+    assert controller.analysis_dialog(result.id).shown is True
 
     window.close()
 
@@ -1253,12 +1203,13 @@ def test_main_window_materializes_a_configured_quantum_phonon_job_and_shows_its_
     }
 
     window._refresh_quantum_corrections_view()
-    assert window._quantum_corrections_view._sources_table.item(0, 3).text() == "6"
-    assert window._quantum_corrections_view._sources_table.item(0, 5).text() == "4"
-    assert window._quantum_corrections_view._sources_table.item(0, 6).text() == "ready"
+    table = window._quantum_corrections_view._sources_table
+    assert "Displacements: 6" in table.item(0, 0).toolTip()
+    assert table.item(0, 7).text() == "4"
+    assert table.item(0, 8).text() == "ready"
 
     phonon_jobs = window._quantum_corrections_controller.materialize([str(site.id)])
-    assert window._quantum_corrections_view._sources_table.item(0, 6).text() == "defined"
+    assert table.item(0, 8).text() == "defined"
 
     assert len(phonon_jobs) == 1
     assert phonon_jobs[0].calc_type == QUANTUM_PHONON_CALC_TYPE
@@ -1359,9 +1310,6 @@ def test_main_window_applies_quantum_row_configuration_to_materialized_job(
     }
 
     window._refresh_quantum_corrections_view()
-    configure_button = window._quantum_corrections_view._sources_table.cellWidget(0, 7)
-    assert configure_button.text() == "Configured…"
-
     jobs = window._quantum_corrections_controller.materialize([str(site.id)])
 
     assert len(jobs) == 1
@@ -3903,7 +3851,7 @@ def test_main_window_quantum_sources_show_energy_relative_to_comparable_minimum(
     shown = {
         table.item(row, 0).text(): table.item(row, 2).text() for row in range(table.rowCount())
     }
-    assert shown == {"low": "0.00000", "high": "0.25000", "mu0": "0.00000", "big": "0.00000"}
+    assert shown == {"low": "0.000", "high": "+0.250", "mu0": "0.000", "big": "0.000"}
 
     endpoint_labels = {
         row.key: row.label for row in window._energy_barriers_controller.endpoint_rows()

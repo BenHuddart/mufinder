@@ -308,7 +308,7 @@ def _configure_phonons(window: MainWindow, keys: list[str]) -> None:
         dialog._accept_if_valid()
 
     when_modal("QuantumCorrectionsConfigDialog", configure)
-    window._on_configure_quantum_corrections_source(keys)
+    window._quantum_corrections_controller.configure_sources(keys)
 
 
 def site_keys(window: MainWindow) -> dict[int, str]:
@@ -522,6 +522,6 @@ SCENES: dict[str, Scene] = {
         Page("_energy_barriers_view", (1100, 800), prepare=show_transition_state),
     ),
     "gdru2si2_quantum_corrections": Scene(
-        results_project, "quantum_corrections", Page("_quantum_corrections_view", (1100, 680))
+        results_project, "quantum_corrections", Page("_quantum_corrections_view", (1100, 340))
     ),
 }
