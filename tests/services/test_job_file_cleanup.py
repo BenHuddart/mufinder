@@ -15,6 +15,7 @@ from mufinder.services.job_file_cleanup import (
     KEPT_FOR_ANOTHER_JOB,
     JobCleanupItem,
     JobFileCleanup,
+    refusal_because,
 )
 from mufinder.services.project_service import ProjectDocument, ProjectService
 
@@ -756,3 +757,23 @@ def test_a_folder_holding_a_folder_just_moved_is_not_offered(tmp_path: Path) -> 
     assert (outer / ARCHIVE_FOLDER_NAME / inner_job.label / "moved.castep").is_file()
     assert [entry.directory for entry in outcome.kept] == [outer]
     assert outcome.archived == (inner,)
+
+
+@pytest.mark.parametrize(
+    ("refusal", "one", "several"),
+    [
+        (
+            "another job uses the same output folder (/p/x)",
+            "another job uses the same output folder",
+            "other jobs use them",
+        ),
+        (
+            "its folder is reached through a link ('alias')",
+            "its folder is reached through a link",
+            "their folders are reached through links",
+        ),
+        ("something else (/p/x)", "something else", ""),
+    ],
+)
+def test_refusal_because_gives_the_words_for_one_and_for_several(refusal, one, several) -> None:
+    assert refusal_because(refusal) == (one, several)

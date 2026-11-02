@@ -563,15 +563,17 @@ def _remove_imported_relaxations_entry(record: ProvenanceRecord) -> JournalEntry
     deleted = _folder_names(record.parameters.get("directories")) if deleted_files else []
     kept = _folder_names(record.parameters.get("kept_directories"))
     undeleted = _folder_names(record.parameters.get("undeleted_directories"))
-    if record.parameters.get("misplaced_directories"):
+    # Already relative to the project: a name alone reads the same for every ``..``.
+    misplaced = [str(path) for path in record.parameters.get("misplaced_directories") or []]
+    if misplaced and not deleted and not kept and not undeleted:
         whose = "Its saved location is" if count == 1 else "Their saved locations are"
         body += (
             f" {whose} not {'its' if count == 1 else 'their'} own, so nothing there was touched."
         )
-    if kept and not deleted and not undeleted:
+    elif kept and not deleted and not undeleted and not misplaced:
         whose = "Its" if count == 1 else "Their"
         body += f" {whose} files stay, because another import uses the same folder."
-    elif kept or undeleted:
+    elif kept or undeleted or misplaced:
         if deleted:
             phrase = folder_phrase("Deleted", deleted)
             body += f" {phrase}, including the archived original input files."
@@ -580,6 +582,13 @@ def _remove_imported_relaxations_entry(record: ProvenanceRecord) -> JournalEntry
         if kept:
             reason = "another import uses it" if len(kept) == 1 else "other imports use them"
             body += f" {folder_phrase('Kept', kept)}, because {reason}."
+        if misplaced:
+            reason = (
+                "its saved location is not its own"
+                if len(misplaced) == 1
+                else "their saved locations are not their own"
+            )
+            body += f" {folder_phrase('Left', misplaced)} untouched, because {reason}."
     elif deleted or (deleted_files and "directories" not in record.parameters):
         # A record from before folders were listed says only that they went.
         went = "Its job directory was" if count == 1 else "Their job directories were"

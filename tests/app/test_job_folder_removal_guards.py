@@ -798,6 +798,35 @@ class TestDashboardReset:
         assert _tree(project.files) == before
         assert project.warned and "another workflow" in project.warned[0]
 
+    @pytest.mark.parametrize("count", [2, 15])
+    def test_several_folders_kept_for_one_reason_say_it_in_the_plural(
+        self, project: _Project, count: int
+    ) -> None:
+        item = project.import_batch("runs", (1,)).imported[0]
+        jobs = []
+        for index in range(count):
+            jobs.append(self._failed_native(project, f"row{index}", f"shared{index}"))
+            self._folder(project, f"shared{index}")
+            holder = project.native(label=f"holder{index}", seed=f"shared{index}")
+            holder.status = JobStatus.COMPLETED
+        assert item.job_directory.is_dir()
+        seen: list[tuple] = []
+        project.monkeypatch.setattr(
+            "mufinder.app.main_window.show_detailed_warning",
+            lambda _parent, title, text, **kwargs: seen.append(
+                (title, text, kwargs["informative_text"], kwargs["details"])
+            ),
+        )
+
+        project.window._reset_failed_jobs(jobs, cleanup_choice=True)
+
+        title, summary, instruction, details = seen[0]
+        assert title == "Directory cleanup issues"
+        assert summary == f"MuFinder kept {count} folders because other jobs use them."
+        assert instruction == "Open Details to see which ones."
+        assert details.count("another job uses the same output folder.") == count
+        assert project.status() == f"Reset {count} failed jobs; kept {count} folders"
+
     def test_a_mix_names_each_folder(self, project: _Project) -> None:
         item = project.import_batch("runs", (1,)).imported[0]
         own = self._failed_native(project, "mine", "own")
@@ -1060,8 +1089,18 @@ class TestBatchWithAnUnsafeSavedSeed:
         assert stray.job_id not in project.document.jobs
         assert sound.job_id not in project.document.jobs
         assert "delete its job directory" not in asked[0]
-        assert "The files of 1 relaxation stay" in asked[0]
+        assert (
+            "The files of 1 relaxation stay, because the location saved for it is not its own "
+            "folder."
+        ) in asked[0]
         assert project.status() == "Removed 2 imported relaxations; deleted 1 folder; kept 1"
+        body = next(text for text in project.journal_bodies() if "Removed 2 imported" in text)
+        assert f"Deleted folder '{sound.seed_name}'" in body
+        assert (
+            "Left folder 'files/muon_relaxation' untouched, because its saved location is not "
+            "its own."
+        ) in body
+        assert "Their" not in body
 
     def test_a_link_still_refuses_and_nothing_goes(self, project: _Project) -> None:
         outcome = project.import_batch("runs", (1,))

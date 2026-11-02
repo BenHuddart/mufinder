@@ -101,8 +101,44 @@ KEPT_IN_ANOTHER_PLACE = (
     "they belong to other workflows or charge states",
 )
 
+#: The words for several folders, by what :func:`refusal_because` gets for one.
+_REFUSALS_FOR_SEVERAL = {
+    "another job uses the same output folder": KEPT_FOR_ANOTHER_JOB[1],
+    "its folder is a link to somewhere else": "their folders are links to somewhere else",
+    "its folder is reached through a link": "their folders are reached through links",
+    "its folder name leads out of its own folder": (
+        "their folder names lead out of their own folders"
+    ),
+    "its folder is outside this project's job folders": (
+        "their folders are outside this project's job folders"
+    ),
+    "its output folder is outside the project's job folders": (
+        "their output folders are outside the project's job folders"
+    ),
+    "its folder is in another workflow's job folders": (
+        "their folders are in other workflows' job folders"
+    ),
+    "its folder is not inside its charge folder": (
+        "their folders are not inside their charge folders"
+    ),
+    "its output folder is not named after the job": (
+        "their output folders are not named after their jobs"
+    ),
+}
+
 _DELETE_DISPOSITIONS = frozenset({"delete", "delete_all"})
 _APPLY_TO_ALL_DISPOSITIONS = frozenset({"delete_all", "archive_all"})
+
+
+def refusal_because(refusal: str) -> tuple[str, str]:
+    """Return an ownership refusal's reason, for one folder and for several.
+
+    Without the path that closes it: the folder's name goes with the reason. A reason with
+    no words for several comes back with none, so that a message falls back to Details.
+    """
+
+    reason = refusal.split(" (")[0]
+    return reason, _REFUSALS_FOR_SEVERAL.get(reason, "")
 
 
 def _run_directly(op: Callable[[], object], _description: str) -> object:

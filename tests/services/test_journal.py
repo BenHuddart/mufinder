@@ -2284,3 +2284,16 @@ def test_a_removal_that_left_a_saved_location_alone_says_so() -> None:
 
     assert "Its saved location is not its own, so nothing there was touched." in body
     assert "deleted" not in body
+
+
+def test_a_mixed_removal_says_per_folder_what_happened() -> None:
+    body = _imported_removal_body(
+        directories=["/p/sound"], kept_directories=[], misplaced_directories=["files/x", "files/y"]
+    )
+
+    assert "Deleted folder 'sound', including the archived original input files." in body
+    assert (
+        "Left folders 'files/x' and 'files/y' untouched, because their saved locations are not "
+        "their own."
+    ) in body
+    assert "Their job directories" not in body

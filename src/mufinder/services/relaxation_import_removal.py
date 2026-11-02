@@ -44,6 +44,7 @@ from mufinder.domain.models import ProvenanceRecord
 from mufinder.domain.text import plain_error, plural
 from mufinder.persistence.codec import uuid_or_none
 from mufinder.services.job_paths import (
+    job_directory_label,
     job_directory_misplaced,
     job_directory_refusal,
     resolved_path,
@@ -497,7 +498,10 @@ def remove_imported_relaxations(
                 "directories": [str(path) for path in deleted],
                 "kept_directories": [str(path) for path in kept_directories],
                 "undeleted_directories": [str(path) for path in undeleted],
-                "misplaced_directories": [str(path) for path in misplaced_directories],
+                "misplaced_directories": [
+                    job_directory_label(document.project_root, path)
+                    for path in misplaced_directories
+                ],
             },
             input_entity_ids=[ref.site_id for ref in plan.targets],
         )

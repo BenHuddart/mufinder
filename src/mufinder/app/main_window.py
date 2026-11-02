@@ -337,6 +337,7 @@ from mufinder.services.job_file_cleanup import (
     JobCleanupItem,
     JobCleanupOutcome,
     JobFileCleanup,
+    refusal_because,
 )
 from mufinder.services.job_paths import (
     job_directory_label,
@@ -5658,9 +5659,8 @@ class MainWindow(QMainWindow):
                     if refused_dir is not None
                     else job.label
                 )
-                # Without the path that closes it: the folder's name goes with the reason.
-                reason = cleanup_refusals[job.id].removeprefix(f"- {job.label}: ").split(" (")[0]
-                kept_folders[refused_dir or job.label] = KeptFolder(name, (reason, ""))
+                refusal = cleanup_refusals[job.id].removeprefix(f"- {job.label}: ")
+                kept_folders[refused_dir or job.label] = KeptFolder(name, refusal_because(refusal))
             elif cleanup_choice:
                 output_dir = self._job_output_directory(job)
                 if output_dir is not None and output_dir.exists() and output_dir.is_dir():
@@ -9169,7 +9169,11 @@ class MainWindow(QMainWindow):
             question += f"\n\nThe files of {kept} stay, because {stays}"
         if plan.misplaced_job_ids:
             misplaced = plural(len(plan.misplaced_job_ids), "relaxation")
-            why = elsewhere.format(them="them", their="their")
+            why = (
+                elsewhere.format(them="it", their="its")
+                if len(plan.misplaced_job_ids) == 1
+                else elsewhere.format(them="them", their="their")
+            )
             question += f"\n\nThe files of {misplaced} stay, because {why}"
         return question
 
