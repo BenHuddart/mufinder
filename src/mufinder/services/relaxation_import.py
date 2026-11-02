@@ -244,9 +244,9 @@ class RelaxationFolderScan:
 def seed_is_usable(seed: str) -> bool:
     """Return whether a seed can name a job folder.
 
-    A job's folder is named for its seed. ``..`` or ``. `` is another folder once
-    resolved or trimmed, and a name ending in a space or a dot is not kept by every
-    file system. A space inside a name is fine.
+    A job's folder is named for its seed. Two dots, or a dot and a space, name another
+    folder once resolved or trimmed, and a name ending in a space or a dot is not kept
+    by every file system. A space inside a name is fine.
     """
 
     return (

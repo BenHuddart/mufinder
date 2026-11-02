@@ -115,10 +115,12 @@ def _muon_relaxation_job_directory(base: Path, params: Mapping[str, object], job
     seed_name = job.label
     if isinstance(seed_mapping, dict):
         raw_seed = seed_mapping.get(matching_key)
-        # Exactly as recorded: this names the folder that was written, and a
-        # stripped name is a different folder, possibly another job's.
         if isinstance(raw_seed, str) and raw_seed.strip():
-            seed_name = raw_seed
+            # The folder that was written, if one has exactly this name: the trimmed
+            # name is a different folder, possibly another job's. Otherwise trimmed,
+            # as a saved seed with stray spaces has always been read.
+            exact = (base / prefix / raw_seed).is_dir()
+            seed_name = raw_seed if exact else raw_seed.strip()
     if seed_name == job.label:
         remote_seed = remote_directory_seed_name(job)
         if remote_seed:

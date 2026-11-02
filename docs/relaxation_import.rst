@@ -218,8 +218,8 @@ Decisions
        nothing goes. ``job_directory_refusal`` is the same last check on every
        route that deletes a job's folder, native jobs included.
    * - A seed that cannot name a folder
-     - A leading or trailing space or dot is refused at the scan. A seed is otherwise
-       read back exactly as written, so writing and reading name one folder.
+     - A leading or trailing space or dot is refused at the scan. A saved seed names
+       the folder with exactly that name when one exists, so writing and reading agree.
    * - Choosing the batch to remove
      - By position in the list, with each batch named by its source folder and
        import time, since one folder can be imported more than once.

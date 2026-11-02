@@ -49,10 +49,11 @@ Compatibility ledger
      - Public import alias. Keep for one minor release; then drop the three modules.
    * - ``job_seed_names_by_label`` values read exactly
      - ``mufinder.services.job_paths``
-     - A muon-relaxation seed is read as saved, no longer with its ends trimmed. No
-       saved value changes. A native seed holds no space, so its path is the same.
-       An imported seed with a space at either end now resolves to the folder that
-       was written, where it used to resolve to another job's.
+     - A muon-relaxation seed names the folder with exactly that name when one
+       exists, and is trimmed otherwise, as it always was. No saved value changes and
+       no existing job's path moves, except an imported seed with a space at either
+       end, which now resolves to the folder that was written, where it used to
+       resolve to another job's.
      - Current behaviour, not a shim.
    * - ``configure_muon_relaxation`` records with no rows
      - ``provenance.jsonl``, read by ``mufinder.services.journal``
