@@ -87,7 +87,8 @@ class MagneticFieldDistributionDialog(QDialog):
         style_plot_axes(axis)
         axis.set_xlabel(r"$B$ (T)")
         axis.set_ylabel(r"$p(B)$")
-        axis.set_title(self._title_label())
+        # Wrapped: constrained layout makes room for the lines, and the title stays whole.
+        axis.set_title(self._title_label(), wrap=True)
         x_formatter = ScalarFormatter(useOffset=False)
         x_formatter.set_scientific(False)
         axis.xaxis.set_major_formatter(x_formatter)

@@ -79,6 +79,7 @@ from mufinder.services.polarisation_simulations import (
     polarisation_simulation_summaries,
     prepare_polarisation_simulation,
     remove_polarisation_simulation,
+    removed_sources,
     run_prepared_polarisation_simulation,
     stale_sources,
     store_polarisation_simulation,
@@ -167,17 +168,18 @@ class PolarisationWidget(QWidget):
 
         self._simulations_table = create_workflow_table(
             ("Simulation", "Geometry", "Sample", "Sources", "Status"),
-            resize_to_contents_columns=(1, 2, 4),
+            resize_to_contents_columns=(0, 1, 2, 4),
             stretch_last_section=False,
             accessible_name="Simulations",
         )
         self._simulations_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         for table in (self._sources_table, self._simulations_table):
             table.setMaximumHeight(_TABLE_MAX_HEIGHT)
-        for column in (0, 3):
-            self._simulations_table.horizontalHeader().setSectionResizeMode(
-                column, QHeaderView.ResizeMode.Stretch
-            )
+        # Only Sources gives way on a narrow page: the Field Results table beside it
+        # lists them, and the simulation's name and status stay whole.
+        self._simulations_table.horizontalHeader().setSectionResizeMode(
+            3, QHeaderView.ResizeMode.Stretch
+        )
         self._simulations_table.itemSelectionChanged.connect(self._on_simulation_selected)
         self._delete_shortcuts = bind_delete_shortcuts(
             self._simulations_table, self._remove_selected_simulation
@@ -815,15 +817,11 @@ class PolarisationWidget(QWidget):
             self._draw(record)
             self._drawn = drawn
         stale = stale_sources(self._document, record) if record and self._document else []
-        if stale:
-            names = ", ".join(source.title for source in stale)
-            self._stale_note.setText(
-                f"Stale: the fields of {names} were recalculated or removed since this "
-                "simulation ran. Recalculate it to use the current fields."
-            )
+        removed = removed_sources(self._document, record) if record and self._document else []
+        self._stale_note.setText(_stale_fields_note(stale, removed))
         self._stale_note.setVisible(bool(stale))
         older = older_method_sources(record) if record else []
-        self._older_method_note.setText(_older_fields_note(older, stale))
+        self._older_method_note.setText(_older_fields_note(older, stale, removed))
         self._older_method_note.setVisible(bool(older))
         warnings = record.simulation.warnings if record is not None else ()
         self._warning_note.setText("\n".join(warnings))
@@ -1124,37 +1122,66 @@ class PolarisationWidget(QWidget):
             return
         try:
             stale = stale_sources(self._document, record) if self._document else []
-            Path(path).write_text(export_text(record, stale=stale), encoding="utf-8")
+            removed = removed_sources(self._document, record) if self._document else []
+            Path(path).write_text(
+                export_text(record, stale=stale, removed=removed), encoding="utf-8"
+            )
         except OSError as exc:
             report_export_failed(self, exc)
             return
         report_export_saved(self, path)
 
 
-def _older_fields_note(older: Sequence[SimulationSource], stale: Sequence[SimulationSource]) -> str:
+#: Said of a simulation while a field result it needs is missing, when Recalculate would fail.
+_UNTIL_FIELDS_EXIST = "It cannot be recalculated until the removed fields exist again."
+
+
+def _older_fields_note(
+    older: Sequence[SimulationSource],
+    stale: Sequence[SimulationSource],
+    removed: Sequence[SimulationSource],
+) -> str:
     """The note for a simulation that ran from the ``older`` sources' fields.
 
-    A source also in ``stale`` has had its fields replaced, so only the simulation
-    is left to run again.
+    A source also in ``stale`` has had its fields replaced or removed, so only the
+    simulation is left to run again, once every source in ``removed`` has fields.
     """
 
     names = ", ".join(source.title for source in older)
-    update = (
-        "Recalculate it to update."
-        if all(source in stale for source in older)
-        else "Calculate them to update, then recalculate this simulation."
-    )
+    if removed:
+        update = _UNTIL_FIELDS_EXIST
+    elif all(source in stale for source in older):
+        update = "Recalculate it to update."
+    else:
+        update = "Calculate them to update, then recalculate this simulation."
     return f"This simulation used fields of {names} calculated with an older method. {update}"
+
+
+def _stale_fields_note(
+    stale: Sequence[SimulationSource], removed: Sequence[SimulationSource]
+) -> str:
+    """The note for a simulation whose ``stale`` sources' fields were replaced or removed."""
+
+    replaced = [source for source in stale if source not in removed]
+    changes = [
+        f"the fields of {', '.join(source.title for source in sources)} were {change}"
+        for sources, change in ((replaced, "recalculated"), (removed, "removed"))
+        if sources
+    ]
+    update = _UNTIL_FIELDS_EXIST if removed else "Recalculate it to use the current fields."
+    return f"Stale: {' and '.join(changes)} since this simulation ran. {update}"
 
 
 def export_text(
     record: PolarisationSimulationRecord,
     *,
     stale: Sequence[SimulationSource] = (),
+    removed: Sequence[SimulationSource] = (),
 ) -> str:
     """The simulation as text: a header, the time block, a blank line, the spectrum block.
 
-    ``stale`` are the sources whose fields were replaced since the simulation ran.
+    ``stale`` are the sources whose fields were replaced or removed since the simulation
+    ran, and ``removed`` those of them with no fields now.
     """
 
     static = record.simulation.static
@@ -1167,7 +1194,7 @@ def export_text(
         lines.append(f"# Estimate: {UNRELAXED_RESULTS_NOTE}")
     older = older_method_sources(record)
     if older:
-        lines.append(f"# Older method: {_older_fields_note(older, stale)}")
+        lines.append(f"# Older method: {_older_fields_note(older, stale, removed)}")
     for key, value in record.settings.to_json().items():
         lines.append(f"# {key}: {value}")
     for warning in record.simulation.warnings:

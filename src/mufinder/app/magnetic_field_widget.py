@@ -708,10 +708,12 @@ class MagneticFieldWidget(QWidget):
         action_row.addStretch(1)
         action_row.addWidget(self._polarisation_button)
         results_layout.addLayout(action_row)
-        # The note shares the status row, so showing it does not move the table.
+        # The note shares the status row at its natural width, so showing it moves the
+        # table only when the status then needs another line, in a narrow window.
+        self._older_method_note.setWordWrap(False)
         status_row = QHBoxLayout()
         status_row.addWidget(self._calculation_status, 1)
-        status_row.addWidget(self._older_method_note, 1)
+        status_row.addWidget(self._older_method_note)
         results_layout.addLayout(status_row)
         results_layout.addWidget(self._result_table)
         results_layout.addWidget(self._breakdown_label)

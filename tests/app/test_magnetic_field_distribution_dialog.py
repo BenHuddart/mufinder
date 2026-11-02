@@ -76,6 +76,34 @@ def test_magnetic_field_distribution_dialog_marks_an_older_method(qapp, estimate
     plain.close()
 
 
+def test_a_long_distribution_title_wraps_inside_a_narrow_dialog(qapp) -> None:
+    results = [
+        SimpleNamespace(
+            site_label=f"site 1 equiv {index}",
+            fields_T=np.asarray([[0.0, 0.0, 1.0], [0.0, 0.0, 3.0]], dtype=float),
+            histogram_centres_T=np.asarray([1.0, 3.0], dtype=float),
+            histogram_counts=np.asarray([1.0, 1.0], dtype=float),
+        )
+        for index in range(4)
+    ]
+    dialog = MagneticFieldDistributionDialog(results, estimate=True, older_method=True)
+    dialog.resize(dialog.minimumSizeHint())
+    dialog.show()
+    qapp.processEvents()
+
+    dialog._canvas.draw()
+
+    axis = dialog._figure.axes[0]
+    extent = axis.title.get_window_extent(dialog._canvas.get_renderer())
+    figure_box = dialog._figure.bbox
+    assert axis.title.get_text() == "4 field distributions (unrelaxed estimate, older method)"
+    assert extent.x0 >= figure_box.x0
+    assert extent.x1 <= figure_box.x1
+    assert extent.y1 <= figure_box.y1
+    assert extent.y0 >= axis.get_window_extent().y1
+    dialog.close()
+
+
 def test_magnetic_field_distribution_dialog_overlays_multiple_histograms(qapp) -> None:
     class _Distribution:
         def __init__(self, label: str, centres: list[float], counts: list[float]) -> None:

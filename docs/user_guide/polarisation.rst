@@ -145,8 +145,9 @@ Stale simulations
 A simulation records which field results it used. When one of them is
 recalculated on its page, or its workspace is deleted, the simulation is kept
 and its ``Status`` reads ``Stale``; a note names the field results that
-changed. ``Recalculate`` brings it up to date once every field result it uses
-exists again. A simulation that uses a field result computed at an unrelaxed
+changed and says whether they were recalculated or removed. ``Recalculate``
+brings it up to date once every field result it uses exists again; until then
+the notes say it cannot be recalculated. A simulation that uses a field result computed at an unrelaxed
 UEP site is marked ``estimate``, with the same note as on the Magnetic Fields
 page.
 
@@ -175,7 +176,8 @@ For developers
 Each simulation is a ``Result`` of type ``muon_polarisation`` whose
 ``data["owner"]`` is ``polarisation:`` followed by the simulation id. It holds
 ``title``, ``settings``, ``sources`` (each with ``owner``, ``record_id`` of the
-field result used, ``title`` and ``weight``), ``result`` (the static traces),
+field result used, ``title``, ``weight`` and, when those fields had one,
+``calculation_version``), ``result`` (the static traces),
 ``dynamic``, ``warnings`` and ``site_source``. The spectrum is recomputed from
 the traces. The page's form is saved in the UI state under
 ``polarisation_form``. See :mod:`mufinder.services.polarisation_simulations`.

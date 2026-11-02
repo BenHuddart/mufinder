@@ -14,6 +14,7 @@ import pytest
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
+    QApplication,
     QScrollArea,
     QCheckBox,
     QComboBox,
@@ -39,6 +40,7 @@ from mufinder.services.magnetic_field_results import (
     MAGNETIC_FIELD_PAGE_OWNER,
     UEP_SITE_SOURCE,
     UNRELAXED_RESULTS_NOTE,
+    remove_magnetic_field_results,
     store_magnetic_field_results,
 )
 from mufinder.services.polarisation_simulations import polarisation_simulations
@@ -390,6 +392,68 @@ def test_recalculated_fields_mark_a_simulation_stale(page, document) -> None:
     _button(page, "Recalculate").click()
     assert _table(page, "Simulations").item(0, 4).text() == "Current"
     assert _note(page, "Stale:") is None
+
+
+def test_a_simulation_whose_fields_were_removed_says_it_cannot_be_recalculated(
+    page, document, tmp_path, monkeypatch
+) -> None:
+    _store_fields(document, MAGNETIC_FIELD_PAGE_OWNER, field_result((0.0, 0.0, 0.01)), version=None)
+    page.refresh()
+    _button(page, "Add Simulation").click()
+
+    remove_magnetic_field_results(document, MAGNETIC_FIELD_PAGE_OWNER)
+    page.refresh()
+
+    until_back = "It cannot be recalculated until the removed fields exist again."
+    assert _note(page, "Stale:") == (
+        "Stale: the fields of Magnetic Fields were removed since this simulation ran. " + until_back
+    )
+    older = _note(page, "This simulation used fields")
+    assert older is not None and older.endswith(until_back)
+    target = tmp_path / "removed.dat"
+    monkeypatch.setattr(module, "ask_save_path", lambda *_args, **_kwargs: target)
+    monkeypatch.setattr(module, "report_export_saved", lambda *_args: None)
+    _button(page, "Export Data…").click()
+    assert f"# Older method: {older}" in target.read_text(encoding="utf-8")
+
+
+def test_a_stale_note_names_recalculated_and_removed_fields_apart(page, document) -> None:
+    _set_checked(page, {MAGNETIC_FIELD_PAGE_OWNER, "ws-uep"})
+    _button(page, "Add Simulation").click()
+
+    _store_fields(document, MAGNETIC_FIELD_PAGE_OWNER, field_result((0.0, 0.0, 0.02)))
+    remove_magnetic_field_results(document, "ws-uep")
+    page.refresh()
+
+    assert _note(page, "Stale:") == (
+        "Stale: the fields of Magnetic Fields were recalculated and the fields of UEP site were "
+        "removed since this simulation ran. "
+        "It cannot be recalculated until the removed fields exist again."
+    )
+
+
+def test_a_long_status_leaves_the_simulation_name_readable(page, document) -> None:
+    _store_fields(
+        document,
+        MAGNETIC_FIELD_PAGE_OWNER,
+        field_result((0.0, 0.0, 0.01)),
+        site_source=UEP_SITE_SOURCE,
+        version=None,
+    )
+    page.refresh()
+    _button(page, "Add Simulation").click()
+    _store_fields(document, MAGNETIC_FIELD_PAGE_OWNER, field_result((0.0, 0.0, 0.02)))
+    page.refresh()
+    table = _table(page, "Simulations")
+    table.setFixedWidth(420)
+    page.show()
+    QApplication.processEvents()
+    table.horizontalHeader().resizeSections()
+
+    assert table.item(0, 4).text() == "Stale, older method, estimate"
+    assert table.columnWidth(0) >= table.sizeHintForColumn(0)
+    assert table.columnWidth(4) >= table.sizeHintForColumn(4)
+    page.close()
 
 
 def test_a_simulation_of_fields_from_an_older_method_says_so_until_they_are_updated(

@@ -31,6 +31,7 @@ from mufinder.services.polarisation_simulations import (
     polarisation_simulations,
     prepare_polarisation_simulation,
     remove_polarisation_simulation,
+    removed_sources,
     run_polarisation_simulation,
     run_prepared_polarisation_simulation,
     simulation_owner,
@@ -119,6 +120,25 @@ def test_a_simulation_records_the_method_of_the_fields_it_ran_from(document) -> 
     current = _simulate_page(document)
     assert current.sources[0].calculation_version == CALCULATION_METHOD_VERSION
     assert older_method_sources(current) == []
+
+
+def test_removed_sources_are_those_with_no_fields_left(document) -> None:
+    record = run_polarisation_simulation(
+        document,
+        title="Both",
+        settings=SETTINGS,
+        sources=[
+            SimulationSource(MAGNETIC_FIELD_PAGE_OWNER, "", ""),
+            SimulationSource("ws-1", "", ""),
+        ],
+    )
+    assert removed_sources(document, record) == []
+
+    _store_fields(document, MAGNETIC_FIELD_PAGE_OWNER, _current_fields())
+    remove_magnetic_field_results(document, "ws-1")
+
+    assert [source.owner for source in removed_sources(document, record)] == ["ws-1"]
+    assert stale_sources(document, record) == list(record.sources)
 
 
 def test_a_recorded_method_version_survives_save_and_reopen(document) -> None:

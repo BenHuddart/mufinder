@@ -511,6 +511,18 @@ def stale_sources(
     return stale
 
 
+def removed_sources(
+    document: ProjectDocument, record: PolarisationSimulationRecord | SimulationSummary
+) -> list[SimulationSource]:
+    """Return the sources with no fields now, so ``record`` cannot be recalculated yet."""
+
+    return [
+        source
+        for source in record.sources
+        if magnetic_field_result(document, source.owner, MAGNETIC_FIELD_RESULT_TYPE) is None
+    ]
+
+
 def older_method_sources(
     record: PolarisationSimulationRecord | SimulationSummary,
 ) -> list[SimulationSource]:

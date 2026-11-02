@@ -717,6 +717,29 @@ def test_the_older_method_line_does_not_move_the_table_or_raise_the_minimum(qapp
     current.close()
 
 
+def test_the_older_method_line_takes_its_natural_width_beside_a_long_status(qapp, tmp_path) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "long.mufinder", "Long")
+    service.add_structure(document, feo_host_structure())
+    older = _page_with_a_field(document, site_source="uep_clustering")
+    current = _page_with_a_field(
+        document,
+        site_source="uep_clustering",
+        **{CALCULATION_VERSION_KEY: CALCULATION_METHOD_VERSION},
+    )
+    for page in (older, current):
+        page.resize(1100, 1000)
+    QApplication.processEvents()
+
+    note = older._older_method_note
+    assert note.isVisible()
+    assert note.width() >= note.fontMetrics().horizontalAdvance(note.text())
+    assert older._result_table.y() == current._result_table.y()
+    assert older.minimumSizeHint().width() == current.minimumSizeHint().width()
+    older.close()
+    current.close()
+
+
 def test_the_distribution_plot_of_an_older_result_is_marked(qapp, tmp_path, monkeypatch) -> None:
     service = ProjectService()
     document = service.create_project(tmp_path / "plot.mufinder", "Plot")
