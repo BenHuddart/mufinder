@@ -228,15 +228,15 @@ class JobFileCleanup:
             remote = remote_directory(job)
             reason = ""
             if local is not None:
-                directory = self._job_output_directory(job)
-                unsafe = job_directory_refusal(document.project_root, job, directory)
-                if unsafe is not None:
-                    reason = unsafe
-                elif (
+                if (
                     not local.is_relative_to(files_root)
                     or len(local.relative_to(files_root).parts) < 2
                 ):
                     reason = f"its output folder is outside the project's job folders ({local})"
+                elif unsafe := job_directory_refusal(
+                    document.project_root, job, self._job_output_directory(job)
+                ):
+                    reason = unsafe
                 elif local.name != seed:
                     reason = f"its output folder is not named after the job ({local})"
                 elif any(
