@@ -772,6 +772,46 @@ class TestAnyFolder:
         assert len(runs) == 1
         assert runs[0].importable
 
+    def test_a_stray_copy_does_not_pull_a_run_from_its_own_files(self, tmp_path: Path) -> None:
+        """``backup`` sorts before ``results``, and a stale cell sits closer to it."""
+
+        write_run(tmp_path / "results" / "complete", input_text=_input_cell(muon=(0.1, 0.2, 0.3)))
+        (tmp_path / "backup").mkdir()
+        (tmp_path / "backup" / "mu.castep").write_bytes(
+            (tmp_path / "results" / "complete" / "mu.castep").read_bytes()
+        )
+        (tmp_path / "inputs").mkdir()
+        (tmp_path / "inputs" / "mu.cell").write_text(
+            _input_cell(muon=(0.9, 0.9, 0.9)), encoding="utf-8"
+        )
+
+        runs = scan_relaxation_folder(tmp_path, host_lattice=HOST_LATTICE).runs
+
+        assert [run.relative_name for run in runs] == ["results/complete/mu"]
+        assert runs[0].initial_muon_fractional_supercell == (0.1, 0.2, 0.3)
+
+    def test_an_output_that_vanishes_during_the_scan_does_not_end_it(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from mufinder.services import relaxation_import
+
+        write_run(tmp_path / "good")
+        write_run(tmp_path / "vanishing", "gone")
+        real = relaxation_import._without_copies
+
+        def _vanish_first(outputs, found):
+            (tmp_path / "vanishing" / "gone.castep").unlink()
+            return real(outputs, found)
+
+        monkeypatch.setattr(relaxation_import, "_without_copies", _vanish_first)
+
+        runs = scan_relaxation_folder(tmp_path, host_lattice=HOST_LATTICE).runs
+
+        by_seed = {run.seed_name: run for run in runs}
+        assert by_seed["mu"].importable
+        assert not by_seed["gone"].importable
+        assert any("no longer there" in item for item in by_seed["gone"].blockers)
+
     def test_task_farm_image_outputs_are_not_runs(self, tmp_path: Path) -> None:
         write_run(tmp_path)
         (tmp_path / "mu_farm001.castep").write_text(_castep(), encoding="utf-8")

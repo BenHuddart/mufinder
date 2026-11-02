@@ -724,24 +724,42 @@ def _nearest(castep: Path, candidates: Sequence[Path]) -> tuple[Path | None, str
     return closest[0], None
 
 
-def _without_copies(outputs: Sequence[Path]) -> list[Path]:
-    """Drop a ``.castep`` that repeats an earlier one of the same name byte for byte.
+def _without_copies(
+    outputs: Sequence[Path], found: Mapping[str, Mapping[str, Sequence[Path]]]
+) -> list[Path]:
+    """Keep one of each set of ``.castep`` files of the same name and bytes.
 
-    A copied results folder holds the same calculation, not a second one.
+    A copied results folder holds the same calculation, not a second one. The copy
+    kept is the one with the most of the run's files beside it, so that a stray copy
+    sorting first cannot pull the run away from its own ``.cell`` and ``-out.cell``.
     """
 
-    keys = [(path.name, path.stat().st_size) for path in outputs]
-    sizes = Counter(keys)
-    seen: set[tuple[str, str]] = set()
-    kept: list[Path] = []
-    for path, key in zip(outputs, keys, strict=True):
-        digest = _digest_or_none(path) if sizes[key] > 1 else None
+    groups: dict[tuple[str, str], list[Path]] = {}
+    sizes: dict[Path, int] = {}
+    for path in outputs:
+        try:
+            sizes[path] = path.stat().st_size
+        except OSError:  # Gone since discovery; reading it reports why.
+            continue
+    size_counts = Counter((path.name, size) for path, size in sizes.items())
+    for path, size in sizes.items():
+        digest = _digest_or_none(path) if size_counts[(path.name, size)] > 1 else None
         if digest is not None:
-            if (path.name, digest) in seen:
-                continue
-            seen.add((path.name, digest))
-        kept.append(path)
-    return kept
+            groups.setdefault((path.name, digest), []).append(path)
+
+    def companions(path: Path) -> int:
+        seed = path.name[: -len(_CASTEP_SUFFIX)]
+        return sum(
+            other.parent == path.parent
+            for by_seed in found.values()
+            for other in by_seed.get(seed, ())
+        )
+
+    dropped: set[Path] = set()
+    for copies in groups.values():
+        kept = max(copies, key=companions)
+        dropped.update(path for path in copies if path != kept)
+    return [path for path in outputs if path not in dropped]
 
 
 @dataclass(frozen=True, slots=True)
@@ -796,7 +814,7 @@ def _discover_runs(root: Path) -> tuple[list[_RunFiles], tuple[tuple[str, str], 
             elif name.endswith(_PARAM_SUFFIX):
                 found[_PARAM].setdefault(name[: -len(_PARAM_SUFFIX)], []).append(path)
 
-    outputs = _without_copies(outputs)
+    outputs = _without_copies(outputs, found)
     run_directories: dict[str, set[Path]] = {}
     for path in outputs:
         run_directories.setdefault(path.name[: -len(_CASTEP_SUFFIX)], set()).add(path.parent)
