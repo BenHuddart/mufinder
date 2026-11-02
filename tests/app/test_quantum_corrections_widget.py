@@ -238,7 +238,7 @@ def test_a_row_with_phonon_warnings_marks_its_zpe_and_ranking_and_says_why(qapp)
 def _no_site_row(result_id: str = "result-old") -> QuantumSourceRow:
     return QuantumSourceRow(
         key="",
-        label="quantum_phonon_old (site no longer eligible)",
+        label="quantum_phonon_old (no eligible site)",
         charge_state="–",
         relative_energy="–",
         displacements="",
@@ -261,7 +261,7 @@ def test_a_result_with_no_site_is_read_only_and_opens_its_analysis(qapp) -> None
     table = widget._sources_table
 
     assert not table.item(1, 0).flags() & Qt.ItemFlag.ItemIsEditable
-    assert "no longer eligible" in table.item(1, 0).toolTip()
+    assert "No eligible site" in table.item(1, 0).toolTip()
     assert "Displacements" not in table.item(1, 0).toolTip()
 
     table.selectRow(1)
@@ -285,6 +285,7 @@ def test_a_result_with_no_site_never_reaches_a_job_action(qapp) -> None:
 
     widget._sources_table.selectRow(1)
     assert widget.selected_source_keys() == []
+    assert widget._batch_configure_button.isEnabled() is False
     widget._batch_configure_button.click()
     widget._submit_local_button.click()
     assert configured == [["site-0"]]

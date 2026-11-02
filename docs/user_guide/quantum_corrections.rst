@@ -152,11 +152,10 @@ no longer resolve to an eligible relaxed site (their relaxation was reset or
 removed); re-pin the analysis to refresh them.
 
 Every site has one row. A site without a result shows ``–`` in the result columns.
-A result whose site is no longer eligible, because its relaxation was reset or
-removed, keeps a read-only row after the sites, labelled ``(site no longer
-eligible)``, with its ``ZPE``, widths and ``w1``. ``Open Analysis`` still opens it. It
-has no energy to rank, so it takes no part in ``dE + ZPE``, and no job action reaches
-it.
+A completed result with no eligible site, for example because the relaxation was
+reset or removed, keeps a read-only row after the sites, labelled ``(no eligible
+site)``, with its ``ZPE``, widths and ``w1``. ``Open Analysis`` still opens it. It has
+no energy to rank, so it takes no part in ``dE + ZPE``, and no job action reaches it.
 
 ``Site``
    For a pinned row, the summary label: the Wyckoff label and cluster, such as
@@ -200,7 +199,8 @@ A ``⚠`` beside ``ZPE`` and ``dE + ZPE`` means the result was stored with a war
 and the row's tooltip gives it: a selected muon mode with a non-positive frequency,
 which the total leaves out, or the wrong muon mass (see `Muon mass`_). The number is
 the stored one, but do not rank the site by it: a non-positive muon mode means the
-geometry is a saddle, not a minimum.
+geometry is a saddle, not a minimum. Such a site still takes part in its group, so
+its sum can set the zero that the other rows are read from.
 
 Energies are shown to three decimals. Hover a column header for its definition,
 and a row for what the table has no column for:

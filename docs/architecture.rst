@@ -1587,9 +1587,9 @@ Controller summary
        ``configure_request``), the site rename and the analysis window
        (``open_analysis``). ``refresh_view`` builds one row per site: the newest
        result of the site's job while that job is completed, and ``dE + ZPE``
-       from ``quantum_source_corrected_relative_energies``. A result that no listed
-       site's job stands behind gets a read-only row with an empty key, outside the
-       ranking.
+       from ``quantum_source_corrected_relative_energies``. A completed result
+       that no listed site's job stands behind gets a read-only row with an empty
+       key, outside the ranking.
    * - ``HyperfineCouplingController``
      - One magres job per relaxed-site source, bound through
        ``job_ids_by_label`` and written to ``<output>/<job label>``; row

@@ -300,12 +300,12 @@ def test_quantum_controller_keeps_a_row_for_a_result_whose_site_is_gone(tmp_path
     rows = controller._view.sources[-1]
     assert [row.corrected_energy for row in rows[:2]] == ["0.000", "+0.353"]
     first, second = rows[2:]
-    assert first.label == "quantum_phonon_old (site no longer eligible)"
+    assert first.label == "quantum_phonon_old (no eligible site)"
     assert (first.key, first.result_id) == ("", str(orphan.id))
     assert (first.zpe, first.witness) == ("0.100", "-0.250")
     assert (first.relative_energy, first.corrected_energy) == ("–", "–")
     assert first.status == "completed"
-    assert second.label == "Quantum phonon (site no longer eligible)"
+    assert second.label == "Quantum phonon (no eligible site)"
     assert second.result_id == str(jobless.id)
     assert controller.phonon_result(first.result_id) is orphan
 
@@ -324,6 +324,37 @@ def test_quantum_controller_leaves_an_earlier_run_of_a_listed_job_out_of_the_tab
     controller.refresh_view()
 
     assert all(row.key for row in controller._view.sources[-1])
+
+
+def test_quantum_controller_gives_a_row_only_to_a_completed_job_with_no_site(
+    tmp_path: Path,
+) -> None:
+    service = ProjectService()
+    document, _definition, _candidates, output_root = _seed_quantum_document(service, tmp_path)
+    job = _quantum_job(service, document, "quantum_phonon_old", QUANTUM_PHONON_CALC_TYPE)
+    job.status = JobStatus.RUNNING
+    _store_phonon_result(document, job, {"muon_zpe_total_eV": 0.5})
+    controller = _quantum_document_controller(service, document, output_root)
+    controller.refresh_view()
+    assert all(row.key for row in controller._view.sources[-1])
+
+    job.status = JobStatus.COMPLETED
+    controller.refresh_view()
+    assert [row.zpe for row in controller._view.sources[-1] if not row.key] == ["0.500"]
+
+
+def test_quantum_controller_ignores_a_phonon_result_with_no_payload(tmp_path: Path) -> None:
+    service = ProjectService()
+    document, definition, candidates, output_root = _seed_quantum_document(service, tmp_path)
+    key = next(iter(candidates))
+    job = _bind_phonon(service, document, definition, key, status=JobStatus.COMPLETED)
+    result = _store_phonon_result(document, job, {})
+    result.data = None
+    controller = _quantum_document_controller(service, document, output_root)
+    controller.refresh_view()
+
+    row = next(row for row in controller._view.sources[-1] if row.key == key)
+    assert row.result_id == ""
 
 
 def test_quantum_controller_shows_no_result_while_the_job_is_not_completed(

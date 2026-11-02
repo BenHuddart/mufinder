@@ -1218,7 +1218,8 @@ class QuantumCorrectionsController(WorkflowJobController):
         quantum_states = self.build_states()
         candidates = self.candidates()
         definition = self.active_definition()
-        results = self._site_results(definition, candidates)
+        newest = self._newest_phonon_results()
+        results = self._site_results(definition, candidates, newest)
         relative_energies = quantum_source_relative_energies(candidates)
         corrected_energies = quantum_source_corrected_relative_energies(
             candidates,
@@ -1267,12 +1268,13 @@ class QuantumCorrectionsController(WorkflowJobController):
             job = self.phonon_job_for_key(definition, candidate.key)
             if job is not None:
                 listed_job_ids.add(job.id)
-        self._view.set_sources(source_rows + self._rows_without_a_site(listed_job_ids))
+        self._view.set_sources(source_rows + self._rows_without_a_site(newest, listed_job_ids))
 
     def _newest_phonon_results(self) -> dict[UUID, Result]:
         """Return the newest phonon result of each job, or a result with no job under its own id.
 
-        A naive ``created_at`` from an older project is read as UTC.
+        A result with no payload has nothing to show. A naive ``created_at`` from an
+        older project is read as UTC.
         """
 
         document = self._context.document()
@@ -1280,7 +1282,7 @@ class QuantumCorrectionsController(WorkflowJobController):
             return {}
         newest: dict[UUID, Result] = {}
         for result in document.results.values():
-            if result.result_type != QUANTUM_PHONON_CALC_TYPE:
+            if result.result_type != QUANTUM_PHONON_CALC_TYPE or not isinstance(result.data, dict):
                 continue
             run = (
                 document.runs.get(result.calculation_run_id)
@@ -1299,6 +1301,7 @@ class QuantumCorrectionsController(WorkflowJobController):
         self,
         definition: CalculationDefinition | None,
         candidates: Sequence[QuantumSourceCandidate],
+        newest: Mapping[UUID, Result],
     ) -> dict[str, Result]:
         """Return each site's phonon result: the newest of its job, while that job is completed.
 
@@ -1306,7 +1309,6 @@ class QuantumCorrectionsController(WorkflowJobController):
         numbers of an earlier run.
         """
 
-        newest = self._newest_phonon_results()
         results: dict[str, Result] = {}
         for candidate in candidates:
             job = self.phonon_job_for_key(definition, candidate.key)
@@ -1315,25 +1317,28 @@ class QuantumCorrectionsController(WorkflowJobController):
             results[candidate.key] = newest[job.id]
         return results
 
-    def _rows_without_a_site(self, listed_job_ids: set[UUID]) -> list[QuantumSourceRow]:
+    def _rows_without_a_site(
+        self, newest: Mapping[UUID, Result], listed_job_ids: set[UUID]
+    ) -> list[QuantumSourceRow]:
         """Return a read-only row for each result that no listed site's job stands behind.
 
-        Its relaxation was reset or removed, or its job is gone, so it has no energy to
-        rank; it keeps its numbers and its analysis window.
+        It has no energy to rank; it keeps its numbers and its analysis window. A job
+        that is running again or was reset no longer stands behind its result, and the
+        Job Dashboard shows it, so it gets no row.
         """
 
         document = self._context.document()
         if document is None:
             return []
         rows: list[tuple[tuple[object, ...], QuantumSourceRow]] = []
-        for owner, result in self._newest_phonon_results().items():
-            if owner in listed_job_ids:
-                continue
+        for owner, result in newest.items():
             job = document.jobs.get(owner)
+            if owner in listed_job_ids or (job is not None and job.status != JobStatus.COMPLETED):
+                continue
             label = (job.label if job is not None else "") or "Quantum phonon"
             row = QuantumSourceRow(
                 key="",
-                label=f"{label} (site no longer eligible)",
+                label=f"{label} (no eligible site)",
                 charge_state=NO_VALUE_TEXT,
                 relative_energy=NO_VALUE_TEXT,
                 displacements="",

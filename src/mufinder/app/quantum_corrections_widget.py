@@ -65,7 +65,7 @@ class QuantumSourceRow:
     ``result_id`` names the result ``Open Analysis`` opens, empty without one;
     ``warnings`` are those stored with that result.
 
-    An empty ``key`` marks a result whose site is no longer eligible: a read-only row
+    An empty ``key`` marks a result with no eligible site: a read-only row
     that no job action reaches and only ``Open Analysis`` acts on.
     """
 
@@ -244,7 +244,9 @@ class QuantumCorrectionsWidget(RelaxedSiteSourceTableWidget):
     def refresh_source_actions(self, selected_rows: Sequence[QuantumSourceRow]) -> None:
         super().refresh_source_actions(selected_rows)
         sites = self._site_rows()
-        self._batch_configure_button.setEnabled(bool(sites))
+        self._batch_configure_button.setEnabled(
+            bool(sites) and (not selected_rows or any(row.key for row in selected_rows))
+        )
         completed = sum(row.status == "completed" for row in sites)
         self._run_status_label.setText(
             f"{completed} of {len(sites)} completed" if sites else "No sites to run"
@@ -315,10 +317,7 @@ def _row_tooltip(row: QuantumSourceRow) -> str:
 
     lines = [f"{WARNING_MARK} {warning}" for warning in row.warnings]
     if not row.key:
-        lines.append(
-            "This site is no longer eligible, because its relaxation was reset or removed. "
-            "The result is kept but not ranked."
-        )
+        lines.append("No eligible site stands behind this result, so it is kept but not ranked.")
     if row.pinned_label:
         lines.append(f"Relaxed site: {row.label}")
     if row.displacements:

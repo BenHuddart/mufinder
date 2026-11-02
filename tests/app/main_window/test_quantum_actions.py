@@ -337,9 +337,7 @@ def test_a_result_whose_site_is_gone_still_opens_its_analysis(
     view = window._quantum_corrections_view
 
     assert view._sources_table.rowCount() == 1
-    assert view._sources_table.item(0, 0).text() == (
-        "quantum_phonon_siteA (site no longer eligible)"
-    )
+    assert view._sources_table.item(0, 0).text() == ("quantum_phonon_siteA (no eligible site)")
     assert view._sources_table.item(0, 3).text() == "0.500"
     view._sources_table.selectRow(0)
     view._open_analysis_button.click()
