@@ -1577,6 +1577,7 @@ class _BatchSearchThread(QThread):
             generation_lines = [
                 f"Requested random starts: {self._requested_starts}",
                 f"Initial starts generated: {len(starts)}",
+                f"Gaussian width factor: {self._field.source.gw_factor:g}",
                 f"Min muon-muon distance (Å): {self._min_muon_muon:.3f}",
                 f"Min muon-atom distance (Å): {self._min_muon_atom:.3f}",
                 f"Max attempts: {self._max_attempts}",

@@ -140,8 +140,9 @@ The window offers:
   saved window keeps its values. ``Run Batch Search`` relaxes the starts, with one progress bar, and fills the
   table when they finish. Over sites already listed it asks first, and ``Cancel``, the
   default, keeps them. The ``Search Log`` gives the starts requested and generated,
-  how many ended on minima and on other stationary points, how many failed to
-  converge, and the sites found;
+  the settings the search ran with, including the ``Gaussian width factor``, how many
+  starts ended on minima and on other stationary points, how many failed to converge,
+  and the sites found;
 - muon markers that can be added to the isosurface and slice viewers with
   ``Add / remove muon``, either from the batch-search groups or from
   custom fractional coordinates;

@@ -3703,3 +3703,19 @@ def test_the_log_shows_how_a_search_ended_when_it_is_too_long_to_fit(qapp, monke
     assert log.textCursor().atEnd()
     assert 0 <= log.cursorRect().top() and log.cursorRect().bottom() <= log.viewport().height()
     dialog.close()
+
+
+def test_the_log_records_the_gaussian_width_the_search_ran_with(qapp, monkeypatch) -> None:
+    _run_batch_search_inline(monkeypatch)
+    dialog = _si2_dialog(initial_state={"gw_factor": 3.0})
+
+    dialog._batch_run.click()
+
+    assert "Gaussian width factor: 3" in dialog._batch_summary.toPlainText().splitlines()
+    dialog.close()
+
+    dialog = _si2_dialog()
+    dialog._batch_run.click()
+
+    assert "Gaussian width factor: 5" in dialog._batch_summary.toPlainText().splitlines()
+    dialog.close()
