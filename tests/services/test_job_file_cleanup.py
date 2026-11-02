@@ -645,3 +645,37 @@ def test_a_prompt_cannot_come_between_folders_linked_through_a_third(tmp_path: P
     assert b_job.id not in document.jobs
     assert unrelated.is_dir()
     assert unrelated_job.id in document.jobs
+
+
+def test_a_folder_holding_one_refused_at_its_turn_is_kept(tmp_path: Path) -> None:
+    """A folder can turn into a link while an earlier prompt is open."""
+
+    service, document = _project(tmp_path)
+    first_job = _job(service, document, "relax_a")
+    inner_job = _job(service, document, "relax_b")
+    outer_job = _job(service, document, "relax_c")
+    first = _job_directory(document, first_job.label)
+    outer = _job_directory(document, outer_job.label)
+    inner = outer / inner_job.label
+    inner.mkdir()
+    (outer / "real").mkdir()
+    (outer / "real" / "kept.castep").write_text("kept", encoding="utf-8")
+    cleanup = _cleanup(
+        document, {first_job.label: first, inner_job.label: inner, outer_job.label: outer}
+    )
+
+    def _answer(item: JobCleanupItem):
+        if item.label == first_job.label:
+            inner.rmdir()
+            inner.symlink_to(outer / "real", target_is_directory=True)
+        return "delete"
+
+    outcome = cleanup.execute(
+        [cleanup.plan_item([job]) for job in (first_job, inner_job, outer_job)],
+        choose_disposition=_answer,
+        stop_on_error=False,
+    )
+
+    assert (outer / "real" / "kept.castep").is_file()
+    assert inner_job.id in document.jobs
+    assert [entry.directory for entry in outcome.kept] == [outer]

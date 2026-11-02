@@ -43,7 +43,11 @@ from mufinder.domain.enums import WorkflowStage
 from mufinder.domain.models import ProvenanceRecord
 from mufinder.domain.text import plain_error, plural
 from mufinder.persistence.codec import uuid_or_none
-from mufinder.services.job_paths import job_directory_foreign, job_directory_refusal
+from mufinder.services.job_paths import (
+    job_directory_foreign,
+    job_directory_refusal,
+    resolved_path,
+)
 
 #: Provenance action for one removal. ``services.journal`` renders nothing for
 #: an action it does not know, so a matching journal builder is required.
@@ -260,7 +264,7 @@ def _folder_refusal(
     reason = job_directory_foreign(document.project_root, job, directory)
     if reason is not None:
         return reason
-    resolved = directory.resolve()
+    resolved = resolved_path(directory)
     # An import always has its charge folder: <files>/<workflow>/<charge>/<job>.
     if len(resolved.relative_to(document.project_root.resolve() / "files").parts) != 3:
         return f"its folder is not inside its charge folder ({directory.name!r})"
@@ -269,7 +273,7 @@ def _folder_refusal(
     for other_id, other in other_job_directories.items():
         if other_id == ref.job_id:
             continue
-        other_resolved = other.resolve()
+        other_resolved = resolved_path(other)
         if other_resolved == resolved and _is_import_of(document, other_id, other.name):
             continue  # Another import of the same files: its records can go separately.
         if other_resolved.is_relative_to(resolved) or resolved.is_relative_to(other_resolved):
@@ -319,8 +323,10 @@ def jobs_keeping_their_folder(
     Read after :func:`unsafe_directories` has passed, so such a job is an import.
     """
 
-    others = {path.resolve() for path in other_job_directories.values()}
-    return frozenset(job_id for job_id, path in job_directories.items() if path.resolve() in others)
+    others = {resolved_path(path) for path in other_job_directories.values()}
+    return frozenset(
+        job_id for job_id, path in job_directories.items() if resolved_path(path) in others
+    )
 
 
 def unsafe_directories(
@@ -433,12 +439,12 @@ def remove_imported_relaxations(
     if delete_files:
         # A target that was not removed keeps its folder, whoever else it shares it with.
         staying = {
-            path.resolve()
+            resolved_path(path)
             for job_id, path in plan.job_directories.items()
             if job_id not in removed_job_ids
         }
         for directory in _folders_to_delete(plan.job_directories, kept):
-            if not directory.exists() or directory.resolve() in staying:
+            if not directory.exists() or resolved_path(directory) in staying:
                 continue
             try:
                 shutil.rmtree(directory)

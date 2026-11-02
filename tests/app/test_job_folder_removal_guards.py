@@ -465,6 +465,35 @@ class TestLinks:
         assert job.id in project.document.jobs
         assert project.warned and "link" in project.warned[0]
 
+    def test_a_link_cycle_is_refused_on_each_route_and_does_not_stop_others(
+        self, project: _Project
+    ) -> None:
+        outcome = project.import_batch("runs", (1,))
+        looped = project.native(label="looped", seed="loop")
+        looped.status = JobStatus.FAILED
+        (project.charge / "loop").symlink_to(project.charge / "loop")
+        mine = project.native(label="mine", seed="own")
+        (project.charge / "own").mkdir()
+        (project.charge / "own" / "own.castep").write_text("gone")
+        (project.charge / "own" / "own.cell").write_text("input")
+
+        project.window._reset_failed_jobs([looped], cleanup_choice=True)
+        assert (project.charge / "loop").is_symlink()
+        assert "kept folder 'loop'" in project.status()
+        project.warned.clear()
+
+        project.remove_row("looped")
+        assert looped.id in project.document.jobs
+        assert (project.charge / "loop").is_symlink()
+        assert project.warned and "link" in project.warned[0]
+
+        project.remove_row("mine")
+        assert mine.id not in project.document.jobs
+        assert not (project.charge / "own").exists()
+
+        project.remove_batch(outcome)
+        assert not outcome.imported[0].job_directory.exists()
+
     def test_native_a_missing_folder_with_no_link_lets_the_row_go(self, project: _Project) -> None:
         """Nothing on disk and no link: nothing to protect, so nothing to refuse."""
 

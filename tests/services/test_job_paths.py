@@ -19,6 +19,7 @@ from mufinder.services.job_paths import (
     job_output_files,
     job_seed_name,
     remote_directory_seed_name,
+    resolved_path,
 )
 from mufinder.services.project_service import ProjectDocument
 from mufinder.workflow.naming import job_name
@@ -455,3 +456,28 @@ class TestAMuonRelaxationsPlace:
         job = make_job(label="job", workflow_stage=WorkflowStage.UEP, calc_type="castep_uep")
 
         assert job_directory_foreign(tmp_path, job, tmp_path / "files" / "other" / "job") is None
+
+
+class TestALinkCycle:
+    def test_a_python_that_raises_on_one_gets_the_path_as_written(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Python 3.12 raises on a cycle; later versions return a path."""
+
+        def _raise(_self: Path, strict: bool = False) -> Path:
+            raise RuntimeError("Symlink loop")
+
+        monkeypatch.setattr(Path, "resolve", _raise)
+
+        assert resolved_path(tmp_path / "loop") == tmp_path / "loop"
+
+    def test_it_is_refused_rather_than_raising(self, tmp_path: Path) -> None:
+        charge = tmp_path / "files" / "muon_relaxation" / "positivemuon"
+        charge.mkdir(parents=True)
+        loop = charge / "loop"
+        loop.symlink_to(loop)
+
+        assert resolved_path(loop).name == "loop"
+        assert job_directory_on_disk(tmp_path, loop) is True
+        reason = job_directory_refusal(tmp_path, None, loop)
+        assert reason is not None and "link" in reason

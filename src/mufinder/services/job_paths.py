@@ -223,6 +223,15 @@ def job_output_directory(
     return None
 
 
+def resolved_path(path: Path) -> Path:
+    """Return ``path`` resolved, or as written when it cannot be: a link cycle raises."""
+
+    try:
+        return path.resolve()
+    except (OSError, RuntimeError):
+        return path
+
+
 def job_directory_link(project_root: Path, directory: Path) -> Path | None:
     """Return the first link on the way to ``directory`` below ``files/``, or ``None``.
 
@@ -241,10 +250,10 @@ def job_directory_link(project_root: Path, directory: Path) -> Path | None:
                 if current.is_symlink():
                     return current
             return None
-    if not directory.resolve().is_relative_to(files_root):
+    if not resolved_path(directory).is_relative_to(files_root):
         return None
     for path in (directory, *directory.parents):
-        if path.resolve() == files_root:
+        if resolved_path(path) == files_root:
             return None
         if path.is_symlink():
             return path
@@ -279,7 +288,7 @@ def job_directory_refusal(project_root: Path, job: Job | None, directory: Path) 
         return f"its folder is a link to somewhere else ({directory.name!r})"
     if (link := job_directory_link(project_root, directory)) is not None:
         return f"its folder is reached through a link ({link.name!r})"
-    resolved = directory.resolve()
+    resolved = resolved_path(directory)
     files_root = project_root.resolve() / "files"
     if not resolved.is_relative_to(files_root):
         return f"its folder is outside this project's job folders ({resolved})"
@@ -311,7 +320,7 @@ def job_directory_foreign(project_root: Path, job: Job | None, directory: Path) 
 
     if job is None or not is_muon_relaxation_calc_type(job.calc_type):
         return None
-    place = directory.resolve().relative_to(project_root.resolve() / "files").parts
+    place = resolved_path(directory).relative_to(project_root.resolve() / "files").parts
     charge_state = muon_relaxation_charge_state(job.calc_type)
     charge_folder = muon_charge_state_prefix(charge_state) if charge_state else None
     if place[0] != job.workflow_stage.value:

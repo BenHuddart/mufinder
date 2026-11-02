@@ -57,6 +57,7 @@ from mufinder.services.job_paths import (
     job_directory_foreign,
     job_directory_on_disk,
     job_directory_refusal,
+    resolved_path,
 )
 
 if TYPE_CHECKING:
@@ -292,7 +293,7 @@ class JobFileCleanup:
 
         def local_directory(job: Job) -> Path | None:
             directory = self._job_output_directory(job)
-            return directory.resolve() if directory is not None else None
+            return resolved_path(directory) if directory is not None else None
 
         def remote_directory(job: Job) -> tuple[str, str] | None:
             target = (job.execution_target or "").strip().casefold()
@@ -419,6 +420,7 @@ class JobFileCleanup:
                 refusal = self._folder_refusal(item)
                 if refusal is not None:
                     failures.append(JobCleanupFailure(item, refusal=refusal))
+                    together -= {job.id for job in item.jobs} | item.releases
                     if stop_on_error:
                         break
                     continue
@@ -476,14 +478,14 @@ class JobFileCleanup:
         if document is None or item.directory is None:
             return None
         owner = item.jobs[0] if item.jobs else None
-        folder = item.directory.resolve()
+        folder = resolved_path(item.directory)
         for other in document.jobs.values():
             if other.id in together:
                 continue
             directory = self._job_output_directory(other)
             if directory is None:
                 continue
-            resolved = directory.resolve()
+            resolved = resolved_path(directory)
             if resolved == folder and (
                 other.workflow_stage == WorkflowStage.CONVERGENCE_CUTOFF
                 and other.status == JobStatus.DEFINED
@@ -654,7 +656,9 @@ def _overlapping_folders_together(plan: Sequence[JobCleanupItem]) -> list[JobCle
     Followed through: ``outer/a`` brings ``outer``, and ``outer`` brings ``outer/b``.
     """
 
-    folders = [item.directory.resolve() if item.directory is not None else None for item in plan]
+    folders = [
+        resolved_path(item.directory) if item.directory is not None else None for item in plan
+    ]
     ordered: list[JobCleanupItem] = []
     placed: set[int] = set()
     for first in range(len(plan)):
