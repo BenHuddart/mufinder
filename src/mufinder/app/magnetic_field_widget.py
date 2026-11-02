@@ -105,7 +105,10 @@ from mufinder.services.magnetic_field_results import (
     CALCULATION_VERSION_KEY,
     PLATE_METHOD_VERSION,
     PLATE_METHOD_VERSION_KEY,
+    TRANSLATION_METHOD_VERSION,
+    TRANSLATION_METHOD_VERSION_KEY,
     field_result_uses_older_method,
+    translation_method_applies,
     sample_predates_plate_method,
     UNRELAXED_ESTIMATE_SUFFIX,
     UNRELAXED_SITE_NOTE,
@@ -1912,6 +1915,8 @@ class MagneticFieldWidget(QWidget):
         }
         if self._demag_shape() == "image_plate":
             state[PLATE_METHOD_VERSION_KEY] = PLATE_METHOD_VERSION
+        if translation_method_applies(state):
+            state[TRANSLATION_METHOD_VERSION_KEY] = TRANSLATION_METHOD_VERSION
         return state
 
     @staticmethod

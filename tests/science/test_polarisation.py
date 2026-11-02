@@ -141,6 +141,19 @@ def test_the_bin_count_stops_at_its_limit_and_records_the_phase_it_allows() -> N
     assert result.parameters["max_in_bin_phase_rad"] > 0.1
 
 
+def test_translated_rows_of_a_site_count_equally_with_no_new_weights() -> None:
+    rows = [
+        _field((0.0, 0.1, 0.0), label="Mu + (0, 0, 0)"),
+        _field((0.0, 0.2, 0.0), label="Mu + (1, 0, 0)"),
+        _field((0.0, 0.3, 0.0), label="Mu + (2, 0, 0)"),
+    ]
+
+    result = calculate_polarisation(rows, TIMES)
+
+    expected = np.mean([np.cos(GAMMA * b * TIMES) for b in (0.1, 0.2, 0.3)], axis=0)
+    np.testing.assert_allclose(result.polarisation, expected, atol=5e-4)
+
+
 def test_sites_are_averaged_with_their_weights() -> None:
     sites = [_field((0.0, 0.0, 0.1), label="along"), _field((0.1, 0.0, 0.0), label="across")]
 

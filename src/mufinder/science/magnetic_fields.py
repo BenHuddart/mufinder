@@ -89,9 +89,22 @@ class MagneticFieldDependencyError(ImportError):
     """Raised when the optional muesr backend is unavailable."""
 
 
+#: The longest period of a wavevector whose translations are listed as separate fields. The
+#: period of ``q`` is the smallest ``n`` that makes ``n q`` a reciprocal lattice vector, which is
+#: the number of distinct phases ``q . T``. Beyond it the phases are sampled as a distribution.
+MAX_LISTED_TRANSLATION_PERIOD = 12
+#: The most translations a commensurate result lists. One wavevector has at most
+#: :data:`MAX_LISTED_TRANSLATION_PERIOD`; independent wavevectors multiply.
+MAX_LISTED_TRANSLATIONS = 512
+
+
 @dataclass(frozen=True, slots=True)
 class MagneticFieldOptions:
-    """Calculation options for a magnetic field run."""
+    """Calculation options for a magnetic field run.
+
+    A wavevector counts as commensurate up to ``commensurate_max_period``, so its
+    translations are listed as separate fields; a longer period is sampled as a distribution.
+    """
 
     supercell: tuple[int, int, int] = (100, 100, 100)
     radius: float | None = None
@@ -108,7 +121,7 @@ class MagneticFieldOptions:
     find_equivalent_sites: bool = False
     equivalent_tolerance: float = 1e-3
     commensurate_tolerance: float = 1e-8
-    commensurate_max_period: int = 64
+    commensurate_max_period: int = MAX_LISTED_TRANSLATION_PERIOD
     nangles: int = 32_768
     phase_sample_count: int = 200_000
     phase_sampling: str = "auto"
@@ -117,7 +130,7 @@ class MagneticFieldOptions:
     histogram_bins: int = 512
     approximant_tolerance: float = 1e-3
     approximant_max_period: int = 12
-    max_approximant_fields: int = 512
+    max_approximant_fields: int = MAX_LISTED_TRANSLATIONS
 
 
 #: The closest a muon site may sit to any host atom, in Angstrom. The dipolar and
@@ -577,7 +590,7 @@ def is_commensurate_propagation_vector(
     k_rlu: Sequence[float],
     *,
     tolerance: float = 1e-8,
-    max_period: int = 64,
+    max_period: int = MAX_LISTED_TRANSLATION_PERIOD,
 ) -> bool:
     """Return whether a propagation vector is commensurate within a bounded period."""
 
@@ -594,9 +607,13 @@ def classify_magnetic_model(
     model: MagneticStructureModel,
     *,
     tolerance: float = 1e-8,
-    max_period: int = 64,
+    max_period: int = MAX_LISTED_TRANSLATION_PERIOD,
 ) -> str:
-    """Classify a model as commensurate or incommensurate."""
+    """Classify a model as commensurate or incommensurate.
+
+    A period above ``max_period`` counts as incommensurate, whether or not ``q`` is a fraction,
+    because it is sampled as a distribution rather than listed.
+    """
 
     models = get_muesr_model_data(structure, model, merge_equivalent_k=False)
     if not models:
@@ -967,8 +984,8 @@ def _host_contact_ions(
     named by its atom and its cell offset from the muon's own cell.
     """
 
-    # The approximant path asks again for every translation and the settings
-    # dialog for every value typed, so the search is cached on its inputs.
+    # The tie checks and the settings dialog ask again for every value typed, so the
+    # search is cached on its inputs.
     return _cached_host_contact_ions(
         tuple(tuple(float(v) for v in row) for row in structure.lattice_vectors),
         tuple(tuple(float(v) for v in row) for row in structure.fractional_positions),
@@ -1297,6 +1314,14 @@ def calculate_commensurate_fields(
 ) -> tuple[MagneticFieldResult, ...]:
     """Calculate commensurate vector fields with the optional muesr backend.
 
+    One result is returned per muon position and per lattice translation ``T``
+    that gives a distinct set of magnetic phases ``q . T``
+    (:func:`_translated_field_results`), so a ``q = 0`` structure gives one result
+    per position and a helix of period 3 gives three. The positions are the muon
+    sites and, when ``options.find_equivalent_sites`` is set, their symmetry images.
+    Each listed translation stands for the same number of translation-equivalent
+    sites, so the list carries equal weights.
+
     ``distorted_structures`` optionally gives, per entry of ``muon_sites``, the
     relaxed supercell containing that muon. A site with one receives the
     muon-induced distortion correction
@@ -1320,53 +1345,23 @@ def calculate_commensurate_fields(
     ]
     if noncomm:
         raise MagneticFieldError("commensurate field calculation received an incommensurate model")
-
-    locfield, find_largest_sphere, _dipten = _load_muesr_engines()
-    muons = _expanded_muon_positions(structure, muon_sites, opts)
-    sample = _build_muesr_sample(structure, [position for _label, position in muons])
-    radius = (
-        float(opts.radius)
-        if opts.radius is not None
-        else float(find_largest_sphere(sample, list(opts.supercell)))
-    )
-
-    dipolar, lorentz, contact = _commensurate_field_terms(
-        structure,
-        models,
-        [position for _label, position in muons],
-        opts,
-        radius,
-        locfield,
-    )
-
-    applied = _as_vector(opts.applied_field, "applied_field")
-    demag = _demag_field(structure, models, opts)
-    parameters = _contact_calculation_parameters(opts)
-    parameters["modulated"] = _has_modulated_component(models)
-    results: list[MagneticFieldResult] = []
-    for index, (label, position) in enumerate(muons):
-        distortion = distortions[index]
-        warnings = _contact_shell_warnings(structure, models, position, opts, distortion)
-        results.append(
-            MagneticFieldResult(
-                site_label=label,
-                muon_position=_tuple3(position),
-                dipolar=_tuple3(dipolar[index]),
-                lorentz=_tuple3(lorentz[index]),
-                contact=_tuple3(contact[index]),
-                demag=_tuple3(demag),
-                applied=_tuple3(applied),
-                distortion=(
-                    None
-                    if distortion is None
-                    else _distortion_correction(
-                        _distortion_changes(models, distortion, opts), (0, 0, 0)
-                    )
-                ),
-                calculation_parameters=_with_contact_warnings(parameters, warnings),
-            )
+    rationals = [
+        _rational_propagation_vector(
+            model_data.k_rlu,
+            tolerance=opts.commensurate_tolerance,
+            max_period=opts.commensurate_max_period,
         )
-    return tuple(results)
+        for model_data in models
+    ]
+    translations = _distinct_phase_translations(rationals, limit=MAX_LISTED_TRANSLATIONS)
+    if translations is None:
+        raise MagneticFieldError(
+            f"these wavevectors give more than {MAX_LISTED_TRANSLATIONS} inequivalent "
+            "translations, too many to list as separate fields"
+        )
+    return _translated_field_results(
+        structure, models, rationals, translations, muon_sites, distortions, opts
+    )
 
 
 def calculate_commensurate_approximant_fields(
@@ -1381,13 +1376,8 @@ def calculate_commensurate_approximant_fields(
 
     Every component wavevector is replaced by its rational approximant
     (:func:`find_commensurate_approximant` with ``options.approximant_tolerance``
-    and ``options.approximant_max_period``). The approximant repeats over a
-    finite magnetic supercell, so translation-equivalent copies ``r + T`` of a
-    muon site see a finite set of fields. One result is returned per muon site
-    and per translation ``T`` that gives a distinct set of magnetic phases; the
-    field at ``r + T`` is the commensurate sum with every Fourier phase advanced
-    by ``q . T``. Each listed translation stands for the same number of
-    translation-equivalent sites, so the list carries equal weights.
+    and ``options.approximant_max_period``), and the fields are then listed as for
+    an exactly commensurate structure (:func:`calculate_commensurate_fields`).
 
     ``distorted_structures`` works as for :func:`calculate_commensurate_fields`;
     the correction at ``r + T`` uses the approximant order advanced by ``q . T``.
@@ -1417,52 +1407,80 @@ def calculate_commensurate_approximant_fields(
             f"the commensurate approximant has more than {int(opts.max_approximant_fields)} inequivalent "
             "translations; lower the approximant period or sample a distribution instead"
         )
-    approximant_models = [
+    return _translated_field_results(
+        structure, models, rationals, translations, muon_sites, distortions, opts
+    )
+
+
+def _translated_field_results(
+    structure: Structure,
+    models: Sequence[MuesrModelData],
+    rationals: Sequence[tuple[np.ndarray, np.ndarray]],
+    translations: Sequence[tuple[int, int, int]],
+    muon_sites: Sequence[MuonSite | Sequence[float]],
+    distortions: Sequence[MuonDistortion | None],
+    options: MagneticFieldOptions,
+) -> tuple[MagneticFieldResult, ...]:
+    """Return one result per muon position and translation of a rational-``q`` order.
+
+    ``rationals`` holds each model's ``q`` as integer numerators and denominators, and
+    ``translations`` one ``T`` per distinct set of phases. The field at ``r + T`` is the field
+    at ``r`` of the order with every Fourier phase advanced by ``q . T``. A row's label names
+    its translation when there is more than one, and its position is ``r + T``.
+    """
+
+    exact_models = [
         replace(model_data, k_rlu=numerators / denominators)
         for model_data, (numerators, denominators) in zip(models, rationals, strict=True)
     ]
-
     locfield, find_largest_sphere, _dipten = _load_muesr_engines()
-    muons = _expanded_muon_positions(structure, muon_sites, opts)
+    muons = _expanded_muon_positions(structure, muon_sites, options)
     positions = [position for _label, position in muons]
     sample = _build_muesr_sample(structure, positions)
     radius = (
-        float(opts.radius)
-        if opts.radius is not None
-        else float(find_largest_sphere(sample, list(opts.supercell)))
+        float(options.radius)
+        if options.radius is not None
+        else float(find_largest_sphere(sample, list(options.supercell)))
     )
-    applied = _as_vector(opts.applied_field, "applied_field")
-    demag = _demag_field(structure, approximant_models, opts)
-    parameters = _contact_calculation_parameters(opts)
-    parameters["modulated"] = _has_modulated_component(approximant_models)
-
-    terms_by_translation = []
-    for translation in translations:
-        shifted = [
-            replace(
-                model_data,
-                phi=np.asarray(model_data.phi, dtype=float)
-                + float(np.dot(model_data.k_rlu, translation)),
-            )
-            for model_data in approximant_models
-        ]
-        terms_by_translation.append(
-            _commensurate_field_terms(structure, shifted, positions, opts, radius, locfield)
-        )
+    applied = _as_vector(options.applied_field, "applied_field")
+    demag = _demag_field(structure, exact_models, options)
+    parameters = _contact_calculation_parameters(options)
+    parameters["modulated"] = _has_modulated_component(exact_models)
+    coefficients = _commensurate_field_coefficients(
+        structure, exact_models, positions, options, radius, locfield
+    )
 
     results: list[MagneticFieldResult] = []
+    phases_by_translation = [
+        [
+            numerator / denominator
+            for numerator, denominator in (
+                _phase_numerator(numerators, denominators, translation)
+                for numerators, denominators in rationals
+            )
+        ]
+        for translation in translations
+    ]
     for index, (label, position) in enumerate(muons):
         changes = (
             None
             if distortions[index] is None
-            else _distortion_changes(approximant_models, distortions[index], opts)
+            else _distortion_changes(exact_models, distortions[index], options)
         )
         warnings = _contact_shell_warnings(
-            structure, approximant_models, position, opts, distortions[index]
+            structure, exact_models, position, options, distortions[index]
         )
-        for translation, (dipolar, lorentz, contact) in zip(
-            translations, terms_by_translation, strict=True
-        ):
+        for translation, phases in zip(translations, phases_by_translation, strict=True):
+            dipolar, lorentz, contact = (
+                sum(
+                    (
+                        _phase_shifted_fields(terms[term][index], np.array([phase]))[0]
+                        for terms, phase in zip(coefficients, phases, strict=True)
+                    ),
+                    np.zeros(3, dtype=float),
+                )
+                for term in range(3)
+            )
             site_label = label
             if len(translations) > 1:
                 site_label = f"{label} + ({translation[0]}, {translation[1]}, {translation[2]})"
@@ -1472,9 +1490,9 @@ def calculate_commensurate_approximant_fields(
                     muon_position=_tuple3(
                         np.asarray(position, dtype=float) + np.asarray(translation, dtype=float)
                     ),
-                    dipolar=_tuple3(dipolar[index]),
-                    lorentz=_tuple3(lorentz[index]),
-                    contact=_tuple3(contact[index]),
+                    dipolar=_tuple3(dipolar),
+                    lorentz=_tuple3(lorentz),
+                    contact=_tuple3(contact),
                     demag=_tuple3(demag),
                     applied=_tuple3(applied),
                     distortion=(
@@ -1553,50 +1571,80 @@ def _has_modulated_component(models: Sequence[MuesrModelData]) -> bool:
     return any(not _is_uniform_wavevector(model_data.k_rlu) for model_data in models)
 
 
-def _commensurate_field_terms(
+def _commensurate_field_coefficients(
     structure: Structure,
-    models: Sequence[object],
+    models: Sequence[MuesrModelData],
     positions: Sequence[np.ndarray],
     options: MagneticFieldOptions,
     radius: float,
     locfield,
-) -> tuple[list[np.ndarray], list[np.ndarray], list[np.ndarray]]:
-    """Sum the dipolar, Lorentz and contact fields of commensurate models at each position."""
+) -> list[tuple[np.ndarray, np.ndarray, np.ndarray]]:
+    """Return each model's complex dipolar, Lorentz and contact fields at each position.
 
-    dipolar = [np.zeros(3, dtype=float) for _ in positions]
-    lorentz = [np.zeros(3, dtype=float) for _ in positions]
-    contact = [np.zeros(3, dtype=float) for _ in positions]
+    Every field is linear in the moments, so advancing a model's Fourier phase by ``theta``
+    turns gives ``Re[exp(-2 pi i theta) B]`` with ``B = B(0) + i B(1/4)``. That makes every
+    translation of the muon cost no further lattice sum: a modulated model takes two sums. A model
+    whose phases ``q . T`` are only 0 and 1/2 takes one, since they never read ``B(1/4)``, and so
+    does one at ``q = 0``, whose phase never advances. Each array has shape ``(n, 3)``.
+    """
+
+    coefficients = []
     for model_data in models:
-        continuum = _continuum_field_projector(structure, model_data.k_rlu)
-        sample = _build_muesr_sample(structure, positions)
-        sample.new_mm()
-        sample.mm.k = model_data.k_rlu
-        sample.mm.fc = _muesr_fourier_components(model_data, options.supercell)
-        sample.mm.phi = model_data.phi
-        fields = locfield(
-            sample,
-            "s",
-            list(options.supercell),
-            radius,
-            nnn=int(options.nnn),
-            rcont=float(options.rcont),
+        real = _model_field_terms(structure, model_data, positions, options, radius, locfield)
+        if _is_uniform_wavevector(2.0 * np.asarray(model_data.k_rlu, dtype=float)):
+            coefficients.append(tuple(np.asarray(term, dtype=complex) for term in real))
+            continue
+        quarter_turn = replace(model_data, fc=-1j * np.asarray(model_data.fc, dtype=complex))
+        imaginary = _model_field_terms(
+            structure, quarter_turn, positions, options, radius, locfield
         )
-        for index, local_field in enumerate(fields):
-            if options.contact_coupling is not None:
-                local_field.ACont = float(options.contact_coupling)
-            dipolar[index] += _field_vector(local_field, "Dipolar", "D")
-            if options.include_lorentz:
-                lorentz[index] += continuum @ _field_vector(local_field, "Lorentz", "L")
-            contact[index] += _field_vector(local_field, "Contact", "C")
+        coefficients.append(tuple(re + 1j * im for re, im in zip(real, imaginary, strict=True)))
     if options.contact_coupling is not None and _needs_shared_contact_shell(models):
-        for index, position in enumerate(positions):
-            contact[index] = sum(
-                (
-                    change.real
-                    for change in _shared_contact_coefficients(structure, models, position, options)
-                ),
-                np.zeros(3, dtype=float),
-            )
+        shared = [
+            _shared_contact_coefficients(structure, models, position, options)
+            for position in positions
+        ]
+        coefficients = [
+            (dipolar, lorentz, np.array([site[model_index] for site in shared], dtype=complex))
+            for model_index, (dipolar, lorentz, _contact) in enumerate(coefficients)
+        ]
+    return coefficients
+
+
+def _model_field_terms(
+    structure: Structure,
+    model_data: MuesrModelData,
+    positions: Sequence[np.ndarray],
+    options: MagneticFieldOptions,
+    radius: float,
+    locfield,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Sum the dipolar, Lorentz and contact fields of one model at each position, shape ``(n, 3)``."""
+
+    dipolar = np.zeros((len(positions), 3), dtype=float)
+    lorentz = np.zeros((len(positions), 3), dtype=float)
+    contact = np.zeros((len(positions), 3), dtype=float)
+    continuum = _continuum_field_projector(structure, model_data.k_rlu)
+    sample = _build_muesr_sample(structure, positions)
+    sample.new_mm()
+    sample.mm.k = model_data.k_rlu
+    sample.mm.fc = _muesr_fourier_components(model_data, options.supercell)
+    sample.mm.phi = model_data.phi
+    fields = locfield(
+        sample,
+        "s",
+        list(options.supercell),
+        radius,
+        nnn=int(options.nnn),
+        rcont=float(options.rcont),
+    )
+    for index, local_field in enumerate(fields):
+        if options.contact_coupling is not None:
+            local_field.ACont = float(options.contact_coupling)
+        dipolar[index] = _field_vector(local_field, "Dipolar", "D")
+        if options.include_lorentz:
+            lorentz[index] = continuum @ _field_vector(local_field, "Lorentz", "L")
+        contact[index] = _field_vector(local_field, "Contact", "C")
     return dipolar, lorentz, contact
 
 

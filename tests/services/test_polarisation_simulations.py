@@ -15,8 +15,13 @@ from mufinder.science.polarisation import PolarisationError, calculate_polarisat
 from mufinder.science.polarisation_simulation import PolarisationSettings, simulate_polarisation
 from mufinder.services.magnetic_field_results import (
     CALCULATION_METHOD_VERSION,
+    MAGNETIC_FIELD_RESULT_TYPE,
     PLATE_METHOD_NOT_USED,
     PLATE_METHOD_VERSION,
+    TRANSLATION_METHOD_NOT_USED,
+    TRANSLATION_METHOD_VERSION,
+    TRANSLATION_METHOD_VERSION_KEY,
+    magnetic_field_result,
     PLATE_METHOD_VERSION_KEY,
     CALCULATION_VERSION_KEY,
     MAGNETIC_FIELD_PAGE_OWNER,
@@ -175,6 +180,67 @@ def test_a_simulation_saved_before_the_plate_method_decides_from_the_saved_form(
     assert older_method_sources(record, document) == []
     document.ui_state["magnetic_field_form"] = {"demag_shape": "image_plate"}
     assert older_method_sources(record, document) == list(record.sources)
+
+
+def _modulated_fields(*translations: int, **extra) -> dict[str, object]:
+    return {
+        **_current_fields(),
+        "results": [
+            {
+                **_field((0.0, 0.0, 0.01), position=(0.25 + n, 0.25, 0.25)).to_json(),
+                "calculation_parameters": {"modulated": True},
+            }
+            for n in translations
+        ],
+        **extra,
+    }
+
+
+def test_a_simulation_of_one_translation_is_marked_and_one_of_all_of_them_is_not(document) -> None:
+    _store_fields(document, MAGNETIC_FIELD_PAGE_OWNER, _current_fields())
+    uniform = _simulate_page(document)
+    assert uniform.sources[0].translation_method_version == TRANSLATION_METHOD_NOT_USED
+    assert older_method_sources(uniform, document) == []
+
+    _store_fields(document, MAGNETIC_FIELD_PAGE_OWNER, _modulated_fields(0))
+    one_row = _simulate_page(document)
+    assert one_row.sources[0].translation_method_version == 1
+    assert older_method_sources(one_row, document) == list(one_row.sources)
+
+    # Recalculating the fields leaves the stored traces old, and still older.
+    listed = _modulated_fields(0, 1, **{TRANSLATION_METHOD_VERSION_KEY: TRANSLATION_METHOD_VERSION})
+    _store_fields(document, MAGNETIC_FIELD_PAGE_OWNER, listed)
+    stored = polarisation_simulation(document, one_row.simulation_id)
+    assert older_method_sources(stored, document) == list(stored.sources)
+
+    fresh = _simulate_page(document)
+    assert fresh.sources[0].translation_method_version == TRANSLATION_METHOD_VERSION
+    assert older_method_sources(fresh, document) == []
+
+
+def test_a_simulation_saved_before_the_translation_method_reads_the_record_it_ran_from(
+    document,
+) -> None:
+    _store_fields(document, MAGNETIC_FIELD_PAGE_OWNER, _modulated_fields(0))
+    record_id = magnetic_field_result(
+        document, MAGNETIC_FIELD_PAGE_OWNER, MAGNETIC_FIELD_RESULT_TYPE
+    ).id
+    record = SimpleNamespace(
+        sources=[
+            SimulationSource(
+                MAGNETIC_FIELD_PAGE_OWNER,
+                record_id,
+                "Page",
+                calculation_version=CALCULATION_METHOD_VERSION,
+            )
+        ]
+    )
+
+    assert older_method_sources(record, document) == list(record.sources)
+    # Once that record is replaced nothing says what it held, and the simulation is stale instead.
+    _store_fields(document, MAGNETIC_FIELD_PAGE_OWNER, _current_fields())
+    assert older_method_sources(record, document) == []
+    assert stale_sources(document, record) == list(record.sources)
 
 
 def test_removed_sources_are_those_with_no_fields_left(document) -> None:
@@ -450,7 +516,10 @@ def test_nuclear_widths_are_summed_once_per_muon_position(tmp_path: Path, monkey
     from mufinder.services import polarisation_simulations as module
 
     document, _host = muon_host_document(ProjectService(), tmp_path)
-    translations = [_field((0.0, 0.0, 0.01 * (n + 1)), label=f"t{n}") for n in range(5)]
+    translations = [
+        _field((0.0, 0.0, 0.01 * (n + 1)), label=f"t{n}", position=(0.25 + n, 0.25, 0.25))
+        for n in range(5)
+    ]
     _store_fields(document, MAGNETIC_FIELD_PAGE_OWNER, _commensurate(*translations))
     calls: list[tuple[float, ...]] = []
     real = module.calculate_nuclear_width_tensors

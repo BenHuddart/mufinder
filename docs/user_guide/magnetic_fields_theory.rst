@@ -37,8 +37,9 @@ a helix or cycloid.
 Field Calculation Theory
 ------------------------
 
-For commensurate structures, MuFinder can calculate a finite list of local
-fields at the requested muon sites. The dipolar contribution is evaluated using
+For commensurate structures, MuFinder calculates a finite list of local fields
+at the requested muon sites (see :ref:`What a commensurate result lists
+<magnetic-fields-translations>`). The dipolar contribution is evaluated using
 the ``muesr``/``muLFC`` engine. The stored magnetic model can also be exported as
 atom-resolved Fourier coefficients in the format expected by ``muesr``.
 
@@ -73,6 +74,67 @@ multiplies every coefficient by
 handing it over. The ``Cells along`` setting therefore changes a result only
 through the convergence of the lattice sum, never by moving the muon to a
 different magnetic cell.
+
+.. _magnetic-fields-translations:
+
+What a commensurate result lists
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A muon at :math:`\mathbf{r}` and one at :math:`\mathbf{r} + \mathbf{T}`, a lattice
+translation away, sit at the same place in the crystal, but in an order with
+:math:`\mathbf{q} \neq 0` they see different moments. Each is a real stopping
+place, and each is an image of the site. An image is therefore a position in the
+site's symmetry orbit combined with a translation.
+
+The period of a wavevector is the smallest :math:`n` for which
+:math:`n\mathbf{q}` is a reciprocal lattice vector, so ``q = (1/3, 1/4, 0)`` has
+period 12. It is the number of distinct phases :math:`\mathbf{q} \cdot \mathbf{T}`
+modulo 1. MuFinder treats a wavevector as commensurate up to period 12 and lists
+one row per distinct set of phases, each a separate field, labelled with its
+translation (for example ``Custom site + (1, 0, 0)``) and with the position
+:math:`\mathbf{r} + \mathbf{T}` in host fractional coordinates. Every field is
+linear in the moments, so with
+:math:`\mathbf{C} = \mathbf{B}(0) + i\,\mathbf{B}(1/4)`, the field of the order with
+its phase advanced by a quarter turn as the imaginary part, the row at
+:math:`\mathbf{T}` is
+
+.. math::
+
+   \mathbf{B}(\mathbf{r} + \mathbf{T}) =
+   \sum_{\mathbf{q}} \operatorname{Re}\!\left[
+   e^{-2\pi i\, \mathbf{q} \cdot \mathbf{T}}\, \mathbf{C}_{\mathbf{q}}(\mathbf{r})\right].
+
+So:
+
+- ``q = 0``, and any reciprocal lattice vector, gives one row per position, labelled
+  with the site alone;
+- a collinear ``q = (0, 0, 1/2)`` gives two rows, :math:`+\mathbf{B}` and
+  :math:`-\mathbf{B}`;
+- a helix of period 3 gives three rows, whose :math:`|\mathbf{B}|` can all differ;
+- a helix of period 4 gives four rows, in two pairs of opposite vectors;
+- with ``Include equivalent sites`` on, the rows multiply: an orbit of 16 at period 3
+  gives 48.
+
+Each row stands for the same number of translation-equivalent sites. Assuming the
+muon stops equally on each image and is static, quote every distinct
+:math:`|\mathbf{B}|` with the share of rows that give it. A share counts rows, not
+sites, and ``Polarisation`` weights each row equally, with no further weights. In a
+single crystal the vectors matter as well as :math:`|\mathbf{B}|`, and they belong to
+the one magnetic domain that was built.
+
+A wavevector of period 13 or more, such as ``q = (0.22, 0, 0)`` of period 50, counts
+as incommensurate, whether or not it is a fraction: MuFinder samples its phases as a
+distribution, described next, and the structure type reads ``incommensurate``. Quote
+the mean, the RMS and the range of such a distribution.
+
+Several wavevectors combine their phases. Two independent wavevectors of period 4
+give 16 rows, because every pair of phases occurs in the crystal, and wavevectors that
+sum to zero give only the pairs their sum allows. MuFinder lists at most 512 rows per
+position and otherwise stops with an error naming the limit. If any wavevector has a
+period above 12 the whole structure is a distribution, in which the phases of the
+long-period wavevectors are sampled, and a component at ``q = 0`` is constant. A
+component of period 12 or less in such a structure keeps the phase it has at
+:math:`\mathbf{T} = 0`, so its other translations are not represented.
 
 For incommensurate structures, a single muon site generally samples a
 distribution of local fields rather than one finite set of symmetry-equivalent
@@ -244,13 +306,10 @@ sampled as usual and the status line names the approximant it found. With the
 option on, MuFinder lists the finite set of fields that the
 translation-equivalent copies ``r + T`` of the muon site see in that magnetic
 supercell. The field at ``r + T`` is the commensurate lattice sum of the
-approximant with every Fourier phase advanced by ``q . T``. ``muesr`` takes
-these phases in units of :math:`2\pi`, adding them to ``q . R`` of each cell.
-MuFinder lists one translation per distinct set of phases, so every listed
-field stands for the same number of sites. Rows are labelled with their
-translation, for example ``Custom site + (1, 0, 0)``, carry the full term
-breakdown of a commensurate result, and give the muon position ``r + T`` in
-host fractional coordinates. A structure without an approximant within the
+approximant with every Fourier phase advanced by ``q . T``, listed as
+:ref:`a commensurate result lists it <magnetic-fields-translations>`. ``muesr``
+takes these phases in units of :math:`2\pi`, adding them to ``q . R`` of each
+cell. A structure without an approximant within the
 limits keeps its sampled distribution. MuFinder finds the distinct phase sets
 by stepping one unit translation at a time from the origin, so it never walks
 the whole magnetic supercell, and it stops with an error as soon as it finds

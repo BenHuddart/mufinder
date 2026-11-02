@@ -206,7 +206,15 @@ def run_prepared_magnetic_field_calculation(
     distorted_structures = [request.distorted_structure]
     corrected = " with muon-induced distortion corrections" if site.include_distortion else ""
     suffix = UNRELAXED_ESTIMATE_SUFFIX if is_unrelaxed_site_source(site.source) else ""
-    if classify_magnetic_model(host, model) == "commensurate":
+    if (
+        classify_magnetic_model(
+            host,
+            model,
+            tolerance=options.commensurate_tolerance,
+            max_period=options.commensurate_max_period,
+        )
+        == "commensurate"
+    ):
         results = calculate_commensurate_fields(
             host, model, positions, options=options, distorted_structures=distorted_structures
         )

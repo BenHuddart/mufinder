@@ -56,6 +56,8 @@ from mufinder.services.magnetic_field_results import (
     OLDER_METHOD_RESULTS_NOTE,
     PLATE_METHOD_VERSION,
     PLATE_METHOD_VERSION_KEY,
+    TRANSLATION_METHOD_VERSION,
+    TRANSLATION_METHOD_VERSION_KEY,
     field_result_uses_older_method,
     attach_magnetic_field_results,
     magnetic_field_result,
@@ -1446,6 +1448,48 @@ def test_a_stored_result_with_no_plate_stays_current_and_a_fresh_one_records_no_
 
     assert page._older_method_note.isHidden()
     assert PLATE_METHOD_VERSION_KEY not in page.collect_state()["magnetic_field_results"]
+    page.close()
+
+
+def test_a_stored_one_translation_result_reads_as_older_and_only_it(
+    qapp, tmp_path, monkeypatch
+) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "translations.mufinder", "Translations")
+    service.add_structure(document, feo_host_structure())
+    page = _calculating_widget(document, monkeypatch)
+    uniform = _stored_field_state()
+    page.set_form_state({"magnetic_field_results": uniform})
+    assert page._older_method_note.isHidden()
+
+    row = {
+        **uniform["results"][0],
+        "calculation_parameters": {"modulated": True},
+    }
+    page.set_form_state({"magnetic_field_results": {**uniform, "results": [row]}})
+    assert not page._older_method_note.isHidden()
+    assert page._older_method_note.text() == OLDER_METHOD_RESULTS_NOTE
+    page.close()
+
+
+def test_fresh_q_results_record_the_translation_method_and_q_zero_results_do_not(
+    qapp, tmp_path, monkeypatch
+) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "fresh.mufinder", "Fresh")
+    service.add_structure(document, feo_host_structure())
+    page = _calculating_widget(document, monkeypatch)
+    payload = {"site_label": "Mu", "calculation_parameters": {"modulated": True}}
+
+    state = page._field_results_to_state("commensurate", [payload], site_source="custom")
+    assert state[TRANSLATION_METHOD_VERSION_KEY] == TRANSLATION_METHOD_VERSION
+    plain = {"site_label": "Mu", "calculation_parameters": {"modulated": False}}
+    assert TRANSLATION_METHOD_VERSION_KEY not in page._field_results_to_state(
+        "commensurate", [plain], site_source="custom"
+    )
+    assert TRANSLATION_METHOD_VERSION_KEY not in page._field_results_to_state(
+        "distribution", [payload], site_source="custom"
+    )
     page.close()
 
 

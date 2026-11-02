@@ -248,6 +248,19 @@ Compatibility ledger
        with smoothing, is older. Additive, so no migration.
      - Current project data, not deprecated. It may not be dropped without a
        schema migration that first records which results used a plate.
+   * - ``translation_method_version`` key of a field result and a simulation source
+     - ``data`` of a ``magnetic_field`` result, ``magnetic_field_results`` in a
+       form, and each source of a polarisation simulation
+       (``mufinder.services.magnetic_field_results``, ``TRANSLATION_METHOD_VERSION``)
+     - Written for a commensurate field result with a component at ``q ≠ 0``, and for
+       every source of a simulation, where 0 means the method does not apply. A field
+       record without it reads its own rows: a commensurate record whose rows have
+       ``modulated`` in ``calculation_parameters`` and all lie in the home cell is older.
+       A simulation source without it reads the record named by its ``record_id``, and
+       is not marked once that record is gone, when the simulation is stale instead.
+       Additive, so no migration.
+     - Current project data, not deprecated. It may not be dropped without a schema
+       migration that first records which results list their translations.
    * - ``generate_random_sites_by_distance``
      - ``mufinder.science.site_generation``, also exported from
        ``mufinder.science``

@@ -274,10 +274,11 @@ Guided helix, conical, cycloid and spin-density-wave presets are set from the
 crystal axes, and a checklist tracks the build and flags disabled,
 zero-moment and unpreviewed incommensurate structures. It calculates:
 
-- the dipolar field of commensurate structures, optionally corrected for the
+- the dipolar field of commensurate structures, one row per translation with a
+  distinct magnetic phase up to period 12, optionally corrected for the
   host-ion displacements in a relaxed muon supercell at the site and its
   symmetry-equivalent sites, and the field distribution of incommensurate
-  ones, with Auto, Grid or Monte Carlo multi-q phase sampling and convergence
+  ones and of longer periods, with Auto, Grid or Monte Carlo multi-q phase sampling and convergence
   checks for lookup angles, samples and histogram bins; near-commensurate
   structures can instead list the finite fields of their commensurate
   approximant; commensurate results list their dipolar, Lorentz, contact,

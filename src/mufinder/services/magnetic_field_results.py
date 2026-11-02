@@ -42,6 +42,12 @@ without a plate or before the key existed, so
 :func:`field_result_uses_older_method` decides from the sample in the owner's
 saved form (:func:`sample_predates_plate_method`).
 
+A commensurate result of an order with ``q != 0`` also records
+:data:`TRANSLATION_METHOD_VERSION` in ``data["translation_method_version"]``.
+A record without the key decides from its own rows: one that gave only ``T = 0``
+is older (:func:`lists_only_one_translation`), while a ``q = 0`` result, a distribution and the
+translated rows of an approximant had nothing to change.
+
 A muon-polarisation record (:data:`MUON_POLARISATION_RESULT_TYPE`) holds a
 :class:`~mufinder.science.polarisation.PolarisationResult` in
 ``data["result"]``, one record per owner. It is stored and read with
@@ -125,6 +131,16 @@ PLATE_METHOD_VERSION_KEY = "plate_method_version"
 _UNRECORDED_PLATE_METHOD_VERSION = 1
 #: What a simulation keeps for a source whose fields used no plate, so it never reads as older.
 PLATE_METHOD_NOT_USED = 0
+#: The method behind the translations a commensurate ``q != 0`` result lists. Add 1 whenever a
+#: change means such an order gives different rows. A field result that it applies to records it;
+#: ``q = 0`` results and distributions are never marked by it. Version 1 is every such result
+#: from before the version was recorded, which gave the field at ``T = 0`` alone.
+TRANSLATION_METHOD_VERSION = 2
+#: Where a stored field result keeps the :data:`TRANSLATION_METHOD_VERSION` it was calculated with.
+TRANSLATION_METHOD_VERSION_KEY = "translation_method_version"
+_UNRECORDED_TRANSLATION_METHOD_VERSION = 1
+#: What a simulation keeps for a source this method does not apply to, so it never reads as older.
+TRANSLATION_METHOD_NOT_USED = 0
 #: Where a stored result keeps the :data:`CALCULATION_METHOD_VERSION` it was calculated with.
 CALCULATION_VERSION_KEY = "calculation_version"
 
@@ -183,6 +199,52 @@ def sample_predates_plate_method(form_state: object) -> bool:
     )
 
 
+def translation_method_applies(result: Mapping[str, Any]) -> bool:
+    """Return whether a dipolar-field result is a commensurate one with a component at ``q != 0``."""
+
+    rows = result.get("results")
+    if result.get("kind") != "commensurate" or not isinstance(rows, list):
+        return False
+    for row in rows:
+        parameters = row.get("calculation_parameters") if isinstance(row, Mapping) else None
+        if isinstance(parameters, Mapping) and parameters.get("modulated"):
+            return True
+    return False
+
+
+def lists_only_one_translation(result: Mapping[str, Any]) -> bool:
+    """Return whether a commensurate ``q != 0`` result holds rows for ``T = 0`` alone.
+
+    That is what such a result held before :data:`TRANSLATION_METHOD_VERSION` was recorded. Rows
+    at ``T = 0`` lie in the home cell, so the list of an approximant, whose other rows lie beyond
+    it, is not one.
+    """
+
+    return translation_method_applies(result) and not any(
+        _lies_beyond_home_cell(row) for row in result["results"]
+    )
+
+
+def _lies_beyond_home_cell(row: object) -> bool:
+    position = row.get("muon_position") if isinstance(row, Mapping) else None
+    return isinstance(position, list) and any(
+        isinstance(value, (int, float)) and value >= 1.0 for value in position
+    )
+
+
+def _predates_translation_method(result: Mapping[str, Any]) -> bool:
+    version = result.get(TRANSLATION_METHOD_VERSION_KEY)
+    if version is None:
+        return lists_only_one_translation(result)
+    if version == TRANSLATION_METHOD_NOT_USED and not isinstance(version, bool):
+        return False
+    return (
+        not isinstance(version, int)
+        or isinstance(version, bool)
+        or version < TRANSLATION_METHOD_VERSION
+    )
+
+
 def field_result_uses_older_method(result: object, form_state: object = None) -> bool:
     """Return whether a stored dipolar-field result predates the method that now applies to it.
 
@@ -192,7 +254,7 @@ def field_result_uses_older_method(result: object, form_state: object = None) ->
 
     if not isinstance(result, Mapping) or not result:
         return False
-    if uses_older_method(result):
+    if uses_older_method(result) or _predates_translation_method(result):
         return True
     version = result.get(PLATE_METHOD_VERSION_KEY)
     if version is None:
@@ -229,6 +291,17 @@ def recorded_plate_method_version(data: Mapping[str, Any], form_state: object) -
     return PLATE_METHOD_NOT_USED
 
 
+def recorded_translation_method_version(data: Mapping[str, Any]) -> object:
+    """Return the translation method version of a field record, as a simulation should keep it."""
+
+    version = data.get(TRANSLATION_METHOD_VERSION_KEY)
+    if version is not None:
+        return version
+    if lists_only_one_translation(data):
+        return _UNRECORDED_TRANSLATION_METHOD_VERSION
+    return TRANSLATION_METHOD_NOT_USED
+
+
 def field_result_site_source(
     field_results: Mapping[str, Any],
     form_state: Mapping[str, object] | None = None,
@@ -247,6 +320,14 @@ def field_result_site_source(
     return str(source) if source else None
 
 
+#: The method versions a field result carries between its form state and its record.
+_FIELD_VERSION_KEYS = (
+    CALCULATION_VERSION_KEY,
+    PLATE_METHOD_VERSION_KEY,
+    TRANSLATION_METHOD_VERSION_KEY,
+)
+
+
 def _field_data(value: object) -> dict[str, Any] | None:
     if (
         not isinstance(value, Mapping)
@@ -257,7 +338,7 @@ def _field_data(value: object) -> dict[str, Any] | None:
     data: dict[str, Any] = {"kind": str(value.get("kind", "")), "results": list(value["results"])}
     if value.get("site_source"):
         data["site_source"] = str(value["site_source"])
-    for key in (CALCULATION_VERSION_KEY, PLATE_METHOD_VERSION_KEY):
+    for key in _FIELD_VERSION_KEYS:
         if key in value:
             data[key] = value[key]
     return data
@@ -267,7 +348,7 @@ def _field_value(data: Mapping[str, Any]) -> object:
     value: dict[str, Any] = {"kind": data.get("kind", ""), "results": list(data.get("results", []))}
     if data.get("site_source"):
         value["site_source"] = str(data["site_source"])
-    for key in (CALCULATION_VERSION_KEY, PLATE_METHOD_VERSION_KEY):
+    for key in _FIELD_VERSION_KEYS:
         if key in data:
             value[key] = data[key]
     return value

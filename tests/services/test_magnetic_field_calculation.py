@@ -20,6 +20,7 @@ from mufinder.science.magnetic_structure import (
     AtomSelector,
     MagneticStructureModel,
     build_collinear_component,
+    build_magnetic_preset_component,
 )
 from mufinder.science.nuclear_relaxation import (
     NuclearRelaxationError,
@@ -153,7 +154,9 @@ def test_a_non_finite_field_is_refused_with_its_site(monkeypatch) -> None:
         total = (np.nan, 0.0, 0.0)
         magnitude = np.nan
 
-    monkeypatch.setattr(calculation_module, "classify_magnetic_model", lambda *_a: "commensurate")
+    monkeypatch.setattr(
+        calculation_module, "classify_magnetic_model", lambda *_a, **_k: "commensurate"
+    )
     monkeypatch.setattr(
         calculation_module, "calculate_commensurate_fields", lambda *_a, **_k: (_Result(),)
     )
@@ -208,7 +211,9 @@ def test_backend_errors_reach_the_caller(monkeypatch) -> None:
     def _fail(*_args, **_kwargs):
         raise RuntimeError("muLFC refused the cell")
 
-    monkeypatch.setattr(calculation_module, "classify_magnetic_model", lambda *_a: "commensurate")
+    monkeypatch.setattr(
+        calculation_module, "classify_magnetic_model", lambda *_a, **_k: "commensurate"
+    )
     monkeypatch.setattr(calculation_module, "calculate_commensurate_fields", _fail)
     request = prepare_magnetic_field_calculation(
         None,
@@ -306,3 +311,64 @@ def test_the_cancelled_status_says_whether_results_are_kept() -> None:
         "Calculation cancelled; the earlier results are kept"
     )
     assert cancelled_status(keeps_results=False) == "Calculation cancelled"
+
+
+def _fe_helix(q: float) -> MagneticStructureModel:
+    component = build_magnetic_preset_component(
+        "helix",
+        lattice_vectors=_fe().lattice_vectors,
+        q_rlu=(q, 0.0, 0.0),
+        q_coeff=(1.0, 0.0, 0.0),
+        moment=2.2,
+        reference_axis="b",
+        selector=AtomSelector.all(),
+    )
+    return MagneticStructureModel(
+        q_basis_rlu=((q, 0.0, 0.0), (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)), components=(component,)
+    )
+
+
+def test_the_calculation_classifies_q_with_the_options_it_was_given(real_muesr) -> None:
+    calculation = run_magnetic_field_calculation(
+        None,
+        _fe(),
+        _fe_helix(1.0 / 13.0),
+        _site((0.1, 0.2, 0.3)),
+        MagneticFieldOptions(supercell=(8, 8, 8), commensurate_max_period=13),
+        use_approximants=False,
+    )
+
+    assert calculation.kind == COMMENSURATE_RESULTS
+    assert len(calculation.results) == 13
+
+
+@pytest.mark.parametrize(
+    ("q", "kind", "rows", "status"),
+    [
+        (1.0 / 3.0, COMMENSURATE_RESULTS, 3, "Results: calculated 3 commensurate field values."),
+        (1.0 / 12.0, COMMENSURATE_RESULTS, 12, "Results: calculated 12 commensurate field values."),
+        (
+            1.0 / 13.0,
+            DISTRIBUTION_RESULTS,
+            1,
+            "Results: sampled 1 incommensurate field distribution.",
+        ),
+        (0.22, DISTRIBUTION_RESULTS, 1, "Results: sampled 1 incommensurate field distribution."),
+    ],
+    ids=["period-3", "period-12", "period-13", "period-50"],
+)
+def test_the_period_of_q_chooses_between_a_list_and_a_distribution(
+    real_muesr, q, kind, rows, status
+) -> None:
+    calculation = run_magnetic_field_calculation(
+        None,
+        _fe(),
+        _fe_helix(q),
+        _site((0.1, 0.2, 0.3)),
+        MagneticFieldOptions(supercell=(12, 12, 12)),
+        use_approximants=False,
+    )
+
+    assert calculation.kind == kind
+    assert len(calculation.results) == rows
+    assert calculation.status.startswith(status)

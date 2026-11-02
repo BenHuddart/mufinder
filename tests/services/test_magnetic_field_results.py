@@ -35,6 +35,10 @@ from mufinder.services.magnetic_field_results import (
     uses_older_method,
     PLATE_METHOD_VERSION,
     PLATE_METHOD_VERSION_KEY,
+    TRANSLATION_METHOD_NOT_USED,
+    TRANSLATION_METHOD_VERSION,
+    TRANSLATION_METHOD_VERSION_KEY,
+    recorded_translation_method_version,
     field_result_uses_older_method,
     magnetic_field_owner_form,
 )
@@ -599,3 +603,99 @@ def test_a_malformed_polarisation_record_reads_as_none(tmp_path: Path) -> None:
     assert polarisation_result(document, "workspace-1") is None
     record.data["result"] = None
     assert polarisation_result(document, "workspace-1") is None
+
+
+def _field_rows(*positions, modulated: bool = True) -> list[dict[str, object]]:
+    return [
+        {"muon_position": list(position), "calculation_parameters": {"modulated": modulated}}
+        for position in positions
+    ]
+
+
+_HOME = (0.25, 0.5, 0.75)
+_IMAGE = (0.75, 0.5, 0.25)
+_TRANSLATED = (1.25, 0.5, 0.75)
+
+
+def _current_field_result(kind: str, rows: list[dict[str, object]], **extra) -> dict[str, object]:
+    return {
+        "kind": kind,
+        "results": rows,
+        CALCULATION_VERSION_KEY: CALCULATION_METHOD_VERSION,
+        **extra,
+    }
+
+
+@pytest.mark.parametrize(
+    ("result", "older", "recorded"),
+    [
+        # A q != 0 result from before: the field at T = 0 alone, or a period above 12 as one row.
+        (_current_field_result("commensurate", _field_rows(_HOME)), True, 1),
+        (_current_field_result("commensurate", _field_rows(_HOME, _IMAGE)), True, 1),
+        # q = 0 had nothing to change, however many rows it holds.
+        (
+            _current_field_result("commensurate", _field_rows(_HOME, modulated=False)),
+            False,
+            TRANSLATION_METHOD_NOT_USED,
+        ),
+        # A distribution sampled every phase.
+        (
+            _current_field_result("distribution", _field_rows(_HOME)),
+            False,
+            TRANSLATION_METHOD_NOT_USED,
+        ),
+        # The list of an approximant named its translations.
+        (
+            _current_field_result("commensurate", _field_rows(_HOME, _TRANSLATED)),
+            False,
+            TRANSLATION_METHOD_NOT_USED,
+        ),
+    ],
+    ids=["one-row", "orbit", "uniform", "distribution", "approximant"],
+)
+def test_a_result_with_no_translation_version_is_decided_by_its_rows(
+    result, older, recorded
+) -> None:
+    assert field_result_uses_older_method(result) is older
+    assert recorded_translation_method_version(result) == recorded
+
+
+@pytest.mark.parametrize(
+    ("recorded", "older"),
+    [
+        (TRANSLATION_METHOD_VERSION, False),
+        (TRANSLATION_METHOD_VERSION + 1, False),
+        (TRANSLATION_METHOD_VERSION - 1, True),
+        (TRANSLATION_METHOD_NOT_USED, False),
+        ("2", True),
+        (True, True),
+    ],
+)
+def test_a_recorded_translation_version_decides_whatever_the_rows_hold(recorded, older) -> None:
+    result = _current_field_result(
+        "commensurate", _field_rows(_HOME), **{TRANSLATION_METHOD_VERSION_KEY: recorded}
+    )
+
+    assert field_result_uses_older_method(result) is older
+
+
+def test_a_translation_version_is_stored_and_comes_back(tmp_path: Path) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "translation.mufinder", "Translation")
+    value = _current_field_result(
+        "commensurate",
+        _field_rows(_HOME, _TRANSLATED),
+        **{TRANSLATION_METHOD_VERSION_KEY: TRANSLATION_METHOD_VERSION},
+    )
+
+    store_magnetic_field_results(
+        document, MAGNETIC_FIELD_PAGE_OWNER, {"magnetic_field_results": value}
+    )
+    service.save_project(document)
+    reloaded = service.load_project(document.project_root)
+
+    restored = attach_magnetic_field_results(reloaded, MAGNETIC_FIELD_PAGE_OWNER, {})[
+        "magnetic_field_results"
+    ]
+    assert restored[TRANSLATION_METHOD_VERSION_KEY] == TRANSLATION_METHOD_VERSION
+    assert not field_result_uses_older_method(restored)
