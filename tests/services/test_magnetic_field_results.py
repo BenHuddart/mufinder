@@ -116,6 +116,13 @@ def test_a_result_is_older_by_its_stored_version(result, older) -> None:
     assert uses_older_method(result) is older
 
 
+def test_the_plate_tensor_change_is_a_new_method_version() -> None:
+    # Plates moved to 256 voxels along the longest edge, so version 1 numbers can differ.
+    assert CALCULATION_METHOD_VERSION == 2
+    assert uses_older_method({"results": [], CALCULATION_VERSION_KEY: 1})
+    assert not uses_older_method({"results": [], CALCULATION_VERSION_KEY: 2})
+
+
 def test_each_record_keeps_the_version_its_result_was_calculated_with(tmp_path: Path) -> None:
     document = _document(tmp_path)
     version = {CALCULATION_VERSION_KEY: CALCULATION_METHOD_VERSION}

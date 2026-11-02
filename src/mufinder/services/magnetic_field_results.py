@@ -102,7 +102,7 @@ UNRELAXED_ESTIMATE_SUFFIX = " Computed at an unrelaxed UEP site, so these are es
 #: numbers from one of those calculations, such as a corrected formula, position or
 #: default. Leave it alone for a change that gives the same numbers. Stored results with
 #: a lower version then show :data:`OLDER_METHOD_RESULTS_NOTE` until recalculated.
-CALCULATION_METHOD_VERSION = 1
+CALCULATION_METHOD_VERSION = 2
 #: Where a stored result keeps the :data:`CALCULATION_METHOD_VERSION` it was calculated with.
 CALCULATION_VERSION_KEY = "calculation_version"
 

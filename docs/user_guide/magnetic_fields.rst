@@ -1602,6 +1602,10 @@ status on the Magnetic Fields page and in the results of the ``Dipolar Tensor``
 and ``Nuclear Relaxation`` dialogs.
 
 The line means the numbers shown may differ from what the same inputs give now.
+There is one version for all three calculations, so a correction to one marks
+every stored result, including those it does not change: when plates from a photo
+moved to their fixed resolution, a result with no such plate kept its numbers but
+reads as older too.
 MuFinder never rewrites or recalculates them on its own, so they stay exactly as
 calculated, and saving, reopening or saving a workspace keeps them and the line.
 The calculation's ``Calculate`` button replaces them with new numbers and clears

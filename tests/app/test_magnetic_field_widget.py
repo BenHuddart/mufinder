@@ -1375,6 +1375,46 @@ def test_calculation_failing_after_a_reload_leaves_the_reloaded_results_alone(
     widget.close()
 
 
+def test_a_plate_result_stored_at_version_1_reads_as_older_and_a_fresh_one_does_not(
+    qapp, tmp_path, monkeypatch
+) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "plate-version.mufinder", "Plate version")
+    service.add_structure(document, feo_host_structure())
+    page = _calculating_widget(document, monkeypatch)
+    plate = photo_plate_sample()
+    page.set_form_state(
+        {
+            "demag_shape": "image_plate",
+            "demag_sample": plate.to_json(),
+            "magnetic_field_results": {
+                "kind": "commensurate",
+                "results": [
+                    {
+                        "site_label": "site 1",
+                        "muon_position": [0.5, 0.0, 0.75],
+                        "total_T": [1.0, 0.0, 0.0],
+                        "magnitude_T": 1.0,
+                    }
+                ],
+                "site_source": "custom",
+                CALCULATION_VERSION_KEY: 1,
+            },
+        }
+    )
+    assert not page._older_method_note.isHidden()
+    assert page._older_method_note.text() == OLDER_METHOD_RESULTS_NOTE
+
+    page._selected_muon_site = custom_muon_site((0.25, 0.5, 0.75))
+    page.calculate_fields()
+
+    assert page._older_method_note.isHidden()
+    fresh = page.collect_state()["magnetic_field_results"]
+    assert fresh[CALCULATION_VERSION_KEY] == CALCULATION_METHOD_VERSION
+    assert page.field_options().demag_sample == plate
+    page.close()
+
+
 def test_missing_dependency_clears_the_page_but_not_the_saved_results(
     qapp, tmp_path, monkeypatch
 ) -> None:
