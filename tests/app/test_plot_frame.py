@@ -21,6 +21,8 @@ from test_plot_canvas_layout import PLOT_DIALOGS  # noqa: E402
 # Dialogs whose only content is their plot: the dialog itself is already the
 # resizable plot window, so they have no pop-out button.
 _SINGLE_PLOT_DIALOGS = {"magnetic-field-distribution"}
+# Dialogs whose only canvas is a colour key: it has no data to zoom or pan.
+_COLOUR_KEY_DIALOGS = {"uep-potential"}
 
 
 def _settle(qapp, passes: int = 4) -> None:
@@ -246,7 +248,9 @@ def test_overlay_widgets_sit_left_of_the_pop_out_button_in_the_top_right_corner(
     assert host.frame.width() - button_right <= 6
 
 
-@pytest.mark.parametrize("name", sorted(set(PLOT_DIALOGS) - _SINGLE_PLOT_DIALOGS))
+@pytest.mark.parametrize(
+    "name", sorted(set(PLOT_DIALOGS) - _SINGLE_PLOT_DIALOGS - _COLOUR_KEY_DIALOGS)
+)
 def test_plots_sharing_a_dialog_can_be_popped_out(qapp, name: str) -> None:
     dialog = PLOT_DIALOGS[name]()
     try:
