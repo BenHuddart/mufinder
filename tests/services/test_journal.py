@@ -2127,6 +2127,48 @@ def test_a_quantum_entry_with_a_warning_asks_for_attention_and_one_site_has_no_t
     assert details.job_table is None
 
 
+def test_a_quantum_entry_marks_a_zpe_outside_the_ranking_and_a_flagged_row() -> None:
+    entry = _finding_entry(
+        "quantum_corrected",
+        WorkflowStage.QUANTUM_CORRECTIONS,
+        site_label="4c",
+        muon_zpe_total_eV=0.68,
+        zpe_mark="earlier",
+        ranking_notes=["This ZPE is from an earlier geometry."],
+        not_ranked=["T_B (unconfirmed)"],
+        warnings=[],
+        comparison=[
+            {
+                "site_label": "T_A",
+                "relative_energy_eV": 0.257,
+                "zpe_eV": 0.1,
+                "corrected_energy_eV": -0.201,
+                "warned": True,
+            },
+            {
+                "site_label": "O",
+                "relative_energy_eV": 0.0,
+                "zpe_eV": 0.558,
+                "corrected_energy_eV": 0.0,
+                "warned": False,
+            },
+        ],
+    )
+
+    assert entry.body == "ZPE at 4c: 0.680 eV (earlier)"
+    # Being outside the ranking is not a warning about the calculation.
+    assert entry.stamp_kind == "success"
+    details = entry_details(entry)
+    assert details.lines == (
+        "This ZPE is from an earlier geometry.",
+        "Not ranked: T_B (unconfirmed)",
+    )
+    assert details.job_table.rows == (
+        ("T_A", "0.257", "0.100 ⚠", "-0.201 ⚠"),
+        ("O", "0.000", "0.558", "0.000"),
+    )
+
+
 def test_a_barrier_entry_gives_the_path_and_its_numbers() -> None:
     entry = _finding_entry(
         "barrier_calculated",

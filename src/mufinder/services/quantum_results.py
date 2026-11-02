@@ -29,6 +29,9 @@ from mufinder.science.quantum_phonons import (
 )
 from mufinder.services.job_results import parse_numeric
 
+#: Follows a number whose phonon result carries a warning.
+WARNING_MARK = "⚠"
+
 #: The ``w1_definition`` value written with a witness computed as ``P - 3``.
 W1_DEFINITION = "participation_minus_3"
 
@@ -112,6 +115,7 @@ def has_non_positive_muon_mode(data: Mapping[str, object]) -> bool:
 
 __all__ = [
     "W1_DEFINITION",
+    "WARNING_MARK",
     "has_non_positive_muon_mode",
     "mode_widths_from_result_data",
     "phonon_warnings_from_result_data",

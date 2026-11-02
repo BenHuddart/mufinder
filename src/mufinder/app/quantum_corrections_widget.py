@@ -26,12 +26,10 @@ from mufinder.app.workflow_table_utils import (
     create_workflow_table,
     set_header_tooltips,
 )
+from mufinder.services.quantum_results import WARNING_MARK
 
 #: What a cell shows for a site without the number.
 NO_VALUE_TEXT = "–"
-
-#: Follows a number whose result was stored with a warning; the row tooltip says which.
-WARNING_MARK = "⚠"
 
 #: The table's column headers and one-line tooltips, in column order.
 SITE_COLUMNS: tuple[tuple[str, str], ...] = (
