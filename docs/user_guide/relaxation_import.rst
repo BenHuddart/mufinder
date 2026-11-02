@@ -175,10 +175,12 @@ files, and the confirmation says so; the folder is deleted when the last batch u
 it is removed.
 
 MuFinder refuses while anything still references an imported site, its run or
-its structure; the message lists what still uses them. It also refuses, and nothing
-goes, unless each folder is strictly inside its charge folder in this project, is a
-real folder rather than a link, is the one the import recorded writing to, and is
-used by no job other than another import of the same files. Otherwise it deletes the
+its structure; the message lists what still uses them. A relaxation whose saved
+location is not its own folder, because it leads out of its charge folder or out of the
+project, comes out with its records and leaves that location untouched, and the
+confirmation says its files stay. MuFinder also refuses, and nothing goes, unless each
+other folder is a real folder rather than a link, is the one the import recorded writing
+to, and is used by no job other than another import of the same files. Otherwise it deletes the
 rows, mapping entries, jobs, runs, results, structures, sites and copied files
 as one unit, and records the removal in the project provenance and Journal. When some
 of a batch's folders go and others stay, the status bar counts them

@@ -56,6 +56,7 @@ from mufinder.domain.models import Job
 from mufinder.domain.text import KeptFolder, plain_error
 from mufinder.services.job_paths import (
     job_directory_foreign,
+    job_directory_label,
     job_directory_link_refusal,
     job_directory_on_disk,
     job_directory_refusal,
@@ -150,6 +151,7 @@ class JobCleanupKept:
     item: JobCleanupItem
     directory: Path
     because: tuple[str, str]
+    label: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -172,8 +174,8 @@ class JobCleanupOutcome:
     def kept_folders(self) -> tuple[KeptFolder, ...]:
         """Return each folder that stayed, with why."""
 
-        folders = {entry.directory: entry.because for entry in self.kept}
-        return tuple(KeptFolder(path.name, because) for path, because in folders.items())
+        folders = {entry.directory: entry for entry in self.kept}
+        return tuple(KeptFolder(entry.label, entry.because) for entry in folders.values())
 
     @property
     def completed(self) -> bool:
@@ -415,7 +417,13 @@ class JobFileCleanup:
                     continue
                 because = self._folder_kept_because(item, together, bound)
                 if because is not None:
-                    kept.append(JobCleanupKept(item, item.directory, because))
+                    document = self._document_getter()
+                    label = (
+                        job_directory_label(document.project_root, item.directory)
+                        if document is not None
+                        else item.directory.name
+                    )
+                    kept.append(JobCleanupKept(item, item.directory, because, label))
                 else:
                     disposition = shared_disposition or choose_disposition(item)
                     if disposition is None:

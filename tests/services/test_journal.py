@@ -2275,3 +2275,12 @@ def test_a_removal_lists_its_folders_in_order() -> None:
     body = _imported_removal_body(directories=["/p/b", "/p/a"], kept_directories=["/p/c"])
 
     assert "Deleted folders 'a' and 'b'" in body
+
+
+def test_a_removal_that_left_a_saved_location_alone_says_so() -> None:
+    body = _one_imported_removal_body(
+        directories=[], kept_directories=[], misplaced_directories=["/elsewhere/a"]
+    )
+
+    assert "Its saved location is not its own, so nothing there was touched." in body
+    assert "deleted" not in body

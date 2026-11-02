@@ -563,6 +563,11 @@ def _remove_imported_relaxations_entry(record: ProvenanceRecord) -> JournalEntry
     deleted = _folder_names(record.parameters.get("directories")) if deleted_files else []
     kept = _folder_names(record.parameters.get("kept_directories"))
     undeleted = _folder_names(record.parameters.get("undeleted_directories"))
+    if record.parameters.get("misplaced_directories"):
+        whose = "Its saved location is" if count == 1 else "Their saved locations are"
+        body += (
+            f" {whose} not {'its' if count == 1 else 'their'} own, so nothing there was touched."
+        )
     if kept and not deleted and not undeleted:
         whose = "Its" if count == 1 else "Their"
         body += f" {whose} files stay, because another import uses the same folder."

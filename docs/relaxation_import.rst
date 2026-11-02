@@ -214,8 +214,9 @@ Decisions
      - Require a matching host: the import refuses until one is loaded.
    * - Deleting a job folder
      - Only a real folder, not a link, strictly inside this project's job folders and
-       the job's charge folder once resolved, which the import recorded writing to.
-       Anything else is refused and nothing goes. ``job_directory_refusal`` is the
+       the job's charge folder once resolved, which the import recorded writing to. A
+       saved name leading out of its place leaves that folder alone and the records go;
+       anything else is refused and nothing goes. ``job_directory_refusal`` is the
        same last check on every route that deletes a job's folder, native jobs
        included.
    * - A link below ``files/``
@@ -228,8 +229,8 @@ Decisions
    * - A row whose saved seed leads out of its place
      - A native row with an absolute seed outside the project, or ``..``: the row goes
        with its job's records and nothing on disk is touched. Nothing in the app can
-       correct a saved name, so refusing would leave the row for good. An import's batch
-       still refuses.
+       correct a saved name, so refusing would leave the row for good. A batch does the
+       same, and its confirmation says the files stay.
    * - A native row whose folder another job uses
      - The row goes with its job's records and the folder stays, unoffered. A native job
        with no saved seed resolves by its default name, and a normal submit records one

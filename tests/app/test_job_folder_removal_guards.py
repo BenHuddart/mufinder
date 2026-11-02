@@ -62,7 +62,7 @@ class _Project:
             "mufinder.app.main_window.show_detailed_warning",
             lambda _parent, title, text, **kwargs: (
                 self.boxes if title == "Folders kept" else self.warned
-            ).append(text),
+            ).append(f"{text}\n{kwargs.get('details', '')}"),
         )
         monkeypatch.setattr(
             workflow_table_utils, "confirm_destructive", lambda *args, **kwargs: True
@@ -169,7 +169,7 @@ class TestNativeRowInASharedFolder:
         assert project.status() == "Removed 1 job; kept 1 folder"
         assert len(project.boxes) == 1
         assert "because another job uses it." in project.boxes[0]
-        assert f"'{item.seed_name}'" in project.boxes[0]
+        assert f"positivemuon/{item.seed_name}'" in project.boxes[0]
 
     def test_no_saved_seed_and_a_default_name_matching_an_import_keeps_the_folder(
         self, project: _Project
@@ -274,7 +274,7 @@ class TestNativeRowInASharedFolder:
         assert _tree(project.files) == before
         assert job.id not in project.document.jobs
         assert project.status() == "Removed 1 job; kept 1 folder"
-        assert "'not_a_job'" in project.boxes[0]
+        assert "'files/uep/not_a_job'" in project.boxes[0]
         assert "another workflow" in project.boxes[0]
 
     def test_a_seed_inside_an_imports_folder_keeps_it(self, project: _Project) -> None:
@@ -308,7 +308,7 @@ class TestNativeRowInItsOwnFolder:
         assert job.id not in project.document.jobs
         assert len(project.asked) == 1
         assert item.job_directory.is_dir()
-        assert "kept" not in project.status()
+        assert project.status() == "Removed 1 job; deleted 1 folder"
 
     def test_a_reconfigured_rows_two_jobs_delete_their_one_folder(self, project: _Project) -> None:
         project.import_batch("runs", (1,))
@@ -363,7 +363,7 @@ class TestNativeRowInItsOwnFolder:
         assert not (project.charge / "own").exists()
         assert item.job_directory.is_dir()
         assert project.status() == "Removed 2 jobs; deleted 1 folder; kept 1"
-        assert f"- '{item.seed_name}': another job uses it." in project.boxes[0]
+        assert f"positivemuon/{item.seed_name}': another job uses it." in project.boxes[0]
 
 
 class TestLinks:
@@ -511,6 +511,7 @@ class TestLinks:
         assert _tree(project.files) == before
         assert job.id not in project.document.jobs
         assert project.warned == []
+        assert project.status() == "Removed 1 job"
 
 
 class TestBatchStatusAndJournal:
@@ -540,7 +541,7 @@ class TestBatchStatusAndJournal:
         assert kept_item.job_id in project.document.jobs
         assert project.status() == "Removed 3 imported relaxations; deleted 2 folders; kept 1"
         assert "MuFinder kept 1 folder because another import uses it." in project.boxes[0]
-        assert f"'{shared.seed_name}'" in project.boxes[0]
+        assert f"positivemuon/{shared.seed_name}'" in project.boxes[0]
 
         body = next(
             text for text in project.journal_bodies() if text.startswith("Removed 3 imported")
@@ -693,7 +694,7 @@ class TestCutoffRoute:
         assert other.id in project.document.jobs
         assert asked == []
         assert project.status() == "Removed 1 convergence cutoff entry; kept 1 folder"
-        assert f"'{job.label}'" in project.boxes[0]
+        assert f"convergence_cutoff/{job.label}'" in project.boxes[0]
 
     def test_a_link_in_a_parent_is_refused(self, project: _Project, tmp_path: Path) -> None:
         window, job, output_root, asked = self._sweep(project, tmp_path)
@@ -873,7 +874,7 @@ class TestEnergyBarrierRoute:
         assert _tree(project.files) == before
         assert job.id not in project.document.jobs
         assert project.status() == "Removed 1 energy-barrier path; kept 1 folder"
-        assert f"'{item.seed_name}'" in project.boxes[0]
+        assert f"positivemuon/{item.seed_name}'" in project.boxes[0]
 
 
 class TestUnsafeSavedSeed:
@@ -985,6 +986,120 @@ class TestTheBoxAndTheBarFit:
 
         box = shown[0]
         assert box.text() == "MuFinder kept 15 folders because other jobs use them."
+        assert box.informativeText() == "Open Details to see which ones."
         assert box.sizeHint().height() < self.SCREEN_HEIGHT
+        assert box.text() not in box.detailedText()
         assert all(name in box.detailedText() for name in names)
         assert box.detailedText().index("Site_2") < box.detailedText().index("Site_10")
+
+
+class TestBatchWithAnUnsafeSavedSeed:
+    """As for a row: nothing in the app can correct a saved name, so the records can go."""
+
+    def _question(self, project: _Project) -> list[str]:
+        asked: list[str] = []
+
+        def _confirm(*args, **kwargs) -> bool:
+            asked.append(" ".join(str(part) for part in args))
+            return True
+
+        project.monkeypatch.setattr(workflow_table_utils, "confirm_destructive", _confirm)
+        return asked
+
+    @pytest.mark.parametrize(
+        "seed", [".", "..", "../..", "../positivemuon", "../muonium/native_job"]
+    )
+    def test_the_records_go_and_the_disk_is_untouched(self, project: _Project, seed: str) -> None:
+        outcome = project.import_batch("runs", (1,))
+        item = outcome.imported[0]
+        (project.output_root / "muonium" / "native_job").mkdir(parents=True)
+        project.point_at(item, seed)
+        asked = self._question(project)
+        before = _tree(project.files)
+
+        project.remove_batch(outcome)
+
+        assert _tree(project.files) == before
+        assert item.job_id not in project.document.jobs
+        assert item.site_id not in project.document.sites
+        assert project.warned == []
+        assert "Its files stay" in asked[0]
+        assert "delete" not in asked[0].split("MuFinder did not")[0]
+        assert project.status() == "Removed 1 imported relaxation; kept 1 folder"
+        assert "saved location" in project.boxes[0]
+        body = next(text for text in project.journal_bodies() if "Removed 1 imported" in text)
+        assert "nothing there was touched" in body
+        assert "was deleted" not in body
+
+    def test_an_absolute_name_outside_the_project(self, project: _Project, tmp_path: Path) -> None:
+        outcome = project.import_batch("runs", (1,))
+        item = outcome.imported[0]
+        victim = tmp_path / "elsewhere" / "positivemuon" / item.seed_name
+        victim.mkdir(parents=True)
+        (victim / "thesis.txt").write_text("kept")
+        project.point_at(item, str(victim))
+        before = _tree(project.files)
+
+        project.remove_batch(outcome)
+
+        assert (victim / "thesis.txt").is_file()
+        assert _tree(project.files) == before
+        assert item.job_id not in project.document.jobs
+
+    def test_a_mixed_batch_deletes_only_the_sound_folders(self, project: _Project) -> None:
+        outcome = project.import_batch("runs", (1, 2))
+        stray, sound = outcome.imported
+        stray_tree = _tree(stray.job_directory)
+        project.point_at(stray, "..")
+        asked = self._question(project)
+
+        project.remove_batch(outcome)
+
+        assert _tree(stray.job_directory) == stray_tree
+        assert not sound.job_directory.exists()
+        assert stray.job_id not in project.document.jobs
+        assert sound.job_id not in project.document.jobs
+        assert "delete its job directory" not in asked[0]
+        assert "The files of 1 relaxation stay" in asked[0]
+        assert project.status() == "Removed 2 imported relaxations; deleted 1 folder; kept 1"
+
+    def test_a_link_still_refuses_and_nothing_goes(self, project: _Project) -> None:
+        outcome = project.import_batch("runs", (1,))
+        item = outcome.imported[0]
+        (project.charge / "alias").symlink_to(project.charge, target_is_directory=True)
+        project.point_at(item, f"alias/{item.seed_name}")
+
+        project.remove_batch(outcome)
+
+        assert item.job_id in project.document.jobs
+        assert project.warned and "link" in project.warned[0]
+
+
+class TestDetailsTellFoldersApart:
+    def test_one_name_in_two_charge_folders(self, project: _Project) -> None:
+        project.import_batch("runs", (1,))
+        other = project.native(label="other", seed="same")
+        neutral_other = project.native(label="neutral_other", seed="same", charge="muonium")
+        for charge in ("positivemuon", "muonium"):
+            (project.output_root / charge / "same").mkdir(parents=True)
+        first = project.native(label="a", seed="same")
+        second = project.native(label="b", seed="same", charge="muonium")
+
+        project.window._on_remove_muon_relaxation_rows(["positivemuon:a", "muonium:b"])
+
+        assert "files/muon_relaxation/muonium/same" in project.boxes[0]
+        assert "files/muon_relaxation/positivemuon/same" in project.boxes[0]
+        assert first.id not in project.document.jobs
+        assert second.id not in project.document.jobs
+        assert other.id in project.document.jobs
+        assert neutral_other.id in project.document.jobs
+
+    def test_two_names_leading_out_by_different_amounts(self, project: _Project) -> None:
+        project.import_batch("runs", (1,))
+        project.native(label="a", seed="..")
+        project.native(label="b", seed="../../../..")
+
+        project.window._on_remove_muon_relaxation_rows(["positivemuon:a", "positivemuon:b"])
+
+        assert "- '..':" in project.boxes[0]
+        assert "- 'files/muon_relaxation':" in project.boxes[0]

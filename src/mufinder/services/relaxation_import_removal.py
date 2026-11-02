@@ -44,7 +44,7 @@ from mufinder.domain.models import ProvenanceRecord
 from mufinder.domain.text import plain_error, plural
 from mufinder.persistence.codec import uuid_or_none
 from mufinder.services.job_paths import (
-    job_directory_foreign,
+    job_directory_misplaced,
     job_directory_refusal,
     resolved_path,
 )
@@ -91,6 +91,9 @@ class RemovalPlan:
     #: Target jobs whose folder another import also uses: their records go and
     #: the folder stays, until the last import using it goes.
     kept_job_ids: frozenset[UUID] = frozenset()
+    #: Target jobs whose saved name leads out of their place: their records go and
+    #: nothing on disk is touched.
+    misplaced_job_ids: frozenset[UUID] = frozenset()
     #: The folders of every other job, none of which a removal may touch.
     other_job_directories: Mapping[UUID, Path] = field(default_factory=dict)
     #: Why a target's folder is not one this removal may delete. Non-empty means
@@ -101,7 +104,7 @@ class RemovalPlan:
     def directories(self) -> tuple[Path, ...]:
         """Return the folders the removal deletes."""
 
-        return _folders_to_delete(self.job_directories, self.kept_job_ids)
+        return _folders_to_delete(self.job_directories, self.kept_job_ids | self.misplaced_job_ids)
 
     @property
     def kept_directories(self) -> tuple[Path, ...]:
@@ -133,6 +136,8 @@ class RemovalOutcome:
     #: import also uses them.
     deleted_directories: tuple[Path, ...] = ()
     kept_directories: tuple[Path, ...] = ()
+    #: The folders left alone because a saved name led to them.
+    misplaced_directories: tuple[Path, ...] = ()
 
 
 def imported_relaxations_in_batch(document: Any, batch_id: UUID) -> list[ImportedRelaxationRef]:
@@ -252,16 +257,17 @@ def _folder_refusal(
 
     It has to be strictly inside the job's charge folder, be the folder the import
     recorded writing to, and be no other job's. An imported folder holds the only
-    copy of its results, and of any other job's it might turn out to be.
+    copy of its results, and of any other job's it might turn out to be. A saved name
+    that leads out of its place is not refused: :func:`jobs_with_misplaced_folders`
+    leaves that folder alone, and nothing in the app could correct the name.
     """
 
     job = document.jobs.get(ref.job_id)
     if job is None:
         return None
+    if job_directory_misplaced(document.project_root, job, directory):
+        return None
     reason = job_directory_refusal(document.project_root, job, directory)
-    if reason is not None:
-        return reason
-    reason = job_directory_foreign(document.project_root, job, directory)
     if reason is not None:
         return reason
     resolved = resolved_path(directory)
@@ -272,6 +278,10 @@ def _folder_refusal(
         return f"its folder is not the one its files were written to ({directory.name!r})"
     for other_id, other in other_job_directories.items():
         if other_id == ref.job_id:
+            continue
+        # A saved name leading out of its place (``..`` reads as a whole workflow's
+        # folder) says nothing about who uses what.
+        if job_directory_misplaced(document.project_root, document.jobs.get(other_id), other):
             continue
         other_resolved = resolved_path(other)
         if other_resolved == resolved and _is_import_of(document, other_id, other.name):
@@ -312,6 +322,18 @@ def _folders_to_delete(
         dict.fromkeys(
             path for job_id, path in job_directories.items() if job_id not in kept_job_ids
         )
+    )
+
+
+def jobs_with_misplaced_folders(
+    document: Any, job_directories: Mapping[UUID, Path]
+) -> frozenset[UUID]:
+    """Return the target jobs whose saved name leads out of their place."""
+
+    return frozenset(
+        job_id
+        for job_id, path in job_directories.items()
+        if job_directory_misplaced(document.project_root, document.jobs.get(job_id), path)
     )
 
 
@@ -369,11 +391,15 @@ def plan_removal(
     }
     others = dict(other_job_directories or {})
     unsafe = unsafe_directories(document, targets, directories, others)
+    misplaced = jobs_with_misplaced_folders(document, directories)
     return RemovalPlan(
         targets=tuple(targets),
         blockers=tuple(find_references(document, targets)),
         job_directories=directories,
-        kept_job_ids=frozenset() if unsafe else jobs_keeping_their_folder(directories, others),
+        kept_job_ids=(
+            frozenset() if unsafe else jobs_keeping_their_folder(directories, others) - misplaced
+        ),
+        misplaced_job_ids=misplaced,
         other_job_directories=others,
         unsafe=unsafe,
     )
@@ -409,7 +435,8 @@ def remove_imported_relaxations(
     )
     if unsafe:
         return RemovalOutcome(removed=0, errors=list(unsafe))
-    kept = jobs_keeping_their_folder(plan.job_directories, plan.other_job_directories)
+    misplaced = jobs_with_misplaced_folders(document, plan.job_directories)
+    kept = jobs_keeping_their_folder(plan.job_directories, plan.other_job_directories) - misplaced
 
     errors: list[str] = []
     removed = 0
@@ -443,7 +470,7 @@ def remove_imported_relaxations(
             for job_id, path in plan.job_directories.items()
             if job_id not in removed_job_ids
         }
-        for directory in _folders_to_delete(plan.job_directories, kept):
+        for directory in _folders_to_delete(plan.job_directories, kept | misplaced):
             if not directory.exists() or resolved_path(directory) in staying:
                 continue
             try:
@@ -454,6 +481,7 @@ def remove_imported_relaxations(
             else:
                 deleted.append(directory)
     kept_directories = tuple(dict.fromkeys(plan.job_directories[job] for job in kept))
+    misplaced_directories = tuple(dict.fromkeys(plan.job_directories[job] for job in misplaced))
 
     record: ProvenanceRecord | None = None
     if removed:
@@ -469,6 +497,7 @@ def remove_imported_relaxations(
                 "directories": [str(path) for path in deleted],
                 "kept_directories": [str(path) for path in kept_directories],
                 "undeleted_directories": [str(path) for path in undeleted],
+                "misplaced_directories": [str(path) for path in misplaced_directories],
             },
             input_entity_ids=[ref.site_id for ref in plan.targets],
         )
@@ -479,6 +508,7 @@ def remove_imported_relaxations(
         provenance=record,
         deleted_directories=tuple(deleted),
         kept_directories=kept_directories,
+        misplaced_directories=misplaced_directories,
     )
 
 

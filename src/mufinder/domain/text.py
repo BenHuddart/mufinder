@@ -135,8 +135,16 @@ def folder_outcome_status(
     return "; ".join(parts)
 
 
-def kept_folders_message(kept: Sequence[KeptFolder]) -> str:
-    """Return why folders were kept: one line to show, then a line per folder for Details.
+class KeptFoldersMessage(NamedTuple):
+    """Why folders were kept: the line to show, what to do next, and a line per folder."""
+
+    summary: str
+    instruction: str
+    details: str
+
+
+def kept_folders_message(kept: Sequence[KeptFolder]) -> KeptFoldersMessage:
+    """Return why folders were kept, saying each thing once.
 
     Each entry is a folder of its own: two in different charge folders can share a name.
     """
@@ -146,9 +154,10 @@ def kept_folders_message(kept: Sequence[KeptFolder]) -> str:
     reasons = {folder.because for folder in folders}
     one, several = next(iter(reasons))
     reason = one if len(folders) == 1 else several
+    lines = "\n".join(f"- '{folder.name}': {folder.because[0]}." for folder in folders)
     if len(reasons) == 1 and reason:
-        summary = f"MuFinder kept {count} because {reason}."
-    else:
-        summary = f"MuFinder kept {count}. Details gives the reason for each."
-    lines = [f"- '{folder.name}': {folder.because[0]}." for folder in folders]
-    return "\n".join([summary, *lines])
+        which = "which one" if len(folders) == 1 else "which ones"
+        return KeptFoldersMessage(
+            f"MuFinder kept {count} because {reason}.", f"Open Details to see {which}.", lines
+        )
+    return KeptFoldersMessage(f"MuFinder kept {count}.", "Open Details to see why.", lines)

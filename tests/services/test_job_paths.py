@@ -13,7 +13,9 @@ from mufinder.services.job_paths import (
     definition_output_directory,
     job_directory_foreign,
     job_directory_link,
+    job_directory_label,
     job_directory_link_refusal,
+    job_directory_misplaced,
     job_directory_on_disk,
     job_directory_refusal,
     job_output_directory,
@@ -488,3 +490,47 @@ class TestALinkCycle:
         assert job_directory_on_disk(tmp_path, loop) is True
         reason = job_directory_refusal(tmp_path, None, loop)
         assert reason is not None and "link" in reason
+
+
+class TestAFoldersLabel:
+    def test_it_is_relative_to_the_project_and_tells_folders_apart(self, tmp_path: Path) -> None:
+        charge = tmp_path / "files" / "muon_relaxation"
+
+        assert job_directory_label(tmp_path, charge / "muonium" / "x") == (
+            "files/muon_relaxation/muonium/x"
+        )
+        assert job_directory_label(tmp_path, charge / "positivemuon" / "x") == (
+            "files/muon_relaxation/positivemuon/x"
+        )
+        assert job_directory_label(tmp_path, charge / "positivemuon" / "..") == (
+            "files/muon_relaxation"
+        )
+        assert job_directory_label(tmp_path, tmp_path / ".." / "x") == "../x"
+
+
+class TestAMisplacedFolder:
+    def _job(self) -> Job:
+        return make_job(
+            label="native",
+            workflow_stage=WorkflowStage.MUON_RELAXATION,
+            calc_type=MUON_RELAXATION_CALC_TYPES["positive_muon"],
+        )
+
+    def test_a_name_leading_out_is_misplaced_and_its_own_folder_is_not(
+        self, tmp_path: Path
+    ) -> None:
+        charge = tmp_path / "files" / "muon_relaxation" / "positivemuon"
+        charge.mkdir(parents=True)
+        job = self._job()
+
+        assert job_directory_misplaced(tmp_path, job, charge / "job") is False
+        assert job_directory_misplaced(tmp_path, job, charge / "..") is True
+        assert job_directory_misplaced(tmp_path, job, tmp_path.parent / "elsewhere") is True
+        assert job_directory_misplaced(tmp_path, job, tmp_path / "files" / "uep" / "job") is True
+
+    def test_a_link_is_not_misplaced(self, tmp_path: Path) -> None:
+        charge = tmp_path / "files" / "muon_relaxation" / "positivemuon"
+        charge.mkdir(parents=True)
+        (charge / "linked").symlink_to(charge, target_is_directory=True)
+
+        assert job_directory_misplaced(tmp_path, self._job(), charge / "linked") is False

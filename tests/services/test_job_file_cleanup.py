@@ -332,7 +332,9 @@ def test_a_folder_another_job_uses_is_not_offered_and_only_the_records_go(tmp_pa
     assert job.id not in document.jobs
     assert other.id in document.jobs
     assert [entry.directory for entry in outcome.kept] == [directory]
-    assert outcome.kept_folders == (KeptFolder("relax_a", KEPT_FOR_ANOTHER_JOB),)
+    assert outcome.kept_folders == (
+        KeptFolder("files/pristine_relaxation/relax_a", KEPT_FOR_ANOTHER_JOB),
+    )
 
 
 def test_a_folder_holding_or_inside_another_jobs_folder_is_kept(tmp_path: Path) -> None:
@@ -409,7 +411,7 @@ def test_an_outcome_lists_the_folders_of_each_fate(tmp_path: Path) -> None:
 
     assert outcome.deleted == (mine_directory,)
     assert outcome.archived == (moved_directory,)
-    assert [folder.name for folder in outcome.kept_folders] == ["relax_c"]
+    assert [folder.name for folder in outcome.kept_folders] == ["files/pristine_relaxation/relax_c"]
 
 
 def test_an_outcome_with_nothing_kept_lists_no_kept_folder(tmp_path: Path) -> None:

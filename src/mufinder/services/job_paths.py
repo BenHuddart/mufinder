@@ -13,6 +13,7 @@ Layering: this lives in ``mufinder.services`` and imports ``domain`` and
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+import os
 from pathlib import Path
 import posixpath
 from typing import TYPE_CHECKING
@@ -338,6 +339,30 @@ def job_directory_foreign(project_root: Path, job: Job | None, directory: Path) 
     if len(place) > 2 and (len(place) != 3 or place[1] != charge_folder):
         return f"its folder is not inside its charge folder ({directory.name!r})"
     return None
+
+
+def job_directory_misplaced(project_root: Path, job: Job | None, directory: Path) -> bool:
+    """Return whether a saved name leads ``directory`` out of the job's place, a link aside.
+
+    Nothing in the app can correct a saved name, so a removal leaves that folder alone and
+    lets the job's records go. A link can be removed, and is refused instead.
+    """
+
+    if job_directory_link_refusal(project_root, directory) is not None:
+        return False
+    return bool(
+        job_directory_refusal(project_root, job, directory)
+        or job_directory_foreign(project_root, job, directory)
+    )
+
+
+def job_directory_label(project_root: Path, directory: Path) -> str:
+    """Return ``directory`` relative to the project, enough to tell any two folders apart."""
+
+    try:
+        return Path(os.path.relpath(directory, project_root)).as_posix()
+    except ValueError:  # On another drive.
+        return str(directory)
 
 
 def job_seed_name(job: Job, output_directory: Callable[[Job], Path | None]) -> str:

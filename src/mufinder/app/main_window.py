@@ -332,8 +332,14 @@ from mufinder.services.job_artifacts import (
     RetrievalFlags,
     collect_job_artifacts,
 )
-from mufinder.services.job_file_cleanup import JobCleanupItem, JobCleanupOutcome, JobFileCleanup
+from mufinder.services.job_file_cleanup import (
+    KEPT_AS_NOT_ITS_OWN,
+    JobCleanupItem,
+    JobCleanupOutcome,
+    JobFileCleanup,
+)
 from mufinder.services.job_paths import (
+    job_directory_label,
     definition_output_directory,
     job_output_directory,
     job_output_files,
@@ -5647,7 +5653,11 @@ class MainWindow(QMainWindow):
             if cleanup_choice and job.id in cleanup_refusals:
                 cleanup_errors.append(f"{cleanup_refusals[job.id]}; its folder was kept")
                 refused_dir = self._job_output_directory(job)
-                name = refused_dir.name if refused_dir is not None else job.label
+                name = (
+                    job_directory_label(self._document.project_root, refused_dir)
+                    if refused_dir is not None
+                    else job.label
+                )
                 # Without the path that closes it: the folder's name goes with the reason.
                 reason = cleanup_refusals[job.id].removeprefix(f"- {job.label}: ").split(" (")[0]
                 kept_folders[refused_dir or job.label] = KeptFolder(name, (reason, ""))
@@ -5661,7 +5671,8 @@ class MainWindow(QMainWindow):
                     except OSError as exc:
                         cleanup_errors.append(f"- {job.label}: {exc}")
                         reason = plain_error(exc)
-                        kept_folders[output_dir] = KeptFolder(output_dir.name, (reason, ""))
+                        name = job_directory_label(self._document.project_root, output_dir)
+                        kept_folders[output_dir] = KeptFolder(name, (reason, ""))
 
             try:
                 self._project_service.reset_failed_job(job)
@@ -8688,8 +8699,8 @@ class MainWindow(QMainWindow):
             ),
             keep_text="or Cancel to keep the relaxation row.",
         )
-        if outcome.kept:
-            removed = sum(len(item.jobs) for item in outcome.cleaned)
+        removed = sum(len(item.jobs) for item in outcome.cleaned)
+        if removed:
             self._report_cleanup_outcome(f"Removed {plural(removed, 'job')}", outcome)
         return outcome.completed
 
@@ -8745,11 +8756,13 @@ class MainWindow(QMainWindow):
         """Say why folders stayed, however many, with their names under Details."""
 
         if kept:
+            message = kept_folders_message(kept)
             show_detailed_warning(
                 self,
                 title,
-                kept_folders_message(kept),
-                informative_text="Open Details to see each one.",
+                message.summary,
+                informative_text=message.instruction,
+                details=message.details,
             )
 
     def _relaxation_archive_root_for_job(self, job: Job, job_dir: Path) -> Path | None:
@@ -9091,7 +9104,12 @@ class MainWindow(QMainWindow):
             )
             return
         kept = [
-            KeptFolder(path.name, _KEPT_FOR_ANOTHER_IMPORT) for path in outcome.kept_directories
+            KeptFolder(job_directory_label(document.project_root, path), because)
+            for paths, because in (
+                (outcome.kept_directories, _KEPT_FOR_ANOTHER_IMPORT),
+                (outcome.misplaced_directories, KEPT_AS_NOT_ITS_OWN),
+            )
+            for path in paths
         ]
         self.statusBar().showMessage(
             folder_outcome_status(
@@ -9124,18 +9142,35 @@ class MainWindow(QMainWindow):
             "another import uses the same folder. The folder is deleted when the last import "
             "using it is removed."
         )
-        single = len(plan.targets) == 1
-        if not plan.directories and plan.kept_job_ids:
-            whose = "Its" if single else "Their"
-            return f"Remove {count} from the project? {whose} files stay, because {stays}"
-        directories = "its job directory" if single else "their job directories"
-        question = (
-            f"Permanently remove {count} and delete {directories}, including the "
-            "archived original input files?"
+        elsewhere = (
+            "the location saved for {them} is not {their} own folder. Nothing there is touched."
         )
+        single = len(plan.targets) == 1
+        whose = "Its" if single else "Their"
+        if not plan.directories and plan.kept_job_ids and not plan.misplaced_job_ids:
+            return f"Remove {count} from the project? {whose} files stay, because {stays}"
+        if not plan.directories and plan.misplaced_job_ids and not plan.kept_job_ids:
+            why = (
+                elsewhere.format(them="it", their="its")
+                if single
+                else (elsewhere.format(them="them", their="their"))
+            )
+            return f"Remove {count} from the project? {whose} files stay, because {why}"
+        if plan.directories:
+            directories = "its job directory" if single else "their job directories"
+            question = (
+                f"Permanently remove {count} and delete {directories}, including the "
+                "archived original input files?"
+            )
+        else:
+            question = f"Remove {count} from the project?"
         if plan.kept_job_ids:
             kept = plural(len(plan.kept_job_ids), "relaxation")
             question += f"\n\nThe files of {kept} stay, because {stays}"
+        if plan.misplaced_job_ids:
+            misplaced = plural(len(plan.misplaced_job_ids), "relaxation")
+            why = elsewhere.format(them="them", their="their")
+            question += f"\n\nThe files of {misplaced} stay, because {why}"
         return question
 
     def _muon_relaxation_form_state_without(self, targets) -> dict[str, object]:

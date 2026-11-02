@@ -100,38 +100,35 @@ def test_folder_outcome_status_gives_counts_with_one_noun(counts, expected) -> N
 def test_kept_folders_message_says_why_for_one_folder() -> None:
     reasons = ("another job uses it", "other jobs use them")
 
-    assert kept_folders_message([KeptFolder("a", reasons)]).splitlines() == [
+    assert kept_folders_message([KeptFolder("a", reasons)]) == (
         "MuFinder kept 1 folder because another job uses it.",
+        "Open Details to see which one.",
         "- 'a': another job uses it.",
-    ]
+    )
 
 
 def test_kept_folders_message_sorts_and_agrees_for_several() -> None:
     reasons = ("another job uses it", "other jobs use them")
     kept = [KeptFolder(name, reasons) for name in ("Mu_10", "Mu_2")]
 
-    assert kept_folders_message(kept).splitlines() == [
+    assert kept_folders_message(kept) == (
         "MuFinder kept 2 folders because other jobs use them.",
-        "- 'Mu_2': another job uses it.",
-        "- 'Mu_10': another job uses it.",
-    ]
+        "Open Details to see which ones.",
+        "- 'Mu_2': another job uses it.\n- 'Mu_10': another job uses it.",
+    )
 
 
-def test_kept_folders_message_with_mixed_reasons_gives_each_under_details() -> None:
+def test_kept_folders_message_with_mixed_reasons_says_each_thing_once() -> None:
     kept = [KeptFolder("a", ("one", "many")), KeptFolder("b", ("other", "others"))]
 
-    assert kept_folders_message(kept).splitlines() == [
-        "MuFinder kept 2 folders. Details gives the reason for each.",
-        "- 'a': one.",
-        "- 'b': other.",
-    ]
+    assert kept_folders_message(kept) == (
+        "MuFinder kept 2 folders.",
+        "Open Details to see why.",
+        "- 'a': one.\n- 'b': other.",
+    )
 
 
-def test_kept_folders_message_counts_folders_that_share_a_name() -> None:
-    kept = [KeptFolder("x", ("one", "")), KeptFolder("x", ("other", ""))]
+def test_kept_folders_message_with_a_reason_only_for_one_folder() -> None:
+    kept = [KeptFolder("a", ("one", "")), KeptFolder("b", ("one", ""))]
 
-    assert kept_folders_message(kept).splitlines() == [
-        "MuFinder kept 2 folders. Details gives the reason for each.",
-        "- 'x': one.",
-        "- 'x': other.",
-    ]
+    assert kept_folders_message(kept).summary == "MuFinder kept 2 folders."
