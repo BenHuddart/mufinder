@@ -58,6 +58,12 @@ class EnergyBarrierError(ValueError):
     """Raised when an Energy Barriers input cannot be prepared."""
 
 
+# A hop direction's components, as a fraction of the largest, count as zero or as a
+# simple ratio within this tolerance, up to this integer index.
+_DIRECTION_TOLERANCE = 0.02
+_DIRECTION_MAX_INDEX = 6
+
+
 @dataclass(frozen=True, slots=True)
 class MuonPath:
     """One symmetry-distinct muon path between two relaxed structures."""
@@ -521,6 +527,55 @@ def _validate_transition_state_cells(lhs: Atoms, rhs: Atoms) -> None:
         )
     if not np.allclose(lhs.cell.array, rhs.cell.array, atol=1e-8):
         raise EnergyBarrierError("Transition-state endpoints must share the same simulation cell.")
+
+
+def hop_cartesian_vector(
+    start_fractional: Sequence[float],
+    end_fractional: Sequence[float],
+    lattice_vectors: Sequence[Sequence[float]],
+) -> np.ndarray:
+    """Return the hop from start to the nearest periodic image of end, in Å."""
+
+    start = np.asarray(start_fractional, dtype=float).reshape(1, 3)
+    end = np.asarray(end_fractional, dtype=float).reshape(1, 3)
+    lattice = np.asarray(lattice_vectors, dtype=float)
+    return nearest_image_delta_matrix(start, end, lattice)[0, 0] @ lattice
+
+
+def hop_direction_label(
+    hop_cartesian: Sequence[float],
+    reference_lattice: Sequence[Sequence[float]],
+    *,
+    either_sense: bool = False,
+) -> str:
+    """Name a hop's direction in the axes of ``reference_lattice``.
+
+    The result is ``"along c"`` for a hop along one axis and ``"along [1 -1 0]"``
+    otherwise, with the smallest integers when the components are close to a
+    simple ratio and the components scaled to a largest value of 1 when they are
+    not. ``either_sense`` gives a hop and its reverse one name, which suits a hop
+    between copies of one site.
+    """
+
+    components = np.asarray(hop_cartesian, dtype=float) @ np.linalg.inv(
+        np.asarray(reference_lattice, dtype=float)
+    )
+    largest = float(np.max(np.abs(components)))
+    if largest <= 0.0:
+        return ""
+    scaled = components / largest
+    scaled[np.abs(scaled) < _DIRECTION_TOLERANCE] = 0.0
+    if either_sense and scaled[np.flatnonzero(scaled)[0]] < 0.0:
+        scaled = -scaled
+    if np.count_nonzero(scaled) == 1:
+        axis = int(np.flatnonzero(scaled)[0])
+        return f"along {'-' if scaled[axis] < 0.0 else ''}{'abc'[axis]}"
+    for multiplier in range(1, _DIRECTION_MAX_INDEX + 1):
+        multiples = scaled * multiplier
+        if np.all(np.abs(multiples - np.rint(multiples)) < _DIRECTION_TOLERANCE * multiplier):
+            indexes = [int(value) for value in np.rint(multiples)]
+            return f"along [{' '.join(str(index) for index in indexes)}]"
+    return f"along [{' '.join(f'{value:.2g}' for value in scaled)}]"
 
 
 def _wrapped_fractional_delta(start: np.ndarray, end: np.ndarray) -> np.ndarray:

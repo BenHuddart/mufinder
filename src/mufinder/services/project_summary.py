@@ -286,6 +286,13 @@ _STAGE_JOB_STAGES: dict[str, tuple[WorkflowStage, ...]] = {
     "energy_barriers": (WorkflowStage.ENERGY_BARRIERS,),
 }
 
+#: The navigator stage whose page holds a job of each workflow stage.
+_JOB_STAGE_KEYS: dict[WorkflowStage, str] = {
+    **{job_stage: key for key, job_stages in _STAGE_JOB_STAGES.items() for job_stage in job_stages},
+    WorkflowStage.MUON_GENERATION: "muon_candidates",
+    WorkflowStage.SITE_ANALYSIS: "muon_analysis",
+}
+
 _STAGES_BY_KEY = {stage.key: stage for stage in WORKFLOW_STAGES}
 _GROUPS_BY_KEY = {group.key: group for group in STAGE_GROUPS}
 
@@ -294,6 +301,18 @@ def stage_info(key: str) -> WorkflowStageInfo:
     """Return the stage with ``key``; raises ``KeyError`` for an unknown key."""
 
     return _STAGES_BY_KEY[key]
+
+
+def job_stage_key(workflow_stage: WorkflowStage) -> str:
+    """Return the navigator stage key (a page route) of a job's ``workflow_stage``."""
+
+    return _JOB_STAGE_KEYS[workflow_stage]
+
+
+def job_stage_name(workflow_stage: WorkflowStage) -> str:
+    """Return the navigator's name for a job's ``workflow_stage``."""
+
+    return stage_info(job_stage_key(workflow_stage)).title
 
 
 def stage_group(key: str) -> StageGroup:

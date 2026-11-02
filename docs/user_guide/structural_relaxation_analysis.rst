@@ -441,7 +441,7 @@ fields are refreshed from the same completion. A continued run that dies before
 writing a new ``-out.cell`` fails rather than reusing the previous one. Each
 continuation is recorded in the Journal.
 
-The job dashboard's ``Resubmit`` also resumes from the checkpoint when you
+The job dashboard's ``Resubmit…`` also resumes from the checkpoint when you
 choose ``Continue from the checkpoint`` (see :doc:`/getting_started/running_jobs`).
 Neither route deletes the run directory's contents. ``Reset Failed Jobs…``
 with its optional clean-up does: it deletes the local ``.check`` and

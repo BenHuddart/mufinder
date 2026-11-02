@@ -12,6 +12,7 @@ from mufinder.services.job_monitoring import (
     STALENESS_THRESHOLD_SECONDS,
     is_cluster_job,
     job_staleness,
+    job_where_text,
 )
 from tests.support.jobs import make_job
 
@@ -84,3 +85,18 @@ def test_naive_last_checked_stamp_is_treated_as_utc() -> None:
     naive_old = datetime(2026, 7, 4, 11, 0)  # 60 min before _NOW, no tzinfo
     marker = job_staleness(_job(last_checked_at=naive_old), now=_NOW, cluster_connected=True)
     assert marker == "not checked for 60 min"
+
+
+@pytest.mark.parametrize(
+    ("target", "remote_id", "expected"),
+    [
+        ("local", None, "local"),
+        ("", None, "local"),
+        ("SCARF", None, "SCARF"),
+        ("SCARF", "4127731", "SCARF #4127731"),
+    ],
+)
+def test_job_where_text_names_the_cluster_and_its_job_id(target, remote_id, expected) -> None:
+    job = make_job(execution_target=target, remote_job_id=remote_id)
+
+    assert job_where_text(job) == expected

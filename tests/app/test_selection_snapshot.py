@@ -12,16 +12,19 @@ from PySide6.QtWidgets import (
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
+    QTabWidget,
 )
 
 from mufinder.app import selection_snapshot
 from mufinder.app.selection_snapshot import (
+    RowControlsCell,
     SelectionScope,
     SelectionSnapshotCheckBox,
     SelectionSnapshotComboBox,
     SelectionSnapshotPushButton,
     SelectionSnapshotToolButton,
     resolve_target_keys,
+    select_and_reveal_table_rows,
 )
 
 
@@ -662,3 +665,40 @@ def test_snapshot_combo_ends_text_too_wide_for_it_in_an_ellipsis(qapp):
 
     combo.resize(600, 30)
     assert combo.displayed_text() == "YBa2Cu3O7 2x2x1 with a long name"
+
+
+def test_controls_in_a_cell_follow_the_row_rule(qapp):
+    table = _make_table_with_rows(3)
+    first = SelectionSnapshotPushButton("first")
+    second = SelectionSnapshotPushButton("second")
+    table.setCellWidget(1, 0, RowControlsCell(first, second))
+
+    assert second._own_table_row(table) == 1
+    assert second._owning_table() is table
+
+    # On a row outside the selection the highlight moves to its row.
+    _select_rows(table, [0, 2])
+    second._capture_selection_snapshot()
+    assert second.selection_snapshot_rows == (1,)
+
+    # On a row inside it the whole selection is kept.
+    _select_rows(table, [0, 1])
+    first._capture_selection_snapshot()
+    assert first.selection_snapshot_rows == (0, 1)
+    table.close()
+
+
+def test_select_and_reveal_shows_the_tab_holding_the_table(qapp):
+    tabs = QTabWidget()
+    other = _make_table_with_rows(2)
+    table = _make_table_with_rows(4)
+    tabs.addTab(other, "other")
+    tabs.addTab(table, "table")
+
+    assert select_and_reveal_table_rows(table, []) is False
+    assert tabs.currentWidget() is other
+
+    assert select_and_reveal_table_rows(table, [1, 3]) is True
+    assert tabs.currentWidget() is table
+    assert sorted(index.row() for index in table.selectionModel().selectedRows()) == [1, 3]
+    tabs.close()

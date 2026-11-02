@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+import math
 from typing import Callable
 
 import shiboken6
-from PySide6.QtCore import QObject, Qt
+from PySide6.QtCore import QObject, QSize, Qt
 from PySide6.QtGui import QAction, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -32,6 +33,7 @@ from mufinder.app.selection_snapshot import SelectionSnapshotComboBox, resolve_t
 from mufinder.app.theme import use_square_top_table_corners, use_tabbed_table_corners
 from mufinder.app.workflow_submission import READY_WORKFLOW_ROW_STATUSES
 from mufinder.castep_io.types import ValueWithUnit
+from mufinder.domain.constants import MEV_PER_EV
 from mufinder.domain.text import plural
 from mufinder.science.kpoint_grids import spacing_from_grid
 
@@ -59,15 +61,21 @@ RESET_FAILED_TABLE_TOOLTIP = (
 )
 
 
-def format_energy_ev(value: object) -> str:
-    """Format an energy in eV for a workflow results table; blank when not numeric."""
+#: What a results cell shows while a value does not exist yet.
+NO_VALUE_TEXT = "–"
 
-    if value is None:
-        return ""
-    try:
-        return f"{float(value):.6g} eV"
-    except (TypeError, ValueError):
-        return ""
+
+def format_energy_mev(energy_ev: float | None, *, signed: bool = False) -> str:
+    """Format an energy in eV as whole meV for a results table.
+
+    ``None`` or a non-finite value (a diverged band image) gives a dash, and ``0`` has
+    no sign.
+    """
+
+    if energy_ev is None or not math.isfinite(energy_ev):
+        return NO_VALUE_TEXT
+    rounded = round(float(energy_ev) * MEV_PER_EV)
+    return f"{rounded:+d} meV" if signed and rounded else f"{rounded:d} meV"
 
 
 #: Values at most this large are shown as ``0`` by :func:`format_table_number`.
@@ -292,6 +300,13 @@ def confirm_row_removal(
     )
 
 
+class _MaximumHeightTable(QTableWidget):
+    """Table that asks a layout for its maximum height instead of Qt's default hint."""
+
+    def sizeHint(self) -> QSize:  # noqa: N802 - Qt API naming.
+        return QSize(super().sizeHint().width(), self.maximumHeight())
+
+
 def create_workflow_table(
     headers: tuple[str, ...],
     *,
@@ -304,6 +319,7 @@ def create_workflow_table(
     stretch_last_section: bool = True,
     default_resize_mode: QHeaderView.ResizeMode = QHeaderView.ResizeMode.Stretch,
     accessible_name: str = "",
+    prefer_maximum_height: bool = False,
 ) -> QTableWidget:
     """Build a table with MuFinder's shared chrome.
 
@@ -323,10 +339,12 @@ def create_workflow_table(
     and ``default_resize_mode`` let sites that want every column sized to its
     contents (rather than stretched to fill) opt out of the stretch default.
     ``accessible_name`` is what a screen reader announces for the table: the
-    title of the group or dialog that shows it, in Title Case.
+    title of the group or dialog that shows it, in Title Case. With
+    ``prefer_maximum_height`` the table asks a layout for its maximum height, which
+    the caller sets to hold the rows it may show.
     """
 
-    table = QTableWidget(0, len(headers))
+    table = (_MaximumHeightTable if prefer_maximum_height else QTableWidget)(0, len(headers))
     if accessible_name:
         table.setAccessibleName(accessible_name)
     table.setHorizontalHeaderLabels(list(headers))
@@ -900,16 +918,19 @@ class SelectionFeedback(QObject):
         multi = len(rows) >= 2
         for row in range(self._table.rowCount()):
             for column in range(self._table.columnCount()):
-                widget = self._table.cellWidget(row, column)
-                if widget is None or not getattr(widget, "propagates_to_selection", False):
+                cell = self._table.cellWidget(row, column)
+                if cell is None:
                     continue
-                targeted = multi and row in rows
-                if bool(widget.property(MULTI_ROW_TARGET_PROPERTY)) == targeted:
-                    continue
-                widget.setProperty(MULTI_ROW_TARGET_PROPERTY, targeted)
-                # A dynamic property only restyles the widget once repolished.
-                widget.style().unpolish(widget)
-                widget.style().polish(widget)
+                for widget in getattr(cell, "row_controls", (cell,)):
+                    if not getattr(widget, "propagates_to_selection", False):
+                        continue
+                    targeted = multi and row in rows
+                    if bool(widget.property(MULTI_ROW_TARGET_PROPERTY)) == targeted:
+                        continue
+                    widget.setProperty(MULTI_ROW_TARGET_PROPERTY, targeted)
+                    # A dynamic property only restyles the widget once repolished.
+                    widget.style().unpolish(widget)
+                    widget.style().polish(widget)
 
 
 def show_status_message(widget: QWidget, text: str, timeout_ms: int = 6000) -> None:

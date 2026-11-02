@@ -324,6 +324,26 @@ class SweepConvergenceController(WorkflowJobController):
     # so convergence rows use the same submit-eligibility predicate as every
     # other workflow.
 
+    def key_for_job(self, job_id: UUID) -> object | None:
+        """Return the row bound to ``job_id``, also while the form has diverged from its run.
+
+        ``build_states`` shows no job for a diverged form, but a row with the
+        run's sweep value still holds that value's job.
+        """
+
+        key = super().key_for_job(job_id)
+        if key is not None:
+            return key
+        definition, config = self.active_config()
+        if definition is None or config is None:
+            return None
+        _prefix, form_keys = self.form_snapshot()
+        for key in self.config_keys(config):
+            job = self.job_for_sweep_key(definition, key)
+            if job is not None and job.id == job_id and key in form_keys:
+                return key
+        return None
+
     def build_states(self) -> dict[Any, SweepPointRunState]:
         document = self._context.document()
         if document is None:

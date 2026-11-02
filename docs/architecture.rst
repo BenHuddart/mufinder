@@ -309,7 +309,7 @@ defined by two of these modules, and a pinned count may only fall.
        (``bind_delete_shortcuts``) and the locked-row rule
        (``workflow_row_is_locked``: rows with no job yet and ``cancelled``
        rows are editable, every other status locks the row), and energies and
-       numbers in a results table (``format_energy_ev``,
+       numbers in a results table (``format_energy_mev``, ``NO_VALUE_TEXT``,
        ``format_table_number``, ``format_vector_components``: rounding noise
        and ``-0`` show as ``0``).
    * - ``mufinder.app.export_dialogs``
@@ -1078,18 +1078,19 @@ staged by the user: each row is a source read from the project through
 ``mufinder.services.source_candidates`` (a relaxed muon site, a diffusion
 path), shown in the order the widget's ``set_sources`` receives, and
 submitted, configured and tracked under the row's source key. The source
-rows are frozen dataclasses carrying at least ``key``, ``status`` and
-``configured``.
+rows are frozen dataclasses carrying at least ``key`` and ``status``, and
+``configured`` when the table has a Configure column.
 
 The base owns the key lookups (``selected_source_keys``, the key at a row,
 the keys at a set of rows), the run targeting (the selection, else every
 row), Configure Selected, the source table's row menu (Run, Cancel, Inspect,
 Configure, an optional Remove and failed-job reset, then the widget's extra
 entries), the table fill with the per-status colour of the Status cell and
-the per-row Configure button with the shared targeting rule, and the
+any per-row Configure button with the shared targeting rule, and the
 action-state refresh that enables Configure Selected from the selection.
 
-A subclass declares its status and Configure columns, the workflow named on
+A subclass declares its status and Configure columns (energy barriers has no
+Configure column: its rows are configured from the selection), the workflow named on
 the Configure button and the names of its configure and run signals as class
 attributes, so each widget keeps its own signal names. It implements three
 public hooks: ``source_row_values`` (the text of the leading columns),
@@ -1597,8 +1598,10 @@ Controller summary
        the selected endpoints into the form state (``generate_paths``), drops
        them from the form state and from both its NEB definitions and the
        transition-state-search sets older configurations stored them in
-       (``remove_rows``), and drives the path viewer and NEB preview
-       (``path_preview``, ``show_neb_preview``).
+       (``remove_rows``, behind ``remove_paths``, which first cleans up the
+       paths' job files), opens the NEB dialog (``configure_paths``) and fills
+       the inspector for the selected path (``show_path``, ``path_preview``). A
+       finished band without an eligible path keeps a row of its own.
 
 Source table controllers
 ~~~~~~~~~~~~~~~~~~~~~~~~
@@ -1614,12 +1617,13 @@ hooks above:
 - ``configure_request(keys)`` returns the Configure dialog's seed, a
   ``SourceConfigureRequest`` (each row's effective parameters, the dialog's
   title and intro text, whether it opens read-only, the agreed farm count and
-  the species options); the window hands ``run_source_configure_dialog`` a
-  builder for the workflow's dialog and a reader for its own controls (the
+  the species options); the window (Quantum Corrections) or the controller
+  (``configure_paths`` in Energy Barriers) hands ``run_source_configure_dialog``
+  a builder for the workflow's dialog and a reader for its own controls (the
   farm count). The runner passes the shared values, advanced names and mixed
   names to the dialog's constructor, so the rows are built once per open,
   reads the controls into ``SourceConfigureResult.extras`` and deletes the
-  dialog once it closes. The window passes the result to
+  dialog once it closes. The result goes to
   ``apply_configuration(keys, result, extras)``, which stores each row's
   ``row_settings`` entry (a mixed parameter left untouched keeps each row's
   own value), refreshes the view and persists.
@@ -1635,9 +1639,20 @@ Their deps hold only what needs the window: the host-mismatch dialogs
 (``handle_structure_host_mismatch``, ``handle_site_host_mismatch``), a warning,
 and the job and file primitives its stage resets drive (the
 directory-ownership check, path and job-record deletion, the keep-files job
-reset and the post-reset repaint). The
-window keeps the dialogs themselves, the job-file cleanup before a path is
-removed, and the phonon analysis windows.
+reset and the post-reset repaint). The energy-barriers deps add the NEB dialog's
+parent, the shared prompt for a removed job's files and the repaint of the pages
+that list jobs. The window keeps the phonon analysis windows.
+
+NEB output names under task farming
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+CASTEP appends ``_farmNNN`` to the seedname before the calculation starts, so a
+farmed NEB run writes ``<seed>_farm001.castep`` … ``<seed>_farmNNN.castep`` and
+``<seed>_farm001.ts``; no unfarmed ``<seed>.ts`` is produced. Every farm writes a
+complete, identical copy of the band, so MuFinder reads farm 001. The
+``<seed>.castep`` file a farmed run still writes holds only the header and timings,
+not the band or its convergence, which is why MuFinder parses the farmed file for
+the job's real outcome.
 
 Definition mappings and row removal
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

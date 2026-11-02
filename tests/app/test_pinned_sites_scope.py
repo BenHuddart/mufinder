@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from functools import partial
 from pathlib import Path
+import re
 
 from PySide6.QtWidgets import QCheckBox, QDialog, QPushButton
 
@@ -202,7 +203,8 @@ def test_energy_barrier_endpoints_default_to_the_pinned_sites(qapp, tmp_path: Pa
             str(low_a.id),
             str(high.id),
         ]
-        assert combo.itemText(0).startswith("8c · cluster 1")
+        assert combo.itemText(0) == "8c · site 1"
+        assert re.fullmatch(r"4b · site 2 \(\+\d+ meV\)", combo.itemText(1))
 
         _scope_checkbox(view).click()
 

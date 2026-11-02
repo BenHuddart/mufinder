@@ -22,6 +22,10 @@ whose endpoints are those sites.
   ``image_labels``, ``reaction_coordinates`` and ``image_energies_eV``. Both the
   NEB and the transition-state-search calc types are registered on
   :attr:`calc_types`, so :meth:`handles_job` covers the ``.ts``-producing pair.
+- **One page.** :meth:`EnergyBarriersController.refresh_view` lists every path with
+  its barriers, and :meth:`EnergyBarriersController.show_path` fills the inspector
+  for the selected one. A finished band whose path is no longer eligible, or that no
+  path names any more, keeps a row of its own, keyed by its path or its result.
 - **Lazily created view.** The energy-barriers view is created only when its
   route is first opened, but the controller is built and registered at startup
   so a completed NEB job dispatches through it regardless. It therefore takes a
@@ -31,10 +35,14 @@ whose endpoints are those sites.
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
+from functools import partial
 from pathlib import Path
 from uuid import UUID
+
+from PySide6.QtWidgets import QWidget
 
 from mufinder.castep_io.output_parser import CastepResult
 from mufinder.castep_io.schema import KeywordSpec
@@ -46,11 +54,13 @@ from mufinder.castep_io.ts_parser import (
 from mufinder.castep_io.types import AtomicPosition, PositionBlock, ValueWithUnit
 from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationDefinition, CalculationRun, Job, Result, Structure
+from mufinder.domain.text import plural
 from mufinder.services.definition_mappings import (
     remove_generated_sources,
     remove_source_keys_from_definition,
 )
 from mufinder.services.job_artifacts import ParsedJobArtifacts
+from mufinder.services.job_file_cleanup import JobCleanupItem
 from mufinder.services.muon_sites_summary import (
     ENERGY_BARRIERS_SCOPE,
     DownstreamSiteScope,
@@ -60,6 +70,7 @@ from mufinder.services.muon_sites_summary import (
 from mufinder.services.project_service import ProjectDocument
 from mufinder.services.source_candidates import (
     ENERGY_BARRIERS_FORM_STATE_KEY,
+    EnergyBarrierCompletedNebCandidate,
     EnergyBarrierNebCandidate,
     EnergyBarrierSourceCandidate,
     QuantumSourceCandidate,
@@ -75,7 +86,6 @@ from mufinder.services.source_candidates import (
     energy_barrier_neb_sources_by_job_id,
     energy_barrier_path_preview_structure,
     energy_barrier_path_symmetry_uses_magnetic_order,
-    energy_barrier_source_label,
     energy_barrier_source_site_labels,
     neb_barrier_energies,
     enumerate_energy_barrier_source_candidates,
@@ -90,13 +100,15 @@ from mufinder.services.source_candidates import (
     source_relaxation_parameter_values,
     uuid_from_source,
 )
+from mufinder.domain.charge_states import muon_charge_state_label
 from mufinder.science.energy_barriers import (
     EnergyBarrierError,
+    hop_cartesian_vector,
+    hop_direction_label,
     idpp_intermediate_structure,
     prepare_transition_state_structures,
 )
-from mufinder.science.site_generation import lattice_cart_to_frac
-from mufinder.domain.charge_states import muon_charge_state_label
+from mufinder.science.site_generation import lattice_cart_to_frac, lattice_frac_to_cart
 from mufinder.workflow import StructureBridgeError, structure_to_spec, write_job_directory
 from mufinder.workflow.energy_barriers import (
     NUDGED_ELASTIC_BAND_CALC_TYPE,
@@ -118,7 +130,6 @@ from mufinder.app.adapter_common import (
 )
 from mufinder.app.energy_barriers_widget import (
     EnergyBarrierEndpointRow,
-    EnergyBarrierNebResultRow,
     EnergyBarrierPreviewImageRow,
     EnergyBarriersWidget,
     EnergyBarrierSourceRow,
@@ -139,14 +150,19 @@ from mufinder.app.workflow_controllers.base import (
     confirm_active_host,
     dedupe_jobs,
 )
-from mufinder.app.workflow_dialogs import SourceConfigureRequest, SourceConfigureResult
+from mufinder.app.workflow_dialogs import (
+    NudgedElasticBandConfigDialog,
+    SourceConfigureRequest,
+    SourceConfigureResult,
+    run_source_configure_dialog,
+)
 from mufinder.app.workflow_parameters import (
     build_workflow_parameter_surface,
     merge_species_options,
     workflow_basic_parameter_names,
 )
 from mufinder.app.workflow_submission import effective_row_status, workflow_row_state_is_ready
-from mufinder.app.workflow_table_utils import format_energy_ev
+from mufinder.app.workflow_table_utils import format_energy_mev
 
 # The NEB dialog's default rows after the shared ones: the two NEB settings that
 # are routinely changed. The dialog adds the task-farm row below them. The other
@@ -190,10 +206,12 @@ PATH_SYMMETRY_MAGNETIC_NOTE = (
 class EnergyBarriersDeps:
     """The window-side handles the energy-barriers controller needs.
 
-    Each one shows a dialog: the host-mismatch handlers ask whether to switch
-    the active host (shared with every host-guarded workflow) and
-    ``show_warning`` reports a rejected input. Everything else the controller
-    reads from the shared
+    The host-mismatch handlers ask whether to switch the active host (shared with
+    every host-guarded workflow), ``show_warning`` reports a rejected input,
+    ``dialog_parent`` parents the NEB dialog, ``clean_up_removed_jobs`` asks what to
+    do with a removed job's files (shared with every workflow that removes rows) and
+    ``paths_removed`` refreshes the pages that list jobs. Everything else the
+    controller reads from the shared
     :class:`~mufinder.app.workflow_controllers.base.WorkflowControllerContext`
     or the service layer.
     """
@@ -201,16 +219,20 @@ class EnergyBarriersDeps:
     handle_structure_host_mismatch: Callable[[object], bool]
     handle_site_host_mismatch: Callable[[object], bool]
     show_warning: Callable[[str, str], None]
+    dialog_parent: Callable[[], QWidget | None]
+    clean_up_removed_jobs: Callable[..., bool]
+    paths_removed: Callable[[], None]
 
 
 @dataclass(frozen=True)
 class PathPreview:
-    """What the path viewer shows for one generated path."""
+    """What the inspector shows for one generated path without a band."""
 
     structure: Structure
     start_fractional: tuple[float, float, float]
     end_fractional: tuple[float, float, float]
     title: str
+    summary: str
 
 
 class EnergyBarriersController(WorkflowJobController):
@@ -272,9 +294,10 @@ class EnergyBarriersController(WorkflowJobController):
     ) -> list[EnergyBarrierEndpointRow]:
         """Return the relaxed sites offered as initial and final endpoints.
 
-        By default these are the sites pinned to the Muon Sites summary, labelled
-        by Wyckoff label and cluster in energy-rank order; with "Show every
-        relaxed site" they are every eligible relaxed site.
+        By default these are the sites pinned to the Muon Sites summary, in
+        energy-rank order; with "Show every relaxed site" they are every eligible
+        relaxed site. A label is the site's name and its energy above the lowest
+        site in meV, with the charge state only when the list holds more than one.
         """
 
         candidates = eligible_quantum_source_candidates(self._context.document())
@@ -283,16 +306,26 @@ class EnergyBarriersController(WorkflowJobController):
                 self._context.document(), ENERGY_BARRIERS_SCOPE, candidates
             )
         relative = quantum_source_relative_energies(candidates)
-        return [
-            EnergyBarrierEndpointRow(
-                key=candidate.key,
-                label=_endpoint_label(scope, candidate),
-                charge_state=charge_state_label_for_job(candidate.job),
-                source_job=candidate.job.label,
-                relative_energy=_format_endpoint_relative_energy(relative.get(candidate.key)),
+        scoped = scope.scoped_candidates(candidates)
+        show_charge = _more_than_one_charge_state(scoped)
+        names = {
+            candidate.key: _charged_label(_site_label(scope, candidate), candidate.job, show_charge)
+            for candidate in scoped
+        }
+        name_counts = Counter(names.values())
+        rows: list[EnergyBarrierEndpointRow] = []
+        for candidate in scoped:
+            name = names[candidate.key]
+            # Sites can share a label; the job that relaxed each tells them apart.
+            if name_counts[name] > 1:
+                name = f"{name} · {candidate.job.label}"
+            rows.append(
+                EnergyBarrierEndpointRow(
+                    key=candidate.key,
+                    label=name + _endpoint_energy_suffix(relative.get(candidate.key)),
+                )
             )
-            for candidate in scope.scoped_candidates(candidates)
-        ]
+        return rows
 
     def set_show_every_site(self, enabled: bool) -> None:
         """Offer every eligible relaxed site as an endpoint (``True``) or only the pinned ones."""
@@ -447,7 +480,7 @@ class EnergyBarriersController(WorkflowJobController):
         return note
 
     def path_preview(self, key: str) -> PathPreview | None:
-        """Return what the path viewer shows for path ``key``.
+        """Return what the inspector shows for path ``key`` while it has no band.
 
         ``None`` for an unknown path. Raises ``ValueError`` with a user-facing
         reason when the pristine supercell cannot be built.
@@ -458,61 +491,151 @@ class EnergyBarriersController(WorkflowJobController):
         )
         if candidate is None:
             return None
+        document = self._context.document()
         return PathPreview(
-            structure=energy_barrier_path_preview_structure(self._context.document(), candidate),
+            structure=energy_barrier_path_preview_structure(document, candidate),
             start_fractional=candidate.path.start_fractional,
             end_fractional=candidate.path.end_fractional,
-            title=f"{energy_barrier_source_label(candidate)} path preview",
+            title=self._hop_names().get(key, key),
+            summary=(
+                f"{candidate.path.length_ang:.4g} Å  ·  "
+                f"{charge_state_label_for_job(candidate.reactant.job)}  ·  pristine supercell"
+            ),
         )
 
-    def show_neb_preview(self, key: str) -> None:
-        """Show the band of completed NEB result ``key`` in the view's preview panel.
+    def show_path(self, key: str) -> None:
+        """Fill the inspector for the selected path; an empty ``key`` empties it.
 
-        Each image's energy is reported relative to the initial image: absolute
-        CASTEP energies are ~10⁵ eV, so differences vanish in the display.
+        A path with a finished band shows the band, any other the hop in the
+        pristine supercell. A path that cannot be shown says why in the title.
         """
 
         view = self._view_getter()
         if view is None:
             return
-        candidate = next(
-            (
-                candidate
-                for candidate in completed_energy_barrier_neb_candidates(self._context.document())
-                if candidate.key == key
-            ),
-            None,
-        )
-        if candidate is None:
+        if not key:
             view.clear_neb_preview()
             return
-        ts_path = _transition_state_file_path(candidate.result)
+        band = self._completed_bands().get(key)
+        if band is not None:
+            self._show_band(view, key, band)
+            return
+        try:
+            preview = self.path_preview(key)
+        except ValueError as exc:
+            view.clear_neb_preview(title=f"{self._hop_names().get(key, key)}: {exc}")
+            return
+        if preview is None:
+            view.clear_neb_preview()
+            return
+        hop = hop_cartesian_vector(
+            preview.start_fractional, preview.end_fractional, preview.structure.lattice_vectors
+        )
+        start = lattice_frac_to_cart(preview.start_fractional, preview.structure.lattice_vectors)
+        view.set_path_preview(
+            title=preview.title,
+            summary=preview.summary,
+            structure=preview.structure,
+            start_cartesian=start,
+            end_cartesian=[float(value) + float(step) for value, step in zip(start, hop)],
+        )
+
+    def _show_band(
+        self, view: EnergyBarriersWidget, key: str, band: EnergyBarrierCompletedNebCandidate
+    ) -> None:
+        """Show a finished band, each image's energy relative to the initial image.
+
+        Absolute CASTEP energies are ~10⁵ eV, so differences vanish in the display.
+        """
+
+        document = self._context.document()
+        source = energy_barrier_neb_sources_by_job_id(document, self.definitions()).get(band.job.id)
+        hop = self._hop_names().get(key) or _band_hop_name(document, band, source)
+        ts_path = _transition_state_file_path(band.result)
         if ts_path is None or not ts_path.exists():
-            view.clear_neb_preview(title=f"{candidate.job.label} preview unavailable")
+            view.clear_neb_preview(title=f"{hop}: the band file was not found")
             return
         try:
             transition_state = parse_transition_state_file(ts_path)
         except TransitionStateParseError:
-            view.clear_neb_preview(title=f"{candidate.job.label} preview unavailable")
+            view.clear_neb_preview(title=f"{hop}: the band file could not be read")
             return
         initial_energy = transition_state.images[0].energy
+        length_ang = float_from_source(source, "path_length_ang") if source is not None else None
+        parts = [hop] if length_ang is None else [hop, f"{length_ang:.4g} Å"]
+        parts.append(f"{len(transition_state.images)} images")
         view.set_neb_preview(
-            title=f"{candidate.job.label} ({len(transition_state.images)} images)",
+            title="  ·  ".join(parts),
             image_rows=[
                 EnergyBarrierPreviewImageRow(
-                    label=image.label,
+                    label=f"Image {number}",
                     reaction_coordinate=f"{image.reaction_coordinate:.6g}",
                     energy=f"{image.energy - initial_energy:+.4g} eV",
                     reaction_coordinate_value=image.reaction_coordinate,
                     energy_value=image.energy,
                 )
-                for image in transition_state.images
+                for number, image in enumerate(transition_state.images, start=1)
             ],
             structures=[
-                self._image_structure(candidate.job.label, image)
-                for image in transition_state.images
+                self._image_structure(band.job.label, image) for image in transition_state.images
             ],
         )
+
+    def _completed_bands(self) -> dict[str, EnergyBarrierCompletedNebCandidate]:
+        """Return each finished band under its path's key, or its result's without a path.
+
+        A path that ran again shows its newest band.
+        """
+
+        document = self._context.document()
+        sources = energy_barrier_neb_sources_by_job_id(document, self.definitions())
+        bands: dict[str, EnergyBarrierCompletedNebCandidate] = {}
+        for candidate in completed_energy_barrier_neb_candidates(document):
+            source = sources.get(candidate.job.id)
+            key = (
+                str(source.get("key", "")).strip() if source is not None else ""
+            ) or candidate.key
+            current = bands.get(key)
+            if current is None or candidate.result.created_at >= current.result.created_at:
+                bands[key] = candidate
+        return bands
+
+    def _hop_names(self) -> dict[str, str]:
+        """Return each eligible path's name, as the page's rows and inspector give it.
+
+        The endpoints use the endpoint pickers' site labels. Rows that would share
+        a name also give the hop direction when it tells them apart.
+        """
+
+        document = self._context.document()
+        candidates = self.candidates()
+        scope = self.site_scope()
+        show_charge = _more_than_one_charge_state(
+            [
+                *scope.scoped_candidates(eligible_quantum_source_candidates(document)),
+                *(candidate.reactant for candidate in candidates),
+            ]
+        )
+        names = {
+            candidate.key: _charged_label(
+                f"{_site_label(scope, candidate.reactant)} → "
+                f"{_site_label(scope, candidate.product)}",
+                candidate.reactant.job,
+                show_charge,
+            )
+            for candidate in candidates
+        }
+        same_named: dict[str, list[EnergyBarrierSourceCandidate]] = {}
+        for candidate in candidates:
+            same_named.setdefault(names[candidate.key], []).append(candidate)
+        for name, group in same_named.items():
+            if len(group) < 2:
+                continue
+            directions = {candidate.key: _hop_direction(document, candidate) for candidate in group}
+            if len(set(directions.values())) > 1:
+                for key, direction in directions.items():
+                    names[key] = f"{name} {direction}"
+        return names
 
     def _image_structure(self, job_label: str, image: TransitionStateImage) -> Structure:
         # The parser already converts the ``.ts`` geometry from Bohr to Å, so the
@@ -613,8 +736,8 @@ class EnergyBarriersController(WorkflowJobController):
 
         Unlike the row-table workflows, paths live in the form state and in the
         legacy transition-state-search definitions as well as the NEB ones (see
-        :meth:`path_definitions`). Job-file cleanup happens before this, in the
-        window.
+        :meth:`path_definitions`). Job-file cleanup comes first, in
+        :meth:`remove_paths`.
         """
 
         document = self._context.document()
@@ -628,7 +751,71 @@ class EnergyBarriersController(WorkflowJobController):
             if self.remove_labels_from_definition(definition, keys)
         )
 
+    def remove_paths(self, keys: Iterable[object]) -> None:
+        """Remove the paths ``keys`` name with their jobs, asking what to do with job files.
+
+        Answering Cancel keeps the path.
+        """
+
+        document = self._context.document()
+        removed = {str(key).strip() for key in keys if str(key).strip()}
+        if document is None or not removed:
+            return
+        plan = [
+            self._context.job_file_cleanup.plan_item(
+                [job],
+                archive_root=(
+                    self._context.definition_output_directory(definition)
+                    if definition is not None
+                    else None
+                ),
+            )
+            for definition, job in self.jobs_for_removed_sources(removed)
+        ]
+
+        def describe(item: JobCleanupItem) -> str:
+            return f"Energy-barrier job '{item.label}' has associated files.\n\n{item.directory}"
+
+        cleaned = self._deps.clean_up_removed_jobs(
+            plan,
+            title="Remove energy-barrier path with files",
+            describe=describe,
+            keep_text="or Cancel to keep the generated path.",
+        )
+        if not cleaned:
+            self.refresh_view()
+            return
+        self.remove_rows(removed)
+        self.refresh_view()
+        self._deps.paths_removed()
+        self._context.status_message(f"Removed {plural(len(removed), 'energy-barrier path')}")
+        self._context.persist_ui_state(
+            failure_message="Energy Barriers paths were removed, but autosave failed."
+        )
+
     # --- configuration ---
+
+    def configure_paths(self, keys: Iterable[object]) -> None:
+        """Open the NEB dialog for the paths ``keys`` name and store what it accepts."""
+
+        request = self.configure_request(list(dict.fromkeys(str(key) for key in keys)))
+        if request is None:
+            return
+        result = run_source_configure_dialog(
+            partial(
+                NudgedElasticBandConfigDialog,
+                specs=self.parameter_specs(),
+                num_farms=request.num_farms,
+                intro_text=request.intro_text,
+                read_only=request.read_only,
+                species_options=request.species_options,
+                parent=self._deps.dialog_parent(),
+            ),
+            request,
+            extras=lambda dialog: {"num_farms": dialog.num_farms()},
+        )
+        if result is not None:
+            self.apply_configuration(request.keys, result, result.extras)
 
     @staticmethod
     def parameter_specs() -> list[KeywordSpec]:
@@ -777,7 +964,7 @@ class EnergyBarriersController(WorkflowJobController):
             advanced_names=frozenset(advanced_names),
             title="Inspect NEB Parameters" if read_only else "Configure NEB Parameters",
             intro_text=(
-                _hop_heading(document, first, source_candidates.get(first.key))
+                _hop_heading(document, first, self._hop_names().get(first.key))
                 if len(candidates) == 1
                 else f"Selected paths: {len(candidates)}"
             ),
@@ -877,18 +1064,19 @@ class EnergyBarriersController(WorkflowJobController):
 
     def jobs_for_removed_sources(
         self, keys: Collection[str]
-    ) -> list[tuple[CalculationDefinition, Job]]:
+    ) -> list[tuple[CalculationDefinition | None, Job]]:
         """Return ``(definition, job)`` for each job a removed source ``keys`` name is bound to.
 
         Walks every one of :meth:`path_definitions`, so paths an older
         configuration stored are cleaned up too; each job appears once, with
-        the first definition that binds it.
+        the first definition that binds it. A finished band that no definition
+        binds any more comes last, with no definition.
         """
 
         document = self._context.document()
         if document is None:
             return []
-        targets: list[tuple[CalculationDefinition, Job]] = []
+        targets: list[tuple[CalculationDefinition | None, Job]] = []
         seen: set[UUID] = set()
         for definition in self.path_definitions():
             mapping = definition.parameters.get("job_ids_by_label", {})
@@ -907,6 +1095,12 @@ class EnergyBarriersController(WorkflowJobController):
                     continue
                 targets.append((definition, job))
                 seen.add(job.id)
+        bands = self._completed_bands()
+        for key in keys:
+            band = bands.get(key)
+            if band is not None and band.job.id not in seen:
+                targets.append((None, band.job))
+                seen.add(band.job.id)
         return targets
 
     def jobs_for_keys(self, keys: list[object]) -> list[Job]:
@@ -923,6 +1117,12 @@ class EnergyBarriersController(WorkflowJobController):
                     continue
                 selected.append(job)
                 seen.add(job.id)
+        bands = self._completed_bands()
+        for key in str_keys:
+            band = bands.get(key)
+            if band is not None and band.job.id not in seen:
+                selected.append(band.job)
+                seen.add(band.job.id)
         return selected
 
     def materialize(self, keys: list[object]) -> list[Job]:
@@ -1152,7 +1352,7 @@ class EnergyBarriersController(WorkflowJobController):
     # --- view contract ---
 
     def refresh_view(self) -> None:
-        """Re-render the endpoint options, the path table and the NEB results.
+        """Re-render the endpoint options and the path table with its barriers.
 
         Does nothing while the lazily created view does not exist, which is what
         lets result dispatch and materialize run before the route is opened.
@@ -1167,7 +1367,6 @@ class EnergyBarriersController(WorkflowJobController):
             view.set_endpoint_options([])
             view.set_path_symmetry_note("")
             view.set_sources([])
-            view.set_neb_results([])
             return
 
         scope = self.site_scope()
@@ -1195,86 +1394,141 @@ class EnergyBarriersController(WorkflowJobController):
         )
         view.set_path_symmetry_note(self.path_symmetry_note(reactant_key))
 
-        # One unified table: each generated path carries its NEB status + configuration.
-        source_rows: list[EnergyBarrierSourceRow] = []
-        neb_states = self.build_states()
-        neb_definition = self.active_definition()
+        view.set_sources(self._path_rows())
+
+    def _path_rows(self) -> list[EnergyBarrierSourceRow]:
+        """Return a row per eligible path, then one per finished band without such a path."""
+
+        document = self._context.document()
+        states = self.build_states()
+        definition = self.active_definition()
+        bands = self._completed_bands()
+        names = self._hop_names()
+        rows: list[EnergyBarrierSourceRow] = []
         for candidate in self.candidates():
-            _params, _advanced, extras = workflow_row_configuration(neb_definition, candidate.key)
-            source_rows.append(
-                EnergyBarrierSourceRow(
+            band = bands.get(candidate.key)
+            status = getattr(states.get(candidate.key), "status", "ready") or "ready"
+            rows.append(
+                _path_row(
                     key=candidate.key,
-                    reactant=candidate.reactant.site.label or candidate.reactant.job.label,
-                    product=candidate.product.site.label or candidate.product.job.label,
-                    charge_state=charge_state_label_for_job(candidate.reactant.job),
-                    path_length=f"{candidate.path.length_ang:.4g} Å",
-                    status=getattr(neb_states.get(candidate.key), "status", "ready") or "ready",
-                    farms=_farm_count_label(num_farms_from_extras(extras)),
-                    configured=workflow_row_configuration_exists(neb_definition, candidate.key),
+                    hop=names[candidate.key],
+                    length_ang=candidate.path.length_ang,
+                    status=status,
+                    definition=definition,
+                    band=band,
                 )
             )
-        view.set_sources(source_rows)
-
-        neb_result_rows: list[EnergyBarrierNebResultRow] = []
-        neb_sources_by_job_id = energy_barrier_neb_sources_by_job_id(document, self.definitions())
-        for candidate in completed_energy_barrier_neb_candidates(document):
-            result = candidate.result
-            data = result.data if isinstance(result.data, dict) else {}
-            forward, reverse, delta = _neb_barrier_summaries(data)
-            source = neb_sources_by_job_id.get(candidate.job.id)
-            path_length_ang = (
-                float_from_source(source, "path_length_ang") if source is not None else None
-            )
-            raw_charge = str(source.get("charge_state", "")).strip() if source is not None else ""
-            neb_result_rows.append(
-                EnergyBarrierNebResultRow(
-                    key=candidate.key,
-                    label=energy_barrier_neb_result_path_label(document, candidate, source),
-                    charge_state=muon_charge_state_label(raw_charge) if raw_charge else "",
-                    path_length="" if path_length_ang is None else f"{path_length_ang:.4g} Å",
-                    barrier_forward=forward,
-                    barrier_reverse=reverse,
-                    delta_energy=delta,
-                    images=str(data.get("num_images", "")),
-                    status=candidate.job.status.value,
-                    transition_state_file=str(data.get("transition_state_file", "")),
+        sources = energy_barrier_neb_sources_by_job_id(document, self.definitions())
+        for key, band in bands.items():
+            if key in names:
+                continue
+            source = sources.get(band.job.id)
+            rows.append(
+                _path_row(
+                    key=key,
+                    hop=_band_hop_name(document, band, source),
+                    length_ang=(
+                        float_from_source(source, "path_length_ang") if source is not None else None
+                    ),
+                    status=band.job.status.value,
+                    definition=definition,
+                    band=band,
                 )
             )
-        view.set_neb_results(neb_result_rows)
+        return rows
 
 
-def _endpoint_label(scope: DownstreamSiteScope, candidate: QuantumSourceCandidate) -> str:
-    """Return the name the endpoint pickers give a relaxed site."""
+def _path_row(
+    *,
+    key: str,
+    hop: str,
+    length_ang: float | None,
+    status: str,
+    definition: CalculationDefinition | None,
+    band: EnergyBarrierCompletedNebCandidate | None,
+) -> EnergyBarrierSourceRow:
+    """Build a path table row; a row with no ``band`` keeps dashes for its barriers."""
+
+    _params, _advanced, extras = workflow_row_configuration(definition, key)
+    data = band.result.data if band is not None and isinstance(band.result.data, dict) else {}
+    forward, reverse, delta = neb_barrier_energies(data)
+    return EnergyBarrierSourceRow(
+        key=key,
+        hop=hop,
+        path_length="" if length_ang is None else f"{length_ang:.4g} Å",
+        status=status,
+        farms=_farm_count_label(num_farms_from_extras(extras)),
+        barrier_forward=format_energy_mev(forward),
+        barrier_reverse=format_energy_mev(reverse),
+        delta_energy=format_energy_mev(delta, signed=True),
+        band_key=band.key if band is not None else "",
+        transition_state_file=str(data.get("transition_state_file", "")),
+    )
+
+
+def _site_label(scope: DownstreamSiteScope, candidate: QuantumSourceCandidate) -> str:
+    """Return the name the page gives a relaxed site, in the pickers and in hop names alike."""
 
     return (
-        scope.pinned_label(candidate.key)
+        scope.pinned_site_label(candidate.key)
         or candidate.site.label
         or candidate.job.label
         or candidate.structure.label
     )
 
 
+def _band_hop_name(
+    document: ProjectDocument | None,
+    band: EnergyBarrierCompletedNebCandidate,
+    source: Mapping[str, object] | None,
+) -> str:
+    """Name a finished band without an eligible path by its stored sites and charge state."""
+
+    name = energy_barrier_neb_result_path_label(document, band, source)
+    charge_state = str(source.get("charge_state", "")).strip() if source is not None else ""
+    return f"{name} · {muon_charge_state_label(charge_state)}" if charge_state else name
+
+
+def _more_than_one_charge_state(candidates: Iterable[QuantumSourceCandidate]) -> bool:
+    return len({charge_state_for_job(candidate.job) for candidate in candidates}) > 1
+
+
+def _charged_label(label: str, job: Job, show_charge: bool) -> str:
+    """Return ``label``, naming ``job``'s charge state when the page holds more than one."""
+
+    return f"{label} · {charge_state_label_for_job(job)}" if show_charge else label
+
+
+def _hop_direction(document: ProjectDocument, candidate: EnergyBarrierSourceCandidate) -> str:
+    """Name a hop's direction in the host's axes, or its endpoint cell's without a host."""
+
+    host_id = document.project.host_structure_id
+    host = document.structures.get(host_id) if host_id is not None else None
+    lattice = candidate.reactant.structure.lattice_vectors
+    return hop_direction_label(
+        hop_cartesian_vector(
+            candidate.path.start_fractional, candidate.path.end_fractional, lattice
+        ),
+        host.lattice_vectors if host is not None else lattice,
+        either_sense=candidate.reactant.key == candidate.product.key,
+    )
+
+
 def _hop_heading(
     document: ProjectDocument,
     candidate: EnergyBarrierNebCandidate,
-    source_candidate: EnergyBarrierSourceCandidate | None,
+    hop_name: str | None,
 ) -> str:
-    """Return the hop as the endpoint pickers name it, with its length.
+    """Return the hop as the page names it, with its length.
 
     A path whose endpoints are no longer eligible is named by its stored sites.
     """
 
-    if source_candidate is not None:
-        scope = downstream_site_scope(document, ENERGY_BARRIERS_SCOPE)
-        names = (
-            _endpoint_label(scope, source_candidate.reactant),
-            _endpoint_label(scope, source_candidate.product),
-        )
-    else:
+    if hop_name is None:
         names = energy_barrier_source_site_labels(document, candidate.source)
-    hop = f"{names[0]} → {names[1]}" if names is not None else "Selected path"
+        hop_name = f"{names[0]} → {names[1]}" if names is not None else "Selected path"
     length_ang = float_from_source(candidate.source, "path_length_ang")
-    return hop if length_ang is None else f"{hop} · {length_ang:.2f} Å"
+    return hop_name if length_ang is None else f"{hop_name} · {length_ang:.2f} Å"
 
 
 def _source_ids(
@@ -1330,24 +1584,16 @@ def _transition_state_file_path(result: Result) -> Path | None:
     return Path(raw)
 
 
-def _format_endpoint_relative_energy(value: float | None) -> str:
-    """Format a site energy relative to its comparable minimum, as in the Muon Sites summary."""
+def _endpoint_energy_suffix(relative_energy_ev: float | None) -> str:
+    """Return a site's energy above its comparable minimum for its label; none at the minimum."""
 
-    return "" if value is None else f"dE {float(value):.5f} eV"
-
-
-def _neb_barrier_summaries(data: Mapping[str, object]) -> tuple[str, str, str]:
-    """Format (forward barrier, reverse barrier, endpoint ΔE) from a NEB result payload.
-
-    A value that :func:`neb_barrier_energies` cannot derive gives a blank column.
-    """
-
-    forward, reverse, delta = neb_barrier_energies(data)
-    return format_energy_ev(forward), format_energy_ev(reverse), format_energy_ev(delta)
+    if not relative_energy_ev:
+        return ""
+    return f" ({format_energy_mev(relative_energy_ev, signed=True)})"
 
 
 def _farm_count_label(num_farms: int) -> str:
-    """Render a configured farm count for the sources table."""
+    """Render a configured farm count for the path table."""
 
     count = max(1, int(num_farms))
     return "Off" if count == 1 else str(count)

@@ -585,11 +585,11 @@ Energy barriers
   directly from the two relaxed endpoints, with the intermediate image
   synthesised by IDPP interpolation; no separate transition-state search step
   is required.
-- The page is split across tabs for path generation and NEB analysis so it
-  stays usable on smaller displays. Completed NEB jobs expose an inline
-  inspector with image-by-image geometry preview in the shared structure
-  viewer and a plotted reaction-coordinate profile synchronized with the image
-  table, slider and viewer. Profiles are persisted and exportable (see
+- One page holds path generation, the barriers of each path and one inspector,
+  and fits the default window. The inspector follows the table selection: a path
+  without a finished band shows its hop in the pristine supercell; a finished one
+  shows image-by-image geometry in the shared structure viewer and a plotted
+  reaction-coordinate profile synchronized with the image stepper and viewer (see
   :doc:`/user_guide/energy_barriers`).
 
 Structure import and MCIF magnetic extraction

@@ -416,6 +416,18 @@ def _draw_delete_icon(
     _line(painter, 9.0, 7.5, 9.0, 11.5)
 
 
+def _draw_stale_icon(
+    painter: QPainter, ink: QColor, accent: QColor, muted: QColor, paper: QColor
+) -> None:
+    """A clock: the status shown was read a while ago."""
+
+    painter.setPen(_ink_pen(ink, 1.15))
+    painter.setBrush(paper)
+    painter.drawEllipse(QRectF(3.0, 3.0, 10.0, 10.0))
+    _line(painter, 8.0, 5.0, 8.0, 8.0)
+    _line(painter, 8.0, 8.0, 10.25, 9.25)
+
+
 def _draw_monitor_stand(painter: QPainter) -> None:
     _line(painter, 6.0, 12.5, 10.0, 12.5)
     _line(painter, 8.0, 10.5, 8.0, 14.0)
@@ -529,6 +541,7 @@ _GLYPHS: dict[str, tuple[float, Callable[[QPainter, QColor, QColor, QColor, QCol
     "save_project": (16.0, _draw_save_project_icon),
     "save_workspace": (16.0, _draw_save_workspace_icon),
     "demo": (16.0, _draw_demo_icon),
+    "stale": (16.0, _draw_stale_icon),
     "cluster": (16.0, _draw_cluster_icon),
     "settings": (16.0, _draw_settings_icon),
     "appearance_light": (16.0, _draw_appearance_light_icon),

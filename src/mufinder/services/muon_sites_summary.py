@@ -433,6 +433,14 @@ class PinnedMuonSite:
             return f"{self.wyckoff_label} · cluster {self.cluster_index}"
         return f"Cluster {self.cluster_index}"
 
+    @property
+    def site_label(self) -> str:
+        """Return the name a hop gives the site: ``"4a · site 2"`` or ``"Site 2"``."""
+
+        if self.wyckoff_label:
+            return f"{self.wyckoff_label} · site {self.cluster_index}"
+        return f"Site {self.cluster_index}"
+
 
 @dataclass(frozen=True, slots=True)
 class PinnedQuantumSource:
@@ -462,6 +470,9 @@ class PinnedSourceSelection:
 
     def labels_by_key(self) -> dict[str, str]:
         return {source.candidate.key: source.pinned.label for source in self.sources}
+
+    def site_labels_by_key(self) -> dict[str, str]:
+        return {source.candidate.key: source.pinned.site_label for source in self.sources}
 
 
 def pinned_muon_sites(document: ProjectDocument | None, charge_state: str) -> list[PinnedMuonSite]:
@@ -632,10 +643,13 @@ def pinned_sites_notice(selection: PinnedSourceSelection, charge_states: Sequenc
         parts.append(f"No {labels} sites are pinned; show every relaxed site to include them.")
     if selection.unresolved:
         count = len(selection.unresolved)
-        noun = "site is" if count == 1 else "sites are"
+        state = (
+            "site is no longer an eligible relaxed site (its relaxation was"
+            if count == 1
+            else "sites are no longer eligible relaxed sites (their relaxations were"
+        )
         parts.append(
-            f"{count} pinned {noun} no longer an eligible relaxed site (its relaxation "
-            "was reset or removed); re-pin the analysis to refresh the summary."
+            f"{count} pinned {state} reset or removed); re-pin the analysis to refresh the summary."
         )
     return " ".join(parts)
 
@@ -684,6 +698,11 @@ class DownstreamSiteScope:
         if self.show_every_site:
             return ""
         return self.selection.labels_by_key().get(key, "")
+
+    def pinned_site_label(self, key: str) -> str:
+        """Return the name a hop gives pinned site ``key``, else ``""``; the same in both lists."""
+
+        return self.selection.site_labels_by_key().get(key, "")
 
 
 def downstream_site_scope(

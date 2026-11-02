@@ -64,8 +64,6 @@ def test_stopped_job_can_be_resubmitted_from_the_dashboard(
     job.execution_target = "alpha"
     job.remote_directory = "/remote/work/timed_out"
 
-    specs = {kind: enabled for _column, _text, kind, enabled in window._job_button_specs(job)}
-    assert specs["resubmit"] is True
     assert window._dashboard_action_applies("resubmit", job) is True
 
     calls: list[dict] = []
@@ -105,7 +103,7 @@ def test_dashboard_undiagnosed_failure_shows_its_message(qapp, tmp_path: Path) -
 
     item = _status_item(window)
 
-    assert item.text() == "failed"
+    assert item.text() == "failed · process exited with code 1"
     assert item.toolTip() == "process exited with code 1\n\nUse Inspect to see the job's logs."
     window.close()
 

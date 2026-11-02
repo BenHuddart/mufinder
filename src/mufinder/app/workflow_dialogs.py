@@ -7,19 +7,14 @@ from dataclasses import dataclass, field
 from typing import Generic, TypeVar
 
 from PySide6.QtWidgets import (
-    QCheckBox,
     QDialog,
     QLabel,
     QHBoxLayout,
     QSpinBox,
-    QVBoxLayout,
     QWidget,
 )
 
-from mufinder.app.atomic_structure_viewer import AtomicStructureViewer
 from mufinder.app.param_dialog import ParameterDialog, WorkflowTableRow
-from mufinder.app.theme import STRUCTURE_OVERLAY_COLOURS
-from mufinder.app.viewer_dialog import StructureViewerDialog
 from mufinder.app.workflow_parameters import (
     kpoint_exclusive_hint,
     merge_batch_advanced,
@@ -27,11 +22,9 @@ from mufinder.app.workflow_parameters import (
     mixed_parameter_names,
     shared_parameter_values,
 )
-from mufinder.domain.models import Structure
 from mufinder.castep_io.schema import KeywordSpec
 from mufinder.domain.text import plural
 from mufinder.science.energy_barriers import neb_farm_distribution
-from mufinder.science.site_generation import lattice_frac_to_cart
 
 #: Row key of a workflow table: a row id, a cutoff energy or a k-point grid.
 RowKeyT = TypeVar("RowKeyT", bound=Hashable)
@@ -434,93 +427,3 @@ class NudgedElasticBandConfigDialog(ParameterDialog):
         if distribution.idle_farms:
             text += f" {plural(distribution.idle_farms, 'farm')} would sit idle."
         hint.setText(text)
-
-
-class EnergyBarrierPathViewerDialog(StructureViewerDialog):
-    """Preview an Energy Barriers path in the undistorted supercell."""
-
-    def __init__(
-        self,
-        *,
-        structure: Structure,
-        start_fractional: Sequence[float],
-        end_fractional: Sequence[float],
-        title: str,
-        parent=None,
-    ) -> None:
-        super().__init__(parent)
-        self.setWindowTitle(title)
-        self.resize(980, 760)
-
-        self._structure = structure
-        self._start_fractional = tuple(float(value) for value in start_fractional[:3])
-        self._end_fractional = tuple(float(value) for value in end_fractional[:3])
-        self._viewer = self.hold_viewer(AtomicStructureViewer(self))
-
-        layout = QVBoxLayout(self)
-
-        summary = QLabel(
-            "The viewer uses the pristine supercell matching the relaxed endpoint cell. "
-            "Muon start and end positions are shown as overlays.",
-            self,
-        )
-        summary.setWordWrap(True)
-        layout.addWidget(summary)
-
-        controls = QHBoxLayout()
-        self._show_arrow = QCheckBox("Show path arrow", self)
-        self._show_arrow.setChecked(True)
-        self._show_arrow.toggled.connect(self._refresh_overlays)
-        controls.addWidget(self._show_arrow)
-        controls.addStretch(1)
-        layout.addLayout(controls)
-
-        layout.addWidget(self._viewer, 1)
-
-        with self._viewer.batch_update():
-            self._viewer.set_structure(structure)
-            self._refresh_overlays()
-
-    def _overlay_positions(self) -> tuple[tuple[float, float, float], tuple[float, float, float]]:
-        start = lattice_frac_to_cart(self._start_fractional, self._structure.lattice_vectors)
-        end = lattice_frac_to_cart(self._end_fractional, self._structure.lattice_vectors)
-        return (
-            tuple(float(value) for value in start),
-            tuple(float(value) for value in end),
-        )
-
-    def _refresh_overlays(self) -> None:
-        with self._viewer.batch_update():
-            self._set_endpoint_overlays()
-
-    def _set_endpoint_overlays(self) -> None:
-        start, end = self._overlay_positions()
-        self._viewer.set_point_overlays(
-            [
-                {
-                    "positions": [start],
-                    "colors": [STRUCTURE_OVERLAY_COLOURS.path_start],
-                    "radii": [0.28],
-                },
-                {
-                    "positions": [end],
-                    "colors": [STRUCTURE_OVERLAY_COLOURS.path_end],
-                    "radii": [0.28],
-                },
-            ]
-        )
-        if self._show_arrow.isChecked():
-            self._viewer.set_line_overlays(
-                [
-                    {
-                        "start": start,
-                        "end": end,
-                        "color": STRUCTURE_OVERLAY_COLOURS.path_arrow,
-                        "width": 7.0,
-                        "alpha": 0.92,
-                        "arrow": True,
-                    }
-                ]
-            )
-            return
-        self._viewer.set_line_overlays(None)

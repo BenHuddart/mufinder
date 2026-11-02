@@ -127,6 +127,21 @@ def failure_reason_label(reason: FailureReason | None) -> str:
     return FAILURE_REASON_LABELS.get(reason, "") if reason is not None else ""
 
 
+def failure_status_reason(reason: FailureReason | None, message: str | None) -> str:
+    """Return the reason shown beside a failed or stopped job's status.
+
+    A CASTEP error, or a failure with no classified cause, says what happened
+    in its recorded message (``SCF did not converge``), so the first line of
+    that is the reason; every other cause has its short label. Empty when
+    nothing is known.
+    """
+
+    lines = (message or "").strip().splitlines()
+    if lines and reason in (None, FailureReason.CASTEP_ERROR):
+        return lines[0].strip()
+    return failure_reason_label(reason)
+
+
 def failure_reason_summary(reason: FailureReason | None) -> str:
     """Return the one-sentence explanation of ``reason``."""
 

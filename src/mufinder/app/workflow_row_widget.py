@@ -33,7 +33,7 @@ public hooks :meth:`SourceTableWidget.source_row_values`,
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
@@ -67,6 +67,7 @@ from mufinder.app.selection_snapshot import (
     SelectionSnapshotPushButton,
     SelectionSnapshotToolButton,
     resolve_target_keys,
+    select_and_reveal_table_rows,
 )
 from mufinder.app.theme import (
     make_empty_state_label,
@@ -883,6 +884,36 @@ class RowTableWidget(QWidget):
         rows = selected_table_rows(table) or tuple(range(table.rowCount()))
         return self._submission_keys_at_rows(rows, table=table)
 
+    def select_rows_for_keys(self, keys: Collection[object]) -> bool:
+        """Make the rows with ``keys`` the selection of every table; False when there are none.
+
+        Rows can span tables (one per charge state); the first table holding one
+        is left on show, and a table holding none loses any earlier selection.
+        With no match at all, nothing changes.
+        """
+
+        rows_by_table = [
+            (
+                table,
+                [
+                    row
+                    for row in range(table.rowCount())
+                    if self._label_at_row(row, table=table)
+                    and self._submission_key_at_row(row, table=table) in keys
+                ],
+            )
+            for table in self._all_tables()
+        ]
+        if not any(rows for _table, rows in rows_by_table):
+            return False
+        # Reversed, so the first table with a match is revealed last.
+        for table, rows in reversed(rows_by_table):
+            if rows:
+                select_and_reveal_table_rows(table, rows)
+            else:
+                table.clearSelection()
+        return True
+
     def _refresh_empty_rows_state(self) -> None:
         if self._empty_rows_label is None:
             return
@@ -1475,17 +1506,18 @@ class SourceTableWidget(QWidget):
     row is a source read from the project (a relaxed site, a diffusion path;
     see ``mufinder.services.source_candidates``), shown in table order from
     ``_source_rows`` and submitted, configured and tracked under that row's
-    ``key``. A source row is a frozen dataclass with at least ``key``,
-    ``status`` and ``configured``.
+    ``key``. A source row is a frozen dataclass with at least ``key`` and
+    ``status``, and ``configured`` when the table has a Configure column.
 
     The base owns the key lookups (``selected_source_keys`` and the
     row-to-key helpers), the run and Configure targeting (the selection, else
     every row), the source table's row menu, its fill with the status colour
-    and the per-row Configure button, and the action-state refresh.
+    and any per-row Configure button, and the action-state refresh.
 
     Class attributes a subclass sets:
 
-    - ``_SOURCE_STATUS_COLUMN`` and ``_SOURCE_CONFIGURE_COLUMN``;
+    - ``_SOURCE_STATUS_COLUMN`` and ``_SOURCE_CONFIGURE_COLUMN``, the latter
+      ``None`` when the rows are configured from the selection only;
     - ``_SOURCE_WORKFLOW_LABEL``, the workflow named on the Configure button;
     - ``_CONFIGURE_SIGNAL``, ``_SUBMIT_LOCAL_SIGNAL`` and
       ``_SUBMIT_CLUSTER_SIGNAL``, the names of its own signals.
@@ -1500,7 +1532,7 @@ class SourceTableWidget(QWidget):
     """
 
     _SOURCE_STATUS_COLUMN: int
-    _SOURCE_CONFIGURE_COLUMN: int
+    _SOURCE_CONFIGURE_COLUMN: int | None
     _SOURCE_WORKFLOW_LABEL = ""
     _CONFIGURE_SIGNAL = ""
     _SUBMIT_LOCAL_SIGNAL = ""
@@ -1549,6 +1581,12 @@ class SourceTableWidget(QWidget):
         """Return the rows the run buttons act on: the selection, else every row."""
 
         return self.selected_source_keys() or [row.key for row in self._source_rows if row.key]
+
+    def select_rows_for_keys(self, keys: Collection[object]) -> bool:
+        """Select the source rows with ``keys``, showing their table; False when there are none."""
+
+        rows = [index for index, row in enumerate(self._source_rows) if row.key in keys]
+        return select_and_reveal_table_rows(self._sources_table, rows)
 
     def _source_key_at_row(self, row: int) -> str | None:
         if not (0 <= row < len(self._source_rows)):
@@ -1639,7 +1677,8 @@ class SourceTableWidget(QWidget):
             for row_index, row in enumerate(rows):
                 for column, value in enumerate(self.source_row_values(row)):
                     set_workflow_table_item(table, row_index, column, value)
-                self._create_source_configure_button(row_index, row)
+                if self._SOURCE_CONFIGURE_COLUMN is not None:
+                    self._create_source_configure_button(row_index, row)
                 self.create_source_row_cells(row_index, row)
             self._reapply_source_status_colors()
             table.resizeRowsToContents()

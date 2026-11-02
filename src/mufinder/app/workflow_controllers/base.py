@@ -327,6 +327,19 @@ class WorkflowJobController:
 
         raise NotImplementedError
 
+    def key_for_job(self, job_id: UUID) -> object | None:
+        """Return the key of the row bound to ``job_id``, or ``None`` when no row is."""
+
+        states = self.build_states()
+        for key, state in states.items():
+            if getattr(state, "job_id", None) == job_id:
+                return key
+        # A row whose form has diverged from its run shows no job, but stays bound.
+        for key in states:
+            if any(job.id == job_id for job in self.jobs_for_keys([key])):
+                return key
+        return None
+
     def relaxed_structure_export(self, key: object) -> RelaxedStructureExport:
         """Return ``key``'s relaxed structure for export, or why it has none.
 

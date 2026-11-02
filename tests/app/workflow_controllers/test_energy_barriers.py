@@ -6,10 +6,12 @@ materialization, ``NUM_FARMS`` rendering and ``validate_artifacts``.
 
 from __future__ import annotations
 
+from datetime import timedelta
 from functools import partial
 from pathlib import Path
 from uuid import UUID
 
+import numpy as np
 import pytest
 from PySide6.QtWidgets import QDialog
 
@@ -28,6 +30,9 @@ from mufinder.services.job_artifacts import ParsedJobArtifacts, collect_job_arti
 from mufinder.services.project_service import ProjectDocument, ProjectService
 from mufinder.domain.models import CalculationDefinition as _CalculationDefinition
 from mufinder.domain.models import MuonSite as _MuonSite
+from mufinder.domain.models import Result as _Result
+from mufinder.science.energy_barriers import hop_cartesian_vector
+from mufinder.services.source_candidates import ENERGY_BARRIERS_FORM_STATE_KEY
 from mufinder.domain.models import Structure as _Structure
 from mufinder.workflow.energy_barriers import (
     NUDGED_ELASTIC_BAND_CALC_TYPE,
@@ -66,9 +71,9 @@ class _FakeEnergyBarriersView:
     def __init__(self) -> None:
         self.endpoint_calls: list[tuple] = []
         self.sources: list[list] = []
-        self.neb_results: list[list] = []
         self.site_scopes: list[dict] = []
         self.neb_previews: list[dict] = []
+        self.path_previews: list[dict] = []
         self.cleared_previews: list[str | None] = []
         self.path_symmetry_notes: list[str] = []
 
@@ -84,11 +89,11 @@ class _FakeEnergyBarriersView:
     def set_sources(self, rows) -> None:
         self.sources.append(list(rows))
 
-    def set_neb_results(self, rows) -> None:
-        self.neb_results.append(list(rows))
-
     def set_neb_preview(self, **kwargs) -> None:
         self.neb_previews.append(kwargs)
+
+    def set_path_preview(self, **kwargs) -> None:
+        self.path_previews.append(kwargs)
 
     def clear_neb_preview(self, title: str | None = None) -> None:
         self.cleared_previews.append(title)
@@ -99,6 +104,9 @@ def _stub_energy_barriers_deps(**overrides) -> EnergyBarriersDeps:
         handle_structure_host_mismatch=lambda _mismatch: True,
         handle_site_host_mismatch=lambda _mismatch: True,
         show_warning=lambda _title, _text: None,
+        dialog_parent=lambda: None,
+        clean_up_removed_jobs=lambda _plan, **_labels: True,
+        paths_removed=lambda: None,
     )
     base.update(overrides)
     return EnergyBarriersDeps(**base)
@@ -166,17 +174,13 @@ def test_energy_barriers_controller_refresh_view_clears_when_document_none() -> 
     controller.refresh_view()
     assert view.endpoint_calls[-1][0] == []
     assert view.sources == [[]]
-    assert view.neb_results == [[]]
+    assert view.sources == [[]]
 
 
-def test_energy_barriers_controller_refresh_view_renders_sources_and_results(
+def test_energy_barriers_controller_refresh_view_fills_barriers_in_the_path_row(
     tmp_path: Path,
 ) -> None:
-    """With a view and a document, refresh renders endpoint options, one source
-    row, and one completed-NEB result row — exercising the full render body
-    (source-row build + result-row build with barrier summaries / charge label)."""
-
-    from mufinder.domain.models import Result as _Result
+    """A finished band's barriers land in its path's row, in whole meV."""
 
     service = ProjectService()
     document, definition, _source, output_root = _seed_energy_barriers_document(
@@ -209,25 +213,289 @@ def test_energy_barriers_controller_refresh_view_renders_sources_and_results(
     assert [row.label for row in endpoint_rows] == ["siteA", "siteB"]
     assert endpoint_options["reactant_key"] == endpoint_rows[0].key
     assert endpoint_options["product_key"] == endpoint_rows[1].key
+    assert len(view.sources[-1]) == 1
     source_row = view.sources[-1][0]
-    assert (source_row.reactant, source_row.product) == ("siteA", "siteB")
-    assert source_row.charge_state == "positive muon"
+    assert source_row.hop == "siteA → siteB"
     assert source_row.path_length == "2.5 Å"
     assert source_row.farms == "3"
-    assert source_row.configured is True
     assert source_row.status == "completed"
-    result_row = view.neb_results[-1][0]
-    assert result_row.label == "siteA → siteB"
-    assert result_row.images == "7"
-    assert result_row.charge_state == "positive muon"
-    assert result_row.path_length == "2.5 Å"
-    assert (result_row.barrier_forward, result_row.barrier_reverse, result_row.delta_energy) == (
-        "0.2 eV",
-        "0.1 eV",
-        "0.1 eV",
+    assert (source_row.barrier_forward, source_row.barrier_reverse, source_row.delta_energy) == (
+        "200 meV",
+        "100 meV",
+        "+100 meV",
     )
-    # The result row carries the producing job's status so the results table can colour it.
-    assert result_row.status == "completed"
+    assert source_row.band_key == str(result.id)
+    assert source_row.transition_state_file == "/tmp/barrier.ts"
+
+
+def _add_band(
+    service: ProjectService, document: ProjectDocument, ts_path: Path | str = "/tmp/barrier.ts"
+) -> tuple[Job, _Result]:
+    job = _neb_job(service, document, "barrier_neb", NUDGED_ELASTIC_BAND_CALC_TYPE)
+    job.status = JobStatus.COMPLETED
+    run = CalculationRun(job_id=job.id, status=JobStatus.COMPLETED)
+    result = _Result(
+        calculation_run_id=run.id,
+        result_type=NUDGED_ELASTIC_BAND_CALC_TYPE,
+        data={"transition_state_file": str(ts_path), "image_energies_eV": [-1.0, -0.8, -0.9]},
+    )
+    run.result_id = result.id
+    document.runs[run.id] = run
+    document.results[result.id] = result
+    return job, result
+
+
+def test_energy_barriers_path_without_a_band_shows_dashes(tmp_path: Path) -> None:
+    service = ProjectService()
+    document, _definition, _source, output_root = _seed_energy_barriers_document(service, tmp_path)
+    view = _FakeEnergyBarriersView()
+    controller = _neb_controller(service, document, output_root, view_getter=lambda: view)
+
+    controller.refresh_view()
+
+    row = view.sources[-1][0]
+    assert row.status == "ready"
+    assert (row.barrier_forward, row.barrier_reverse, row.delta_energy) == ("–", "–", "–")
+    assert row.band_key == ""
+
+
+def test_energy_barriers_band_without_a_path_keeps_its_own_row(tmp_path: Path) -> None:
+    """A finished band no path names stays on the page, and can be removed with its job."""
+
+    service = ProjectService()
+    document, _definition, _source, output_root = _seed_energy_barriers_document(service, tmp_path)
+    job, result = _add_band(service, document)
+    view = _FakeEnergyBarriersView()
+    controller = _neb_controller(service, document, output_root, view_getter=lambda: view)
+
+    controller.refresh_view()
+
+    assert [row.key for row in view.sources[-1]] == ["source-key", str(result.id)]
+    band_row = view.sources[-1][1]
+    assert band_row.hop == "barrier_neb"
+    assert band_row.path_length == ""
+    assert band_row.barrier_forward == "200 meV"
+    assert controller.jobs_for_keys([str(result.id)]) == [job]
+    assert controller.jobs_for_removed_sources({str(result.id)}) == [(None, job)]
+    assert controller.configure_request([str(result.id)]) is None
+
+
+def test_energy_barriers_path_that_ran_again_shows_its_newest_band(tmp_path: Path) -> None:
+    service = ProjectService()
+    document, definition, _source, output_root = _seed_energy_barriers_document(service, tmp_path)
+    job, older = _add_band(service, document)
+    definition.parameters["job_ids_by_label"]["source-key"] = str(job.id)
+    newer = _Result(
+        calculation_run_id=older.calculation_run_id,
+        result_type=NUDGED_ELASTIC_BAND_CALC_TYPE,
+        data={"image_energies_eV": [-1.0, -0.5, -0.9]},
+        created_at=older.created_at + timedelta(hours=1),
+    )
+    document.results = {newer.id: newer, older.id: older}
+    view = _FakeEnergyBarriersView()
+    controller = _neb_controller(service, document, output_root, view_getter=lambda: view)
+
+    controller.refresh_view()
+
+    assert [row.barrier_forward for row in view.sources[-1]] == ["500 meV"]
+
+
+def test_energy_barriers_show_path_shows_the_hop_until_a_band_exists(tmp_path: Path) -> None:
+    service = ProjectService()
+    document, definition, source, output_root = _seed_energy_barriers_document(service, tmp_path)
+    view = _FakeEnergyBarriersView()
+    controller = _neb_controller(service, document, output_root, view_getter=lambda: view)
+
+    controller.show_path("source-key")
+
+    preview = view.path_previews[-1]
+    assert preview["title"] == "siteA → siteB"
+    assert preview["summary"] == "2.5 Å  ·  positive muon  ·  pristine supercell"
+    assert preview["structure"].origin == "energy_barriers_path_preview"
+    step = np.subtract(preview["end_cartesian"], preview["start_cartesian"])
+    assert np.linalg.norm(step) == pytest.approx(
+        np.linalg.norm(
+            hop_cartesian_vector(
+                source["path_start_fractional"],
+                source["path_end_fractional"],
+                preview["structure"].lattice_vectors,
+            )
+        )
+    )
+
+    ts_path = tmp_path / "barrier.ts"
+    ts_path.write_text(_NEB_TS_FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
+    job, _result = _add_band(service, document, ts_path)
+    definition.parameters["job_ids_by_label"]["source-key"] = str(job.id)
+
+    controller.show_path("source-key")
+
+    band = view.neb_previews[-1]
+    assert band["title"] == "siteA → siteB  ·  2.5 Å  ·  7 images"
+    assert band["image_rows"][1].label == "Image 2"
+
+    controller.show_path("")
+    assert view.cleared_previews[-1] is None
+
+
+def test_energy_barriers_show_path_says_why_it_cannot_show_a_path(tmp_path: Path) -> None:
+    service = ProjectService()
+    document, definition, _source, output_root = _seed_energy_barriers_document(service, tmp_path)
+    view = _FakeEnergyBarriersView()
+    controller = _neb_controller(service, document, output_root, view_getter=lambda: view)
+
+    host_id = document.project.host_structure_id
+    document.project.host_structure_id = None
+    controller.show_path("source-key")
+    assert "pristine host structure is required" in view.cleared_previews[-1]
+    document.project.host_structure_id = host_id
+
+    job, _result = _add_band(service, document, tmp_path / "gone.ts")
+    definition.parameters["job_ids_by_label"]["source-key"] = str(job.id)
+    controller.show_path("source-key")
+    assert view.cleared_previews[-1] == "siteA → siteB: the band file was not found"
+
+    (tmp_path / "gone.ts").write_text("not a band", encoding="utf-8")
+    controller.show_path("source-key")
+    assert view.cleared_previews[-1] == "siteA → siteB: the band file could not be read"
+
+
+def test_energy_barriers_endpoints_sharing_a_label_name_their_job(tmp_path: Path) -> None:
+    service = ProjectService()
+    document, _definition, _source, output_root = _seed_energy_barriers_document(service, tmp_path)
+    set_show_every_relaxed_site(document, ENERGY_BARRIERS_SCOPE, True)
+    for site in document.sites.values():
+        site.label = "same"
+    controller = _neb_controller(service, document, output_root)
+
+    labels = [row.label for row in controller.endpoint_rows()]
+
+    assert len(set(labels)) == 2
+    assert all(label.startswith("same · ") for label in labels)
+
+
+def test_energy_barriers_band_of_an_ineligible_path_names_sites_and_charge(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = ProjectService()
+    document, definition, _source, output_root = _seed_energy_barriers_document(service, tmp_path)
+    job, _result = _add_band(service, document)
+    definition.parameters["job_ids_by_label"]["source-key"] = str(job.id)
+    view = _FakeEnergyBarriersView()
+    controller = _neb_controller(service, document, output_root, view_getter=lambda: view)
+    monkeypatch.setattr(controller, "candidates", lambda: [])
+
+    controller.refresh_view()
+
+    row = view.sources[-1][0]
+    assert row.key == "source-key"
+    assert row.hop == "siteA → siteB · positive muon"
+    assert row.barrier_forward == "200 meV"
+
+
+def test_energy_barriers_same_named_hops_give_their_direction(tmp_path: Path) -> None:
+    service = ProjectService()
+    document, _definition, source, output_root = _seed_energy_barriers_document(service, tmp_path)
+    second = {
+        **source,
+        "key": "source-key-2",
+        "path_index": 2,
+        "path_start_fractional": [0.0, 0.0, 0.0],
+        "path_end_fractional": [0.0, 0.0, 0.25],
+    }
+    first = {
+        **source,
+        "path_start_fractional": [0.0, 0.0, 0.0],
+        "path_end_fractional": [0.25, 0.25, 0.0],
+    }
+    document.ui_state[ENERGY_BARRIERS_FORM_STATE_KEY]["generated_sources"] = [first, second]
+    view = _FakeEnergyBarriersView()
+    controller = _neb_controller(service, document, output_root, view_getter=lambda: view)
+
+    controller.refresh_view()
+
+    assert sorted(row.hop for row in view.sources[-1]) == [
+        "siteA → siteB along [1 1 0]",
+        "siteA → siteB along c",
+    ]
+
+
+def test_energy_barriers_hop_and_endpoints_name_a_site_alike(tmp_path: Path) -> None:
+    """The endpoint label minus its energy is the name the hop gives the site."""
+
+    service = ProjectService()
+    document, _definition, _source, output_root = _seed_energy_barriers_document(service, tmp_path)
+    set_show_every_relaxed_site(document, ENERGY_BARRIERS_SCOPE, True)
+    view = _FakeEnergyBarriersView()
+    controller = _neb_controller(service, document, output_root, view_getter=lambda: view)
+
+    controller.refresh_view()
+
+    endpoint_rows, _options = view.endpoint_calls[-1]
+    names = [row.label.split(" (")[0] for row in endpoint_rows]
+    assert view.sources[-1][0].hop == f"{names[0]} → {names[1]}"
+
+
+def test_energy_barriers_dialog_heading_gives_the_direction_of_same_named_hops(
+    tmp_path: Path,
+) -> None:
+    service = ProjectService()
+    document, _definition, source, output_root = _seed_energy_barriers_document(service, tmp_path)
+    sources = [
+        {
+            **source,
+            "path_start_fractional": [0.0, 0.0, 0.0],
+            "path_end_fractional": [0.0, 0.0, 0.25],
+        },
+        {
+            **source,
+            "key": "source-key-2",
+            "path_index": 2,
+            "path_start_fractional": [0.0, 0.0, 0.0],
+            "path_end_fractional": [0.25, 0.25, 0.0],
+        },
+    ]
+    document.ui_state[ENERGY_BARRIERS_FORM_STATE_KEY]["generated_sources"] = sources
+    controller = _neb_controller(service, document, output_root)
+
+    request = controller.configure_request(["source-key"])
+
+    assert request.intro_text == "siteA → siteB along c · 2.50 Å"
+
+
+def test_energy_barriers_remove_paths_stops_when_file_cleanup_is_cancelled(tmp_path: Path) -> None:
+    service = ProjectService()
+    document, definition, _source, output_root = _seed_energy_barriers_document(service, tmp_path)
+    job, _result = _add_band(service, document)
+    definition.parameters["job_ids_by_label"]["source-key"] = str(job.id)
+    plans: list[list] = []
+    removed: list[bool] = []
+
+    def cancel(plan, **_labels) -> bool:
+        plans.append(list(plan))
+        return False
+
+    statuses: list[str] = []
+    controller = EnergyBarriersController(
+        make_context(document=document, project_service=service, statuses=statuses),
+        _stub_energy_barriers_deps(
+            clean_up_removed_jobs=cancel, paths_removed=lambda: removed.append(True)
+        ),
+        lambda: None,
+    )
+
+    controller.remove_paths(["source-key"])
+
+    assert [item.jobs for item in plans[0]] == [(job,)]
+    assert [candidate.key for candidate in controller.neb_candidates()] == ["source-key"]
+    assert removed == []
+
+    controller._deps = _stub_energy_barriers_deps(paths_removed=lambda: removed.append(True))
+    controller.remove_paths(["source-key"])
+
+    assert controller.neb_candidates() == []
+    assert removed == [True]
+    assert statuses == ["Removed 1 energy-barrier path"]
 
 
 @pytest.mark.parametrize(
@@ -322,14 +590,12 @@ def test_energy_barriers_controller_build_result_ts_payload(tmp_path: Path) -> N
     assert result.derived_structure_ids == []
 
 
-def test_energy_barriers_controller_show_neb_preview_structures_are_in_angstrom(
+def test_energy_barriers_controller_band_structures_are_in_angstrom(
     tmp_path: Path,
 ) -> None:
-    """show_neb_preview hands the view one ``Structure`` per image, with the
+    """show_path hands the view one ``Structure`` per image, with the
     ``.ts`` geometry already converted from Bohr to Å: the fixture's 6.8431966 Bohr
     fcc Cu cell must reach the viewer as ~3.6213 Å, not 1.89 times too large."""
-
-    from mufinder.domain.models import Result as _Result
 
     service = ProjectService()
     document = service.create_project(tmp_path / "eb.mufinder", "EB")
@@ -354,11 +620,11 @@ def test_energy_barriers_controller_show_neb_preview_structures_are_in_angstrom(
         lambda: view,
     )
 
-    controller.show_neb_preview(str(result.id))
+    controller.show_path(str(result.id))
 
     assert view.cleared_previews == []
     preview = view.neb_previews[-1]
-    assert preview["title"] == "barrier_neb (7 images)"
+    assert preview["title"] == "barrier_neb  ·  7 images"
     structures = preview["structures"]
     assert [structure.label for structure in structures] == [
         f"barrier_neb {label}" for label in ("REA", "TST", "TST", "TST", "TST", "TST", "PRO")
@@ -450,8 +716,6 @@ def _seed_energy_barriers_document(service: ProjectService, tmp_path: Path, *, r
 
     ``row_settings`` is stored as the definition's per-path configuration.
     """
-
-    from mufinder.domain.models import Result as _Result
 
     document = service.create_project(tmp_path / "eb_mat.mufinder", "EBMat")
     host = _Structure(
@@ -920,7 +1184,7 @@ def test_energy_barriers_controller_path_preview(tmp_path: Path) -> None:
     preview = controller.path_preview("source-key")
 
     assert preview is not None
-    assert preview.title == "siteA_to_siteB_path1 path preview"
+    assert preview.title == "siteA → siteB"
     assert preview.structure.origin == "energy_barriers_path_preview"
     assert preview.start_fractional == tuple(source["path_start_fractional"])
     assert preview.end_fractional == tuple(source["path_end_fractional"])
