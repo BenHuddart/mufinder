@@ -181,6 +181,17 @@ Compatibility ledger
      - Read-side repair. Ignoring an unknown key needs no code; keep this entry
        until a saved-project schema version bump includes a migration that drops
        the keys from stored forms.
+   * - ``plate_method_version`` key of a field result and a simulation source
+     - ``data`` of a ``magnetic_field`` result, ``magnetic_field_results`` in a
+       form, and each source of a polarisation simulation
+       (``mufinder.services.magnetic_field_results``, ``PLATE_METHOD_VERSION``)
+     - Written only for a field result calculated with a ``Plate from photo``,
+       and by a simulation of such fields. A record without it was calculated
+       without a plate or before the key existed, and reads the sample in its
+       owner's saved form: a plate from a photo, or a voxel grid saved with
+       another padding or with smoothing, is older. Additive, so no migration.
+     - Current project data, not deprecated. It may not be dropped without a
+       schema migration that first records which results used a plate.
    * - ``generate_random_sites_by_distance``
      - ``mufinder.science.site_generation``, also exported from
        ``mufinder.science``

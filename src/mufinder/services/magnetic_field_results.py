@@ -35,6 +35,13 @@ version, or none, keeps its numbers and shows :data:`OLDER_METHOD_RESULTS_NOTE`
 (:func:`uses_older_method`); moving a result to a record never updates its
 version.
 
+A dipolar-field result calculated with a plate from a photo also records
+:data:`PLATE_METHOD_VERSION` in ``data["plate_method_version"]``. Such a change
+marks only the results it touches: a record without the key was calculated
+without a plate or before the key existed, so
+:func:`field_result_uses_older_method` decides from the sample in the owner's
+saved form (:func:`sample_predates_plate_method`).
+
 A muon-polarisation record (:data:`MUON_POLARISATION_RESULT_TYPE`) holds a
 :class:`~mufinder.science.polarisation.PolarisationResult` in
 ``data["result"]``, one record per owner. It is stored and read with
@@ -52,6 +59,7 @@ from typing import Any
 from mufinder.domain.enums import WorkflowStage
 from mufinder.domain.models import ProvenanceRecord, Result
 from mufinder.persistence.codec import to_jsonable
+from mufinder.science.demagnetization import FOURIER_PADDING
 from mufinder.science.polarisation import PolarisationError, PolarisationResult
 from mufinder.services.project_document import ProjectDocument
 from mufinder.services.study_findings import (
@@ -102,7 +110,19 @@ UNRELAXED_ESTIMATE_SUFFIX = " Computed at an unrelaxed UEP site, so these are es
 #: numbers from one of those calculations, such as a corrected formula, position or
 #: default. Leave it alone for a change that gives the same numbers. Stored results with
 #: a lower version then show :data:`OLDER_METHOD_RESULTS_NOTE` until recalculated.
-CALCULATION_METHOD_VERSION = 2
+#:
+#: This constant marks every stored result. For a change that touches only some of them, give
+#: that kind of result its own version, as :data:`PLATE_METHOD_VERSION` does, so that the
+#: others keep their real status.
+CALCULATION_METHOD_VERSION = 1
+#: The method behind the demagnetizing tensor of a plate from a photo. Add 1 whenever a change
+#: means the same plate gives a different tensor, such as a new resolution or sum. A field
+#: result calculated with a plate records it; results without a plate are never marked by it.
+#: Version 1 is every plate result from before the version was recorded.
+PLATE_METHOD_VERSION = 2
+#: Where a stored field result keeps the :data:`PLATE_METHOD_VERSION` it was calculated with.
+PLATE_METHOD_VERSION_KEY = "plate_method_version"
+_UNRECORDED_PLATE_METHOD_VERSION = 1
 #: Where a stored result keeps the :data:`CALCULATION_METHOD_VERSION` it was calculated with.
 CALCULATION_VERSION_KEY = "calculation_version"
 
@@ -140,6 +160,69 @@ def uses_older_method(result: Mapping[str, Any]) -> bool:
     )
 
 
+def sample_predates_plate_method(form_state: object) -> bool:
+    """Return whether a form's sample gave different numbers before the plate method changed.
+
+    That is a plate from a photo, or a voxel grid saved with another padding or with smoothing.
+    Read this from the saved form: loading a sample and saving it drops those voxel settings.
+    """
+
+    if not isinstance(form_state, Mapping):
+        return False
+    shape = str(form_state.get("demag_shape", "")).strip().lower()
+    if shape == "image_plate":
+        return True
+    sample = form_state.get("demag_sample")
+    if shape != "voxel_grid" or not isinstance(sample, Mapping):
+        return False
+    return (
+        sample.get("padding", FOURIER_PADDING) != FOURIER_PADDING
+        or sample.get("smoothing", 0.0) != 0.0
+    )
+
+
+def field_result_uses_older_method(result: object, form_state: object = None) -> bool:
+    """Return whether a stored dipolar-field result predates the method that now applies to it.
+
+    ``form_state`` is the saved form of the result's owner, or just its ``demag_shape`` and
+    ``demag_sample``. It decides for a result that records no plate method version.
+    """
+
+    if not isinstance(result, Mapping) or not result:
+        return False
+    if uses_older_method(result):
+        return True
+    version = result.get(PLATE_METHOD_VERSION_KEY)
+    if version is None:
+        return sample_predates_plate_method(form_state)
+    return (
+        not isinstance(version, int) or isinstance(version, bool) or version < PLATE_METHOD_VERSION
+    )
+
+
+def magnetic_field_owner_form(document: ProjectDocument, owner: str) -> Mapping[str, Any] | None:
+    """Return the saved form of the page or workspace ``owner``; ``None`` once it is gone."""
+
+    if owner == MAGNETIC_FIELD_PAGE_OWNER:
+        form = document.ui_state.get("magnetic_field_form")
+        return form if isinstance(form, Mapping) else None
+    workspaces = document.ui_state.get("magnetic_field_workspaces")
+    for workspace in workspaces if isinstance(workspaces, list) else ():
+        if isinstance(workspace, Mapping) and str(workspace.get("id", "")).strip() == owner:
+            form = workspace.get("form")
+            return form if isinstance(form, Mapping) else None
+    return None
+
+
+def recorded_plate_method_version(data: Mapping[str, Any], form_state: object) -> object:
+    """Return the plate method version of a field record, as a simulation of it should keep it."""
+
+    version = data.get(PLATE_METHOD_VERSION_KEY)
+    if version is None and sample_predates_plate_method(form_state):
+        return _UNRECORDED_PLATE_METHOD_VERSION
+    return version
+
+
 def field_result_site_source(
     field_results: Mapping[str, Any],
     form_state: Mapping[str, object] | None = None,
@@ -168,8 +251,9 @@ def _field_data(value: object) -> dict[str, Any] | None:
     data: dict[str, Any] = {"kind": str(value.get("kind", "")), "results": list(value["results"])}
     if value.get("site_source"):
         data["site_source"] = str(value["site_source"])
-    if CALCULATION_VERSION_KEY in value:
-        data[CALCULATION_VERSION_KEY] = value[CALCULATION_VERSION_KEY]
+    for key in (CALCULATION_VERSION_KEY, PLATE_METHOD_VERSION_KEY):
+        if key in value:
+            data[key] = value[key]
     return data
 
 
@@ -177,8 +261,9 @@ def _field_value(data: Mapping[str, Any]) -> object:
     value: dict[str, Any] = {"kind": data.get("kind", ""), "results": list(data.get("results", []))}
     if data.get("site_source"):
         value["site_source"] = str(data["site_source"])
-    if CALCULATION_VERSION_KEY in data:
-        value[CALCULATION_VERSION_KEY] = data[CALCULATION_VERSION_KEY]
+    for key in (CALCULATION_VERSION_KEY, PLATE_METHOD_VERSION_KEY):
+        if key in data:
+            value[key] = data[key]
     return value
 
 

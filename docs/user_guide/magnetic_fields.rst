@@ -1602,10 +1602,13 @@ status on the Magnetic Fields page and in the results of the ``Dipolar Tensor``
 and ``Nuclear Relaxation`` dialogs.
 
 The line means the numbers shown may differ from what the same inputs give now.
-There is one version for all three calculations, so a correction to one marks
-every stored result, including those it does not change: when plates from a photo
-moved to their fixed resolution, a result with no such plate kept its numbers but
-reads as older too.
+A correction marks only the results it touches. The tensor of a ``Plate from
+photo`` has its own version, which a field result records when it used such a
+plate, so a field result calculated with any other sample is not marked by a
+change to it. A field result from before that version was recorded reads the
+sample saved with it: a ``Plate from photo``, or a voxel grid saved with another
+padding or with smoothing, is older, and anything else is not. Dipolar tensor and
+nuclear relaxation results do not use the sample.
 MuFinder never rewrites or recalculates them on its own, so they stay exactly as
 calculated, and saving, reopening or saving a workspace keeps them and the line.
 The calculation's ``Calculate`` button replaces them with new numbers and clears

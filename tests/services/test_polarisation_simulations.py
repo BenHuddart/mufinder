@@ -14,6 +14,8 @@ from mufinder.science.polarisation import PolarisationError, calculate_polarisat
 from mufinder.science.polarisation_simulation import PolarisationSettings, simulate_polarisation
 from mufinder.services.magnetic_field_results import (
     CALCULATION_METHOD_VERSION,
+    PLATE_METHOD_VERSION,
+    PLATE_METHOD_VERSION_KEY,
     CALCULATION_VERSION_KEY,
     MAGNETIC_FIELD_PAGE_OWNER,
     UEP_SITE_SOURCE,
@@ -120,6 +122,46 @@ def test_a_simulation_records_the_method_of_the_fields_it_ran_from(document) -> 
     current = _simulate_page(document)
     assert current.sources[0].calculation_version == CALCULATION_METHOD_VERSION
     assert older_method_sources(current) == []
+
+
+def test_a_simulation_of_a_plate_is_marked_and_one_without_is_not(document) -> None:
+    document.ui_state["magnetic_field_form"] = {"demag_shape": "sphere"}
+    _store_fields(document, MAGNETIC_FIELD_PAGE_OWNER, _current_fields())
+    no_plate = _simulate_page(document)
+    assert no_plate.sources[0].plate_method_version is None
+    assert older_method_sources(no_plate, document) == []
+
+    # Fields from before the plate method was recorded, under a plate from a photo.
+    document.ui_state["magnetic_field_form"] = {"demag_shape": "image_plate"}
+    old_plate = _simulate_page(document)
+    assert old_plate.sources[0].plate_method_version == 1
+    assert older_method_sources(old_plate, document) == list(old_plate.sources)
+
+    # Once it has run, the mark follows the simulation and not the form.
+    document.ui_state["magnetic_field_form"] = {"demag_shape": "sphere"}
+    stored = polarisation_simulation(document, old_plate.simulation_id)
+    assert older_method_sources(stored, document) == list(stored.sources)
+
+    _store_fields(
+        document,
+        MAGNETIC_FIELD_PAGE_OWNER,
+        {**_current_fields(), PLATE_METHOD_VERSION_KEY: PLATE_METHOD_VERSION},
+    )
+    document.ui_state["magnetic_field_form"] = {"demag_shape": "image_plate"}
+    fresh = _simulate_page(document)
+    assert fresh.sources[0].plate_method_version == PLATE_METHOD_VERSION
+    assert older_method_sources(fresh, document) == []
+
+
+def test_a_simulation_saved_before_the_plate_method_decides_from_the_saved_form(document) -> None:
+    _store_fields(document, MAGNETIC_FIELD_PAGE_OWNER, _current_fields())
+    document.ui_state["magnetic_field_form"] = {"demag_shape": "sphere"}
+    record = _simulate_page(document)
+    assert record.sources[0].plate_method_version is None
+
+    assert older_method_sources(record, document) == []
+    document.ui_state["magnetic_field_form"] = {"demag_shape": "image_plate"}
+    assert older_method_sources(record, document) == list(record.sources)
 
 
 def test_removed_sources_are_those_with_no_fields_left(document) -> None:

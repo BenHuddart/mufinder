@@ -34,12 +34,12 @@ from mufinder.science.lattice import (
 )
 from mufinder.services.job_results import latest_result_for_job, total_energy_for_job
 from mufinder.services.magnetic_field_results import (
+    field_result_uses_older_method,
     MAGNETIC_FIELD_RESULT_TYPE,
     commensurate_field_entries,
     field_result_site_source,
     is_unrelaxed_site_source,
     magnetic_field_result,
-    uses_older_method,
 )
 from mufinder.services.project_document import (
     ProjectDocument,
@@ -418,7 +418,7 @@ def _magnetic_layers(document: ProjectDocument, host: Structure) -> list[SurveyL
         estimate = is_unrelaxed_site_source(
             field_result_site_source(result.data, form if isinstance(form, Mapping) else None)
         )
-        older = uses_older_method(result.data)
+        older = field_result_uses_older_method(result.data, form)
         markers = []
         for entry in commensurate_field_entries(result):
             position = _triplet(entry.get("muon_position"))

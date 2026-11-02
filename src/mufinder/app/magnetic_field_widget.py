@@ -103,10 +103,12 @@ from mufinder.services.magnetic_field_calculation import (
 from mufinder.services.magnetic_field_results import (
     CALCULATION_METHOD_VERSION,
     CALCULATION_VERSION_KEY,
+    PLATE_METHOD_VERSION,
+    PLATE_METHOD_VERSION_KEY,
+    field_result_uses_older_method,
     UNRELAXED_ESTIMATE_SUFFIX,
     UNRELAXED_SITE_NOTE,
     is_unrelaxed_site_source,
-    uses_older_method,
 )
 from mufinder.services.magnetic_field_settings import (
     CONTACT_RADIUS_DECIMALS,
@@ -457,6 +459,7 @@ class MagneticFieldWidget(QWidget):
         # Counts set_document and set_form_state calls, so a calculation that
         # finishes after the project reloaded the page does not overwrite it.
         self._page_reloads = 0
+        self._loaded_demag_form: Mapping[str, object] | None = None
         self._distribution_results: list[object] = []
         self._field_results_state: dict[str, object] | None = None
         self._dipolar_tensor_selector_state: dict[str, object] = {"mode": "assigned"}
@@ -860,6 +863,11 @@ class MagneticFieldWidget(QWidget):
             self._field_results_state = (
                 dict(field_results) if isinstance(field_results, Mapping) else None
             )
+            # As saved: it says which sample results loaded from this form used.
+            self._loaded_demag_form = {
+                "demag_shape": state.get("demag_shape"),
+                "demag_sample": state.get("demag_sample"),
+            }
 
             if selected_site is not None:
                 self._selected_muon_site = selected_site
@@ -1548,6 +1556,7 @@ class MagneticFieldWidget(QWidget):
         self._distribution_results = []
         if clear_state:
             self._field_results_state = None
+            self._loaded_demag_form = None
         self._result_table.setRowCount(0)
         self._calculation_status.setText("Results: -")
         self._sync_distribution_plot_button()
@@ -1564,8 +1573,7 @@ class MagneticFieldWidget(QWidget):
     def _results_use_older_method(self) -> bool:
         """Return whether the shown field results predate the current calculation method."""
 
-        state = self._field_results_state
-        return isinstance(state, Mapping) and uses_older_method(state)
+        return field_result_uses_older_method(self._field_results_state, self._loaded_demag_form)
 
     def _refresh_field_breakdown(self) -> None:
         """List the field terms that sum to the selected result row.
@@ -1878,12 +1886,15 @@ class MagneticFieldWidget(QWidget):
             jsonable = to_jsonable(payload)
             if isinstance(jsonable, Mapping):
                 payloads.append(dict(jsonable))
-        return {
+        state: dict[str, object] = {
             "kind": kind,
             "results": payloads,
             "site_source": site_source,
             CALCULATION_VERSION_KEY: CALCULATION_METHOD_VERSION,
         }
+        if self._demag_shape() == "image_plate":
+            state[PLATE_METHOD_VERSION_KEY] = PLATE_METHOD_VERSION
+        return state
 
     @staticmethod
     def _field_result_object_to_state(result: object) -> dict[str, object]:

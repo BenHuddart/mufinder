@@ -749,7 +749,7 @@ class PolarisationWidget(QWidget):
                 table.insertRow(row)
                 stale = self._document is not None and bool(stale_sources(self._document, record))
                 status = "Stale" if stale else "Current"
-                if older_method_sources(record):
+                if older_method_sources(record, self._document):
                     status += ", older method"
                 if record.estimate:
                     status += ", estimate"
@@ -820,7 +820,7 @@ class PolarisationWidget(QWidget):
         removed = removed_sources(self._document, record) if record and self._document else []
         self._stale_note.setText(_stale_fields_note(stale, removed))
         self._stale_note.setVisible(bool(stale))
-        older = older_method_sources(record) if record else []
+        older = older_method_sources(record, self._document) if record else []
         self._older_method_note.setText(_older_fields_note(older, stale, removed))
         self._older_method_note.setVisible(bool(older))
         warnings = record.simulation.warnings if record is not None else ()
@@ -1124,7 +1124,13 @@ class PolarisationWidget(QWidget):
             stale = stale_sources(self._document, record) if self._document else []
             removed = removed_sources(self._document, record) if self._document else []
             Path(path).write_text(
-                export_text(record, stale=stale, removed=removed), encoding="utf-8"
+                export_text(
+                    record,
+                    stale=stale,
+                    removed=removed,
+                    older=older_method_sources(record, self._document),
+                ),
+                encoding="utf-8",
             )
         except OSError as exc:
             report_export_failed(self, exc)
@@ -1177,6 +1183,7 @@ def export_text(
     *,
     stale: Sequence[SimulationSource] = (),
     removed: Sequence[SimulationSource] = (),
+    older: Sequence[SimulationSource] | None = None,
 ) -> str:
     """The simulation as text: a header, the time block, a blank line, the spectrum block.
 
@@ -1192,7 +1199,8 @@ def export_text(
     ]
     if record.estimate:
         lines.append(f"# Estimate: {UNRELAXED_RESULTS_NOTE}")
-    older = older_method_sources(record)
+    if older is None:
+        older = older_method_sources(record)
     if older:
         lines.append(f"# Older method: {_older_fields_note(older, stale, removed)}")
     for key, value in record.settings.to_json().items():

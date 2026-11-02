@@ -11,6 +11,8 @@ from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationDefinition, CalculationRun, Job, MuonSite, Result
 from mufinder.services.magnetic_field_results import (
     CALCULATION_METHOD_VERSION,
+    PLATE_METHOD_VERSION,
+    PLATE_METHOD_VERSION_KEY,
     CALCULATION_VERSION_KEY,
     MAGNETIC_FIELD_PAGE_OWNER,
     store_magnetic_field_results,
@@ -402,6 +404,47 @@ def test_magnetic_layer_marks_fields_at_uep_sites_as_estimates(tmp_path: Path) -
         ),
     ],
 )
+@pytest.mark.parametrize(
+    ("form", "stored", "label"),
+    [
+        ({"demag_shape": "image_plate"}, {}, "0.213 T (older)"),
+        ({"demag_shape": "sphere"}, {}, "0.213 T"),
+        (
+            {"demag_shape": "image_plate"},
+            {PLATE_METHOD_VERSION_KEY: PLATE_METHOD_VERSION},
+            "0.213 T",
+        ),
+    ],
+    ids=["old plate", "no plate", "fresh plate"],
+)
+def test_magnetic_layer_marks_only_a_field_that_used_an_older_plate(
+    tmp_path: Path, form, stored, label
+) -> None:
+    project = muon_project(tmp_path)
+    project.document.ui_state["magnetic_field_workspaces"] = [
+        {"id": "ws", "title": "AFM", "form": form}
+    ]
+    store_magnetic_field_results(
+        project.document,
+        "ws",
+        {
+            "magnetic_field_results": {
+                "kind": "commensurate",
+                "results": [
+                    {"site_label": "3c", "muon_position": [0.5, 0.25, 0.25], "magnitude_T": 0.2134}
+                ],
+                "site_source": "custom",
+                CALCULATION_VERSION_KEY: CALCULATION_METHOD_VERSION,
+                **stored,
+            }
+        },
+    )
+
+    (layer,) = survey_layers(project.document, "magnetic_fields")
+
+    assert layer.markers[0].label == label
+
+
 def test_magnetic_layer_marks_a_field_from_an_older_method(
     tmp_path: Path, version, site_source, label, older
 ) -> None:

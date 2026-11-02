@@ -34,6 +34,9 @@ simulation ran, in ``calculation_version``. The stored traces came from those
 fields whatever has happened to them since, so :func:`older_method_sources`
 reads this version and not the current field record: a simulation of older
 fields stays marked after the fields are recalculated, until it is run again.
+A source's ``plate_method_version`` does the same for a plate from a photo; a
+simulation from before it existed decides from the sample in the source's saved
+form, so only one that used such a plate is marked.
 A source with no version recorded counts as older.
 """
 
@@ -72,7 +75,10 @@ from mufinder.services.magnetic_field_results import (
     field_result_site_source,
     is_unrelaxed_site_source,
     magnetic_field_result,
-    uses_older_method,
+    PLATE_METHOD_VERSION_KEY,
+    field_result_uses_older_method,
+    magnetic_field_owner_form,
+    recorded_plate_method_version,
 )
 from mufinder.services.project_document import ProjectDocument, active_host_structure
 from mufinder.services.project_summary import magnetic_field_workspaces
@@ -150,6 +156,7 @@ class SimulationSource:
     title: str
     weight: float = 1.0
     calculation_version: object = None
+    plate_method_version: object = None
 
     def to_json(self) -> dict[str, object]:
         payload: dict[str, object] = {
@@ -160,6 +167,8 @@ class SimulationSource:
         }
         if self.calculation_version is not None:
             payload[CALCULATION_VERSION_KEY] = self.calculation_version
+        if self.plate_method_version is not None:
+            payload[PLATE_METHOD_VERSION_KEY] = self.plate_method_version
         return payload
 
     @classmethod
@@ -170,6 +179,7 @@ class SimulationSource:
             title=str(payload.get("title", "")),
             weight=float(payload.get("weight", 1.0)),
             calculation_version=payload.get(CALCULATION_VERSION_KEY),
+            plate_method_version=payload.get(PLATE_METHOD_VERSION_KEY),
         )
 
 
@@ -333,6 +343,9 @@ def prepare_polarisation_simulation(
                 title=titles[source.owner],
                 weight=float(source.weight),
                 calculation_version=data.get(CALCULATION_VERSION_KEY),
+                plate_method_version=recorded_plate_method_version(
+                    data, magnetic_field_owner_form(document, source.owner)
+                ),
             )
         )
         field_results.append(tuple(_field_results(data)))
@@ -525,13 +538,23 @@ def removed_sources(
 
 def older_method_sources(
     record: PolarisationSimulationRecord | SimulationSummary,
+    document: ProjectDocument | None = None,
 ) -> list[SimulationSource]:
-    """Return the sources whose fields, when ``record`` ran, came from an older method."""
+    """Return the sources whose fields, when ``record`` ran, came from an older method.
+
+    ``document`` holds the saved forms that decide for a source with no plate method version.
+    """
 
     return [
         source
         for source in record.sources
-        if uses_older_method({CALCULATION_VERSION_KEY: source.calculation_version})
+        if field_result_uses_older_method(
+            {
+                CALCULATION_VERSION_KEY: source.calculation_version,
+                PLATE_METHOD_VERSION_KEY: source.plate_method_version,
+            },
+            None if document is None else magnetic_field_owner_form(document, source.owner),
+        )
     ]
 
 
