@@ -205,6 +205,7 @@ def test_corrected_energy_header_says_its_zero_is_among_sites_with_a_result(qapp
     tooltip = dict(SITE_COLUMNS)["dE + ZPE (eV)"]
 
     assert "lowest such sum among sites with a result" in tooltip
+    assert "non-positive muon mode" in tooltip
     assert "\n" not in tooltip
 
 
@@ -230,6 +231,31 @@ def test_a_row_with_phonon_warnings_marks_its_zpe_and_ranking_and_says_why(qapp)
     for column in range(table.columnCount()):
         assert table.item(0, column).toolTip().startswith(f"⚠ {warning}\n")
     assert "⚠" not in table.item(1, 0).toolTip()
+
+
+def test_a_zpe_from_an_earlier_geometry_is_marked_and_explained(qapp) -> None:
+    widget = QuantumCorrectionsWidget()
+    note = "From an earlier geometry."
+    widget.set_sources(
+        [
+            _completed(0, zpe="0.654", corrected_energy="–", zpe_mark="earlier", notes=(note,)),
+            _completed(1, zpe="0.700", corrected_energy="–", zpe_mark="unconfirmed", notes=(note,)),
+            _completed(
+                2,
+                zpe="0.200",
+                corrected_energy="–",
+                zpe_mark="earlier",
+                warnings=("A warning.",),
+            ),
+        ]
+    )
+    table = widget._sources_table
+
+    assert table.item(0, 3).text() == "0.654 (earlier)"
+    assert table.item(1, 3).text() == "0.700 (unconfirmed)"
+    assert table.item(2, 3).text() == "0.200 ⚠ (earlier)"
+    assert table.item(0, 4).text() == "–"
+    assert table.item(0, 0).toolTip().startswith(f"{note}\n")
 
 
 # --- a result whose site is no longer eligible ----------------------------------------------

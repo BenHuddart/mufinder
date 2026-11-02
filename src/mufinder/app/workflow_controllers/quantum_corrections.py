@@ -68,6 +68,7 @@ from mufinder.services.job_artifacts import ParsedJobArtifacts
 from mufinder.services.job_results import parse_numeric
 from mufinder.services.quantum_results import (
     W1_DEFINITION,
+    has_non_positive_muon_mode,
     mode_widths_from_result_data,
     phonon_warnings_from_result_data,
     w1_from_result_data,
@@ -82,10 +83,12 @@ from mufinder.services.muon_sites_summary import (
     set_show_every_relaxed_site,
 )
 from mufinder.services.source_candidates import (
+    PhononZpeSource,
     QuantumSourceCandidate,
     charge_state_for_job,
     charge_state_label_for_job,
     eligible_quantum_source_candidates,
+    phonon_zpe_source_state,
     quantum_seed_name_for_key,
     quantum_source_candidate_by_key,
     quantum_source_corrected_relative_energies,
@@ -166,6 +169,8 @@ _LEGACY_METHOD_TO_CASTEP = {
 _DEFAULT_ELEC_ENERGY_TOL = ValueWithUnit(1e-9, "eV")
 _PHONON_JOB_MAPPING = "phonon_job_ids_by_label"
 _SEED_MAPPING = "job_seed_names_by_label"
+#: The relaxation run each row's phonon inputs were last written from.
+_SOURCE_RUN_MAPPING = "phonon_source_run_ids_by_label"
 
 
 def _legacy_method_value(value: object) -> str:
@@ -232,6 +237,27 @@ def _muon_mode_texts(data: Mapping[str, object]) -> tuple[str, str]:
         ", ".join(f"{frequency:.1f}" for frequency, _width in pairs),
         " ".join(f"{width:.2f}" for _frequency, width in pairs),
     )
+
+
+def _ranking_notes(source: PhononZpeSource, zero_from_flagged: bool) -> tuple[str, ...]:
+    """Return the row tooltip's lines on why its ``dE + ZPE`` reads as it does."""
+
+    notes: list[str] = []
+    if source is PhononZpeSource.EARLIER:
+        notes.append(
+            "This ZPE is from an earlier geometry: the site's relaxation has run again since, "
+            "so it is not ranked."
+        )
+    elif source is PhononZpeSource.UNCONFIRMED:
+        notes.append(
+            "This project does not record which relaxation this ZPE came from, so it is not ranked."
+        )
+    elif zero_from_flagged:
+        notes.append(
+            "Every ranked site in this group has a non-positive muon mode, so the zero is the "
+            "lowest of them."
+        )
+    return tuple(notes)
 
 
 def _result_cells(result: Result) -> dict[str, object]:
@@ -311,6 +337,7 @@ class QuantumConfigureRequest(SourceConfigureRequest):
     """
 
     locked_reason: str
+    num_farms_differ: bool = False
 
 
 class QuantumCorrectionsController(WorkflowJobController):
@@ -608,6 +635,7 @@ class QuantumCorrectionsController(WorkflowJobController):
             num_farms=_agreed(num_farms_values, default=1),
             species_options=merge_species_options(candidate.structure for candidate in candidates),
             locked_reason=locked_reason,
+            num_farms_differ=len(set(num_farms_values)) > 1,
         )
 
     def apply_configuration(
@@ -650,6 +678,7 @@ class QuantumCorrectionsController(WorkflowJobController):
                 QuantumCorrectionsConfigDialog,
                 specs=self.parameter_specs(),
                 num_farms=request.num_farms,
+                num_farms_differ=request.num_farms_differ,
                 intro_text=request.intro_text,
                 read_only=request.read_only,
                 species_options=request.species_options,
@@ -1026,6 +1055,7 @@ class QuantumCorrectionsController(WorkflowJobController):
 
         phonon_mapping = _definition_mapping(definition, _PHONON_JOB_MAPPING)
         seed_mapping = _definition_mapping(definition, _SEED_MAPPING)
+        source_runs = _definition_mapping(definition, _SOURCE_RUN_MAPPING)
         # Load-bearing: ``phonon_job_for_key`` falls back to reading
         # ``job_ids_by_label``, so keep the phonon mapping aliased there.
         definition.parameters["job_ids_by_label"] = phonon_mapping
@@ -1045,11 +1075,13 @@ class QuantumCorrectionsController(WorkflowJobController):
                     _write_job_directory(
                         spec, output_root, seed_name=self.seed_name_for_key(definition, key)
                     )
+                    source_runs[key] = str(self._source_run_id(key))
                 created.append(existing)
                 continue
             seed_name = self._seed_for_new_job(definition, key, output_root=output_root)
             seed_mapping[key] = seed_name
             _write_job_directory(spec, output_root, seed_name=seed_name)
+            source_runs[key] = str(self._source_run_id(key))
             job = self._context.project_service.add_job(
                 document,
                 label=spec.name,
@@ -1066,6 +1098,12 @@ class QuantumCorrectionsController(WorkflowJobController):
                 failure_message=("Quantum Corrections jobs were generated, but autosave failed.")
             )
         return jobs
+
+    def _source_run_id(self, key: str) -> UUID | None:
+        """Return the relaxation run the row ``key`` currently reads."""
+
+        candidate = self.candidate_by_key(key)
+        return candidate.run.id if candidate is not None else None
 
     def _seed_for_new_job(
         self, definition: CalculationDefinition, key: str, *, output_root: Path
@@ -1218,11 +1256,16 @@ class QuantumCorrectionsController(WorkflowJobController):
         newest = self._newest_phonon_results()
         results = self._site_results(definition, candidates, newest)
         relative_energies = quantum_source_relative_energies(candidates)
-        corrected_energies = quantum_source_corrected_relative_energies(
+        sources = self._zpe_sources(definition, candidates, results)
+        corrected = quantum_source_corrected_relative_energies(
             candidates,
             {
                 key: parse_numeric(result.data.get("muon_zpe_total_eV"))
                 for key, result in results.items()
+                if sources[key] is PhononZpeSource.CURRENT
+            },
+            flagged_keys={
+                key for key, result in results.items() if has_non_positive_muon_mode(result.data)
             },
         )
         # The pinned list keeps every row this workflow already tracks, so a
@@ -1254,11 +1297,14 @@ class QuantumCorrectionsController(WorkflowJobController):
             )
             result = results.get(candidate.key)
             if result is not None:
+                source = sources[candidate.key]
                 row = replace(
                     row,
                     corrected_energy=_format_three_decimals(
-                        corrected_energies.get(candidate.key), signed=True
+                        corrected.values.get(candidate.key), signed=True
                     ),
+                    zpe_mark="" if source is PhononZpeSource.CURRENT else source.value,
+                    notes=_ranking_notes(source, candidate.key in corrected.zero_from_flagged),
                     **_result_cells(result),
                 )
             source_rows.append(row)
@@ -1313,6 +1359,28 @@ class QuantumCorrectionsController(WorkflowJobController):
                 continue
             results[candidate.key] = newest[job.id]
         return results
+
+    def _zpe_sources(
+        self,
+        definition: CalculationDefinition | None,
+        candidates: Sequence[QuantumSourceCandidate],
+        results: Mapping[str, Result],
+    ) -> dict[str, PhononZpeSource]:
+        """Return which relaxation of its site each result's phonon job read."""
+
+        recorded = (
+            definition.parameters.get(_SOURCE_RUN_MAPPING) if definition is not None else None
+        )
+        sources: dict[str, PhononZpeSource] = {}
+        for candidate in candidates:
+            job = self.phonon_job_for_key(definition, candidate.key)
+            if candidate.key in results and job is not None:
+                sources[candidate.key] = phonon_zpe_source_state(
+                    candidate,
+                    job,
+                    recorded.get(candidate.key) if isinstance(recorded, dict) else None,
+                )
+        return sources
 
     def _rows_without_a_site(
         self, newest: Mapping[UUID, Result], listed_job_ids: set[UUID]

@@ -26,6 +26,10 @@ class PhononParseError(ValueError):
     """Raised when a CASTEP ``.phonon`` file cannot be interpreted."""
 
 
+#: The warning :func:`muon_zpe` raises when a selected mode is left out of the total.
+NON_POSITIVE_MUON_MODES_WARNING = "Selected muon-dominated modes include non-positive frequencies."
+
+
 @dataclass(frozen=True, slots=True)
 class PhononAtom:
     """One atom row from the CASTEP phonon header."""
@@ -339,7 +343,7 @@ def muon_zpe(
     modes = select_muon_modes(calculation, muon_species=muon_species, count=count)
     unstable = [mode for mode in modes if mode.frequency_cm <= 0.0]
     if unstable:
-        warnings.append("Selected muon-dominated modes include non-positive frequencies.")
+        warnings.append(NON_POSITIVE_MUON_MODES_WARNING)
     total = sum(mode.zpe_eV for mode in modes if mode.frequency_cm > 0.0)
     return MuonZPEResult(total_eV=float(total), modes=modes, warnings=tuple(warnings))
 

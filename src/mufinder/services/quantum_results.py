@@ -23,7 +23,10 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-from mufinder.science.quantum_phonons import mode_width_angstrom
+from mufinder.science.quantum_phonons import (
+    NON_POSITIVE_MUON_MODES_WARNING,
+    mode_width_angstrom,
+)
 from mufinder.services.job_results import parse_numeric
 
 #: The ``w1_definition`` value written with a witness computed as ``P - 3``.
@@ -93,8 +96,23 @@ def phonon_warnings_from_result_data(data: Mapping[str, object]) -> tuple[str, .
     return tuple(text for text in stored if isinstance(text, str) and text.strip())
 
 
+def has_non_positive_muon_mode(data: Mapping[str, object]) -> bool:
+    """Return whether a selected muon mode of a phonon payload has a non-positive frequency.
+
+    Such a mode marks a saddle rather than a minimum, and the ZPE total leaves it out.
+    A stored frequency decides, or the warning stored with the payload.
+    """
+
+    for mode in _stored_modes(data) or []:
+        frequency = parse_numeric(mode.get("frequency_cm"))
+        if frequency is not None and frequency <= 0.0:
+            return True
+    return NON_POSITIVE_MUON_MODES_WARNING in phonon_warnings_from_result_data(data)
+
+
 __all__ = [
     "W1_DEFINITION",
+    "has_non_positive_muon_mode",
     "mode_widths_from_result_data",
     "phonon_warnings_from_result_data",
     "w1_from_result_data",

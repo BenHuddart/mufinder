@@ -248,6 +248,7 @@ def _completed_quantum_row(window, tmp_path: Path):
     )
     phonon.status = JobStatus.COMPLETED
     definition.parameters["phonon_job_ids_by_label"] = {candidate.key: str(phonon.id)}
+    definition.parameters["phonon_source_run_ids_by_label"] = {candidate.key: str(candidate.run.id)}
     phonon_path = doc.project_root / "site.phonon"
     phonon_path.write_text("phonon\n", encoding="utf-8")
     run = CalculationRun(job_id=phonon.id, status=JobStatus.COMPLETED)

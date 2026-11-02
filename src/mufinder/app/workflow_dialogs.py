@@ -219,6 +219,7 @@ class QuantumCorrectionsConfigDialog(ParameterDialog):
         preferred_exclusive: str | None = None,
         advanced_names: Iterable[str] | None = None,
         mixed_names: Iterable[str] | None = None,
+        num_farms_differ: bool = False,
         parent=None,
     ) -> None:
         super().__init__(
@@ -238,6 +239,8 @@ class QuantumCorrectionsConfigDialog(ParameterDialog):
         self._num_farms_spin.setRange(1, 9999)
         self._num_farms_spin.setValue(max(1, int(num_farms)))
         self._num_farms_spin.setEnabled(not read_only)
+        if num_farms_differ:
+            self._num_farms_spin.setSpecialValueText("Differs")
         self._num_farms_edited = False
         self._num_farms_spin.valueChanged.connect(self._mark_num_farms_edited)
         # Typing the value already shown changes nothing, but it is still a choice.
@@ -262,6 +265,7 @@ class QuantumCorrectionsConfigDialog(ParameterDialog):
 
     def _mark_num_farms_edited(self) -> None:
         self._num_farms_edited = True
+        self._num_farms_spin.setSpecialValueText("")
 
 
 class HyperfineCouplingConfigDialog(ParameterDialog):

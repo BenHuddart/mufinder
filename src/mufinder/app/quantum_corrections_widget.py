@@ -46,7 +46,7 @@ SITE_COLUMNS: tuple[tuple[str, str], ...] = (
     (
         "dE + ZPE (eV)",
         "Relaxed energy plus muon ZPE, relative to the lowest such sum among sites with a "
-        "result, same charge state and cell",
+        "result and no non-positive muon mode, same charge state and cell",
     ),
     ("Widths (Å)", "Zero-point width of the muon along each of its three modes"),
     ("w1", "Mode-mixing witness: 0 when the muon's motion stays in its three modes, down to −3"),
@@ -63,7 +63,9 @@ class QuantumSourceRow:
     ``corrected_energy``, ``widths`` and ``witness`` are the result's columns;
     ``muon_modes`` lists the three selected Γ-mode frequencies for the row tooltip;
     ``result_id`` names the result ``Open Analysis`` opens, empty without one;
-    ``warnings`` are those stored with that result.
+    ``warnings`` are those stored with that result. ``zpe_mark`` says when the ZPE may
+    not belong to the site's current geometry (``earlier`` or ``unconfirmed``), and
+    ``notes`` are further lines for the row tooltip.
 
     An empty ``key`` marks a result with no eligible site: a read-only row
     that no job action reaches and only ``Open Analysis`` acts on.
@@ -85,6 +87,8 @@ class QuantumSourceRow:
     muon_modes: str = ""
     result_id: str = ""
     warnings: tuple[str, ...] = ()
+    zpe_mark: str = ""
+    notes: tuple[str, ...] = ()
 
 
 class QuantumCorrectionsWidget(RelaxedSiteSourceTableWidget):
@@ -224,7 +228,7 @@ class QuantumCorrectionsWidget(RelaxedSiteSourceTableWidget):
             row.pinned_label or row.label,
             row.charge_state,
             row.relative_energy,
-            _marked(row.zpe, row),
+            f"{_marked(row.zpe, row)} ({row.zpe_mark})" if row.zpe_mark else _marked(row.zpe, row),
             _marked(row.corrected_energy, row),
             row.widths,
             row.witness,
@@ -316,6 +320,7 @@ def _row_tooltip(row: QuantumSourceRow) -> str:
     """Return what a row's cells show on hover: what the table has no column for."""
 
     lines = [f"{WARNING_MARK} {warning}" for warning in row.warnings]
+    lines.extend(row.notes)
     if not row.key:
         lines.append("No eligible site stands behind this result, so it is kept but not ranked.")
     if row.pinned_label:

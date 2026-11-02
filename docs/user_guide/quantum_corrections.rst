@@ -73,8 +73,8 @@ The page shows the flow as three numbered steps above one table of sites.
    - ``Configure…`` opens the row settings for the selected sites, or with
      nothing selected for every site not yet run. Check the electronic settings
      (inherited from the source relaxation, see `Configuration dialog`_) and set
-     ``Farms`` if you want task farming; sites with different farm counts keep
-     theirs unless you change it. The settings stay editable until the site's job
+     ``Farms`` if you want task farming; when the sites differ it reads ``Differs``
+     and they keep theirs unless you change it. The settings stay editable until the site's job
      is submitted.
    - ``Run Selected Locally`` and ``Run Selected on Cluster`` submit the selected
      sites. With nothing selected the buttons read ``Run All Locally`` /
@@ -177,9 +177,10 @@ no energy to rank, so it takes no part in ``dE + ZPE``, and no job action reache
 ``dE + ZPE (eV)``
    The ranking once zero-point energy is counted: the site's relaxed total energy
    plus its muon ZPE, relative to the lowest such sum among the sites with a
-   result and the same charge state and cell composition. Until every site in the
-   group has a result, its zero can move as more results arrive, and a site with
-   ``dE`` above 0 can read ``0.000``. See
+   result and no non-positive muon mode, with the same charge state and cell
+   composition. Until every site in the group has a result, its zero can move as
+   more results arrive, and a site with ``dE`` above 0 can read ``0.000``. A site
+   with ``(earlier)`` or ``(unconfirmed)`` beside its ``ZPE`` shows ``–`` here. See
    `Ranking sites with zero-point energy`_.
 ``Widths (Å)``
    The muon's zero-point width ``sqrt(ħ / (2 m_μ ω))`` along each of those modes,
@@ -199,8 +200,21 @@ A ``⚠`` beside ``ZPE`` and ``dE + ZPE`` means the result was stored with a war
 and the row's tooltip gives it: a selected muon mode with a non-positive frequency,
 which the total leaves out, or the wrong muon mass (see `Muon mass`_). The number is
 the stored one, but do not rank the site by it: a non-positive muon mode means the
-geometry is a saddle, not a minimum. Such a site still takes part in its group, so
-its sum can set the zero that the other rows are read from.
+geometry is a saddle, not a minimum, and its total leaves that mode out. Such a site
+cannot set its group's zero: its ``dE + ZPE`` is read from the zero of the other
+sites, and can be negative. If every ranked site in a group has such a mode, the zero
+is the lowest of them, and the row's tooltip says so. A wrong muon mass is flagged but
+keeps its place in the ranking.
+
+``ZPE`` reads ``(earlier)`` when the phonon job read an earlier relaxation of the site
+than the one it now points at, for example after ``Continue relaxation…``. The sum
+would add a new energy to a ZPE from another geometry, so the row shows ``–`` under
+``dE + ZPE`` and takes no part in the ranking until its phonon job runs again.
+MuFinder records the run each phonon job's inputs were written from. A job from before
+that record is read from its timestamps: a relaxation that finished after the job was
+submitted cannot be the one it read. If a stamp is missing, ``ZPE`` reads
+``(unconfirmed)``, and the row is left out in the same way, because nothing shows that
+the two numbers belong together.
 
 Energies are shown to three decimals. Hover a column header for its definition,
 and a row for what the table has no column for:

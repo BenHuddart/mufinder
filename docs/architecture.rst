@@ -1587,7 +1587,11 @@ Controller summary
        ``configure_request``), the site rename and the analysis window
        (``open_analysis``). ``refresh_view`` builds one row per site: the newest
        result of the site's job while that job is completed, and ``dE + ZPE``
-       from ``quantum_source_corrected_relative_energies``. A completed result
+       from ``quantum_source_corrected_relative_energies``, leaving out a result
+       that ``phonon_zpe_source_state`` cannot tie to the site's current relaxation
+       run (``materialize`` records that run in ``phonon_source_run_ids_by_label``;
+       older jobs are read from their timestamps) and keeping a row with a
+       non-positive muon mode from setting the zero. A completed result
        that no listed site's job stands behind gets a read-only row with an empty
        key, outside the ranking.
    * - ``HyperfineCouplingController``

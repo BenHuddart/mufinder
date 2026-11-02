@@ -19,6 +19,7 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
+from enum import Enum
 from pathlib import Path
 from typing import Protocol
 from uuid import UUID
@@ -43,6 +44,7 @@ from mufinder.domain.models import (
     MuonSite,
     Result,
     Structure,
+    as_aware_utc,
 )
 from mufinder.persistence.codec import float_triplet_or_none
 from mufinder.science.energy_barriers import (
@@ -453,28 +455,95 @@ def quantum_source_relative_energies(
     )
 
 
+class PhononZpeSource(Enum):
+    """Which relaxation of a site a phonon job's ZPE came from, so what it may be added to."""
+
+    CURRENT = "current"
+    EARLIER = "earlier"
+    UNCONFIRMED = "unconfirmed"
+
+
+def phonon_zpe_source_state(
+    candidate: QuantumSourceCandidate,
+    phonon_job: Job,
+    recorded_run_id: object = None,
+) -> PhononZpeSource:
+    """Return whether a phonon job read the relaxation run its site now points at.
+
+    ``recorded_run_id`` is the run written down when the job's inputs were written, and
+    it decides. A job with no record was read from its timestamps: inputs are written
+    at submission, so a relaxation that finished after the job was submitted cannot be
+    the one it read, and one that finished before it is. Without both stamps nothing
+    tells them apart, and the state is unconfirmed. A naive stamp from an older project
+    is read as UTC.
+    """
+
+    if isinstance(recorded_run_id, str) and recorded_run_id.strip():
+        return (
+            PhononZpeSource.CURRENT
+            if recorded_run_id.strip() == str(candidate.run.id)
+            else PhononZpeSource.EARLIER
+        )
+    relaxed_at = candidate.run.completed_at or candidate.job.completed_at
+    if relaxed_at is None or phonon_job.submitted_at is None:
+        return PhononZpeSource.UNCONFIRMED
+    if as_aware_utc(relaxed_at) > as_aware_utc(phonon_job.submitted_at):
+        return PhononZpeSource.EARLIER
+    return PhononZpeSource.CURRENT
+
+
+@dataclass(frozen=True, slots=True)
+class CorrectedEnergies:
+    """Relative zero-point-corrected energies, and whose zero is set by flagged sources.
+
+    ``values`` maps each source key to its energy, ``None`` for a source left out.
+    ``zero_from_flagged`` holds the keys in groups where only flagged sources take part.
+    """
+
+    values: dict[str, float | None]
+    zero_from_flagged: frozenset[str]
+
+
 def quantum_source_corrected_relative_energies(
     candidates: Iterable[QuantumSourceCandidate],
     muon_zpe_eV_by_key: Mapping[str, float | None],
-) -> dict[str, float | None]:
+    flagged_keys: Collection[str] = (),
+) -> CorrectedEnergies:
     """Return each source's zero-point-corrected energy relative to its comparable minimum.
 
     The corrected energy is the relaxation's absolute final total energy plus the
     muon ZPE of the source's phonon result. The groups are those of
-    :func:`quantum_source_relative_energies`, and each source is reported relative
-    to the lowest corrected energy in its group, so only sources with both numbers
-    take part. A source without a total energy or a ZPE maps to ``None``.
+    :func:`quantum_source_relative_energies`, and only sources with both numbers take
+    part; any other maps to ``None``. Each group's zero is its lowest corrected energy
+    among sources outside ``flagged_keys``, whose total may leave a mode out, and a
+    flagged source is read from that zero too. A group of only flagged sources takes
+    its zero from them.
     """
 
-    entries: dict[str, tuple[object, float | None]] = {}
+    sums: dict[str, tuple[object, float]] = {}
+    keys: list[str] = []
     for candidate in candidates:
+        keys.append(candidate.key)
         zpe = muon_zpe_eV_by_key.get(candidate.key)
         energy = candidate.total_energy_eV
-        entries[candidate.key] = (
-            quantum_source_energy_group(candidate),
-            None if energy is None or zpe is None else float(energy) + float(zpe),
-        )
-    return grouped_relative_energies(entries)
+        if energy is None or zpe is None:
+            continue
+        total = float(energy) + float(zpe)
+        if np.isfinite(total):
+            sums[candidate.key] = (quantum_source_energy_group(candidate), total)
+    zeros: dict[object, float] = {}
+    for key, (group, total) in sums.items():
+        if key not in flagged_keys:
+            zeros[group] = min(total, zeros.get(group, total))
+    fallback: dict[object, float] = {}
+    for key, (group, total) in sums.items():
+        if group not in zeros:
+            fallback[group] = min(total, fallback.get(group, total))
+    zeros.update(fallback)
+    return CorrectedEnergies(
+        values={key: sums[key][1] - zeros[sums[key][0]] if key in sums else None for key in keys},
+        zero_from_flagged=frozenset(key for key, (group, _t) in sums.items() if group in fallback),
+    )
 
 
 def quantum_source_energy_group(candidate: QuantumSourceCandidate) -> object:
