@@ -15,6 +15,7 @@ from mufinder.science import demagnetization
 from mufinder.science.sample_image import segment_plate_image
 from mufinder.science.demagnetization import (
     PLATE_FOURIER_GRID,
+    PLATE_FOURIER_PADDING,
     DemagnetizationError,
     DemagnetizingSample,
     PlatePhoto,
@@ -706,17 +707,21 @@ def _cylinder_axial_factor(height_over_diameter: float) -> float:
 
     edges = np.arange(0.0, 410.0, 10.0)
     total = sum(quad(integrand, lo, hi, limit=200)[0] for lo, hi in zip(edges, edges[1:]))
-    # Beyond the last edge J1(q)^2 averages 1 / (pi q).
-    return 2.0 / d_over_r * (total + 1.0 / (2.0 * np.pi * edges[-1] ** 2))
+    # Beyond the last edge J1(q)^2 averages 1 / (pi q); in u = q d the rest is smooth.
+    tail = quad(lambda u: -np.expm1(-u) / u**3, edges[-1] * d_over_r, np.inf, limit=400)[0]
+    return 2.0 / d_over_r * (total + d_over_r**2 / np.pi * tail)
 
 
 def test_cylinder_reference_has_the_known_limits_and_values() -> None:
     assert _cylinder_axial_factor(1.0) == pytest.approx(0.3116, abs=1e-4)
-    assert _cylinder_axial_factor(0.001) == pytest.approx(1.0, abs=6e-3)
+    # A thin disc: 1 - N = (2 t / pi) (ln(4 / t) - 1 / 2).
+    for thin in (1e-3, 1e-4):
+        expected = 1.0 - 2.0 * thin / np.pi * (np.log(4.0 / thin) - 0.5)
+        assert _cylinder_axial_factor(thin) == pytest.approx(expected, abs=2e-5)
     assert _cylinder_axial_factor(50.0) == pytest.approx(8.0 / (3.0 * np.pi * 100.0), rel=0.01)
 
 
-def test_photo_plate_of_a_thin_square_is_within_half_a_percent_of_aharoni() -> None:
+def test_photo_plate_of_a_thin_square_is_within_five_thousandths_of_a_percent_of_aharoni() -> None:
     grey = np.full((300, 300), 220, dtype=np.uint8)
     grey[50:250, 50:250] = 40
     outline = segment_plate_image(grey).in_plane_mask()
@@ -725,8 +730,7 @@ def test_photo_plate_of_a_thin_square_is_within_half_a_percent_of_aharoni() -> N
 
     exact = demagnetizing_factors_rectangular_prism((5.0, 5.0, 0.1))
     assert exact[2] == pytest.approx(0.94086, abs=1e-5)
-    # The issue asked for 0.5 %; 256 voxels along the edge give 0.01 %.
-    np.testing.assert_allclose(result.tensor[2, 2], exact[2], rtol=0.0005)
+    np.testing.assert_allclose(result.tensor[2, 2], exact[2], rtol=0.00005)
     assert result.trace == pytest.approx(1.0, abs=1e-12)
 
 
@@ -745,13 +749,43 @@ def test_photo_plates_of_any_proportions_match_their_closed_forms(thickness: flo
         np.diag(square),
         demagnetizing_factors_rectangular_prism((1.0, 1.0, thickness)),
         rtol=0.0,
-        atol=0.002,
+        atol=0.0006,
     )
     axial = _cylinder_axial_factor(thickness)
     np.testing.assert_allclose(
-        np.diag(disc), (0.5 * (1.0 - axial), 0.5 * (1.0 - axial), axial), rtol=0.0, atol=0.002
+        np.diag(disc), (0.5 * (1.0 - axial), 0.5 * (1.0 - axial), axial), rtol=0.0, atol=0.0006
     )
     assert np.trace(disc) == pytest.approx(1.0, abs=1e-12)
+
+
+@pytest.mark.parametrize(
+    ("thickness", "square_error", "disc_error"),
+    [(0.5, 0.0002, 0.0001), (1.0, 1e-5, 0.00012), (1.5, 0.00015, 0.00022)],
+    ids=str,
+)
+def test_compact_photo_plates_are_not_limited_by_their_images(
+    thickness: float, square_error: float, disc_error: float
+) -> None:
+    square = fourier_demagnetizing_result(
+        DemagnetizingSample.image_plate(np.ones((128, 128), dtype=bool), (1.0, 1.0), thickness)
+    ).tensor
+    disc = fourier_demagnetizing_result(
+        DemagnetizingSample.image_plate(_disc(256), (1.0, 1.0), thickness)
+    ).tensor
+
+    exact = demagnetizing_factors_rectangular_prism((1.0, 1.0, thickness))
+    assert np.max(np.abs(np.diag(square) - exact)) < square_error
+    axial = _cylinder_axial_factor(thickness)
+    disc_exact = (0.5 * (1.0 - axial), 0.5 * (1.0 - axial), axial)
+    assert np.max(np.abs(np.diag(disc) - disc_exact)) < disc_error
+
+
+def test_photo_plate_box_is_four_longest_edges_and_a_voxel_grid_s_is_two_and_a_half() -> None:
+    plate = DemagnetizingSample.image_plate(np.ones((64, 64), dtype=bool), (5.0, 5.0), 0.5)
+    grid = DemagnetizingSample.voxel_grid(np.ones((32, 32, 4), dtype=bool), (0.125, 0.125, 0.25))
+
+    assert sample_fourier_box(plate) == (1024, 1024, 1050)
+    assert sample_fourier_box(grid) == (80, 80, 40)
 
 
 def _odd_outline() -> np.ndarray:
@@ -783,7 +817,7 @@ def test_photo_plate_sum_is_the_fft_of_the_whole_box(
 
     two_dimensional = fourier_demagnetizing_result(plate)
     model = plate.voxel_model()
-    whole_box = voxel_demagnetizing_tensor(model.mask, model.spacing)
+    whole_box = voxel_demagnetizing_tensor(model.mask, model.spacing, padding=PLATE_FOURIER_PADDING)
 
     assert two_dimensional.box_shape == whole_box.box_shape
     assert two_dimensional.voxel_count == whole_box.voxel_count
@@ -808,7 +842,7 @@ def test_photo_plate_needs_no_more_memory_than_its_outline(monkeypatch) -> None:
         DemagnetizingSample.image_plate(np.ones((64, 64), dtype=bool), (1.0, 1.0), 1.0 / 2345.0)
     )
 
-    assert transforms == [(640, 640)]
+    assert transforms == [(1024, 1024)]
     assert result.box_shape[2] > 5000
 
 
@@ -993,6 +1027,10 @@ def test_photo_plate_limits_are_the_ones_the_refusal_names() -> None:
     assert sample_fourier_box(DemagnetizingSample.image_plate(outline, (1.0, 1.0), 1e-4))
     # There is no limit on thickness as such: a rod from an end-on photo works.
     assert sample_fourier_box(DemagnetizingSample.image_plate(outline, (1.0, 1.0), 1000.0))
+    # The time limit lets a needle about 2000 widths long through, and refuses a longer one.
+    assert sample_fourier_box(DemagnetizingSample.image_plate(outline, (1.0, 6e-4), 6e-4))
+    with pytest.raises(DemagnetizationError, match="Rectangular prism"):
+        sample_fourier_box(DemagnetizingSample.image_plate(outline, (1.0, 5e-4), 5e-4))
 
 
 def test_fourier_tensor_whose_trace_is_off_by_over_a_percent_raises(monkeypatch) -> None:

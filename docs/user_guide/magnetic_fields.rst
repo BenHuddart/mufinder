@@ -934,7 +934,7 @@ under the fields, and ``Use Outline`` stays disabled until the threshold or
 
 .. figure:: ../_generated/screenshots/fe_photographed_plate.webp
    :alt: The Advanced Demagnetizing Field window with Plate from photo chosen,
-         the tensor of the platelet with N along c of 0.92620 and its trace 1,
+         the tensor of the platelet with N along c of 0.92618 and its trace 1,
          and the voxelised platelet in the preview.
 
    The same platelet as a ``Plate from photo`` of bcc iron, aligned with the
@@ -1162,10 +1162,11 @@ The resolution is fixed, so a calculation has no numerical settings:
 
 Padding
    The FFT treats the box as periodic, so the sample sits in a lattice of its
-   own images. The box spans 2.5 times the longest sample edge along every
-   axis, not along each axis separately: a thin plate padded only through its
-   thickness would sit in a stack of plates one thickness apart and behave like
-   bulk.
+   own images. The box spans 4 times the longest sample edge for a plate from a
+   photo, and 2.5 times for a voxel grid, whose FFT holds the whole box in memory.
+   It spans that along every axis, not along each axis separately: a thin plate
+   padded only through its thickness would sit in a stack of plates one
+   thickness apart and behave like bulk.
 Voxels of a plate from a photo
    256 voxels span the sample's longest edge, thickness included, and the other
    edges take the same voxel edge, rounded and at least 1 voxel, so the voxels
@@ -1177,8 +1178,9 @@ Voxels of a plate from a photo
 The trace is a check on the calculation: a tensor whose ``Tr N`` differs from 1
 by more than 1 % is refused rather than used.
 
-These plates, against their closed forms, show what to expect. Compact plates
-are limited by the padding, and thin ones by their single flat layer:
+These plates, against their closed forms, show what to expect. The thinnest are
+limited by their single flat layer, and curved outlines by the steps along their
+edge:
 
 .. list-table::
    :header-rows: 1
@@ -1188,28 +1190,28 @@ are limited by the padding, and thin ones by their single flat layer:
      - Circular plate, largest error in a factor
    * - 1/10000
      - 0.00019
-     - 0.00004
+     - 0.00017
    * - 1/1000
      - 0.00052
      - 0.00038
    * - 1/50
-     - 0.00009
-     - 0.00011
+     - 0.00000
+     - 0.00016
    * - 1/10
-     - 0.00058
-     - 0.00030
+     - 0.00006
+     - 0.00002
    * - 1/2
-     - 0.00184
-     - 0.00096
+     - 0.00018
+     - 0.00007
    * - 1
      - 0.00000
-     - 0.00095
+     - 0.00011
    * - 3/2
-     - 0.00152
-     - 0.00148
+     - 0.00014
+     - 0.00021
    * - 10
-     - 0.00006
-     - 0.00025
+     - 0.00001
+     - 0.00030
 
 An outline a few voxels across is coarser, since 256 voxels along the longest
 edge leave few across a narrow side. Over rectangles 1 x b, from b to b/20 thick,
@@ -1262,7 +1264,9 @@ and the refusal gives the figure, rounded up, for the plate in hand. The quick `
 plate`` has its normal along ``c``, so for a plate oriented otherwise choose a
 ``Rectangular prism``, which keeps the orientation. The limit on the time taken
 also refuses a needle or rod whose length is more than about 2000 times its
-width. A ``Voxel grid`` from the Python API takes the FFT of the whole box, which
+width. On a desktop computer a plate typically takes about 0.3 s, one at the
+thickness limit about 10 s, and the largest box allowed, a rod near that length,
+about 25 s and 2 GB. A ``Voxel grid`` from the Python API takes the FFT of the whole box, which
 holds at most 268 million voxels and about 4 GB; a larger box, or an allocation
 that fails, is refused.
 
