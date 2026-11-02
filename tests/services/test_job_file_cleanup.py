@@ -7,9 +7,13 @@ from pathlib import Path
 import pytest
 
 import mufinder.services.job_file_cleanup as cleanup_module
-from mufinder.domain.enums import WorkflowStage
+from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationDefinition, CalculationRun, Job, Result
-from mufinder.services.job_file_cleanup import JobCleanupItem, JobFileCleanup
+from mufinder.services.job_file_cleanup import (
+    ARCHIVE_FOLDER_NAME,
+    JobCleanupItem,
+    JobFileCleanup,
+)
 from mufinder.services.project_service import ProjectDocument, ProjectService
 
 
@@ -302,3 +306,229 @@ def test_delete_path_retries_a_transient_permission_error(
 
     assert calls["n"] >= 2
     assert not target.exists()
+
+
+def test_a_folder_another_job_uses_is_not_offered_and_only_the_records_go(tmp_path: Path) -> None:
+    service, document = _project(tmp_path)
+    job = _job(service, document, "relax_a")
+    other = _job(service, document, "relax_b")
+    other.status = JobStatus.COMPLETED
+    directory = _job_directory(document, job.label)
+    cleanup = _cleanup(document, {job.label: directory, other.label: directory})
+    asked: list[JobCleanupItem] = []
+
+    outcome = cleanup.execute(
+        [cleanup.plan_item([job])],
+        choose_disposition=lambda item: asked.append(item) or "archive",
+        stop_on_error=True,
+    )
+
+    assert outcome.completed
+    assert asked == []
+    assert directory.is_dir()
+    assert not (directory.parent / ARCHIVE_FOLDER_NAME).exists()
+    assert job.id not in document.jobs
+    assert other.id in document.jobs
+    assert [entry.directory for entry in outcome.kept] == [directory]
+    assert outcome.folder_summary() == "kept folder 'relax_a' because another job uses it"
+
+
+def test_a_folder_holding_or_inside_another_jobs_folder_is_kept(tmp_path: Path) -> None:
+    service, document = _project(tmp_path)
+    outer = _job(service, document, "outer")
+    inner = _job(service, document, "inner")
+    inner.status = JobStatus.COMPLETED
+    outer.status = JobStatus.COMPLETED
+    outer_directory = _job_directory(document, outer.label)
+    inner_directory = outer_directory / inner.label
+    inner_directory.mkdir()
+    directories = {outer.label: outer_directory, inner.label: inner_directory}
+
+    for job in (outer, inner):
+        cleanup = _cleanup(document, directories)
+        document.jobs[job.id] = job
+        outcome = cleanup.execute(
+            [cleanup.plan_item([job])],
+            choose_disposition=lambda _item: "delete",
+            stop_on_error=True,
+        )
+        assert len(outcome.kept) == 1
+        document.jobs[job.id] = job
+
+    assert inner_directory.is_dir()
+
+
+def test_jobs_cleaned_together_may_share_a_folder(tmp_path: Path) -> None:
+    service, document = _project(tmp_path)
+    old = _job(service, document, "relax_a")
+    replacement = _job(service, document, "relax_b")
+    replacement.status = JobStatus.COMPLETED
+    directory = _job_directory(document, old.label)
+    cleanup = _cleanup(document, {old.label: directory, replacement.label: directory})
+
+    outcome = cleanup.execute(
+        [cleanup.plan_item([old]), cleanup.plan_item([replacement])],
+        choose_disposition=lambda _item: "delete",
+        stop_on_error=True,
+    )
+
+    assert outcome.completed
+    assert outcome.kept == ()
+    assert outcome.deleted == (directory,)
+    assert not directory.exists()
+
+
+def test_a_summary_names_the_folders_of_each_fate_only_when_one_was_kept(tmp_path: Path) -> None:
+    service, document = _project(tmp_path)
+    mine = _job(service, document, "relax_a")
+    moved = _job(service, document, "relax_b")
+    shared = _job(service, document, "relax_c")
+    other = _job(service, document, "relax_d")
+    other.status = JobStatus.COMPLETED
+    mine_directory = _job_directory(document, mine.label)
+    moved_directory = _job_directory(document, moved.label)
+    shared_directory = _job_directory(document, shared.label)
+    cleanup = _cleanup(
+        document,
+        {
+            mine.label: mine_directory,
+            moved.label: moved_directory,
+            shared.label: shared_directory,
+            other.label: shared_directory,
+        },
+    )
+    answers = {mine.label: "delete", moved.label: "archive"}
+
+    outcome = cleanup.execute(
+        [cleanup.plan_item([mine]), cleanup.plan_item([moved]), cleanup.plan_item([shared])],
+        choose_disposition=lambda item: answers[item.label],
+        stop_on_error=True,
+    )
+
+    assert outcome.folder_summary() == (
+        "deleted folder 'relax_a'; archived folder 'relax_b'; "
+        "kept folder 'relax_c' because another job uses it"
+    )
+
+
+def test_a_summary_with_nothing_kept_is_empty(tmp_path: Path) -> None:
+    service, document = _project(tmp_path)
+    job = _job(service, document, "relax_a")
+    directory = _job_directory(document, job.label)
+    cleanup = _cleanup(document, {job.label: directory})
+
+    outcome = cleanup.execute(
+        [cleanup.plan_item([job])], choose_disposition=lambda _item: "delete", stop_on_error=True
+    )
+
+    assert outcome.folder_summary() == ""
+
+
+def test_a_job_left_unbound_and_defined_does_not_hold_a_folder(tmp_path: Path) -> None:
+    """A reset cutoff job stays in the project with nothing of its own in the folder."""
+
+    service, document = _project(tmp_path)
+    job = _job(service, document, "relax_a")
+    detached = _job(service, document, "relax_b")
+    directory = _job_directory(document, job.label)
+    cleanup = _cleanup(document, {job.label: directory, detached.label: directory})
+
+    outcome = cleanup.execute(
+        [cleanup.plan_item([job])], choose_disposition=lambda _item: "delete", stop_on_error=True
+    )
+
+    assert outcome.kept == ()
+    assert not directory.exists()
+
+
+def test_a_defined_job_bound_to_a_definition_does_hold_its_folder(tmp_path: Path) -> None:
+    service, document = _project(tmp_path)
+    job = _job(service, document, "relax_a")
+    bound = _job(service, document, "relax_b")
+    definition = CalculationDefinition(
+        workflow_stage=WorkflowStage.PRISTINE_RELAXATION,
+        calc_type="castep_geometry_optimization",
+        parameters={"job_ids_by_label": {"row": str(bound.id)}},
+    )
+    document.calculations[definition.id] = definition
+    directory = _job_directory(document, job.label)
+    cleanup = _cleanup(document, {job.label: directory, bound.label: directory})
+
+    outcome = cleanup.execute(
+        [cleanup.plan_item([job])], choose_disposition=lambda _item: "delete", stop_on_error=True
+    )
+
+    assert len(outcome.kept) == 1
+    assert directory.is_dir()
+
+
+def test_a_cancel_between_two_items_cannot_part_a_shared_folder_from_its_jobs(
+    tmp_path: Path,
+) -> None:
+    """Items sharing a folder run one after another, whatever the plan's order."""
+
+    service, document = _project(tmp_path)
+    first = _job(service, document, "relax_a")
+    between = _job(service, document, "relax_b")
+    last = _job(service, document, "relax_c")
+    shared = _job_directory(document, first.label)
+    own = _job_directory(document, between.label)
+    cleanup = _cleanup(document, {first.label: shared, between.label: own, last.label: shared})
+    answers = {first.label: "delete", between.label: None}
+
+    outcome = cleanup.execute(
+        [cleanup.plan_item([first]), cleanup.plan_item([between]), cleanup.plan_item([last])],
+        choose_disposition=lambda item: answers[item.label],
+        stop_on_error=True,
+    )
+
+    assert outcome.cancelled
+    assert not shared.exists()
+    assert first.id not in document.jobs
+    assert last.id not in document.jobs
+    assert own.is_dir()
+    assert between.id in document.jobs
+
+
+def test_a_refused_item_keeps_a_folder_it_lives_inside(tmp_path: Path) -> None:
+    service, document = _project(tmp_path)
+    outer = _job(service, document, "relax_a")
+    inner = _job(service, document, "relax_b")
+    outer_directory = _job_directory(document, outer.label)
+    inner_directory = outer_directory / inner.label
+    inner_directory.mkdir()
+    cleanup = _cleanup(document, {outer.label: outer_directory, inner.label: inner_directory})
+    refused = JobCleanupItem(
+        label=inner.label, jobs=(inner,), directory=inner_directory, refusal="- no"
+    )
+    inner.status = JobStatus.COMPLETED
+
+    outcome = cleanup.execute(
+        [cleanup.plan_item([outer]), refused],
+        choose_disposition=lambda _item: "delete",
+        stop_on_error=False,
+    )
+
+    assert inner_directory.is_dir()
+    assert inner.id in document.jobs
+    assert [entry.directory for entry in outcome.kept] == [outer_directory]
+
+
+def test_a_job_an_item_releases_does_not_keep_its_folder_and_keeps_its_record(
+    tmp_path: Path,
+) -> None:
+    service, document = _project(tmp_path)
+    job = _job(service, document, "relax_a")
+    released = _job(service, document, "relax_b")
+    released.status = JobStatus.COMPLETED
+    directory = _job_directory(document, job.label)
+    cleanup = _cleanup(document, {job.label: directory, released.label: directory})
+    item = JobCleanupItem(
+        label=job.label, jobs=(job,), directory=directory, releases=frozenset({released.id})
+    )
+
+    outcome = cleanup.execute([item], choose_disposition=lambda _item: "delete", stop_on_error=True)
+
+    assert outcome.kept == ()
+    assert not directory.exists()
+    assert released.id in document.jobs

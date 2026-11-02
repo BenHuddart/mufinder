@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from mufinder.domain.text import natural_sort_key, plural, space_group_text
+from mufinder.domain.text import folder_phrase, natural_sort_key, plural, space_group_text
 
 
 @pytest.mark.parametrize(
@@ -60,3 +60,16 @@ def test_plain_error_drops_the_errno_and_the_path() -> None:
         "no space left on device"
     )
     assert plain_error(ValueError("Unknown block FOO.")) == "Unknown block FOO"
+
+
+def test_folder_phrase_agrees_with_the_number_of_folders() -> None:
+    assert folder_phrase("kept", ["a"]) == "kept folder 'a'"
+    assert folder_phrase("deleted", ["a", "b"]) == "deleted folders 'a' and 'b'"
+    assert folder_phrase("deleted", ["a", "b", "c"]) == "deleted folders 'a', 'b' and 'c'"
+
+
+def test_folder_phrase_counts_the_names_past_its_limit() -> None:
+    assert (
+        folder_phrase("kept", ["a", "b", "c", "d"], limit=2) == "kept folders 'a', 'b' and 2 more"
+    )
+    assert folder_phrase("kept", ["a", "b"], limit=2) == "kept folders 'a' and 'b'"

@@ -11,6 +11,10 @@ from mufinder.domain.enums import WorkflowStage
 from mufinder.domain.models import CalculationDefinition, Job, Project
 from mufinder.services.job_paths import (
     definition_output_directory,
+    job_directory_foreign,
+    job_directory_link,
+    job_directory_on_disk,
+    job_directory_refusal,
     job_output_directory,
     job_output_files,
     job_seed_name,
@@ -336,3 +340,118 @@ def test_a_link_is_refused_wherever_it_points(tmp_path: Path) -> None:
     (charge / "link").symlink_to(charge / "real", target_is_directory=True)
 
     assert "link" in job_directory_refusal(tmp_path, job, charge / "link")
+
+
+class TestLinksBelowFiles:
+    def _charge(self, tmp_path: Path) -> tuple[Path, Path]:
+        root = tmp_path / "project"
+        charge = root / "files" / "muon_relaxation" / "positivemuon"
+        charge.mkdir(parents=True)
+        return root, charge
+
+    def test_a_real_path_has_no_link(self, tmp_path: Path) -> None:
+        root, charge = self._charge(tmp_path)
+        (charge / "job").mkdir()
+
+        assert job_directory_link(root, charge / "job") is None
+        assert job_directory_refusal(root, None, charge / "job") is None
+
+    def test_a_link_in_a_parent_that_stays_inside_the_project_is_found(
+        self, tmp_path: Path
+    ) -> None:
+        root, charge = self._charge(tmp_path)
+        (charge / "real" / "job").mkdir(parents=True)
+        (charge / "alias").symlink_to(charge / "real", target_is_directory=True)
+
+        assert job_directory_link(root, charge / "alias" / "job") == charge / "alias"
+        reason = job_directory_refusal(root, None, charge / "alias" / "job")
+        assert reason is not None and "link" in reason
+
+    def test_a_link_above_the_files_folder_does_not_count(self, tmp_path: Path) -> None:
+        real, _charge = self._charge(tmp_path)
+        alias = tmp_path / "alias"
+        alias.symlink_to(real, target_is_directory=True)
+        directory = alias / "files" / "muon_relaxation" / "positivemuon" / "job"
+        directory.mkdir()
+
+        assert job_directory_link(alias, directory) is None
+        assert job_directory_refusal(alias, None, directory) is None
+
+    def test_a_path_spelled_from_outside_that_lands_inside_came_through_a_link(
+        self, tmp_path: Path
+    ) -> None:
+        root, charge = self._charge(tmp_path)
+        (charge / "job").mkdir()
+        outside = tmp_path / "outside"
+        outside.symlink_to(charge, target_is_directory=True)
+
+        assert job_directory_link(root, outside / "job") == outside
+
+    def test_a_saved_path_by_another_spelling_of_the_project_has_no_link(
+        self, tmp_path: Path
+    ) -> None:
+        """A healthy folder, reached by a link above files/: nothing below it to remove."""
+
+        root, charge = self._charge(tmp_path)
+        (charge / "job").mkdir()
+        alias = tmp_path / "alias"
+        alias.symlink_to(root, target_is_directory=True)
+        saved = alias / "files" / "muon_relaxation" / "positivemuon" / "job"
+
+        assert job_directory_link(root, saved) is None
+        assert job_directory_refusal(root, None, saved) is None
+
+    def test_a_path_wholly_outside_is_not_a_links_business(self, tmp_path: Path) -> None:
+        root, _charge = self._charge(tmp_path)
+        elsewhere = tmp_path / "elsewhere" / "job"
+
+        assert job_directory_link(root, elsewhere) is None
+        assert job_directory_on_disk(root, elsewhere) is False
+
+    def test_a_dangling_link_counts_as_on_disk_and_a_plain_missing_folder_does_not(
+        self, tmp_path: Path
+    ) -> None:
+        root, charge = self._charge(tmp_path)
+        (charge / "dangling").symlink_to(charge / "gone", target_is_directory=True)
+
+        assert job_directory_on_disk(root, charge / "dangling") is True
+        assert job_directory_on_disk(root, charge / "dangling" / "inner") is True
+        assert job_directory_on_disk(root, charge / "never_written") is False
+
+
+class TestAMuonRelaxationsPlace:
+    def _job(self, charge: str = "positive_muon") -> Job:
+        return make_job(
+            label="native",
+            workflow_stage=WorkflowStage.MUON_RELAXATION,
+            calc_type=MUON_RELAXATION_CALC_TYPES[charge],
+        )
+
+    @pytest.mark.parametrize(
+        "place",
+        ["muon_relaxation/positivemuon/job", "muon_relaxation/job"],
+    )
+    def test_its_own_charge_folder_and_the_fallback_are_its_place(
+        self, tmp_path: Path, place: str
+    ) -> None:
+        directory = tmp_path / "files" / place
+
+        assert job_directory_foreign(tmp_path, self._job(), directory) is None
+
+    @pytest.mark.parametrize(
+        ("place", "words"),
+        [
+            ("uep/job", "another workflow"),
+            ("muon_relaxation/muonium/job", "charge folder"),
+            ("muon_relaxation/positivemuon/job/inner", "charge folder"),
+        ],
+    )
+    def test_anywhere_else_is_not(self, tmp_path: Path, place: str, words: str) -> None:
+        reason = job_directory_foreign(tmp_path, self._job(), tmp_path / "files" / place)
+
+        assert reason is not None and words in reason
+
+    def test_another_kind_of_job_is_not_asked(self, tmp_path: Path) -> None:
+        job = make_job(label="job", workflow_stage=WorkflowStage.UEP, calc_type="castep_uep")
+
+        assert job_directory_foreign(tmp_path, job, tmp_path / "files" / "other" / "job") is None

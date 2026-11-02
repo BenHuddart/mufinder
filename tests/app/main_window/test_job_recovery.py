@@ -1962,7 +1962,7 @@ def test_main_window_reset_failed_jobs_uses_supplied_cleanup_choice_without_aski
         window,
         "_apply_failed_job_reset",
         lambda jobs, *, cleanup_choice, detach_convergence: (
-            applied.append((list(jobs), cleanup_choice)) or (0, [])
+            applied.append((list(jobs), cleanup_choice)) or (0, [], ([], []))
         ),
     )
 

@@ -2194,3 +2194,59 @@ def test_a_saved_record_of_zero_muon_relaxations_shows_no_entry() -> None:
     )
 
     assert not build_journal("Test", [record]).days
+
+
+def _imported_removal_body(**parameters: object) -> str:
+    record = ProvenanceRecord(
+        action="remove_imported_relaxations",
+        workflow_stage=WorkflowStage.MUON_RELAXATION,
+        actor="user",
+        description="Removed imported relaxations",
+        parameters={"labels": ["a", "b", "c"], "deleted_files": True, **parameters},
+    )
+    return build_journal("Test", [record]).days[0].entries[0].body
+
+
+def test_a_removal_that_deleted_every_folder_says_so() -> None:
+    body = _imported_removal_body(directories=["/p/a", "/p/b"], kept_directories=[])
+
+    assert "Their job directories were deleted" in body
+
+
+def test_a_removal_that_kept_every_folder_says_the_files_stay() -> None:
+    body = _imported_removal_body(directories=[], kept_directories=["/p/a"])
+
+    assert "Their files stay" in body
+    assert "deleted" not in body
+
+
+def test_a_partly_shared_removal_names_each_folder() -> None:
+    body = _imported_removal_body(directories=["/p/a", "/p/b"], kept_directories=["/p/c"])
+
+    assert "Deleted folders 'a' and 'b'" in body
+    assert "Kept folder 'c', because another import uses it." in body
+    assert "Their" not in body
+
+
+def test_a_removal_that_could_not_delete_a_folder_does_not_claim_it_went() -> None:
+    body = _imported_removal_body(
+        directories=["/p/a"], kept_directories=[], undeleted_directories=["/p/b"]
+    )
+
+    assert "Deleted folder 'a'" in body
+    assert "Could not delete folder 'b'." in body
+    assert "Their job directories were deleted" not in body
+
+
+def test_a_removal_that_found_no_folder_claims_nothing_about_one() -> None:
+    assert _imported_removal_body(directories=[], kept_directories=[]).endswith("the project.")
+
+
+def test_a_removal_keeping_its_files_claims_none_went() -> None:
+    body = _imported_removal_body(deleted_files=False, directories=["/p/a"], kept_directories=[])
+
+    assert body.endswith("the project.")
+
+
+def test_a_record_from_before_folders_were_listed_still_says_they_went() -> None:
+    assert "Their job directories were deleted" in _imported_removal_body()

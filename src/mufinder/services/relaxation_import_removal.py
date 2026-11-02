@@ -38,13 +38,12 @@ import shutil
 from typing import Any, Sequence
 from uuid import UUID
 
-from mufinder.domain.charge_states import muon_charge_state_prefix, muon_relaxation_charge_state
 from mufinder.domain.constants import IMPORTED_JOB_TAG
 from mufinder.domain.enums import WorkflowStage
 from mufinder.domain.models import ProvenanceRecord
 from mufinder.domain.text import plain_error, plural
 from mufinder.persistence.codec import uuid_or_none
-from mufinder.services.job_paths import job_directory_refusal
+from mufinder.services.job_paths import job_directory_foreign, job_directory_refusal
 
 #: Provenance action for one removal. ``services.journal`` renders nothing for
 #: an action it does not know, so a matching journal builder is required.
@@ -126,6 +125,10 @@ class RemovalOutcome:
     #: it, so a record appended here would vanish on reload. ``None`` when
     #: nothing was removed.
     provenance: ProvenanceRecord | None = None
+    #: The folders that actually went, and those that stayed because another
+    #: import also uses them.
+    deleted_directories: tuple[Path, ...] = ()
+    kept_directories: tuple[Path, ...] = ()
 
 
 def imported_relaxations_in_batch(document: Any, batch_id: UUID) -> list[ImportedRelaxationRef]:
@@ -254,12 +257,12 @@ def _folder_refusal(
     reason = job_directory_refusal(document.project_root, job, directory)
     if reason is not None:
         return reason
+    reason = job_directory_foreign(document.project_root, job, directory)
+    if reason is not None:
+        return reason
     resolved = directory.resolve()
-    charge_state = muon_relaxation_charge_state(job.calc_type)
-    charge_folder = muon_charge_state_prefix(charge_state) if charge_state else None
-    # Whole place, inside this project: <files>/<workflow>/<charge>/<job>.
-    place = resolved.relative_to(document.project_root.resolve() / "files").parts
-    if len(place) != 3 or place[1] != charge_folder:
+    # An import always has its charge folder: <files>/<workflow>/<charge>/<job>.
+    if len(resolved.relative_to(document.project_root.resolve() / "files").parts) != 3:
         return f"its folder is not inside its charge folder ({directory.name!r})"
     if directory.name not in _folders_recorded(document, ref.job_id):
         return f"its folder is not the one its files were written to ({directory.name!r})"
@@ -405,6 +408,7 @@ def remove_imported_relaxations(
     errors: list[str] = []
     removed = 0
     removed_labels: list[str] = []
+    removed_job_ids: set[UUID] = set()
 
     for ref in plan.targets:
         job = document.jobs.get(ref.job_id)
@@ -422,16 +426,28 @@ def remove_imported_relaxations(
             document.structures.pop(ref.structure_id, None)
         removed += 1
         removed_labels.append(ref.label)
+        removed_job_ids.add(ref.job_id)
 
-    deleted = _folders_to_delete(plan.job_directories, kept)
+    deleted: list[Path] = []
+    undeleted: list[Path] = []
     if delete_files:
-        for directory in deleted:
-            if not directory.exists():
+        # A target that was not removed keeps its folder, whoever else it shares it with.
+        staying = {
+            path.resolve()
+            for job_id, path in plan.job_directories.items()
+            if job_id not in removed_job_ids
+        }
+        for directory in _folders_to_delete(plan.job_directories, kept):
+            if not directory.exists() or directory.resolve() in staying:
                 continue
             try:
                 shutil.rmtree(directory)
             except OSError as exc:
+                undeleted.append(directory)
                 errors.append(f"Could not delete {directory.name}: {plain_error(exc)}.")
+            else:
+                deleted.append(directory)
+    kept_directories = tuple(dict.fromkeys(plan.job_directories[job] for job in kept))
 
     record: ProvenanceRecord | None = None
     if removed:
@@ -445,14 +461,19 @@ def remove_imported_relaxations(
                 "labels": removed_labels,
                 "deleted_files": bool(delete_files),
                 "directories": [str(path) for path in deleted],
-                "kept_directories": [
-                    str(path) for path in dict.fromkeys(plan.job_directories[job] for job in kept)
-                ],
+                "kept_directories": [str(path) for path in kept_directories],
+                "undeleted_directories": [str(path) for path in undeleted],
             },
             input_entity_ids=[ref.site_id for ref in plan.targets],
         )
 
-    return RemovalOutcome(removed=removed, errors=errors, provenance=record)
+    return RemovalOutcome(
+        removed=removed,
+        errors=errors,
+        provenance=record,
+        deleted_directories=tuple(deleted),
+        kept_directories=kept_directories,
+    )
 
 
 def detach_rows_from_definition(definition: Any, targets: Sequence[ImportedRelaxationRef]) -> int:

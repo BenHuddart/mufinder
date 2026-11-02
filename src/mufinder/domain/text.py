@@ -7,6 +7,7 @@ the app.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 import errno
 import re
 
@@ -90,3 +91,17 @@ def natural_sort_key(label: str) -> tuple[tuple[int, object], ...]:
         else:
             parts.append((1, part.casefold()))
     return tuple(parts)
+
+
+def folder_phrase(verb: str, names: Sequence[str], *, limit: int | None = None) -> str:
+    """Return what happened to named folders: ``deleted folders 'a' and 'b'``.
+
+    With ``limit``, names past it are counted, not listed (``'a', 'b' and 3 more``),
+    for a status bar that has one line.
+    """
+
+    quoted = [f"'{name}'" for name in names]
+    if limit is not None and len(quoted) > limit:
+        quoted = [*quoted[:limit], f"{len(names) - limit} more"]
+    listed = quoted[0] if len(quoted) == 1 else f"{', '.join(quoted[:-1])} and {quoted[-1]}"
+    return f"{verb} {'folder' if len(names) == 1 else 'folders'} {listed}"

@@ -23,6 +23,7 @@ from mufinder.domain.charge_states import (
     POSITIVE_MUON_CHARGE_STATE,
     is_muon_relaxation_calc_type,
     muon_charge_state_prefix,
+    muon_relaxation_charge_state,
 )
 from mufinder.domain.enums import WorkflowStage
 from mufinder.domain.models import CalculationDefinition, Job
@@ -222,13 +223,52 @@ def job_output_directory(
     return None
 
 
+def job_directory_link(project_root: Path, directory: Path) -> Path | None:
+    """Return the first link on the way to ``directory`` below ``files/``, or ``None``.
+
+    Read from the path as written, since resolving would look through the link. A path
+    spelled from elsewhere that lands inside ``files/`` is walked back up to it. Links above
+    ``files/``, such as a project opened by another spelling of its path, are the user's own
+    arrangement of their disk and do not count.
+    """
+
+    files_root = project_root.resolve() / "files"
+    for root in (project_root / "files", files_root):
+        if directory.is_relative_to(root):
+            current = root
+            for part in directory.relative_to(root).parts:
+                current = current / part
+                if current.is_symlink():
+                    return current
+            return None
+    if not directory.resolve().is_relative_to(files_root):
+        return None
+    for path in (directory, *directory.parents):
+        if path.resolve() == files_root:
+            return None
+        if path.is_symlink():
+            return path
+    return None
+
+
+def job_directory_on_disk(project_root: Path, directory: Path) -> bool:
+    """Return whether there is anything at ``directory`` for a clean-up to deal with.
+
+    A dangling link counts, and so does a missing folder reached through one: neither
+    exists, and both have to be refused rather than read as nothing being there.
+    """
+
+    return directory.exists() or job_directory_link(project_root, directory) is not None
+
+
 def job_directory_refusal(project_root: Path, job: Job | None, directory: Path) -> str | None:
     """Return why ``directory`` must not be deleted as a job's own folder, or ``None``.
 
     The last check before any job folder goes, on every route. A job's folder comes
     from names saved in the project: ``.`` or ``..`` resolves to a folder holding every
-    other job, and an absolute name to a folder that is not the project's at all. So
-    the place is checked once resolved, and a name alone is never enough.
+    other job, an absolute name to a folder that is not the project's at all, and a link
+    below ``files/`` to anywhere at all. So links are looked for before resolving, the
+    place is checked once resolved, and a name alone is never enough.
     """
 
     if ".." in directory.parts:
@@ -237,6 +277,8 @@ def job_directory_refusal(project_root: Path, job: Job | None, directory: Path) 
     # whatever it points at, and deleting one neither removes nor refuses.
     if directory.is_symlink():
         return f"its folder is a link to somewhere else ({directory.name!r})"
+    if (link := job_directory_link(project_root, directory)) is not None:
+        return f"its folder is reached through a link ({link.name!r})"
     resolved = directory.resolve()
     files_root = project_root.resolve() / "files"
     if not resolved.is_relative_to(files_root):
@@ -255,6 +297,27 @@ def job_directory_refusal(project_root: Path, job: Job | None, directory: Path) 
         and resolved.parent.name not in charge_folders
     ):
         return f"its folder is the one shared by a whole charge state ({resolved.name!r})"
+    return None
+
+
+def job_directory_foreign(project_root: Path, job: Job | None, directory: Path) -> str | None:
+    """Return why ``directory`` is not where this muon relaxation's folder belongs, or ``None``.
+
+    A muon relaxation's folder is ``<workflow>/<its charge>/<name>``, or the
+    ``<workflow>/<name>`` the fallback for an unclaimed job finds. Its seed is saved in the
+    project, so it can name a folder elsewhere, which is then some other work's even when no
+    job record says so. Call after :func:`job_directory_refusal` has passed.
+    """
+
+    if job is None or not is_muon_relaxation_calc_type(job.calc_type):
+        return None
+    place = directory.resolve().relative_to(project_root.resolve() / "files").parts
+    charge_state = muon_relaxation_charge_state(job.calc_type)
+    charge_folder = muon_charge_state_prefix(charge_state) if charge_state else None
+    if place[0] != job.workflow_stage.value:
+        return f"its folder is in another workflow's job folders ({directory.name!r})"
+    if len(place) > 2 and (len(place) != 3 or place[1] != charge_folder):
+        return f"its folder is not inside its charge folder ({directory.name!r})"
     return None
 
 

@@ -190,7 +190,7 @@ def test_a_folder_shared_with_an_imported_job_is_never_cleaned(qapp, tmp_path: P
     imported.tags.append(main_window_module.IMPORTED_JOB_TAG)
     directory = _job_directory(doc)
 
-    reset_count, cleanup_errors = window._apply_failed_job_reset(
+    reset_count, cleanup_errors, _folders = window._apply_failed_job_reset(
         [native, imported], cleanup_choice=True, detach_convergence=False
     )
 

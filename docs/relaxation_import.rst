@@ -218,12 +218,18 @@ Decisions
        Anything else is refused and nothing goes. ``job_directory_refusal`` is the
        same last check on every route that deletes a job's folder, native jobs
        included.
-   * - A job folder that is a link
-     - Refused with rows kept, on every route. Unlinking would leave the target's files
-       unaccounted for, and the user can remove the link and try again.
+   * - A link below ``files/``
+     - The job's folder, any folder on the way to it, or a dangling one: refused with
+       rows kept, on every route. Unlinking would leave the target's files unaccounted
+       for, and the user can remove the link and try again.
    * - A folder two imports share
      - Each batch's removal takes its records and keeps the files; the last one using
        the folder deletes it. Any job that is not an import of those files refuses.
+   * - A native row whose folder another job uses
+     - The row goes with its job's records and the folder stays, unoffered. A native job
+       with no saved seed resolves by its default name, and a normal submit records one
+       and writes into an existing folder of that name, so both reach an import's folder.
+       Refusing here as well would leave the row and the import each waiting on the other.
    * - A seed that cannot name a folder
      - A leading or trailing space or dot is refused at the scan. A saved seed names
        the folder with exactly that name when one exists, so writing and reading agree.
