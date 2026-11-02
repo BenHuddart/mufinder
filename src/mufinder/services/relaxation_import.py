@@ -903,11 +903,12 @@ def _discover_runs(root: Path) -> tuple[list[_RunFiles], tuple[tuple[str, str], 
             )
         )
 
-    # One file cannot be the input of two calculations: neither run gets it.
-    uses = Counter(path for run in runs for path in run.files.values())
+    # One file cannot play one role for two calculations: neither run gets it. Two
+    # roles are fine: ``mu-out.cell`` can be ``mu``'s result and ``mu-out``'s input.
+    uses = Counter((kind, path) for run in runs for kind, path in run.files.items())
     for run in runs:
         for kind, path in list(run.files.items()):
-            if uses[path] > 1:
+            if uses[(kind, path)] > 1:
                 del run.files[kind]
                 run.refused[kind] = (
                     f"{path.name} could belong to several runs under this folder, "

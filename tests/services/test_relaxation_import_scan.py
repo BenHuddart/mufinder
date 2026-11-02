@@ -881,6 +881,24 @@ class TestAnyFolder:
 
         assert scan_relaxation_folder(tmp_path, host_lattice=HOST_LATTICE).runs[0].importable
 
+    def test_a_relaxed_cell_can_start_the_next_run(self, tmp_path: Path) -> None:
+        write_run(tmp_path, "mu")
+        write_run(
+            tmp_path,
+            "mu-out",
+            input_text=_out_cell(),
+            castep_kwargs={"cutoff": "  700.0000   eV"},
+        )
+
+        runs = {
+            run.seed_name: run
+            for run in scan_relaxation_folder(tmp_path, host_lattice=HOST_LATTICE).runs
+        }
+
+        assert runs["mu"].importable
+        assert runs["mu-out"].importable
+        assert runs["mu"].out_cell_path == runs["mu-out"].input_cell_path
+
     def test_task_farm_image_outputs_are_not_runs(self, tmp_path: Path) -> None:
         write_run(tmp_path)
         (tmp_path / "mu_farm001.castep").write_text(_castep(), encoding="utf-8")
