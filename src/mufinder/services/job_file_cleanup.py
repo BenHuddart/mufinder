@@ -23,7 +23,9 @@ The service never shows a dialog: the window asks the questions and reports the
 outcome. Filesystem operations run through ``run_file_op`` so the window can run
 them off the GUI thread.
 
-Layering: this lives in ``mufinder.services`` and imports ``domain`` only.
+Layering: this lives in ``mufinder.services`` and imports ``domain`` and
+``job_paths``, whose ``job_directory_refusal`` is the last check before any
+folder goes.
 """
 
 from __future__ import annotations
@@ -40,6 +42,8 @@ from typing import TYPE_CHECKING, Literal
 from uuid import UUID
 
 from mufinder.domain.models import Job
+from mufinder.domain.text import plain_error
+from mufinder.services.job_paths import job_directory_refusal
 
 if TYPE_CHECKING:
     from mufinder.services.project_service import ProjectDocument
@@ -98,6 +102,14 @@ class JobCleanupFailure:
     item: JobCleanupItem
     refusal: str | None = None
     error: OSError | None = None
+
+    @property
+    def reason(self) -> str:
+        """Return why, in words, whichever of the two it was."""
+
+        if self.refusal is not None:
+            return self.refusal.removeprefix(f"- {self.item.label}: ")
+        return plain_error(self.error) if self.error is not None else "it was not cleaned"
 
 
 @dataclass(frozen=True, slots=True)
@@ -230,6 +242,10 @@ class JobFileCleanup:
                     or len(local.relative_to(files_root).parts) < 2
                 ):
                     reason = f"its output folder is outside the project's job folders ({local})"
+                elif unsafe := job_directory_refusal(
+                    document.project_root, job, self._job_output_directory(job)
+                ):
+                    reason = unsafe
                 elif local.name != seed:
                     reason = f"its output folder is not named after the job ({local})"
                 elif any(
@@ -293,6 +309,12 @@ class JobFileCleanup:
             # archived a directory this one shares (a reconfigured relaxation
             # row's old and replacement jobs use one folder).
             if item.directory is not None and item.directory.exists():
+                refusal = self._folder_refusal(item)
+                if refusal is not None:
+                    failures.append(JobCleanupFailure(item, refusal=refusal))
+                    if stop_on_error:
+                        break
+                    continue
                 disposition = shared_disposition or choose_disposition(item)
                 if disposition is None:
                     return JobCleanupOutcome(tuple(cleaned), tuple(failures), cancelled=True)
@@ -312,6 +334,33 @@ class JobFileCleanup:
                 self.delete_job_records(job.id)
             cleaned.append(item)
         return JobCleanupOutcome(tuple(cleaned), tuple(failures))
+
+    def _folder_refusal(self, item: JobCleanupItem) -> str | None:
+        """Return why ``item``'s folder may not go, whichever route planned it.
+
+        Run on every item, since not every route asks for the ownership check: a
+        folder holding a job other than the item's own is never the item's alone.
+        """
+
+        document = self._document_getter()
+        if document is None or item.directory is None:
+            return None
+        owner = item.jobs[0] if item.jobs else None
+        reason = job_directory_refusal(document.project_root, owner, item.directory)
+        if reason is None:
+            folder = item.directory.resolve()
+            own = {job.id for job in item.jobs}
+            for other in document.jobs.values():
+                if other.id in own:
+                    continue
+                directory = self._job_output_directory(other)
+                if directory is None:
+                    continue
+                resolved = directory.resolve()
+                if resolved != folder and resolved.is_relative_to(folder):
+                    reason = f"its folder holds another job's folder ({other.label})"
+                    break
+        return f"- {item.label}: {reason}" if reason is not None else None
 
     def delete_job_records(self, job_id: UUID) -> None:
         """Delete a job with its runs and results, and unbind it from every definition.

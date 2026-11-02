@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from collections.abc import Iterator
 from dataclasses import replace
 from pathlib import Path
@@ -30,6 +29,7 @@ import mufinder.app.workflow_controllers.energy_barriers as energy_barriers_cont
 import mufinder.services.job_artifacts as job_artifacts_module
 import mufinder.castep_io.schema as schema_module
 from mufinder.app.main_window import MainWindow
+from tests.support.main_window import answer_new_project
 from tests.support.muon_sites import add_relaxed_muon_site
 from mufinder.services.muon_sites_summary import (
     ENERGY_BARRIERS_SCOPE,
@@ -780,9 +780,11 @@ def test_main_window_close_tolerates_missing_relaxation_analysis_view(qapp) -> N
 
 @pytest.fixture
 def visible_project_window(main_window: MainWindow, tmp_path: Path) -> Iterator[MainWindow]:
-    """A shown window with a project, so closing it asks whether to save."""
+    """A shown window with a changed viewer choice, so closing it asks whether to save."""
 
     main_window._document = ProjectService().create_project(tmp_path / "close.mufinder", "Close")
+    main_window._project_service.settle_ui_state(main_window._document)
+    main_window._document.ui_state["changed_viewer_choice"] = True
     main_window.show()
     yield main_window
     # The Qt clean-up closes every window once the conftest stubs are gone, so a test
@@ -978,38 +980,13 @@ def test_new_project_failure_shows_the_reason_and_keeps_the_open_project(
     current = ProjectService().create_project(tmp_path / "current.mufinder", "Current")
     window._document = current
     messages = _record_critical_messages(monkeypatch)
-    monkeypatch.setattr(
-        main_window_module.QInputDialog, "getText", lambda *_a, **_k: ("Fresh", True)
-    )
-    monkeypatch.setattr(window, "_get_existing_directory", lambda **_k: str(tmp_path))
+    answer_new_project(monkeypatch, "Fresh", location=tmp_path)
     _fail_project_writes(monkeypatch, error)
 
     window._new_project()
 
     assert messages == [("Project error", str(error))]
     assert window._document is current
-
-
-@pytest.mark.skipif(not hasattr(os, "geteuid") or os.geteuid() == 0, reason="needs file modes")
-def test_new_project_reports_an_unreadable_target_folder(
-    main_window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    window = main_window
-    messages = _record_critical_messages(monkeypatch)
-    monkeypatch.setattr(
-        main_window_module.QInputDialog, "getText", lambda *_a, **_k: ("Fresh", True)
-    )
-    monkeypatch.setattr(window, "_get_existing_directory", lambda **_k: str(tmp_path))
-    target = tmp_path / "Fresh.mufinder"
-    target.mkdir()
-    target.chmod(0o000)
-    try:
-        window._new_project()
-    finally:
-        target.chmod(0o755)
-
-    assert [title for title, _text in messages] == ["Project error"]
-    assert window._document is None
 
 
 def test_close_without_a_prompt_survives_a_failed_autosave(

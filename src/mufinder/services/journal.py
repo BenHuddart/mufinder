@@ -381,7 +381,8 @@ def export_journal(journal: JournalDocument, output_path: Path, *, format_name: 
 def _entry_from_record(record: ProvenanceRecord) -> JournalEntry | None:
     mapping = {
         "import_structure": _import_structure_entry,
-        "import_legacy_relaxations": _import_legacy_relaxations_entry,
+        "import_castep_relaxations": _import_castep_relaxations_entry,
+        "import_legacy_relaxations": _import_castep_relaxations_entry,
         "remove_imported_relaxations": _remove_imported_relaxations_entry,
         "configure_convergence_cutoff": _configure_cutoff_entry,
         "configure_convergence_kpoint": _configure_kpoint_entry,
@@ -425,6 +426,8 @@ def _entry_from_record(record: ProvenanceRecord) -> JournalEntry | None:
     if builder is None:
         return None
     entry = builder(record)
+    if entry is None:
+        return None
     details = _DETAIL_BUILDERS.get(record.action)
     return replace(entry, detail_lines=details(record)) if details else entry
 
@@ -494,8 +497,8 @@ def _import_structure_entry(record: ProvenanceRecord) -> JournalEntry:
     return replace(entry, route="host_structure", open_label="Open in Host Structure")
 
 
-def _import_legacy_relaxations_entry(record: ProvenanceRecord) -> JournalEntry:
-    """Describe one legacy-import batch.
+def _import_castep_relaxations_entry(record: ProvenanceRecord) -> JournalEntry:
+    """Describe one batch of imported CASTEP relaxations.
 
     The journal is where a reader learns that some relaxations in this project
     were not run here, so the entry leads with that and surfaces the two things
@@ -508,7 +511,7 @@ def _import_legacy_relaxations_entry(record: ProvenanceRecord) -> JournalEntry:
     skipped_raw = record.parameters.get("skipped")
     skipped = len(skipped_raw) if isinstance(skipped_raw, list) else 0
     source = _text_param(record, "source_folder")
-    folder = Path(source).name if source else "a legacy folder"
+    folder = Path(source).name if source else "a folder"
 
     conflicts = 0
     if isinstance(sites, list):
@@ -532,7 +535,7 @@ def _import_legacy_relaxations_entry(record: ProvenanceRecord) -> JournalEntry:
     return _entry(
         record,
         stamp_kind="warning" if (skipped or conflicts) else "milestone",
-        title="Legacy relaxations imported",
+        title="CASTEP relaxations imported",
         body=body,
     )
 
@@ -548,7 +551,9 @@ def _remove_imported_relaxations_entry(record: ProvenanceRecord) -> JournalEntry
     labels = record.parameters.get("labels")
     count = len(labels) if isinstance(labels, list) else 0
     body = f"Removed {plural(count, 'imported muon relaxation')} from the project."
-    if record.parameters.get("deleted_files"):
+    if record.parameters.get("kept_directories") and not record.parameters.get("directories"):
+        body += " Their files stay, because another import uses the same folder."
+    elif record.parameters.get("deleted_files"):
         body += " Their job directories were deleted, including the archived original input files."
     return _entry(
         record,
@@ -610,10 +615,12 @@ def _configure_uep_entry(record: ProvenanceRecord) -> JournalEntry:
     )
 
 
-def _configure_muon_relaxation_entry(record: ProvenanceRecord) -> JournalEntry:
+def _configure_muon_relaxation_entry(record: ProvenanceRecord) -> JournalEntry | None:
     configuration = record.parameters.get("configuration")
     rows = configuration.get("rows") if isinstance(configuration, dict) else None
     rows = [row for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []
+    if not rows:  # An empty definition prepared nothing, whatever an older project recorded.
+        return None
     charge_counts: dict[str, int] = {}
     for row in rows:
         label = muon_charge_state_label(str(row.get("charge_state") or ""))
@@ -1872,7 +1879,7 @@ def _generation_detail_lines(record: ProvenanceRecord) -> tuple[str, ...]:
     return (run_methods_sentence(run),) if run is not None else ()
 
 
-def _legacy_import_detail_lines(record: ProvenanceRecord) -> tuple[str, ...]:
+def _relaxation_import_detail_lines(record: ProvenanceRecord) -> tuple[str, ...]:
     """The source folder, every skipped run with its reason, and every conflict."""
 
     lines: list[str] = []
@@ -1882,7 +1889,9 @@ def _legacy_import_detail_lines(record: ProvenanceRecord) -> tuple[str, ...]:
     skipped = record.parameters.get("skipped")
     for item in skipped if isinstance(skipped, list) else []:
         if isinstance(item, dict):
-            lines.append(f"Skipped run {item.get('site_index')}: {item.get('reason')}")
+            # Batches imported before runs were named by path recorded an index.
+            name = item.get("run", item.get("site_index"))
+            lines.append(f"Skipped run {name}: {item.get('reason')}")
     sites = record.parameters.get("imported_sites")
     for site in sites if isinstance(sites, list) else []:
         if isinstance(site, dict) and isinstance(site.get("conflicts"), list):
@@ -1908,7 +1917,8 @@ _DETAIL_BUILDERS: dict[str, Callable[[ProvenanceRecord], tuple[str, ...]]] = {
     "set_recommended_cutoff": _default_detail_lines("recommended_cutoff"),
     "set_recommended_kpoint_grid": _default_detail_lines("recommended_kpoint"),
     "generate_candidates": _generation_detail_lines,
-    "import_legacy_relaxations": _legacy_import_detail_lines,
+    "import_castep_relaxations": _relaxation_import_detail_lines,
+    "import_legacy_relaxations": _relaxation_import_detail_lines,
 }
 
 

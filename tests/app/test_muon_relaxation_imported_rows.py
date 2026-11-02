@@ -5,7 +5,7 @@ widget's current state, so a flag dropped anywhere in that loop silently unlocks
 every imported row while its entities and files remain. These tests pin each leg
 of the loop, and then the loop itself.
 
-See ``docs/legacy_import.rst`` for why imported rows are read-only.
+See ``docs/relaxation_import.rst`` for why imported rows are read-only.
 """
 
 from __future__ import annotations
@@ -32,7 +32,7 @@ def main_window(qapp) -> MainWindow:
 BATCH_ID = UUID("11111111-2222-3333-4444-555555555555")
 
 
-def _imported_row(label: str = "Legacy Site 1", **overrides: object) -> MuonRelaxationRow:
+def _imported_row(label: str = "Imported Host_1", **overrides: object) -> MuonRelaxationRow:
     payload: dict[str, object] = {
         "site_id": uuid4(),
         "label": label,
@@ -147,8 +147,8 @@ class TestWidgetStateRoundTrip:
         collected = widget.collect_state()
 
         by_label = {entry["label"]: entry for entry in collected["rows"]}
-        assert by_label["Legacy Site 1"]["imported"] is True
-        assert by_label["Legacy Site 1"]["import_batch_id"] == str(BATCH_ID)
+        assert by_label["Imported Host_1"]["imported"] is True
+        assert by_label["Imported Host_1"]["import_batch_id"] == str(BATCH_ID)
         assert by_label["Site 1"]["imported"] is False
         assert by_label["Site 1"]["import_batch_id"] is None
 
@@ -196,8 +196,8 @@ class TestReconfigureLoop:
 
         assert round_tripped is not None
         by_label = {row.label: row for row in round_tripped.rows}
-        assert by_label["Legacy Site 1"].imported is True
-        assert by_label["Legacy Site 1"].import_batch_id == BATCH_ID
+        assert by_label["Imported Host_1"].imported is True
+        assert by_label["Imported Host_1"].import_batch_id == BATCH_ID
         assert by_label["Site 1"].imported is False
 
     def test_the_projected_config_reports_the_marker(self, main_window) -> None:
@@ -210,8 +210,8 @@ class TestReconfigureLoop:
 
         assert config is not None
         by_label = {row.label: row for row in config.rows}
-        assert by_label["Legacy Site 1"].imported is True
-        assert by_label["Legacy Site 1"].import_batch_id == BATCH_ID
+        assert by_label["Imported Host_1"].imported is True
+        assert by_label["Imported Host_1"].import_batch_id == BATCH_ID
         assert by_label["Site 1"].imported is False
 
 
@@ -251,3 +251,118 @@ class TestRowSignature:
         assert main_window._muon_relaxation_row_signature(
             row
         ) != main_window._muon_relaxation_row_signature(other)
+
+
+class TestImportedLabelsFit:
+    def _table(self, qapp, label: str):
+        from mufinder.app.muon_relaxation_widget import MuonRelaxationWidget
+
+        widget = MuonRelaxationWidget()
+        widget.set_form_state(
+            {
+                "rows": [
+                    {
+                        "site_id": str(uuid4()),
+                        "label": label,
+                        "fractional_position": [0.1, 0.2, 0.3],
+                        "charge_state": "positive_muon",
+                        "imported": True,
+                        "import_batch_id": str(BATCH_ID),
+                    }
+                ]
+            }
+        )
+        return widget, widget._table
+
+    def test_the_column_fits_the_label_and_the_tooltip_gives_it_whole(self, qapp) -> None:
+        label = "Imported Gd3Ru4Al12_10"
+        widget, table = self._table(qapp, label)
+        item = table.item(0, widget._LABEL_COLUMN)
+
+        hint = table.sizeHintForIndex(table.indexFromItem(item)).width()
+        assert table.columnWidth(widget._LABEL_COLUMN) >= hint
+        assert item.toolTip().startswith(f"{label}\n")
+
+    def test_a_very_long_label_does_not_take_the_page(self, qapp) -> None:
+        widget, table = self._table(qapp, "Imported " + "x" * 300)
+        item = table.item(0, widget._LABEL_COLUMN)
+
+        assert table.columnWidth(widget._LABEL_COLUMN) < table.fontMetrics().averageCharWidth() * 80
+        assert item.toolTip().startswith("Imported " + "x" * 300)
+
+    def test_a_native_row_keeps_its_column_width(self, qapp) -> None:
+        from mufinder.app.muon_relaxation_widget import MuonRelaxationWidget
+
+        widget = MuonRelaxationWidget()
+        width = widget._table.columnWidth(widget._LABEL_COLUMN)
+        widget.set_form_state(
+            {
+                "rows": [
+                    {
+                        "site_id": str(uuid4()),
+                        "label": "A native row with quite a long label indeed",
+                        "fractional_position": [0.1, 0.2, 0.3],
+                        "charge_state": "positive_muon",
+                    }
+                ]
+            }
+        )
+
+        assert widget._table.columnWidth(widget._LABEL_COLUMN) == width
+
+
+class TestLabelColumnFit:
+    def _state(self, label: str) -> dict[str, object]:
+        return {
+            "rows": [
+                {
+                    "site_id": str(uuid4()),
+                    "label": label,
+                    "fractional_position": [0.1, 0.2, 0.3],
+                    "charge_state": "positive_muon",
+                    "imported": True,
+                    "import_batch_id": str(BATCH_ID),
+                }
+            ]
+        }
+
+    def test_a_long_label_leaves_the_rows_actions_on_screen(self, qapp) -> None:
+        """982 px is the table's viewport in the real default window."""
+
+        from mufinder.app.muon_relaxation_widget import MuonRelaxationWidget
+
+        widget = MuonRelaxationWidget()
+        widget.set_form_state(self._state("Imported " + "x" * 120))
+        widget.show()
+        qapp.processEvents()
+        table = widget._table
+        widget.resize(widget.width() - table.viewport().width() + 982, 600)
+        qapp.processEvents()
+
+        assert table.horizontalHeader().length() <= table.viewport().width()
+        assert table.horizontalScrollBar().maximum() == 0
+        widget.close()
+
+    def test_the_column_narrows_again_when_the_long_rows_go(self, qapp) -> None:
+        from mufinder.app.muon_relaxation_widget import MuonRelaxationWidget
+
+        widget = MuonRelaxationWidget()
+        width = widget._table.columnWidth(widget._LABEL_COLUMN)
+        widget.set_form_state(self._state("Imported " + "x" * 120))
+        assert widget._table.columnWidth(widget._LABEL_COLUMN) > width
+
+        widget.set_form_state({"rows": []})
+
+        assert widget._table.columnWidth(widget._LABEL_COLUMN) == width
+
+    def test_a_width_the_user_chose_survives_a_state_that_changes_nothing(self, qapp) -> None:
+        from mufinder.app.muon_relaxation_widget import MuonRelaxationWidget
+
+        widget = MuonRelaxationWidget()
+        state = self._state("Imported Host_1")
+        widget.set_form_state(state)
+        widget._table.setColumnWidth(widget._LABEL_COLUMN, 200)
+
+        widget.set_form_state(widget.collect_state())
+
+        assert widget._table.columnWidth(widget._LABEL_COLUMN) == 200

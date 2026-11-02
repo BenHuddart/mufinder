@@ -31,6 +31,35 @@ if TYPE_CHECKING:
     from mufinder.app.main_window import MainWindow
 
 
+def answer_new_project(
+    monkeypatch: pytest.MonkeyPatch,
+    name: str,
+    *,
+    accept: bool = True,
+    location: Path | None = None,
+) -> list[str]:
+    """Answer the New Project dialog: type ``name`` and press Create or Cancel.
+
+    Returns a list that collects the location each dialog opened with.
+    """
+
+    from PySide6.QtWidgets import QDialog
+
+    from mufinder.app.new_project_dialog import NewProjectDialog
+
+    starts: list[str] = []
+
+    def _exec(dialog: NewProjectDialog) -> int:
+        starts.append(dialog._location_edit.text())
+        if location is not None:
+            dialog._location_edit.setText(str(location))
+        dialog._name_edit.setText(name)
+        return QDialog.DialogCode.Accepted if accept else QDialog.DialogCode.Rejected
+
+    monkeypatch.setattr(NewProjectDialog, "exec", _exec)
+    return starts
+
+
 def open_project_with_host(
     window: MainWindow,
     tmp_path: Path,

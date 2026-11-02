@@ -337,6 +337,11 @@ def uep_search_outcome(results: Sequence[UepOptimizationResult]) -> str:
     return text
 
 
+SAVED_WITHOUT_ZPE_TEXT = (
+    "This search was saved without zero-point energies. Run the search again to compute them."
+)
+
+
 def uep_search_log(existing: str, summary: UepBatchSummary) -> str:
     """Return a search log with its account of the grouping brought up to date."""
 
@@ -367,6 +372,20 @@ def _cluster_summary_from_dict(payload: object) -> UepClusterSummary | None:
         standard_deviation_ev=float(payload["standard_deviation_ev"]),
         member_indexes=tuple(int(member) for member in members),
     )
+
+
+def saved_uep_search_log(
+    existing: str, results: Sequence[UepOptimizationResult], summary: UepBatchSummary
+) -> str:
+    """Return a saved search's log as it reads once restored, saying if it lacks ZPEs."""
+
+    log = uep_search_log(existing, summary).replace(f"\n{SAVED_WITHOUT_ZPE_TEXT}", "")
+    if any(
+        results[cluster.representative_index].zero_point_energy_ev is None
+        for cluster in summary.clusters
+    ):
+        log = "\n".join([log, SAVED_WITHOUT_ZPE_TEXT])
+    return log
 
 
 def uep_batch_summary_from_dict(payload: object) -> UepBatchSummary | None:

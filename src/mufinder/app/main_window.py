@@ -9,6 +9,7 @@ from functools import partial
 import logging
 from pathlib import Path
 import posixpath
+import sys
 import time
 from html import escape
 from typing import Any, TypeVar
@@ -28,6 +29,7 @@ from PySide6.QtCore import (
     Slot,
 )
 from PySide6.QtGui import (
+    QAction,
     QIcon,
     QActionGroup,
     QBrush,
@@ -123,11 +125,15 @@ from mufinder.app.energy_barriers_widget import (
 from mufinder.app.export_dialogs import open_containing_folder
 from mufinder.app.failed_job_dialog import FailedJobAction, FailedJobDialog
 from mufinder.app.kpoint_convergence_widget import KPointConvergenceWidget
-from mufinder.app.legacy_import_dialog import LegacyImportDialog, start_legacy_scan
-from mufinder.domain.text import plural
-from mufinder.services.legacy_import import LegacyFolderScan
-from mufinder.services.legacy_import_commit import IMPORT_ACTION, commit_legacy_import
-from mufinder.services.legacy_import_removal import (
+from mufinder.app.relaxation_import_dialog import (
+    RelaxationImportDialog,
+    choose_import_batch,
+    start_relaxation_scan,
+)
+from mufinder.domain.text import plain_error, plural
+from mufinder.services.relaxation_import import RelaxationFolderScan
+from mufinder.services.relaxation_import_commit import IMPORT_ACTIONS, commit_relaxation_import
+from mufinder.services.relaxation_import_removal import (
     detach_rows_from_definition,
     imported_relaxations_in_batch,
     plan_removal,
@@ -185,6 +191,7 @@ from mufinder.app.journal_widget import JournalWidget
 from mufinder.app.magnetic_field_widget import MagneticFieldWidget
 from mufinder.app.polarisation_widget import PolarisationWidget
 from mufinder.app.muon_generation_widget import MuonGenerationWidget
+from mufinder.app.new_project_dialog import NewProjectDialog
 from mufinder.app.param_dialog import ParameterDialog
 from mufinder.app.project_defaults_widget import ProjectDefaultsStrip, ProjectDefaultsSummary
 
@@ -374,6 +381,7 @@ from mufinder.services.project_service import (
     CONTINUABLE_JOB_STATUSES,
     ProjectDocument,
     ProjectService,
+    UnsavedChanges,
 )
 from mufinder.services.project_summary import (
     COMPLETION_CHECKS,
@@ -497,6 +505,7 @@ class MainWindow(QMainWindow):
     """Main shell containing project navigation and job dashboard."""
 
     _MAIN_WINDOW_GEOMETRY_KEY = "ui/main_window_geometry"
+    _MAIN_WINDOW_STATE_KEY = "ui/main_window_state"
     _LAST_DIALOG_DIR_KEY = "ui/last_dialog_dir"
     _LAST_DIALOG_DIR_BY_CONTEXT_PREFIX = "ui/last_dialog_dir_by_context"
     _RECENT_PROJECTS_KEY = "ui/recent_projects"
@@ -565,7 +574,12 @@ class MainWindow(QMainWindow):
         # also reports False on window minimize / tabbed-dock obscuring.
         # Defaults True so an as-yet-unshown window still arms the timer.
         self._jobs_dock_visible = True
-        self._jobs_dock_height_set = False
+        self._jobs_dock_placed = False
+        # View > Job Dashboard's setting: the dock shows while a project is open and
+        # this is on. The saved window state brings it back after a restart.
+        self._jobs_dock_wanted = True
+        # A save while closing failed, so the next close asks rather than retries.
+        self._close_save_failed = False
         # True while _sync_jobs_table_rows reconciles the dashboard rows.
         self._jobs_table_syncing = False
         self._settings = QSettings("MuFinder", "MuFinder")
@@ -893,10 +907,10 @@ class MainWindow(QMainWindow):
             self._on_create_muon_relaxation_jobs_requested
         )
         self._muon_generation_view.form_state_changed.connect(self._on_muon_form_state_changed)
-        self._import_legacy_action = None
+        self._import_relaxations_action = None
         self._remove_imported_action = None
-        self._legacy_scan_host: Structure | None = None
-        self._legacy_scan_root: Path | None = None
+        self._relaxation_scan_host: Structure | None = None
+        self._relaxation_scan_root: Path | None = None
         self._muon_relaxation_view = MuonRelaxationWidget()
         self._muon_relaxation_view.configure_requested.connect(self._on_muon_relaxation_configured)
         self._muon_relaxation_view.form_state_changed.connect(
@@ -1279,33 +1293,61 @@ class MainWindow(QMainWindow):
         self._jobs_backspace_shortcut.activated.connect(self._on_dashboard_delete_key_requested)
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, jobs_dock)
 
-    def _sync_project_panels(self) -> None:
-        """Show the navigator and the Job Dashboard only while a project is open.
+    def _on_jobs_dock_toggled(self, shown: bool) -> None:
+        # Only the user changes it with a project open: the title-bar button or the View
+        # action. Hiding it for having no project is not the user's setting, and
+        # minimising the window also unchecks the action.
+        if self._document is not None and not self.isMinimized():
+            self._jobs_dock_wanted = shown
 
-        Called on every project change, so this also brings back a dashboard
-        closed with its title-bar button.
+    def _sync_project_panels(self) -> None:
+        """Fit the window to whether a project is open.
+
+        The navigator shows only with a project, and the Job Dashboard also needs
+        ``View > Job Dashboard`` on. The project actions and the title follow.
         """
 
         has_project = self._document is not None
         self._project_tree_panel.setVisible(has_project)
-        self._jobs_dock.setVisible(has_project)
-        self._schedule_default_jobs_dock_height()
+        self._place_jobs_dock_once()
+        self._jobs_dock.setVisible(has_project and self._jobs_dock_wanted)
+        self._jobs_dock.toggleViewAction().setEnabled(has_project)
+        self._save_project_action.setEnabled(has_project)
+        self._import_relaxations_action.setEnabled(
+            has_project and self._relaxation_scan_root is None
+        )
+        self._remove_imported_action.setEnabled(has_project)
+        self.setWindowTitle(
+            f"{self._document.project.name} \u2014 {PRODUCT_NAME}" if has_project else PRODUCT_NAME
+        )
         if has_project:
             # The panels are back in the layout, which sets the minimum from here on.
             self.setMinimumSize(0, 0)
 
     def showEvent(self, event) -> None:  # noqa: N802 - Qt API naming.
         super().showEvent(event)
-        self._schedule_default_jobs_dock_height()
+        self._place_jobs_dock_once()
 
-    def _schedule_default_jobs_dock_height(self) -> None:
-        """Size the dock once, the first time it is on screen."""
+    def _place_jobs_dock_once(self) -> None:
+        """Put the dock where it was last time, closed or not, else at its default.
 
-        if self._jobs_dock_height_set or not self.isVisible() or self._jobs_dock.isHidden():
+        This waits for the first time a project is on screen: a saved state would
+        otherwise show a dock that stays hidden until a project opens.
+        """
+
+        if self._jobs_dock_placed or not self.isVisible() or self._document is None:
             return
-        self._jobs_dock_height_set = True
-        # The dock has its real geometry once this show has been laid out.
-        QTimer.singleShot(0, self._apply_default_jobs_dock_height)
+        self._jobs_dock_placed = True
+        saved_state = self._settings.value(self._MAIN_WINDOW_STATE_KEY, QByteArray())
+        if (
+            not isinstance(saved_state, QByteArray)
+            or saved_state.isEmpty()
+            or not self.restoreState(saved_state)
+        ):
+            # The dock has its real geometry once this show has been laid out.
+            QTimer.singleShot(0, self._apply_default_jobs_dock_height)
+        else:
+            self._jobs_dock_wanted = not self._jobs_dock.isHidden()
 
     def _apply_default_jobs_dock_height(self) -> None:
         """Size the dock to show about ``_JOB_DOCK_DEFAULT_ROWS`` rows."""
@@ -1352,6 +1394,10 @@ class MainWindow(QMainWindow):
             super().closeEvent(event)
             return
         self._settings.setValue(self._MAIN_WINDOW_GEOMETRY_KEY, self.saveGeometry())
+        if self._document is not None and self.isVisible():
+            # Without a project the dock is hidden whatever the user chose, which
+            # is not worth remembering.
+            self._settings.setValue(self._MAIN_WINDOW_STATE_KEY, self.saveState())
         if self._dragged_navigator_width is not None:
             self._settings.setValue(
                 self._PROJECT_NAVIGATOR_WIDTH_KEY, self._dragged_navigator_width
@@ -1366,25 +1412,20 @@ class MainWindow(QMainWindow):
         if job_watchdog_timer is not None:
             job_watchdog_timer.stop()
         if self._document is not None and self.isVisible():
-            answer = workflow_table_utils.confirm_choice(
-                self,
-                "Save project?",
-                "Save the current project before closing?",
-                [("save", "Save"), ("discard", "Don't save"), ("cancel", "Cancel")],
-                default="save",
-                escape="cancel",
-                destructive=("discard",),
-            )
+            answer = self._answer_for_saving_on_close()
             if answer == "cancel":
                 self._resume_after_abandoned_close()
                 event.ignore()
                 return
-            if answer == "save":
-                self._flush_uep_analysis_dialogs()
+            if answer in ("save", "tidy"):
                 try:
-                    self._project_service.save_project(self._document)
+                    if answer == "tidy":
+                        self._project_service.save_tidying(self._document)
+                    else:
+                        self._project_service.save_project(self._document)
                 except (OSError, ValueError) as exc:
                     event.ignore()
+                    self._close_save_failed = True
                     QMessageBox.critical(self, "Save blocked", str(exc))
                     self._resume_after_abandoned_close()
                     return
@@ -1434,6 +1475,27 @@ class MainWindow(QMainWindow):
         if cluster_runner is not None:
             cluster_runner.shutdown()
         super().closeEvent(event)
+
+    def _answer_for_saving_on_close(self) -> str:
+        """Return ``save``, ``tidy``, ``discard`` or ``cancel``, asking only if the user must choose."""
+
+        assert self._document is not None
+        self._flush_uep_analysis_dialogs()
+        changes = self._project_service.unsaved_changes(self._document)
+        if changes is UnsavedChanges.UI_STATE or self._close_save_failed:
+            return workflow_table_utils.confirm_choice(
+                self,
+                "Save project?",
+                "Save the current project before closing?",
+                [("save", "Save"), ("discard", "Don't save"), ("cancel", "Cancel")],
+                default="save",
+                escape="cancel",
+                destructive=("discard",),
+            )
+        # Nothing to decide. "discard" here has nothing to discard, and writes nothing.
+        return {UnsavedChanges.ROUTINE: "save", UnsavedChanges.TIDYING: "tidy"}.get(
+            changes, "discard"
+        )
 
     def _resume_after_abandoned_close(self) -> None:
         """Restart what ``closeEvent`` stopped, now that the window stays open."""
@@ -1684,30 +1746,36 @@ class MainWindow(QMainWindow):
     def _build_menu(self) -> None:
         file_menu = self.menuBar().addMenu("File")
 
-        new_action = file_menu.addAction(icon("new_project"), "New Project")
+        new_action = file_menu.addAction(icon("new_project"), "New Project…")
+        new_action.setShortcuts(QKeySequence.StandardKey.New)
         new_action.triggered.connect(self._new_project)
 
-        open_action = file_menu.addAction(icon("open_project"), "Open Project")
+        open_action = file_menu.addAction(icon("open_project"), "Open Project…")
+        open_action.setShortcuts(QKeySequence.StandardKey.Open)
         open_action.triggered.connect(self._open_project)
 
         self._recent_projects_menu = file_menu.addMenu("Open Recent")
         self._refresh_recent_projects_menu()
 
-        save_action = file_menu.addAction(icon("save_project"), "Save Project")
-        save_action.triggered.connect(self._save_project)
+        self._save_project_action = file_menu.addAction(icon("save_project"), "Save Project")
+        self._save_project_action.setShortcuts(QKeySequence.StandardKey.Save)
+        self._save_project_action.triggered.connect(self._save_project)
 
         file_menu.addSeparator()
 
-        self._import_legacy_action = file_menu.addAction("Import Legacy Relaxations…")
-        self._import_legacy_action.triggered.connect(self._on_import_legacy_relaxations)
+        self._import_relaxations_action = file_menu.addAction("Import CASTEP Relaxations…")
+        self._import_relaxations_action.triggered.connect(self._on_import_castep_relaxations)
 
         self._remove_imported_action = file_menu.addAction("Remove Imported Relaxations…")
         self._remove_imported_action.triggered.connect(self._on_remove_imported_relaxations)
 
         file_menu.addSeparator()
 
-        exit_action = file_menu.addAction("Exit")
-        exit_action.triggered.connect(self.close)
+        # macOS moves a QuitRole action to the application menu and names it itself.
+        quit_action = file_menu.addAction("Exit" if sys.platform == "win32" else "Quit")
+        quit_action.setShortcuts(self._quit_key_bindings())
+        quit_action.setMenuRole(QAction.MenuRole.QuitRole)
+        quit_action.triggered.connect(self.close)
 
         setup_menu = self.menuBar().addMenu("Setup")
         castep_action = setup_menu.addAction(icon("settings"), "CASTEP…")
@@ -1716,6 +1784,8 @@ class MainWindow(QMainWindow):
         cluster_action.triggered.connect(lambda: self._open_cluster_setup_dialog())
 
         view_menu = self.menuBar().addMenu("View")
+        view_menu.addAction(self._jobs_dock.toggleViewAction())
+        self._jobs_dock.toggleViewAction().toggled.connect(self._on_jobs_dock_toggled)
         appearance_menu = view_menu.addMenu("Appearance")
         appearance_group = QActionGroup(self)
         appearance_group.setExclusive(True)
@@ -1752,6 +1822,20 @@ class MainWindow(QMainWindow):
         about_action = help_menu.addAction(f"About {PRODUCT_NAME}")
         about_action.triggered.connect(self._show_about_dialog)
 
+    @staticmethod
+    def _quit_key_bindings() -> list[QKeySequence]:
+        """Return the platform's Quit keys, with Ctrl+Q first except on Windows.
+
+        What ``StandardKey.Quit`` holds depends on the platform theme, and it can be
+        nothing or only the Exit key. Ctrl+Q is Cmd+Q on macOS.
+        """
+
+        bindings = QKeySequence.keyBindings(QKeySequence.StandardKey.Quit)
+        if sys.platform == "win32":
+            return bindings
+        ctrl_q = QKeySequence("Ctrl+Q")
+        return [ctrl_q, *(binding for binding in bindings if binding != ctrl_q)]
+
     def _open_user_guide(self) -> None:
         QDesktopServices.openUrl(QUrl(DOCUMENTATION_URL))
 
@@ -1778,37 +1862,19 @@ class MainWindow(QMainWindow):
         self._sync_project_home()
 
     def _new_project(self) -> None:
-        project_name, ok = QInputDialog.getText(self, "New Project", "Project name:")
-        if not ok or not project_name.strip():
+        dialog = NewProjectDialog(self._dialog_start_dir("new_project_parent"), parent=self)
+        accepted = dialog.exec() == QDialog.DialogCode.Accepted
+        project_name = dialog.project_name()
+        project_root = dialog.project_root()
+        dialog.deleteLater()
+        if not accepted or project_root is None:
             return
-
-        base_dir = self._get_existing_directory(
-            title="Select parent folder",
-            context="new_project_parent",
-        )
-        if not base_dir:
-            return
-
-        project_root = Path(base_dir) / f"{project_name.strip()}.mufinder"
-        try:
-            target_in_use = project_root.exists() and any(project_root.iterdir())
-        except OSError as exc:
-            QMessageBox.critical(self, "Project error", str(exc))
-            return
-        if target_in_use:
-            QMessageBox.warning(
-                self,
-                "Project exists",
-                "Target project folder already exists and is not empty.",
-            )
-            return
+        self._remember_dialog_path(project_root.parent, "new_project_parent")
 
         # Persist any coalesced flush for the outgoing project before swapping.
         self._flush_dashboard()
         try:
-            self._document = self._project_service.create_project(
-                project_root, project_name.strip()
-            )
+            self._document = self._project_service.create_project(project_root, project_name)
         except (OSError, ValueError) as exc:
             QMessageBox.critical(self, "Project error", str(exc))
             return
@@ -2004,8 +2070,8 @@ class MainWindow(QMainWindow):
         clear_action.triggered.connect(self._clear_recent_projects)
 
     def _save_project(self) -> None:
+        # The action is disabled with no project.
         if self._document is None:
-            QMessageBox.information(self, "No project", "Create or open a project first.")
             return
 
         self._flush_uep_analysis_dialogs()
@@ -2014,6 +2080,7 @@ class MainWindow(QMainWindow):
         except (OSError, ValueError) as exc:
             QMessageBox.critical(self, "Save blocked", str(exc))
             return
+        self._close_save_failed = False
         # This wrote the whole document, so any coalesced flush is subsumed.
         self._dashboard_flush_pending = False
         self._dashboard_flush_timer.stop()
@@ -2196,6 +2263,9 @@ class MainWindow(QMainWindow):
         with trace.stage("_refresh_journal_view"):
             self._refresh_journal_view()
         trace.log_summary(extra=self._document.project.name)
+        # Filling the pages tidied some saved forms; only what the user does next counts.
+        self._project_service.settle_ui_state(self._document)
+        self._close_save_failed = False
 
     def _reset_job_tracking_for_project_change(self) -> None:
         assert self._document is not None
@@ -3165,6 +3235,8 @@ class MainWindow(QMainWindow):
         except (OSError, ValueError) as exc:
             _LOG.warning("Autosave failed: %s", exc)
             self.statusBar().showMessage(failure_message)
+        else:
+            self._close_save_failed = False
 
     def _request_dashboard_flush(self, *, failure_message: str) -> None:
         """Schedule a coalesced dashboard refresh + autosave for lifecycle handlers.
@@ -4358,7 +4430,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(
                 self,
                 "File cleanup failed",
-                f"Could not update files for cutoff {failure.item.key[0]:.8g} eV:\n{failure.error}",
+                f"Could not update files for cutoff {failure.item.key[0]:.8g} eV:\n{failure.reason}",
             )
 
         removed_cutoffs: list[float] = []
@@ -8614,7 +8686,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(
                 self,
                 "File cleanup failed",
-                f"Could not update files for job '{failure.item.label}':\n{failure.error}",
+                f"Could not update files for job '{failure.item.label}':\n{failure.reason}",
             )
         return outcome.completed
 
@@ -8686,15 +8758,15 @@ class MainWindow(QMainWindow):
         self._uep_controller.remove_rows(labels)
         self._refresh_uep_rows()
 
-    def _on_import_legacy_relaxations(self) -> None:
-        """Scan a legacy MuFinder folder and import the relaxations chosen from it."""
+    def _on_import_castep_relaxations(self) -> None:
+        """Scan a folder for CASTEP relaxations and import the ones chosen from it."""
 
         document = self._document
         if document is None:
             QMessageBox.information(
                 self,
                 "No project open",
-                "Open or create a project before importing legacy relaxations.",
+                "Open or create a project before importing CASTEP relaxations.",
             )
             return
 
@@ -8713,73 +8785,79 @@ class MainWindow(QMainWindow):
             return
 
         directory = QFileDialog.getExistingDirectory(
-            self, "Select a legacy MuFinder working folder"
+            self, "Select a folder containing CASTEP relaxations"
         )
         if not directory:
             return
 
-        self._begin_legacy_scan(Path(directory), host)
+        self._begin_relaxation_scan(Path(directory), host)
 
-    def _begin_legacy_scan(self, root: Path, host: Structure) -> None:
+    def _begin_relaxation_scan(self, root: Path, host: Structure) -> None:
         """Scan ``root`` on a worker thread, then review and commit."""
 
-        self.statusBar().showMessage(f"Scanning {root.name} for legacy relaxations…")
-        if self._import_legacy_action is not None:
-            self._import_legacy_action.setEnabled(False)
-        self._legacy_scan_host = host
-        self._legacy_scan_root = root
-        start_legacy_scan(
+        self.statusBar().showMessage(f"Scanning {root.name} for CASTEP relaxations…")
+        if self._import_relaxations_action is not None:
+            self._import_relaxations_action.setEnabled(False)
+        self._relaxation_scan_host = host
+        self._relaxation_scan_root = root
+        start_relaxation_scan(
             self,
             root,
             [list(vector) for vector in host.lattice_vectors],
             list(host.species),
-            self._on_legacy_scan_completed,
-            self._on_legacy_scan_failed,
-            self._on_legacy_scan_progress,
+            self._on_relaxation_scan_completed,
+            self._on_relaxation_scan_failed,
+            self._on_relaxation_scan_progress,
         )
 
     @Slot(int, int)
-    def _on_legacy_scan_progress(self, done: int, total: int) -> None:
-        root = self._legacy_scan_root
+    def _on_relaxation_scan_progress(self, done: int, total: int) -> None:
+        root = self._relaxation_scan_root
         name = root.name if root is not None else "folder"
         self.statusBar().showMessage(f"Scanning {name}: relaxation {done} of {total}…")
 
     @Slot(str)
-    def _on_legacy_scan_failed(self, message: str) -> None:
-        self._finish_legacy_scan()
+    def _on_relaxation_scan_failed(self, message: str) -> None:
+        self._finish_relaxation_scan()
         QMessageBox.warning(self, "Import failed", f"Could not scan the folder:\n{message}")
 
     @Slot(object)
-    def _on_legacy_scan_completed(self, scan: object) -> None:
-        self._finish_legacy_scan()
+    def _on_relaxation_scan_completed(self, scan: object) -> None:
+        self._finish_relaxation_scan()
         document = self._document
-        host = self._legacy_scan_host
-        if document is None or host is None or not isinstance(scan, LegacyFolderScan):
+        host = self._relaxation_scan_host
+        if document is None or host is None or not isinstance(scan, RelaxationFolderScan):
             return
 
         if not scan.runs:
+            if scan.unreadable:
+                QMessageBox.information(self, "Could not read folder", scan.unreadable_note)
+                return
             QMessageBox.information(
                 self,
                 "Nothing to import",
-                "No muon relaxations were found in that folder.\n\n" + "\n".join(scan.warnings),
+                "No CASTEP outputs (.castep files) were found in or under that folder.",
             )
             return
 
-        dialog = LegacyImportDialog(scan, parent=self)
+        dialog = RelaxationImportDialog(scan, parent=self)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         selected = dialog.selected_runs()
         if not selected:
             return
 
-        self._commit_legacy_import(scan, selected, host)
+        self._commit_relaxation_import(scan, selected, host)
 
-    def _finish_legacy_scan(self) -> None:
-        if self._import_legacy_action is not None:
-            self._import_legacy_action.setEnabled(True)
+    def _finish_relaxation_scan(self) -> None:
+        self._relaxation_scan_root = None
+        if self._import_relaxations_action is not None:
+            self._import_relaxations_action.setEnabled(True)
         self.statusBar().clearMessage()
 
-    def _commit_legacy_import(self, scan: LegacyFolderScan, runs: list, host: Structure) -> None:
+    def _commit_relaxation_import(
+        self, scan: RelaxationFolderScan, runs: list, host: Structure
+    ) -> None:
         """Build entities and files, attach the rows, and save."""
 
         document = self._document
@@ -8797,7 +8875,7 @@ class MainWindow(QMainWindow):
                 existing_labels = [row.label for row in config.rows]
 
         try:
-            outcome = commit_legacy_import(
+            outcome = commit_relaxation_import(
                 document,
                 scan=scan,
                 runs=runs,
@@ -8807,7 +8885,7 @@ class MainWindow(QMainWindow):
             )
         except OSError as exc:
             QMessageBox.warning(
-                self, "Import failed", f"Could not write the imported files:\n{exc}"
+                self, "Import failed", f"Could not write the imported files: {plain_error(exc)}."
             )
             return
 
@@ -8829,7 +8907,7 @@ class MainWindow(QMainWindow):
         self._refresh_jobs_table()
         self._refresh_muon_sites_summary()
         self._persist_document_ui_state(
-            failure_message="Legacy relaxations were imported, but autosave failed.",
+            failure_message="CASTEP relaxations were imported, but autosave failed.",
         )
 
         messages = [f"Imported {plural(len(outcome.imported), 'relaxation')}."]
@@ -8841,7 +8919,7 @@ class MainWindow(QMainWindow):
             messages.extend(f"- {note}" for note in dict.fromkeys(row_warnings))
         QMessageBox.information(self, "Import complete", "\n".join(messages))
         self.statusBar().showMessage(
-            f"Imported {plural(len(outcome.imported), 'legacy relaxation')}"
+            f"Imported {plural(len(outcome.imported), 'CASTEP relaxation')}"
         )
 
     def _on_remove_imported_relaxations(self) -> None:
@@ -8868,12 +8946,10 @@ class MainWindow(QMainWindow):
             return
 
         labels = [f"{label} ({plural(count, 'relaxation')})" for label, count, _batch_id in batches]
-        choice, accepted = QInputDialog.getItem(
-            self, "Remove Imported Relaxations", "Import batch", labels, 0, False
-        )
-        if not accepted:
+        chosen = choose_import_batch(self, labels)
+        if chosen is None:
             return
-        batch_id = batches[labels.index(choice)][2]
+        batch_id = batches[chosen][2]
 
         refs = imported_relaxations_in_batch(document, batch_id)
         directories = {
@@ -8881,24 +8957,37 @@ class MainWindow(QMainWindow):
             for ref in refs
             if (path := self._job_output_directory(document.jobs[ref.job_id])) is not None
         }
-        plan = plan_removal(document, refs, job_directories=directories)
+        others = {
+            job.id: path
+            for job in document.jobs.values()
+            if job.id not in directories and (path := self._job_output_directory(job)) is not None
+        }
+        plan = plan_removal(
+            document, refs, job_directories=directories, other_job_directories=others
+        )
+
+        if plan.unsafe:
+            self._warn_with_lines(
+                "Cannot remove safely",
+                f"MuFinder will not delete the folders of {plural(len(plan.unsafe), 'relaxation')}, "
+                "so nothing was removed.",
+                plan.unsafe,
+            )
+            return
 
         if plan.blockers:
-            QMessageBox.warning(
-                self,
+            self._warn_with_lines(
                 "Still in use",
-                "These imported relaxations cannot be removed because they are still "
-                "used by:\n\n"
-                + "\n".join(f"- {item}" for item in plan.blockers)
-                + "\n\nRemove those first.",
+                "These imported relaxations cannot be removed because other work uses them. "
+                "Remove that first.",
+                plan.blockers,
             )
             return
 
         if not workflow_table_utils.confirm_destructive(
             self,
             "Remove imported relaxations?",
-            f"Permanently remove {plural(len(plan.targets), 'imported relaxation')} and delete "
-            "their job directories, including the archived original input files?",
+            self._removal_question(plan),
             "MuFinder did not run these calculations and cannot recreate them.",
             accept_label=(f"Remove {plural(len(plan.targets), 'relaxation', 'relaxations')}"),
         ):
@@ -8906,11 +8995,16 @@ class MainWindow(QMainWindow):
 
         outcome = remove_imported_relaxations(document, plan, batch_id=batch_id)
         removed, errors = outcome.removed, outcome.errors
+        if not removed:
+            self._warn_with_lines("Cannot remove safely", "Nothing was removed.", errors)
+            return
+        # Only what actually went: a row whose job stayed keeps its binding.
+        gone = [ref for ref in plan.targets if ref.job_id not in document.jobs]
         definition = self._muon_relaxation_controller.active_definition()
         if definition is not None:
-            detach_rows_from_definition(definition, plan.targets)
+            detach_rows_from_definition(definition, gone)
             self._muon_relaxation_view.set_form_state(
-                self._muon_relaxation_form_state_without(plan.targets)
+                self._muon_relaxation_form_state_without(gone)
             )
             document.ui_state["muon_relaxation_form"] = self._muon_relaxation_view.collect_state()
 
@@ -8929,8 +9023,52 @@ class MainWindow(QMainWindow):
         )
 
         if errors:
-            QMessageBox.warning(self, "Removal issues", "\n".join(errors))
+            self._warn_with_lines("Removal issues", "Some files could not be deleted.", errors)
+            self.statusBar().showMessage(
+                f"Removed {plural(removed, 'imported relaxation')}; "
+                "some of its files could not be deleted"
+            )
+            return
+        if plan.kept_job_ids:
+            self.statusBar().showMessage(
+                f"Removed {plural(removed, 'imported relaxation')}; "
+                "the files stay because another import uses them"
+            )
+            return
         self.statusBar().showMessage(f"Removed {plural(removed, 'imported relaxation')}")
+
+    def _warn_with_lines(self, title: str, summary: str, lines: Sequence[str]) -> None:
+        """Warn with ``summary`` and one line per item, kept on screen however many there are."""
+
+        if len(lines) == 1:
+            QMessageBox.warning(self, title, f"{summary}\n\n- {lines[0]}")
+            return
+        show_detailed_warning(
+            self,
+            title,
+            summary + "\n" + "\n".join(f"- {line}" for line in lines),
+            informative_text="Open Details to see each one.",
+        )
+
+    @staticmethod
+    def _removal_question(plan) -> str:
+        """Return what removing a batch will do with its folders, in plain words."""
+
+        count = plural(len(plan.targets), "imported relaxation")
+        stays = (
+            "another import uses the same folder. The folder is deleted when the last import "
+            "using it is removed."
+        )
+        if not plan.directories and plan.kept_job_ids:
+            return f"Remove {count} from the project? Their files stay, because {stays}"
+        question = (
+            f"Permanently remove {count} and delete their job directories, including the "
+            "archived original input files?"
+        )
+        if plan.kept_job_ids:
+            kept = plural(len(plan.kept_job_ids), "relaxation")
+            question += f"\n\nThe files of {kept} stay, because {stays}"
+        return question
 
     def _muon_relaxation_form_state_without(self, targets) -> dict[str, object]:
         """Return the widget's form state with ``targets``' rows dropped."""
@@ -8941,7 +9079,11 @@ class MainWindow(QMainWindow):
         return {"rows": [row for row in rows if str(row.get("site_id", "")) not in removed]}
 
     def _imported_relaxation_batches(self) -> list[tuple[str, int, UUID]]:
-        """Return ``(label, count, batch_id)`` for every import batch present."""
+        """Return ``(label, count, batch_id)`` for every import batch, oldest first.
+
+        A label names the source folder and when it was imported, since one folder
+        can be imported more than once. A batch whose record is missing comes last.
+        """
 
         document = self._document
         if document is None:
@@ -8953,22 +9095,34 @@ class MainWindow(QMainWindow):
                 counts[str(raw)] = counts.get(str(raw), 0) + 1
 
         labels: dict[str, str] = {}
+        order: dict[str, float] = {}
         for record in document.provenance:
-            if record.action != IMPORT_ACTION:
+            if record.action not in IMPORT_ACTIONS:
                 continue
             raw_batch = record.parameters.get("batch_id")
             source = record.parameters.get("source_folder")
             if raw_batch:
-                labels[str(raw_batch)] = Path(str(source)).name if source else "imported batch"
+                folder = Path(str(source)).name if source else "imported batch"
+                when = record.timestamp.astimezone()
+                labels[str(raw_batch)] = f"{folder}, imported {when:%d %b %Y at %H:%M:%S}"
+                order[str(raw_batch)] = when.timestamp()
 
-        batches: list[tuple[str, int, UUID]] = []
+        batches: list[tuple[float, str, int, UUID]] = []
         for raw_batch, count in counts.items():
             try:
                 batch_id = UUID(raw_batch)
             except ValueError:
                 continue
-            batches.append((labels.get(raw_batch, "imported batch"), count, batch_id))
-        return sorted(batches, key=lambda item: item[0])
+            batches.append(
+                (
+                    order.get(raw_batch, float("inf")),
+                    labels.get(raw_batch, "imported batch"),
+                    count,
+                    batch_id,
+                )
+            )
+        batches.sort(key=lambda item: item[:2])
+        return [(label, count, batch_id) for _when, label, count, batch_id in batches]
 
     def merge_imported_relaxation_rows(
         self,

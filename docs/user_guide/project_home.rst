@@ -11,7 +11,7 @@ active, and ``Open Journal`` opens the :doc:`/user_guide/journal`.
 Before you start
 ----------------
 
-Open or create a project (``File > New Project`` or ``File > Open Project``).
+Open or create a project (``File > New Project…`` or ``File > Open Project…``).
 The home needs nothing else: it reads the project's current state, so it is
 useful on an empty project (it shows what to do first) and on a finished one.
 

@@ -178,6 +178,10 @@ class RowTableWidget(QWidget):
     #: Starting widths of the label and supercell columns; the user can drag them.
     #: The supercell width shows a name like ``YBa2Cu3O7 2x2x1`` in full.
     _LABEL_COLUMN_WIDTH = 130
+    #: The widest a read-only row's label widens the column, in average characters.
+    #: Small enough that the row's Parameters and remove controls stay on screen at
+    #: the default window size.
+    _READ_ONLY_LABEL_CHARACTERS = 32
     _SUPERCELL_COLUMN_WIDTH = 164
     _STATUS_COLUMN: int
     _CONFIGURE_COLUMN: int
@@ -233,6 +237,7 @@ class RowTableWidget(QWidget):
         )
 
         self._tables = self._create_tables()
+        self._fitted_label_widths: dict[QTableWidget, int] = {}
 
         self._name_prefix = (
             QLineEdit(self._NAME_PREFIX_DEFAULT) if self._NAME_PREFIX_DEFAULT is not None else None
@@ -398,6 +403,34 @@ class RowTableWidget(QWidget):
         header.setSectionResizeMode(self._REMOVE_COLUMN, QHeaderView.ResizeMode.Fixed)
         table.setColumnWidth(self._REMOVE_COLUMN, 34)
         return table
+
+    def _fit_read_only_labels(self) -> None:
+        """Fit each label column to the read-only labels it holds, up to a limit.
+
+        A read-only row keeps the name it arrived with, so the width that suits a
+        typed label would clip it for good. A longer one elides; its tooltip holds it.
+
+        Once per table, after the rows are in: reading a column's width lays out the
+        table, so doing it for every row costs a layout of every row. The width is
+        set only when this fit changes, so a width the user chose survives until then.
+        """
+
+        for table in self._all_tables():
+            limit = table.fontMetrics().averageCharWidth() * self._READ_ONLY_LABEL_CHARACTERS
+            widest = 0
+            for row in range(table.rowCount()):
+                item = table.item(row, self._LABEL_COLUMN)
+                if item is None:
+                    continue
+                if self._row_is_read_only(item.data(Qt.ItemDataRole.UserRole)):
+                    font = item.font()
+                    font.setItalic(True)
+                    item.setFont(font)
+                    widest = max(widest, table.sizeHintForIndex(table.indexFromItem(item)).width())
+            fitted = max(self._LABEL_COLUMN_WIDTH, min(widest, limit))
+            if fitted != self._fitted_label_widths.get(table, self._LABEL_COLUMN_WIDTH):
+                table.setColumnWidth(self._LABEL_COLUMN, fitted)
+                self._fitted_label_widths[table] = fitted
 
     def _all_tables(self) -> tuple[QTableWidget, ...]:
         return self._tables
@@ -799,7 +832,7 @@ class RowTableWidget(QWidget):
                 flags |= Qt.ItemFlag.ItemIsEditable
                 label_item.setToolTip("")
             elif read_only:
-                label_item.setToolTip(self._READ_ONLY_ROW_TOOLTIP)
+                label_item.setToolTip(f"{label_item.text()}\n{self._READ_ONLY_ROW_TOOLTIP}")
             else:
                 label_item.setToolTip(_LOCKED_LABEL_TOOLTIP)
             label_item.setFlags(flags)

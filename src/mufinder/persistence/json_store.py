@@ -15,6 +15,10 @@ from uuid import uuid4
 _DARWIN_SF_DATALESS = 0x40000000
 
 
+#: A project folder's name ends in this; the rest is the project's name.
+PROJECT_FOLDER_SUFFIX = ".mufinder"
+
+
 class ProjectStore:
     """Reads and writes MuFinder project metadata and entity files."""
 

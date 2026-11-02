@@ -7,6 +7,7 @@ the app.
 
 from __future__ import annotations
 
+import errno
 import re
 
 
@@ -22,6 +23,29 @@ def plural(n: int, singular: str, plural: str | None = None) -> str:
 
     word = singular if n == 1 else (plural if plural is not None else f"{singular}s")
     return f"{n} {word}"
+
+
+def plain_error(exc: BaseException) -> str:
+    """Return why something failed in words, without an errno, a path or an end stop.
+
+    ``str()`` of an ``OSError`` reads ``[Errno 13] Permission denied: '/the/whole/path'``.
+    The message around this names the file. Any other exception's text is its own.
+    """
+
+    # A parser's "Failed to read '/the/path': ..." wraps the error worth reporting.
+    if isinstance(exc.__cause__, (OSError, UnicodeError)):
+        exc = exc.__cause__
+    if isinstance(exc, UnicodeError):
+        return "it is not a text file"
+    if isinstance(exc, OSError):
+        if exc.errno == errno.ENAMETOOLONG:
+            return "the path is too long"
+        if isinstance(exc, PermissionError):
+            return "permission denied"
+        if isinstance(exc, FileNotFoundError):
+            return "it is no longer there"
+        return (exc.strerror or str(exc) or "the file system refused it").lower()
+    return str(exc).rstrip(" .")
 
 
 #: ``Job.execution_target`` of a job run on the user's own computer; any other

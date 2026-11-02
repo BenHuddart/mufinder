@@ -112,6 +112,7 @@ from mufinder.science.uep_clustering import (
     position_in_source_cell,
     relaxed_site_number_map,
     uep_batch_summary_from_dict,
+    saved_uep_search_log,
     uep_search_log,
     uep_search_outcome,
 )
@@ -136,9 +137,6 @@ _GW_FACTOR_TOOLTIP = (
     "Press Enter to rebuild the active UEP field and recalculate the full-cell potential grid."
 )
 _DEFAULT_MAX_START_ATTEMPTS = 5000
-_SAVED_WITHOUT_ZPE_TEXT = (
-    "This search was saved without zero-point energies. Run the search again to compute them."
-)
 _BATCH_FORCE_TOLERANCE_TOOLTIP = (
     "Force threshold for each start, in eV/Å: the optimizer stops when the norm of the "
     "potential's gradient falls below this value."
@@ -5785,14 +5783,7 @@ class UepAnalysisDialog(QDialog):
             return
         raw_selected_keys = state.get("batch_selected_keys")
         selected_row = state.get("batch_selected_row")
-        log = uep_search_log(self._batch_summary.toPlainText(), summary).replace(
-            f"\n{_SAVED_WITHOUT_ZPE_TEXT}", ""
-        )
-        if any(
-            results[cluster.representative_index].zero_point_energy_ev is None
-            for cluster in summary.clusters
-        ):
-            log = "\n".join([log, _SAVED_WITHOUT_ZPE_TEXT])
+        log = saved_uep_search_log(self._batch_summary.toPlainText(), results, summary)
         self._populate_batch_results(
             results,
             summary,

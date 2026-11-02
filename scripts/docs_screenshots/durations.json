@@ -38,7 +38,7 @@
   "nuclear_relaxation_dialog": 4.5,
   "cof2_magnetic_field_workspace": 3.9,
   "energy_barriers_page": 3.9,
-  "legacy_import_dialog": 1.1,
+  "relaxation_import_dialog": 1.1,
   "fe_host_structure": 1.9,
   "fe_magnetic_fields_page": 1.4,
   "fe_tetrahedral_sites": 1.7,

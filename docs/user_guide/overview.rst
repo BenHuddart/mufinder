@@ -34,18 +34,24 @@ Application shell
 -----------------
 
 - With no project open, the welcome page fills the window: create a project
-  (``New Project``), open one (``Open Project``) or reopen one of the last five
+  (``Create New Project``), open one (``Open Existing Project``) or reopen one of the last five
   (``Recent Projects``, each shown by name and parent folder, with the full path
   in its tooltip). The project navigator and the ``Job Dashboard`` appear once a
   project is open, and keyboard focus starts in the navigator.
-- The ``File`` menu creates (``New Project``), opens (``Open Project``),
+- The ``File`` menu creates (``New Project…``), opens (``Open Project…``),
   reopens (``Open Recent``) and saves (``Save Project``) projects, and holds
-  ``Import Legacy Relaxations…`` and ``Remove Imported Relaxations…`` (see
-  :doc:`/user_guide/legacy_import`).
+  ``Import CASTEP Relaxations…`` and ``Remove Imported Relaxations…`` (see
+  :doc:`/user_guide/relaxation_import`). ``New Project…``, ``Open Project…``, ``Save
+  Project`` and ``Quit`` (``Exit`` on Windows) have the platform's usual
+  shortcuts: Ctrl+N, Ctrl+O, Ctrl+S and Ctrl+Q, with Cmd on macOS. Windows has no
+  standard key for ``Exit``, so there it closes with Alt+F4. ``Save Project`` and
+  the two relaxation actions are available with a project open.
 - The ``Setup`` menu configures the local CASTEP installation and keyword
   catalog (``CASTEP…``, see :doc:`/getting_started/castep_setup`) and the
   cluster profiles (``HPC Clusters…``, see
   :doc:`/getting_started/running_jobs`).
+- ``View -> Job Dashboard`` shows or hides the ``Job Dashboard``, and so does
+  the button on the dock's title bar. It is available with a project open.
 - ``View -> Appearance`` switches between ``Light``, ``Dark`` and ``System``
   themes. MuFinder bundles its own fonts, icons and control styling, so it looks
   the same on macOS, Windows and Linux.
@@ -62,13 +68,18 @@ Application shell
   magnetic-field-workspace nodes have a right-click delete action; workflow
   stage nodes have no context menu.
 - The ``Job Dashboard`` dock lists the jobs that need attention (see `Jobs and
-  execution`_). Opening a project brings it back if it was closed.
+  execution`_). It stays where you put it, and stays closed if you closed it,
+  including across projects and restarts.
 - The project home charts the workflow stages with their dependencies and
   progress, opens at the stage last worked on, and surveys the host cell with
   that stage's muon positions (see :doc:`/user_guide/project_home`).
+- The window title shows the open project's name.
 - Durable project and job state is autosaved. Analysis layouts and viewer
-  choices are kept until ``Save Project``, which MuFinder offers whenever a
-  project window is closed.
+  choices are kept until ``Save Project`` or the next autosave. Closing the window
+  asks to save only when layouts or viewer choices changed since then; otherwise
+  it writes anything still waiting for an autosave, such as the stage the project
+  home opens at, and closes. An upgrade or the home stage that cannot be written,
+  on a read-only folder say, does not stop it closing.
 
 Workflow stages
 ---------------
@@ -213,7 +224,7 @@ A completed relaxation's relaxed supercell can be saved as CIF or CASTEP
 
 See :doc:`/user_guide/site_generation` (Creating Relaxation Jobs),
 :ref:`continue-relaxation`, :ref:`export-relaxed-structures` and
-:doc:`/user_guide/legacy_import`.
+:doc:`/user_guide/relaxation_import`.
 :doc:`/user_guide/examples/cof2` relaxes ten starts as positive muons and as
 muonium.
 
@@ -351,23 +362,23 @@ Journal
 The ``Journal`` is a curated, day-grouped narrative of the project's
 provenance: structure import, workflow configuration, project defaults, site
 generation, job submissions, continuations and outcomes, comparison tables and
-legacy imports. It exports as plain text or Markdown.
+imported relaxations. It exports as plain text or Markdown.
 
 See :doc:`/user_guide/journal`.
 
 Across the workflows
 --------------------
 
-Legacy relaxation import
+CASTEP relaxation import
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
-``File > Import Legacy Relaxations…`` imports muon structural relaxations
-run by the legacy MuFinder application as read-only relaxation rows, so they
-can be used in relaxation analysis, Quantum Corrections and Energy Barriers.
+``File > Import CASTEP Relaxations…`` finds the finished CASTEP geometry
+optimisations in a folder and imports the ones with a muon as read-only
+relaxation rows, so they can be used in relaxation analysis, Quantum Corrections and Energy Barriers.
 ``File > Remove Imported Relaxations…`` removes an import batch that nothing
 downstream still uses.
 
-See :doc:`/user_guide/legacy_import`.
+See :doc:`/user_guide/relaxation_import`.
 
 Jobs and execution
 ~~~~~~~~~~~~~~~~~~

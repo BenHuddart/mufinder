@@ -141,6 +141,7 @@ def test_loading_a_project_with_an_old_cluster_summary_regroups_it(tmp_path: Pat
     assert state["batch_summary_text"].splitlines() == [
         "Requested random starts: 12",
         "Grouping: 12 minima in 1 site, within 0.25 Å and 1 meV.",
+        "This search was saved without zero-point energies. Run the search again to compute them.",
     ]
 
 
@@ -296,3 +297,24 @@ def test_a_search_that_fails_in_any_way_does_not_stop_the_project_opening(
     assert loaded.ui_state[_STATES_KEY][str(job.id)]["batch_summary_data"]["clustering_method"] == (
         "hier"
     )
+
+
+def test_a_search_with_a_current_grouping_is_left_alone_when_it_already_matches(
+    tmp_path: Path,
+) -> None:
+    document = ProjectService().create_project(tmp_path / "plain.mufinder", "Plain")
+    state = {"batch_results": [], "batch_summary_text": "nothing yet", "current_tab": 2}
+    document.ui_state["uep_analysis_states"] = {"job": state}
+
+    assert regroup_saved_uep_searches(document) is False
+    assert document.ui_state["uep_analysis_states"]["job"] is state
+
+
+def test_the_retired_zpe_flag_is_dropped_on_load(tmp_path: Path) -> None:
+    document = ProjectService().create_project(tmp_path / "flag.mufinder", "Flag")
+    document.ui_state["uep_analysis_states"] = {
+        "job": {"batch_results": [], "batch_zpe_completed": False}
+    }
+
+    assert regroup_saved_uep_searches(document) is True
+    assert document.ui_state["uep_analysis_states"]["job"] == {"batch_results": []}

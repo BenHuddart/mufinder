@@ -70,7 +70,7 @@ def detect_supercell_matrix_from_lattices(
 
     The lattice-level form of :func:`detect_supercell_matrix`, for callers that
     hold parsed cells rather than :class:`~mufinder.domain.models.Structure`
-    records — notably the legacy-import scanner, which must infer a supercell
+    records — notably the relaxation-import scanner, which must infer a supercell
     before it has built any project entities.
     """
 

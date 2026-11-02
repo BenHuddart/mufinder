@@ -528,3 +528,4 @@ class MuonRelaxationWidget(RelaxationRowTableWidget):
                     keep_unknown=row_id in self._row_imported,
                 )
                 self._insert_row(row_id, label, table=table)
+        self._fit_read_only_labels()

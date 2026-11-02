@@ -175,7 +175,7 @@ def test_home_button_and_file_menu_follow_appearance_switch(main_window, light_t
         return {action.text(): action for action in menu.actions()}
 
     menu_bar_actions = main_window.menuBar().actions()
-    new_project = submenu_actions(menu_bar_actions, "File")["New Project"]
+    new_project = submenu_actions(menu_bar_actions, "File")["New Project…"]
     view_actions = submenu_actions(menu_bar_actions, "View")
     appearance = submenu_actions(list(view_actions.values()), "Appearance")
     home_button = main_window._project_home_button

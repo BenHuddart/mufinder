@@ -1,16 +1,16 @@
-Legacy Relaxation Import
+CASTEP Relaxation Import
 ========================
 
 This document is the design contract for importing muon structural relaxations
-produced by the **legacy MuFinder** (the Tkinter-era GitLab application) into a
-project in the current application, so that those relaxed muoniated structures
-can be used as inputs for Quantum Corrections and Energy Barriers calculations.
+that CASTEP ran outside MuFinder into a project, so that those relaxed muoniated
+structures can be used as inputs for Quantum Corrections and Energy Barriers
+calculations.
 
 How to run the importer, what it accepts, where the imported files go and how
-to remove an import are described in :doc:`/user_guide/legacy_import`.
+to remove an import are described in :doc:`/user_guide/relaxation_import`.
 
-Scope is deliberately narrow: **muon structural relaxations only**. Convergence
-sweeps, pristine relaxations, UEP, and dipolar-field data are out of scope.
+Scope is deliberately narrow: **muon geometry optimisations only**. Runs of the
+host alone and other CASTEP tasks are listed with the reason and not imported.
 
 Status: implemented (see Phasing). A few parts of the design below are not
 yet built; they are listed under `Implementation status`_ and flagged where they
@@ -51,10 +51,10 @@ for a design decision, reproduced as a number and never as data.
 Motivation
 ----------
 
-Relaxed muon sites produced by the legacy application cannot currently feed
-Quantum Corrections (Gamma-point phonons) or Energy Barriers (transition-state
-search and NEB). Both gate their source lists on relaxations that this
-application performed. The import exists to make a legacy relaxation
+Relaxed muon sites from a calculation run outside MuFinder could not otherwise
+feed Quantum Corrections (Gamma-point phonons) or Energy Barriers (transition-state
+search and NEB). Both gate their source lists on relaxations recorded in the
+project. The import exists to make such a relaxation
 indistinguishable — *to those two workflows* — from a native one, without
 pretending it was run here.
 
@@ -64,37 +64,59 @@ what produced the structure, and they seed the two values downstream jobs
 inherit. Where the two goals conflict, structure availability wins. No
 degradation in parameter recovery may block an import.
 
-The legacy layout
------------------
+What a run is
+-------------
 
-The legacy application has no project file. Everything is filesystem
-convention::
+A run is a ``<seed>.castep`` anywhere under the chosen folder; the search follows
+no symbolic links to directories. A project records nothing about a run from
+outside, so what it is comes only from its files:
 
-    <work_dir>/
-      <name>.cif                       host structure (sometimes; .mag_array alongside)
-      input/  <seed>_<N>.cell          host supercell + H:mu at candidate N
-              jobs.pkl                 transient submit queue, not a record
-      run/    site<N>/<seed>_<N>.cell
-              site<N>/<seed>_<N>.param
-      results/<seed>_<N>.castep
-              <seed>_<N>-out.cell
+.. list-table::
+   :header-rows: 1
+   :widths: 25 75
+
+   * - File
+     - Role
+   * - ``<seed>.castep``
+     - The run. Whether it finished and converged, its energy and the parameters
+       it used.
+   * - ``<seed>.cell``
+     - The starting structure. Fixes the supercell matrix and the initial muon
+       position.
+   * - ``<seed>-out.cell``
+     - The relaxed structure.
+   * - ``<seed>.param``
+     - Optional. Supplies parameters the output does not report.
 
 Properties that constrain the design:
 
-- **The site index lives only in the filename.** Legacy parses it by splitting
-  the name on ``_``, space, and ``.`` and taking the second-to-last field.
-- **Site 0 is the pristine/neutral reference**, not a muon site. It is skipped
-  on import.
-- **No supercell matrix is recorded anywhere.** Legacy recovers it as
-  ``L_relaxed @ inv(L_host)``. The importer must do the same.
-- **``jobs.pkl`` is a transient queue**, not a provenance source. It is empty in
-  dataset A.
-- **The local input tree is not trustworthy.** In dataset A the local
-  ``run/site1/<seed>_1.param`` declares an LDA functional, ``basis_precision:
-  FINE`` and ``elec_energy_tol: 1E-10``, while the corresponding
-  ``results/<seed>_1.castep`` reports PBE, a 900 eV cutoff, and a 3x3x3
-  Monkhorst-Pack grid that appears in no local input file at all. The runs
-  executed on an HPC system; the local input tree is a stale sibling.
+- **Pairing goes by name and closeness.** The other files are taken from beside
+  the ``.castep``, then from the closest directory holding that name, counted in
+  directories apart, so a tree that keeps inputs and results apart pairs up without
+  a layout being assumed. A file beside another ``.castep`` of the same seed
+  belongs to that run: ``site1/mu.castep`` must not borrow ``site2/mu.cell``.
+  Two different files equally close block the run rather than picking one, since
+  a wrong ``.cell`` would attach the wrong starting structure; byte-identical
+  copies are accepted. A file that would serve several runs serves none, a relaxed
+  cell must hold the input cell's atoms, and the review names any file read from
+  another folder.
+- **A seed carries no meaning.** Nothing is read from a seed name but the row
+  label and job directory. Whether a run holds a muon is read from its structure.
+- **No supercell matrix is recorded anywhere.** It is recovered as
+  ``L_input @ inv(L_host)``.
+- **A ``.castep`` of the same name and bytes as an earlier one is a copy**, not a
+  second calculation, and is listed once. ``<seed>_farmNNN.castep`` is one image
+  of a task farm, not a run.
+- **A run of another task is refused.** The ``.castep`` echo says what it ran.
+- **What the search cannot open is reported.** A locked folder, or one past the
+  system's path limit, may hold runs, so it is named rather than passed over, and
+  a scan that found nothing else does not claim the folder holds no outputs.
+- **A local input may be stale.** In dataset A the local
+  ``.param`` beside an input declares an LDA functional, ``basis_precision:
+  FINE`` and ``elec_energy_tol: 1E-10``, while the corresponding ``.castep``
+  reports PBE, a 900 eV cutoff, and a 3x3x3 Monkhorst-Pack grid that appears in
+  no local input file at all. The runs executed on an HPC system; the local
+  input tree is a stale sibling.
 
 .. important::
 
@@ -166,13 +188,13 @@ document. They re-read them from disk::
     spin_polarized  <-  <jobdir>/<seed>.param (and SPIN= tokens in the .cell)
 
 NEB inherits the same way, via the reactant endpoint. For dataset A a verbatim
-copy of the legacy files would supply **neither** value: the input ``.cell``
+copy of the input files would supply **neither** value: the input ``.cell``
 carries no ``kpoint_mp_grid``, and the ``.param`` uses ``basis_precision``
 instead of ``cut_off_energy``. A phonon job seeded from it would silently fall
 back to project defaults and run at the wrong cutoff on the wrong grid —
 precisely the failure this feature exists to prevent. This constraint drives the
-on-disk layout described under "Files on disk" in
-:doc:`/user_guide/legacy_import`.
+on-disk layout described under "What MuFinder writes" in
+:doc:`/user_guide/relaxation_import`.
 
 Decisions
 ---------
@@ -189,23 +211,45 @@ Decisions
    * - Seed files on disk
      - Normalise from the ``.castep`` record; archive byte-exact originals.
    * - Host structure
-     - Require a matching host. (Offering to adopt the legacy CIF when the
-       project has none is not implemented: the import refuses until a host is
-       loaded.)
+     - Require a matching host: the import refuses until one is loaded.
+   * - Deleting a job folder
+     - Only a real folder, not a link, strictly inside this project's job folders and
+       the job's charge folder once resolved, which the import recorded writing to.
+       Anything else is refused and nothing goes. ``job_directory_refusal`` is the
+       same last check on every route that deletes a job's folder, native jobs
+       included.
+   * - A job folder that is a link
+     - Refused with rows kept, on every route. Unlinking would leave the target's files
+       unaccounted for, and the user can remove the link and try again.
+   * - A folder two imports share
+     - Each batch's removal takes its records and keeps the files; the last one using
+       the folder deletes it. Any job that is not an import of those files refuses.
+   * - A seed that cannot name a folder
+     - A leading or trailing space or dot is refused at the scan. A saved seed names
+       the folder with exactly that name when one exists, so writing and reading agree.
+   * - Choosing the batch to remove
+     - By position in the list, with each batch named by its source folder and
+       import time, since one folder can be imported more than once.
    * - Removing an imported row
      - Cascade-check references, then delete row, job, run, result, structure,
        site and files together.
-   * - Failed or unconverged legacy runs
+   * - Failed or unconverged runs
      - The wizard lists all runs and pre-ticks converged ones. A run whose
        CASTEP calculation did not complete is blocked; a completed but
        unconverged run can be ticked and is imported as ``COMPLETED`` with
        ``convergence_achieved`` false. Nothing is imported as ``FAILED``.
    * - No active definition
      - The import creates one and makes it active.
-   * - Legacy site 0
-     - Skipped; it is the pristine reference, not a muon site.
-   * - Site labelling
-     - ``Legacy Site <N>`` from the filename index, suffixed on collision.
+   * - A run with no muon
+     - Listed as ``No muon in this structure.`` and not importable, decided from
+       the structure. A bare ``H`` that the host's own composition accounts for is
+       not a muon.
+   * - Row labelling
+     - ``Imported <seed>``, suffixed on collision.
+   * - Job directory
+     - Named for the seed, suffixed when that directory exists, with the copied
+       outputs named to match, so that two runs of one seed, or one folder
+       imported twice, never share files.
 
 Entity construction
 -------------------
@@ -213,7 +257,7 @@ Entity construction
 Per imported site, one five-entity chain satisfying the eligibility contract.
 
 ``MuonSite``
-   ``status = "relaxed"``, ``generation_method = "imported_legacy"``,
+   ``status = "relaxed"``, ``generation_method = "imported"``,
    ``source_structure_id`` the active host, ``initial_fractional_position``
    taken from the **input** cell's ``H:mu`` folded to host coordinates,
    ``initial_cartesian_position`` derived from it,
@@ -227,14 +271,14 @@ Per imported site, one five-entity chain satisfying the eligibility contract.
    means the same as every other site in the project.
 
    Every position an imported row or site records is in the **host** frame.
-   Legacy states the muon position in the supercell frame, and job expansion
+   An input cell states the muon position in the supercell frame, and job expansion
    converts host to supercell on the way out, so storing supercell coordinates
    would display the wrong numbers and transform them a second time if the row
    were ever re-expanded.
 
 ``Job``
    ``MUON_RELAXATION``, ``COMPLETED``, calc type by detected charge state, tagged
-   ``imported`` and ``legacy_mufinder``. ``execution_target`` stays ``"local"``;
+   ``imported``. ``execution_target`` stays ``"local"``;
    a completed job is never reattached, so the value is inert.
 
 ``CalculationRun``
@@ -278,6 +322,8 @@ Per imported site, one five-entity chain satisfying the eligibility contract.
    The relaxed cell. ``origin`` **must** stay ``"muon_relaxation"`` and
    ``properties["source_workflow_stage"]`` must stay ``"muon_relaxation"`` for
    eligibility, so the import marker lives in ``properties["import_source"]``.
+   That holds the kind ``castep_folder``, the batch id, the seed, the run's path
+   under the folder and the CASTEP version.
    ``parent_structure_id`` **must** be the active host id, or every downstream
    submission fails its host check.
 
@@ -337,7 +383,7 @@ Reset and Dismiss actions. One dismissal makes the row's effective status read
 launches a real local calculation in the imported directory. Worse, the reset
 cleanup keeps only ``.cell`` and ``.param`` and recursively removes
 subdirectories — destroying the byte-exact ``.castep``, the relaxed output cell,
-**and the entire archive of legacy originals**. Resubmit, reset, and directory
+**and the entire archive of original inputs**. Resubmit, reset, and directory
 cleanup must all be gated on the imported marker; failing that, failed runs must
 be imported in a non-resubmittable representation.
 
@@ -458,7 +504,7 @@ Two readers are required, both in :mod:`mufinder.castep_io`. Both are
 
   That block is worth calling out because it is the clearest illustration of why
   the echo is preferred over the ``.param``: CASTEP writes it only when
-  ``METALS_METHOD`` is ``DM``, and a legacy ``.param`` need not state any of it.
+  ``METALS_METHOD`` is ``DM``, and a ``.param`` need not state any of it.
   Without reading the echo, whether a run's mixing settings survive an import
   depends on whether the local input file happened to carry them — so two runs
   of the same calculation can import with different parameter sets purely
@@ -469,7 +515,7 @@ Two readers are required, both in :mod:`mufinder.castep_io`. Both are
   expert). A value the echo did not print is a genuine absence and is left
   absent rather than filled in from a schema default.
 
-Both were validated against real legacy output from two CASTEP versions, and
+Both were validated against real output from two CASTEP versions, and
 correctly reproduce the input-tree disagreement described above: the echo
 reports PBE with a 900 eV cutoff on a 3x3x3 grid while the stale local
 ``.param`` claims LDA and ``BASIS_PRECISION: FINE``. That disagreement is now
@@ -478,10 +524,10 @@ machine-detectable, which is what the wizard needs to surface it.
 Value aliases must be folded the way CASTEP folds them
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Legacy MuFinder wrote ``task: geometryoptimisation``. CASTEP accepts that and
+A ``.param`` may say ``task: geometryoptimisation``. CASTEP accepts that and
 normalises it to ``GEOMETRYOPTIMIZATION`` on read — its source performs the
 substitution with the comment *"English spelling"* — but MuFinder's own
-validator only accepts the American spelling. Parsed naively, a legacy
+validator only accepts the American spelling. Parsed naively, such a
 ``.param`` therefore yields a value MuFinder then refuses to write, so the
 rendered ``.param`` for an imported job could not be produced at all.
 
@@ -522,8 +568,8 @@ translation table exists. That table, not the line parsing, is the substance of
 this reader. It is enumerated explicitly from CASTEP's own documentation and
 never inferred: the project rule forbids inventing keywords *or* values, so a
 label with no confident mapping is reported as unmapped rather than guessed. Its
-coverage is deliberately narrow — the legacy keyword set plus what inheritance
-needs — and everything outside it is an unmapped observation.
+coverage is deliberately narrow — the keywords relaxation inputs commonly set
+plus what inheritance needs — and everything outside it is an unmapped observation.
 
 Merge order and coercion
 ~~~~~~~~~~~~~~~~~~~~~~~~
@@ -545,11 +591,7 @@ discovered at runtime. The fallback used when no CASTEP installation is found is
 the bundled starter catalog, which is far smaller. Measured against CASTEP 26.11,
 the full catalog yields 447 ``param`` specs against the starter catalog's 47.
 
-That gap looks alarming but barely intersects this feature. The legacy
-application emits a narrow, fixed keyword set. Checking that entire set, plus the
-cell keywords it writes, against the **starter** catalog, exactly one is missing:
-``write_cif_structure``, a cosmetic output-format flag with no physics content
-and no downstream role. Decisively, ``cut_off_energy`` and ``kpoint_mp_grid`` —
+That gap looks alarming but barely intersects this feature. Decisively, ``cut_off_energy`` and ``kpoint_mp_grid`` —
 the two values inheritance actually reads — resolve under **both** catalogs. The
 functionally critical subset is catalog-independent.
 
@@ -588,17 +630,9 @@ cell, and a positional test would need the host tiled and matched atom-by-atom
 for no additional protection here. Scanning without host species skips both
 checks, so a host-less scan stays possible.
 
-On failure, refuse with a readable difference report. The design also calls for
-offering to import the legacy folder's CIF as the host when the project has
-none; that is **not implemented**. The shipped action refuses before the folder
-picker opens when there is no active host (see Phasing, step 6), and the scanner
-only records whether a CIF exists.
-
-**There may be no CIF to adopt.** Dataset A contains only the input, run and
-results directories, with no CIF at all, so the adoption path does not exist for
-it. When the project has no host *and* the folder has no CIF, block the import
-with a message asking the user to import a host structure first. Do **not**
-synthesise a host from an input cell: the muon-bearing supercell is not the host,
+On failure, refuse with a readable difference report. The action refuses before
+the folder picker opens when there is no active host (see Phasing, step 6). Do
+**not** synthesise a host from an input cell: the muon-bearing supercell is not the host,
 and inferring one would guess at the primitive cell and lose the magnetic
 structure.
 
@@ -622,34 +656,18 @@ it** — either charge state may have been run spin-polarised or not.
      - ``net charge of system : +1.000``
      - ``net charge of system : 0.000``
 
-This follows from the legacy parameter writer, which emits a charge line only for
-the positive-muon case and takes spin polarisation as a separate, independent
-argument.
-
-One irreducible ambiguity: legacy writes no charge line for **either** muonium or
-neutral, and nothing in the files distinguishes them. The resolution is
-structural rather than parametric — neutral is used only for site 0, the pristine
-reference, which has no muon and is skipped anyway. So a cell containing ``H:mu``
-at charge 0 is muonium.
+One ambiguity: a ``.param`` with no charge line is neutral whether or not the cell
+holds a muon. The resolution is structural rather than parametric — a run of the
+host alone has no muon and is refused for that reason, so a cell containing
+``H:mu`` at charge 0 is muonium.
 
 Magnetic and spin-polarised hosts
 ---------------------------------
 
-Established by reading the legacy source rather than assumed.
-
-**Legacy CASTEP inputs carry no per-atom spins whatsoever.** Legacy site
-generation writes cells through ASE, and nothing anywhere in that codebase sets
-initial magnetic moments, so ASE has no moments to emit and never writes ``SPIN=``
-tokens. Verified against dataset B, whose host is a genuinely magnetic material
-with rare-earth moments of several Bohr magnetons in its magnetic-structure file:
-**0 of 83 input cells contain a spin token**.
-
-The legacy magnetic-structure editor and its ``.mag_array`` file belong to a
-different pipeline entirely. That file is a Fourier-coefficient CSV feeding the
-**dipolar-field** calculation. It is not a DFT input and must not be read as one.
-
-A magnetic legacy relaxation is therefore characterised by exactly two
-recoverable things:
+**A relaxation's input may carry no per-atom spins.** Verified against dataset B,
+whose host is a genuinely magnetic material with rare-earth moments of several
+Bohr magnetons: **0 of 83 input cells contain a spin token**. Such a relaxation is
+characterised by exactly two recoverable things:
 
 .. list-table::
    :header-rows: 1
@@ -661,14 +679,13 @@ recoverable things:
    * - ``.param``
      - ``spin_polarized : true`` — a single global flag, with no per-atom
        moments and no total spin keyword
-     - the new ``.param`` reader; also the ``.castep`` treatment line
+     - the ``.param`` reader; also the ``.castep`` treatment line
    * - ``.cell``
-     - ``%BLOCK HUBBARD_U`` with element, orbital and U rows, appended from the
-       legacy GUI
+     - ``%BLOCK HUBBARD_U`` with element, orbital and U rows
      - the cell parser: not a known block, so it lands among the generic parsed
        blocks
 
-**Consequence for atomic spins.** There is nothing to reconstruct from the legacy
+**Consequence for atomic spins.** There is nothing to reconstruct from such
 inputs. The available source is the converged Mulliken moments in the
 ``.castep``, which the output parser already extracts. Those are output rather
 than input spins, which is if anything the better seed for a downstream phonon
@@ -687,7 +704,7 @@ polarisation.
 
 .. note::
 
-   Legacy magnetic hosts routinely used a Hubbard U. Quantum Corrections runs
+   Magnetic hosts routinely use a Hubbard U. Quantum Corrections runs
    finite-displacement phonons, which CASTEP supports with DFT+U, so an imported
    site needs no phonon-method check; the importer should still record the
    recovered ``HUBBARD_U`` block in provenance.
@@ -695,16 +712,16 @@ polarisation.
 Provenance
 ----------
 
-A new ``import_legacy_relaxations`` action, plus a journal entry builder. The
+An ``import_castep_relaxations`` action, plus a journal entry builder. The
 journal maps action names to builders and renders nothing for an unmapped action,
 so the builder is required rather than optional.
 
 Recorded in the provenance record: the batch id, source folder, keyword catalog
-origin, and per imported site its index, seed name, label, charge state, CASTEP
+origin, and per imported site its seed name, path under the folder, label, charge state, CASTEP
 version, inferred supercell matrix, the source file of each recovered keyword,
 every conflict found, unmapped observations, warnings and copied files; plus the
 selected runs that were skipped and why. Per-file SHA-256 digests are written to
-the manifest in ``legacy_source/`` rather than to the provenance record. The
+the manifest in ``original_inputs/`` rather than to the provenance record. The
 design's host-match verdict and application version are not recorded.
 
 *Design only:* an idempotency key (source folder, seed name, ``.castep``
@@ -748,8 +765,8 @@ Phasing
    header-dump reader, with synthetic fixtures. Independently useful: it
    unblocks a parsed rather than re-rendered continue-relaxation diff.
 2. **Scanner and inference** — *done*.
-   :mod:`mufinder.services.legacy_import` turns a folder into a
-   ``LegacyFolderScan``: site index, charge state, convergence, supercell
+   :mod:`mufinder.services.relaxation_import` turns a folder into a
+   ``RelaxationFolderScan``: seed, charge state, convergence, supercell
    matrix, merged parameters and conflicts per run. Pure with respect to the
    project — it mutates no document, writes no file, creates no entity — so the
    whole detection path is testable without a project on disk and the wizard can
@@ -759,7 +776,7 @@ Phasing
    directory of third-party output contains surprises, and the honest outcome is
    a report saying which runs are importable and why the others are not. And
    **blockers are distinct from warnings**: a blocker means the run cannot be
-   imported (no ``.castep``, an unparseable input cell, a lattice that is not an
+   imported (no muon, an unparseable input cell, a lattice that is not an
    integer supercell of the host), while a warning is something the user should
    know but that does not prevent import (an undetermined charge state, a muon
    labelled with a bare ``H``).
@@ -767,8 +784,8 @@ Phasing
    Supercell inference reuses ``science.supercell_matching`` through a new
    lattice-level entry point, but with a **much tighter tolerance**. Structure
    comparison defaults to 0.2 because an experimental and a DFT lattice
-   legitimately differ by a percent or so; a legacy input cell was constructed
-   as an exact integer supercell of its host, so the only expected residual is
+   legitimately differ by a percent or so; a muon relaxation's input cell is
+   constructed as an exact integer supercell of its host, so the only expected residual is
    ``.cell`` rounding, of order 1e-6. Keeping comparison's default here would
    accept a 7% lattice mismatch as a supercell and import a run against the
    wrong host.
@@ -778,7 +795,7 @@ Phasing
    signature. Deliberately ahead of entity construction, which writes definition
    rows that must already carry the flag.
 4. **Entity construction and file materialisation** — *done*.
-   :mod:`mufinder.services.legacy_import_commit` builds the five-entity chain,
+   :mod:`mufinder.services.relaxation_import_commit` builds the five-entity chain,
    renders the seed files, archives the originals with digests, and returns one
    provenance record per batch with a matching journal entry. Tested against the
    eligibility gate *and* host resolution — but not "done" on eligibility alone,
@@ -786,7 +803,7 @@ Phasing
 
    ``resolve_recovered_parameters`` resolves mutually exclusive keywords rather
    than merging them, for both the rendered ``.param`` and the definition row. A
-   legacy run typically declares ``BASIS_PRECISION`` while the output echo
+   run often declares ``BASIS_PRECISION`` while the output echo
    reports the ``CUT_OFF_ENERGY`` CASTEP derived from it, so a merged parameter
    set legitimately holds both — and CASTEP treats them as exclusive. The
    resolved cutoff wins, because it is what the calculation actually used and
@@ -800,7 +817,7 @@ Phasing
       ``save_project`` never rewrites it, so a record appended straight to
       ``document.provenance`` would live only until the project was reloaded.
       The same applies to
-      :func:`~mufinder.services.legacy_import_removal.remove_imported_relaxations`.
+      :func:`~mufinder.services.relaxation_import_removal.remove_imported_relaxations`.
       Callers append only *after* their document edits succeed, so a durable
       record never describes a state the project did not reach.
 
@@ -826,9 +843,9 @@ Phasing
    already does. The marker is applied by style and tooltip, never by editing the
    label text: the label is read back as the row's identity, so decorating it
    would corrupt the row key.
-6. **Wizard** — *done*. ``File > Import Legacy Relaxations…`` picks a folder,
+6. **Wizard** — *done*. ``File > Import CASTEP Relaxations…`` picks a folder,
    scans it on a worker thread, and opens
-   :class:`~mufinder.app.legacy_import_dialog.LegacyImportDialog` for review
+   :class:`~mufinder.app.relaxation_import_dialog.RelaxationImportDialog` for review
    before anything is committed.
 
    The dialog is a **review** step rather than a confirmation. An import writes
@@ -850,7 +867,7 @@ Phasing
    .. warning::
 
       **Both the thread and the worker must stay referenced until the thread
-      exits**, which ``_LIVE_SCANS`` in ``app/legacy_import_dialog`` exists to
+      exits**, which ``_LIVE_SCANS`` in ``app/relaxation_import_dialog`` exists to
       do. A ``QObject`` moved to a thread is parentless, so nothing but a Python
       reference keeps it alive; hold only the thread and the worker is collected
       as soon as the starter returns. The scan then never runs at all and the
@@ -873,7 +890,7 @@ Phasing
 
       Tests that drive the worker by calling ``run()`` directly exercise the
       parsing but **not** the threading, and will not catch this. The threaded
-      cases in ``tests/app/test_legacy_import_wizard.py`` run the real signal
+      cases in ``tests/app/test_relaxation_import_wizard.py`` run the real signal
       path through an event loop for that reason.
 
       Those tests must connect **bound slots on a main-thread QObject**, as
@@ -888,7 +905,7 @@ Phasing
    active host, so without one its downstream jobs would fail host resolution at
    submission time.
 7. **Removal cascade** — *done*.
-   :mod:`mufinder.services.legacy_import_removal` resolves an import batch,
+   :mod:`mufinder.services.relaxation_import_removal` resolves an import batch,
    scans for references, and deletes entities, definition rows, job bindings and
    files as one unit, with a provenance record and journal entry.
 
@@ -915,8 +932,6 @@ Implementation status
 The shipped importer follows this design except for the following, each flagged
 where it appears above:
 
-- no offer to adopt the legacy folder's CIF as the host; the import requires an
-  active host structure;
 - unconverged runs are imported as ``COMPLETED`` (with
   ``convergence_achieved`` false), never as ``FAILED``;
 - ``CalculationRun.definition_id`` is not set, ``started_at`` is not recovered
@@ -935,11 +950,11 @@ Verification checklist
   **actually submit**: host resolution returns the active host and no mismatch
   dialog appears. This is distinct from the eligibility check above — a site can
   pass every visible check and still fail here.
-- A phonon job generated from an imported site inherits the legacy cutoff and
+- A phonon job generated from an imported site inherits the run's cutoff and
   k-point grid rather than project defaults.
 - An imported row renders with its correct status, **total energy** and final
   fractional position.
-- An imported row's parameter dialog shows the values the *legacy run* used —
+- An imported row's parameter dialog shows the values the *run* used —
   its cutoff, tolerance and k-point grid — and no parameter it did not use.
 - Adopting project defaults equal to an imported row's own values (the same
   cutoff and grid) leaves that row still rendering completed with its energy.
@@ -969,10 +984,10 @@ Verification checklist
 Open risks
 ----------
 
-- **Legacy datasets using a bare ``H``** rather than ``H:mu``. The legacy muon
-  label detector accepts both, but the eligibility gate hard-requires ``H:mu``,
-  so the importer must relabel and record that it did.
-- **Relaxed-cell legacy runs**, where the cell was not held fixed, break the
+- **Runs using a bare ``H``** rather than ``H:mu``. The scanner accepts both, but
+  the eligibility gate hard-requires ``H:mu``, so the importer must relabel and
+  record that it did.
+- **Relaxed-cell runs**, where the cell was not held fixed, break the
   ``S * L_host`` identity. Inference uses the input cell for this reason, but such
   runs also violate the native muon-relaxation invariant of a fixed cell. Detect
   and warn.
@@ -999,15 +1014,15 @@ Open risks
 - **No available dataset exercises spin polarisation, muonium, or Hubbard U.**
   Both real datasets are entirely positive-muon and non-spin-polarised with no
   Hubbard-U block. Fixtures are synthetic in any case, so this costs nothing
-  structurally — but it does mean the magnetic-host file shapes are inferred from
-  the legacy *source* rather than observed in output. Review them against CASTEP
+  structurally — but it does mean the magnetic-host file shapes are inferred
+  rather than observed in output. Review them against CASTEP
   documentation before relying on them, and do not claim them verified against
   real data.
 
   This is itself informative rather than a gap in the samples: dataset B's host
   *is* a magnetic material, yet its relaxations were run non-spin-polarised, with
-  the magnetism entering only through the dipolar-field step. In the legacy
-  workflow a magnetic host usually does **not** imply a spin-polarised DFT
+  the magnetism entering only through the dipolar-field step. A magnetic host
+  therefore does **not** necessarily imply a spin-polarised DFT
   relaxation, so the common import case is the simple one.
 - **Position block variants.** Dataset A's cells use ``POSITIONS_FRAC`` and
   dataset B's use ``POSITIONS_ABS``. Exercising both found a real defect: the

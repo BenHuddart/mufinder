@@ -99,7 +99,8 @@ Storage layout:
 Persistence requirements:
 
 - projects are saved and loaded explicitly, and closing a visible session with
-  an open project prompts to save first
+  an open project prompts to save first when workflow UI state changed since the
+  last save
 - workflow-relevant UI state is persisted where appropriate
 - provenance and the source files needed for reproducibility are preserved
 - cross-entity references are validated before save
@@ -411,7 +412,7 @@ Muon site generation and relaxation
   column, and CASTEP total charge stays workflow-controlled: ``+1`` for the
   positive muon and ``0`` for muonium.
 - Relaxations performed outside MuFinder can be imported as read-only rows
-  (see :doc:`/user_guide/legacy_import`).
+  (see :doc:`/user_guide/relaxation_import`).
 
 Relaxation analysis and clustering
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

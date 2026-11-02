@@ -1534,7 +1534,7 @@ def test_generation_details_of_an_older_record_are_only_the_time() -> None:
     assert entry_details(entry).lines == ()
 
 
-def test_legacy_import_details_list_skipped_runs_and_conflicts() -> None:
+def test_relaxation_import_details_list_skipped_runs_and_conflicts() -> None:
     entry = _only_entry(
         _details_record(
             "import_legacy_relaxations",
@@ -2179,3 +2179,18 @@ def test_findings_export_as_their_summary_line() -> None:
 
     assert "Barrier 4c → T_A: 0.310 eV" in text
     assert "reverse barrier" not in text
+
+
+def test_a_saved_record_of_zero_muon_relaxations_shows_no_entry() -> None:
+    from mufinder.domain.enums import WorkflowStage
+    from mufinder.domain.models import ProvenanceRecord
+    from mufinder.services.journal import build_journal
+
+    record = ProvenanceRecord(
+        action="configure_muon_relaxation",
+        workflow_stage=WorkflowStage.MUON_RELAXATION,
+        actor="user",
+        parameters={"configuration": {"rows": []}},
+    )
+
+    assert not build_journal("Test", [record]).days
