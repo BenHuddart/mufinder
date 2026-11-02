@@ -6,6 +6,7 @@ from pathlib import Path
 from math import pi
 
 import numpy as np
+import pytest
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
@@ -21,11 +22,21 @@ from PySide6.QtWidgets import (
 import mufinder.app.quantum_analysis_dialog as quantum_analysis_dialog_module
 from mufinder.app.math_label import MathLabel
 from mufinder.app.quantum_analysis_dialog import (
+    MuonCouplingPairDialog,
     QuantumAnalysisHelpDialog,
     QuantumPhononAnalysisDialog,
 )
 from mufinder.app.screen_utils import clamped_size
-from mufinder.app.theme import current_palette
+from mufinder.app.theme import SPACING, current_palette
+from mufinder.app.workflow_table_utils import selected_table_rows
+from mufinder.science.quantum_phonons import (
+    correlation_matrix,
+    covariance_matrix,
+    w2_entanglement_witness,
+)
+
+ALPHA_N2_PHONON = Path(__file__).parents[1] / "fixtures" / "alpha_n2" / "aN2_mu_phonon.phonon"
+ALPHA_N2_MUON = 65
 
 
 PHONON_TEXT = """ BEGIN header
@@ -121,13 +132,13 @@ def test_opening_the_analysis_window_builds_only_the_shown_tab(
 
     _show_tab(dialog, "Muon Coupling")
     assert len(pair_matrices) == 1
-    assert dialog._w2_label.text().startswith("w₂ = ")
+    assert dialog._neighbour_table.rowCount() == 1
 
     # Coming back to a tab shows what was built; nothing is built twice.
-    w2_label = dialog._w2_label
+    neighbour_table = dialog._neighbour_table
     _show_tab(dialog, "Phonon Modes")
     _show_tab(dialog, "Muon Coupling")
-    assert dialog._w2_label is w2_label
+    assert dialog._neighbour_table is neighbour_table
     assert len(pair_matrices) == 1
 
     dialog.close()
@@ -214,13 +225,198 @@ def test_quantum_analysis_dialog_tables_use_splitters_not_width_locks(qapp, tmp_
     assert dialog._phonon_mode_table.minimumWidth() == 320
     assert dialog._phonon_mode_table.minimumWidth() < dialog._phonon_mode_table.maximumWidth()
 
-    # Correlation-tab matrices are capped (setMaximumSize), never locked
-    # (setFixedSize), so they can shrink and scroll on a narrow dialog.
-    assert (
-        dialog._covariance_table.horizontalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAsNeeded
+    dialog.close()
+
+
+def _open_alpha_n2_coupling() -> QuantumPhononAnalysisDialog:
+    dialog = QuantumPhononAnalysisDialog(
+        phonon_path=str(ALPHA_N2_PHONON), site_label="alpha-N2 site"
     )
-    assert dialog._covariance_table.maximumWidth() < 16_777_215
-    assert dialog._covariance_table.maximumHeight() < 16_777_215
+    _show_tab(dialog, "Muon Coupling")
+    return dialog
+
+
+def _table_rows(table) -> list[tuple[str, ...]]:
+    return [
+        tuple(table.item(row, column).text() for column in range(table.columnCount()))
+        for row in range(table.rowCount())
+    ]
+
+
+def test_muon_coupling_lists_the_nearest_atoms_with_their_witness(qapp) -> None:
+    dialog = _open_alpha_n2_coupling()
+    calculation = dialog.calculation
+
+    table = dialog._neighbour_table
+    assert [table.horizontalHeaderItem(column).text() for column in range(4)] == [
+        "Atom",
+        "Species",
+        "Distance (Å)",
+        "|c|",
+    ]
+    rows = _table_rows(table)
+    assert len(rows) == 12
+    assert rows[:3] == [
+        ("57", "N", "1.268", "0.310"),
+        ("1", "N", "1.288", "0.298"),
+        ("29", "N", "2.367", "0.104"),
+    ]
+    assert [float(row[2]) for row in rows] == sorted(float(row[2]) for row in rows)
+    for atom, _species, _distance, shown in rows:
+        expected = -w2_entanglement_witness(calculation, ALPHA_N2_MUON, int(atom))
+        assert float(shown) == pytest.approx(expected, rel=5e-3)
+
+    dialog.close()
+
+
+def test_selecting_a_row_shows_that_atoms_tensors_to_three_figures(qapp) -> None:
+    dialog = _open_alpha_n2_coupling()
+    tensors = dialog._neighbour_tensors
+    table = dialog._neighbour_table
+
+    # The nearest atom is selected from the start.
+    assert selected_table_rows(table) == (0,)
+    assert dialog._selected_atom_label.text() == "Muon and atom 57: N"
+
+    table.selectRow(1)
+
+    assert dialog._selected_atom_label.text() == "Muon and atom 1: N"
+    covariance = covariance_matrix(dialog.calculation, ALPHA_N2_MUON, 1)
+    correlation = correlation_matrix(dialog.calculation, ALPHA_N2_MUON, 1)
+    for shown, matrix in (
+        (tensors.covariance_table, covariance),
+        (tensors.correlation_table, correlation),
+    ):
+        for row, column in np.ndindex(3, 3):
+            text = shown.item(row, column).text()
+            assert len(text.split("e")[0].replace("-", "").replace(".", "").lstrip("0")) <= 3
+            assert float(text) == pytest.approx(matrix[row, column], rel=5e-3, abs=1e-9)
+
+    dialog.close()
+
+
+def test_the_tensors_fit_without_scrollbars(qapp) -> None:
+    dialog = _open_alpha_n2_coupling()
+    tensors = dialog._neighbour_tensors
+    dialog.resize(1180, 560)
+    dialog.show()
+    qapp.processEvents()
+
+    for table in (tensors.covariance_table, tensors.correlation_table):
+        assert table.horizontalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        assert table.verticalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        assert table.viewport().width() >= sum(table.columnWidth(column) for column in range(3))
+        assert table.viewport().height() >= sum(table.rowHeight(row) for row in range(3))
+        # Each column shows its whole text.
+        for column in range(3):
+            assert table.columnWidth(column) >= table.sizeHintForColumn(column)
+    # Moving between atoms leaves the tensors where they are.
+    sizes = {
+        (tensors.covariance_table.sizeHint().width(), tensors.correlation_table.sizeHint().width())
+    }
+    for row in range(dialog._neighbour_table.rowCount()):
+        dialog._neighbour_table.selectRow(row)
+        qapp.processEvents()
+        sizes.add(
+            (
+                tensors.covariance_table.sizeHint().width(),
+                tensors.correlation_table.sizeHint().width(),
+            )
+        )
+    assert len(sizes) == 1
+    # The default list needs no scrolling at the window's default size either.
+    dialog.resize(clamped_size(dialog, 1320, 760))
+    qapp.processEvents()
+    table = dialog._neighbour_table
+    assert table.verticalScrollBar().maximum() == 0
+
+    dialog.close()
+
+
+def test_changing_atoms_shown_lengthens_the_list_and_keeps_the_selection(qapp) -> None:
+    dialog = _open_alpha_n2_coupling()
+    table = dialog._neighbour_table
+    assert dialog._nearest_count_spin.value() == 12
+    assert dialog._nearest_count_spin.maximum() == 64
+
+    # A half-typed count changes nothing until it is finished.
+    assert not dialog._nearest_count_spin.keyboardTracking()
+
+    table.selectRow(5)
+    selected_atom = table.item(5, 0).text()
+
+    dialog._nearest_count_spin.setValue(64)
+    assert table.rowCount() == 64
+    assert table.item(selected_table_rows(table)[0], 0).text() == selected_atom
+    # Atom 17 is 24th by distance, and more correlated than any of the twelve from the 9th on.
+    atom_17 = next(row for row in _table_rows(table) if row[0] == "17")
+    assert atom_17[3] == "0.0317"
+    assert _table_rows(table).index(atom_17) == 23
+
+    # An atom that drops off the list gives way to the nearest.
+    dialog._nearest_count_spin.setValue(3)
+    assert table.rowCount() == 3
+    assert selected_table_rows(table) == (0,)
+    assert dialog._selected_atom_label.text() == "Muon and atom 57: N"
+
+    dialog.close()
+
+
+def test_a_cell_with_few_atoms_lists_them_all(qapp, tmp_path: Path) -> None:
+    dialog = _open_dialog(tmp_path)
+    _show_tab(dialog, "Muon Coupling")
+
+    assert dialog._nearest_count_spin.value() == 1
+    assert dialog._nearest_count_spin.maximum() == 1
+    assert _table_rows(dialog._neighbour_table)[0][:2] == ("1", "N")
+
+    dialog.close()
+
+
+def test_other_pair_shows_any_two_atoms(qapp, monkeypatch) -> None:
+    dialog = _open_alpha_n2_coupling()
+    dialog._neighbour_table.selectRow(2)
+    opened: list[MuonCouplingPairDialog] = []
+    monkeypatch.setattr(MuonCouplingPairDialog, "exec", lambda pair: opened.append(pair) or 0)
+
+    assert dialog._other_pair_button.text() == "Other pair…"
+    dialog._other_pair_button.click()
+
+    pair = opened[0]
+    # It starts on the muon and the selected atom, and follows each picker.
+    assert pair._atom_a_combo.currentData() == ALPHA_N2_MUON
+    assert pair._atom_b_combo.currentData() == 29
+    assert pair._correlation_label.text() == "|c| = 0.104"
+    assert pair._atom_a_combo.accessibleName() == "Atom A"
+    assert pair._atom_b_combo.accessibleName() == "Atom B"
+
+    pair._atom_a_combo.setCurrentIndex(pair._atom_a_combo.findData(1))
+    pair._atom_b_combo.setCurrentIndex(pair._atom_b_combo.findData(2))
+
+    expected = -w2_entanglement_witness(dialog.calculation, 1, 2)
+    assert float(pair._correlation_label.text().removeprefix("|c| = ")) == pytest.approx(
+        expected, rel=5e-3
+    )
+    assert float(pair._tensors.correlation_table.item(0, 0).text()) == pytest.approx(
+        correlation_matrix(dialog.calculation, 1, 2)[0, 0], rel=5e-3
+    )
+
+    pair.close()
+    dialog.close()
+
+
+def test_the_muon_coupling_controls_are_named(qapp) -> None:
+    dialog = _open_alpha_n2_coupling()
+
+    assert dialog._neighbour_table.accessibleName() == "Muon's nearest atoms"
+    assert dialog._nearest_count_spin.accessibleName() == "Atoms shown"
+    tensors = dialog._neighbour_tensors
+    assert tensors.covariance_table.accessibleName() == "Covariance tensor"
+    assert tensors.correlation_table.accessibleName() == "Correlation tensor"
+    assert (
+        dialog.findChildren(QToolButton, "quantumAnalysisHelpButton")[0].accessibleName()
+        == "Muon's nearest atoms help"
+    )
 
     dialog.close()
 
@@ -237,9 +433,8 @@ def test_quantum_phonon_analysis_dialog_lists_modes_and_calculates_pair_matrices
     )
     _show_every_tab(dialog)
 
-    assert dialog._covariance_table.item(0, 0) is not None
-    assert dialog._correlation_table.item(0, 0) is not None
-    assert dialog._w2_label.text().startswith("w₂ = ")
+    assert dialog._neighbour_tensors.covariance_table.item(0, 0) is not None
+    assert dialog._neighbour_tensors.correlation_table.item(0, 0) is not None
     assert dialog._phonon_mode_table.rowCount() == 6
     assert dialog._phonon_mode_table.horizontalHeaderItem(0).text() == "Mode"
     assert dialog._phonon_mode_table.horizontalHeaderItem(1).text() == "Frequency (cm⁻¹)"
@@ -300,8 +495,6 @@ def test_quantum_phonon_analysis_dialog_lists_modes_and_calculates_pair_matrices
     assert "." in direction_item.text()
     assert "[1 0 0]" not in direction_item.text()
     assert direction_item.toolTip() == ""
-    assert dialog._covariance_table.width() > 0
-    assert dialog._correlation_table.width() > 0
     covariance_box = next(
         box for box in dialog.findChildren(QGroupBox) if box.title() == "Covariance"
     )
@@ -310,12 +503,12 @@ def test_quantum_phonon_analysis_dialog_lists_modes_and_calculates_pair_matrices
     )
     covariance_layout = covariance_box.layout()
     correlation_layout = correlation_box.layout()
-    assert covariance_layout.spacing() == 10
-    assert correlation_layout.spacing() == 10
+    assert covariance_layout.spacing() == SPACING.sm
+    assert correlation_layout.spacing() == SPACING.sm
+    assert covariance_layout.itemAt(0).alignment() & Qt.AlignmentFlag.AlignHCenter
     assert covariance_layout.itemAt(1).alignment() & Qt.AlignmentFlag.AlignHCenter
-    assert covariance_layout.itemAt(3).alignment() & Qt.AlignmentFlag.AlignHCenter
+    assert correlation_layout.itemAt(0).alignment() & Qt.AlignmentFlag.AlignHCenter
     assert correlation_layout.itemAt(1).alignment() & Qt.AlignmentFlag.AlignHCenter
-    assert correlation_layout.itemAt(3).alignment() & Qt.AlignmentFlag.AlignHCenter
 
     help_buttons = dialog.findChildren(QToolButton, "quantumAnalysisHelpButton")
     assert len(help_buttons) == 1
