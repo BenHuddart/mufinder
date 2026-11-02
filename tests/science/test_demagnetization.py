@@ -707,8 +707,8 @@ def _cylinder_axial_factor(height_over_diameter: float) -> float:
 
     edges = np.arange(0.0, 410.0, 10.0)
     total = sum(quad(integrand, lo, hi, limit=200)[0] for lo, hi in zip(edges, edges[1:]))
-    # Beyond the last edge J1(q)^2 averages 1 / (pi q); in u = q d the rest is smooth.
-    tail = quad(lambda u: -np.expm1(-u) / u**3, edges[-1] * d_over_r, np.inf, limit=400)[0]
+    # Beyond the last edge J1(q)^2 averages 1 / (pi q); in v = 1 / (q d) the rest is smooth.
+    tail = quad(lambda v: -np.expm1(-1.0 / v) * v, 0.0, 1.0 / (edges[-1] * d_over_r))[0]
     return 2.0 / d_over_r * (total + d_over_r**2 / np.pi * tail)
 
 
