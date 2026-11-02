@@ -76,6 +76,7 @@ from mufinder.domain.text import plain_error, plural
 from mufinder.science.lattice import lattice_frac_to_cart, vector_length, wrap_fractional
 from mufinder.services.relaxation_import import (
     MUON_SPECIES,
+    UNUSABLE_SEEDS,
     DetectedRun,
     RelaxationFolderScan,
     file_digest,
@@ -604,6 +605,9 @@ def commit_relaxation_import(
             continue
         if run.out_cell_path is None:
             skipped.append((run.display_name, "No relaxed cell to import."))
+            continue
+        if run.seed_name in UNUSABLE_SEEDS:
+            skipped.append((run.display_name, "Its file name cannot name a job folder."))
             continue
 
         charge_state = run.charge_state or POSITIVE_MUON_CHARGE_STATE

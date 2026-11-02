@@ -53,6 +53,10 @@ MUON_SPECIES = "H:mu"
 #: Why a run with no muon is not offered: a host-only run is not a stopping site.
 NO_MUON_BLOCKER = "No muon in this structure."
 
+#: File stems that cannot name a seed: the job directory is named for its seed, and
+#: ``..`` would make that the folder above, which removing the import then deletes.
+UNUSABLE_SEEDS = frozenset({"", ".", ".."})
+
 #: The output a task farm writes for one of its images, beside the run's own ``.castep``.
 _FARM_OUTPUT_RE = re.compile(r"_farm\d+$")
 
@@ -725,8 +729,11 @@ def _nearest(castep: Path, candidates: Sequence[Path]) -> tuple[Path | None, str
 
 def _without_copies(
     outputs: Sequence[Path], found: Mapping[str, Mapping[str, Sequence[Path]]]
-) -> list[Path]:
+) -> dict[Path, set[Path]]:
     """Keep one of each set of ``.castep`` files of the same name and bytes.
+
+    Returns each output kept with the directories of the calculation's copies,
+    its own among them.
 
     A copied results folder holds the same calculation, not a second one. The copy
     kept is the one with the most of the run's files beside it, so that a stray copy
@@ -755,10 +762,12 @@ def _without_copies(
         )
 
     dropped: set[Path] = set()
+    directories = {path: {path.parent} for path in outputs}
     for copies in groups.values():
         kept = max(copies, key=companions)
+        directories[kept] = {path.parent for path in copies}
         dropped.update(path for path in copies if path != kept)
-    return [path for path in outputs if path not in dropped]
+    return {path: value for path, value in directories.items() if path not in dropped}
 
 
 @dataclass(frozen=True, slots=True)
@@ -795,7 +804,7 @@ def _discover_runs(root: Path) -> tuple[list[_RunFiles], tuple[tuple[str, str], 
             path = Path(directory) / name
             if name.endswith(_CASTEP_SUFFIX):
                 seed = name[: -len(_CASTEP_SUFFIX)]
-                if _FARM_OUTPUT_RE.search(seed):
+                if seed in UNUSABLE_SEEDS or _FARM_OUTPUT_RE.search(seed):
                     continue
                 try:
                     is_file = stat.S_ISREG(path.stat().st_mode)
@@ -815,17 +824,19 @@ def _discover_runs(root: Path) -> tuple[list[_RunFiles], tuple[tuple[str, str], 
             elif name.endswith(_PARAM_SUFFIX):
                 found[_PARAM].setdefault(name[: -len(_PARAM_SUFFIX)], []).append(path)
 
-    outputs = _without_copies(outputs, found)
+    # Every copy counts here: a backup of one run holds that run's files, which
+    # are not free for another run of the seed to take.
     run_directories: dict[str, set[Path]] = {}
     for path in outputs:
         run_directories.setdefault(path.name[: -len(_CASTEP_SUFFIX)], set()).add(path.parent)
+    kept_outputs = _without_copies(outputs, found)
 
     runs: list[_RunFiles] = []
-    for castep in outputs:
+    for castep, own_directories in kept_outputs.items():
         seed = castep.name[: -len(_CASTEP_SUFFIX)]
         # A file beside another run of this seed belongs to that run, however
         # close it looks: ``site1/mu.castep`` must not borrow ``site2/mu.cell``.
-        others = run_directories[seed] - {castep.parent}
+        others = run_directories[seed] - own_directories
         files: dict[str, Path] = {}
         refused: dict[str, str] = {}
         for kind, by_seed in found.items():
@@ -920,6 +931,7 @@ __all__ = [
     "IMPORT_SUPERCELL_TOLERANCE",
     "MUON_SPECIES",
     "NO_MUON_BLOCKER",
+    "UNUSABLE_SEEDS",
     "DetectedRun",
     "RelaxationFolderScan",
     "file_digest",

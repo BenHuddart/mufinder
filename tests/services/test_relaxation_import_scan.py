@@ -821,6 +821,47 @@ class TestAnyFolder:
         assert run.input_cell_path == tmp_path / "relax-out.cell"
         assert run.out_cell_path == tmp_path / "relax-out-out.cell"
 
+    def test_a_backups_files_are_not_free_for_another_run_to_take(self, tmp_path: Path) -> None:
+        write_run(tmp_path / "site1", castep_kwargs={"cutoff": "  700.0000   eV"})
+        for name in ("mu.cell", "mu-out.cell"):
+            (tmp_path / "site1" / name).unlink()
+        write_run(tmp_path / "site2")
+        (tmp_path / "zz_backup").mkdir()
+        for name in ("mu.castep", "mu.cell", "mu-out.cell"):
+            (tmp_path / "zz_backup" / name).write_bytes((tmp_path / "site2" / name).read_bytes())
+
+        runs = {
+            run.relative_name.split("/")[0]: run
+            for run in scan_relaxation_folder(tmp_path, host_lattice=HOST_LATTICE).runs
+        }
+
+        assert set(runs) == {"site1", "site2"}
+        assert not runs["site1"].importable
+        assert runs["site1"].input_cell_path is None
+        assert runs["site2"].importable
+
+    def test_copies_of_one_run_still_share_their_files(self, tmp_path: Path) -> None:
+        """The copy kept may lack a file that sits beside another copy."""
+
+        root = build_folder(tmp_path, sites=(1,))
+        (root / "run" / "site1" / "Host_1.castep").write_bytes(
+            (root / "results" / "Host_1.castep").read_bytes()
+        )
+        (root / "run" / "site1" / "Host_1.cell").write_text(_input_cell(), encoding="utf-8")
+
+        runs = scan_relaxation_folder(root, host_lattice=HOST_LATTICE).runs
+
+        assert len(runs) == 1
+        assert runs[0].importable
+
+    @pytest.mark.parametrize("name", [".castep", "..castep", "...castep"])
+    def test_a_file_name_that_cannot_name_a_seed_is_not_a_run(
+        self, tmp_path: Path, name: str
+    ) -> None:
+        (tmp_path / name).write_text(_castep(), encoding="utf-8")
+
+        assert scan_relaxation_folder(tmp_path).runs == ()
+
     def test_task_farm_image_outputs_are_not_runs(self, tmp_path: Path) -> None:
         write_run(tmp_path)
         (tmp_path / "mu_farm001.castep").write_text(_castep(), encoding="utf-8")

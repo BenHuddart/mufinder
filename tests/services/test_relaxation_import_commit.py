@@ -710,3 +710,26 @@ class TestNamedFromTheSeed:
         )
 
         assert first.imported[0].job_directory != second.imported[0].job_directory
+
+
+def test_a_seed_that_is_not_a_folder_name_is_never_committed(
+    tmp_path: Path, document: ProjectDocument, host_structure: Structure
+) -> None:
+    from dataclasses import replace
+
+    from tests.services.test_relaxation_import_scan import write_run
+
+    folder = write_run(tmp_path / "run")
+    scan = scan_relaxation_folder(folder, host_lattice=HOST_LATTICE)
+    output_root = document.project_root / "files" / "muon_relaxation"
+
+    outcome = commit_relaxation_import(
+        document,
+        scan=scan,
+        runs=[replace(scan.runs[0], seed_name="..")],
+        host_structure=host_structure,
+        output_root=output_root,
+    )
+
+    assert outcome.imported == ()
+    assert not output_root.exists()
