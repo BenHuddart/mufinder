@@ -95,14 +95,14 @@ The page has a ``Source Structure`` group and a ``UEP Source Jobs`` table with
 these columns: ``Label``, ``Supercell``, ``Status``, ``Total Energy (eV)``,
 ``3D Potential``, ``Parameters``, ``Analysis`` and an unlabelled column with an
 ``x`` button that removes the row. The ``3D Potential`` column reads ``Saved``
-once a full-cell potential grid has been calculated and stored for that job,
-and ``Not calculated`` for a completed job without one.
+for a job that holds a stored potential grid. The analysis window does not read
+or write one: it computes the grid when needed.
 
 The analysis window
 -------------------
 
-Completed UEP source jobs open ``UEP Analysis - <job label>`` with three tabs:
-``Batch Search``, ``Isosurfaces``, and ``Slices``.
+Completed UEP source jobs open ``UEP Analysis - <job label>`` with two tabs,
+``Batch Search`` and ``Potential``, under one ``Gaussian width factor`` that both use.
 
 .. figure:: ../_generated/screenshots/uep_batch_search.webp
    :alt: The Batch Search tab of the UEP analysis window after twelve random
@@ -112,25 +112,17 @@ Completed UEP source jobs open ``UEP Analysis - <job label>`` with three tabs:
    A finished batch search in the CoF₂ model density of
    :doc:`/user_guide/examples/cof2`.
 
+The ``Gaussian width factor`` above the tabs sets the width of the ionic Gaussians,
+the pseudopotential core radius divided by this factor (default 5). It takes values
+from 1 to 10 and applies on ``Enter``. Changing it discards a search's results, after a
+confirmation whose default is ``Cancel`` if the search listed sites. A warning shows
+beside it when the density grid cannot resolve the Gaussians, when σ·G\ :sub:`max` falls
+below 2 for the narrowest one (G\ :sub:`max` is the radius of the sphere inscribed in the
+grid's G box), since the potential then rings around the ions. A job saved with a factor
+outside the range keeps it, and says so, until you change it.
+
 The window offers:
 
-- full-cell 3D potential grids (``Calculate Cell Potential Grid``) shared
-  between the isosurface and slice views, with a ``Gaussian width factor``
-  control (changing it discards a search's results, after a confirmation whose
-  default is ``Cancel`` if the search listed sites), zero-minimum shifting (``Set minimum potential to zero``) and XSF
-  export (``Export XSF…``);
-- responsive isosurface visualization from the cached full-cell potential grid;
-- interactive 2D slice planes (``Add Plane``) defined from one selected atom
-  plus a normal, three selected atoms, or a best-fit plane through four or more
-  selected atoms. A plane's numbered button opens it for editing, and
-  ``Delete Plane`` there removes it after a confirmation whose default is
-  ``Cancel``;
-- multi-atom selection in the structure viewer using ``Shift``-click so slice
-  planes can be defined directly from the host structure (see
-  :doc:`/user_guide/structure_viewer` for the viewer's controls);
-- slice saturation controls (``Slice saturation``, ``Min (eV)``, ``Max
-  (eV)``) and a colorbar that marks when clipped display limits exclude lower
-  or higher physical potentials from the visible range;
 - random-start batch searches on the ``Batch Search`` tab. The controls are
   ``Random starts`` (default 12), ``Min muon-muon distance (Å)`` (default 0.8) and
   ``Min muon-atom distance (Å)`` (default 1.0). ``Advanced`` shows ``Max attempts``
@@ -143,15 +135,51 @@ The window offers:
   the settings the search ran with, including the ``Gaussian width factor``, how many
   starts ended on minima and on other stationary points, how many failed to converge,
   and the sites found;
-- muon markers that can be added to the isosurface and slice viewers with
-  ``Add / remove muon``, either from the batch-search groups or from
-  custom fractional coordinates;
 - a table on the ``Batch Search`` tab of the groups of the latest search, one
   ``Site`` row per site with its ``Start`` rows, its members, under it, and one ``Grouping
   tolerance (Å)`` under the table that regroups them as you type;
 - exposure of the groups to the ``Muon Sites ->
   Generation`` page, where selected UEP rows can be committed as candidate
   muon-site inputs for structural relaxation.
+
+The Potential tab
+~~~~~~~~~~~~~~~~~
+
+.. figure:: ../_generated/screenshots/uep_potential.webp
+   :alt: The Potential tab of the UEP analysis window: the CoF₂ model structure with an
+         isosurface and a slice plane in one viewer, and the controls beside it.
+
+   The potential of the CoF₂ model density, with one isosurface and one slice plane.
+
+The tab has one viewer, which draws the isosurfaces and the slice planes together. The
+potential is an inverse FFT of the field the window already holds, so MuFinder computes it
+on a worker when the tab is first shown and when the ``Gaussian width factor`` changes, and
+no button asks for it.
+
+Every level on the tab reads in eV above the lowest point of the grid. The potential's own
+zero is its cell average, because the G = 0 term is dropped, so only differences between
+its values mean anything. The energies in the ``Batch Search`` table and the exported file
+stay on that scale. The tab's controls, in order, are:
+
+- ``Isosurface level``: a slider from 0 to the 95th percentile of the grid, which leaves out
+  the spikes at the nuclei, with the level's value and colour and ``+`` and ``−`` to add and
+  remove surfaces. A higher level can be typed, up to the grid's maximum. A drag draws a
+  coarse surface from every few points of the grid, and the surface from the whole grid
+  follows once it stops;
+- ``Slice planes``: the list of planes. ``Add plane…`` defines one from one selected atom
+  plus a normal, three selected atoms, or a best-fit plane through four or more selected
+  atoms, using ``Shift``-click in the viewer (see :doc:`/user_guide/structure_viewer`).
+  ``Edit…`` or a double-click opens the selected plane, which can also be removed there;
+- ``Slice saturation``: the colour window of every plane, from 0 to the same 95th percentile
+  on the slider and up to the grid's maximum when typed, with a colorbar whose ``≤`` and
+  ``≥`` mark limits that clip the potential on a plane;
+- ``Export XSF…``: writes the whole grid, on the potential's own scale;
+- ``Hide atoms in front of planes``;
+- ``Add / remove muon``: muon markers from the batch-search groups or from custom fractional
+  coordinates, with a surface at a muon's total energy if asked for.
+
+``−``, ``Remove`` and ``Remove Selected Muons`` ask first, with ``Cancel`` as the default.
+``Delete`` and ``Backspace`` do the same in the list of planes and in the table of muons.
 
 How sites are grouped
 ~~~~~~~~~~~~~~~~~~~~~
@@ -269,9 +297,9 @@ the save boundary matters:
   of the durable project record and are protected by the normal autosave path;
 - UEP analysis-session state remains in memory until you choose ``Save
   Project`` (or confirm the save prompt when closing a modified project);
-- this manual-save state includes the current wizard tab, cached analysis UI
+- this manual-save state includes the current tab, the analysis UI
   choices, selected viewer orientation/zoom, bond and
-  spin visibility, and slice/isosurface presentation settings.
+  spin visibility, and the isosurface levels and slice planes.
 
 You can therefore explore candidate sites or refresh overlays
 without immediately rewriting the project on disk. To restore
@@ -397,7 +425,7 @@ References
 For developers
 --------------
 
-The saved UEP analysis state leaves out the full-cell potential grid, which is
-stored once as the job's grid result, and keeps each isosurface mesh once,
-serialized only when the mesh changes. The package layers and the shared
+The saved UEP analysis state leaves out the full-cell potential grid, the isosurface
+meshes and the slice samples, which the window works out again from the density.
+The package layers and the shared
 workflow infrastructure are described in :doc:`/architecture`.

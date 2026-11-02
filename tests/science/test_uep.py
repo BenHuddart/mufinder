@@ -44,6 +44,9 @@ from mufinder.science.uep import (
     plane_from_point_and_normal,
     plane_from_three_points,
     potential_grid,
+    potential_above_minimum,
+    potential_level_ceiling,
+    ionic_gaussian_resolution,
     preview_potential_grid,
     probe_point,
     sample_grid_slice,
@@ -607,8 +610,7 @@ def test_preview_potential_grid_keeps_axes_already_under_the_cap() -> None:
     preview = preview_potential_grid(grid, max_grid_points=4)
 
     assert preview.grid == (4, 4, 2)
-    assert float(preview.potential_total_ev.min()) == pytest.approx(float(values.min()))
-    assert float(preview.potential_total_ev.max()) == pytest.approx(float(values.max()))
+    assert np.array_equal(preview.potential_total_ev, values[::2, ::2, :])
 
 
 @pytest.mark.parametrize(
@@ -667,7 +669,22 @@ def test_deserialize_potential_grid_accepts_null_gw_factor() -> None:
     assert restored.gw_factor is None
 
 
-def test_preview_potential_grid_caps_resolution_and_preserves_range() -> None:
+def test_a_preview_keeps_the_grids_own_values_on_a_coarser_lattice() -> None:
+    source = load_uep_source(
+        den_fmt_path=_fixture_path("Si8.den_fmt"),
+        castep_path=_fixture_path("Si8.castep"),
+        cell_path=_fixture_path("Si8.cell"),
+    )
+    grid = potential_grid(UepField(source))
+
+    preview = preview_potential_grid(grid, max_grid_points=12)
+
+    assert preview.grid == (12, 12, 12)
+    assert np.array_equal(preview.potential_total_ev, grid.potential_total_ev[::3, ::3, ::3])
+
+
+def test_a_preview_surface_sits_at_the_level_it_was_drawn_for() -> None:
+    # The window read one level while a stretched, interpolated preview drew another.
     source = load_uep_source(
         den_fmt_path=_fixture_path("Si8.den_fmt"),
         castep_path=_fixture_path("Si8.castep"),
@@ -675,17 +692,77 @@ def test_preview_potential_grid_caps_resolution_and_preserves_range() -> None:
     )
     field = UepField(source)
     grid = potential_grid(field)
+    level = float(grid.potential_total_ev.min()) + 2.0
 
-    preview = preview_potential_grid(grid, max_grid_points=12)
+    mesh = extract_isosurface(preview_potential_grid(grid, max_grid_points=18), level_ev=level)
 
-    assert preview.grid == (12, 12, 12)
-    assert preview.potential_total_ev.shape == (12, 12, 12)
-    assert float(preview.potential_total_ev.min()) == pytest.approx(
-        float(grid.potential_total_ev.min())
+    vertices = np.asarray(mesh.vertices_ang)
+    picked = vertices[np.random.default_rng(3).integers(0, len(vertices), 40)]
+    assert np.abs(field.potential(picked)[0] - level).max() < 0.5
+
+
+def test_an_axis_with_no_divisor_keeps_all_its_points_in_a_preview() -> None:
+    grid = UepPotentialGrid(
+        lattice_vectors=_CUBE_LATTICE, grid=(7, 8, 2), potential_total_ev=np.zeros((7, 8, 2))
     )
-    assert float(preview.potential_total_ev.max()) == pytest.approx(
-        float(grid.potential_total_ev.max())
+
+    assert preview_potential_grid(grid, max_grid_points=4).grid == (7, 4, 2)
+
+
+def test_a_preview_axis_takes_the_divisor_closest_to_the_limit() -> None:
+    grid = UepPotentialGrid(
+        lattice_vectors=_CUBE_LATTICE, grid=(25, 58, 64), potential_total_ev=np.zeros((25, 58, 64))
     )
+
+    assert preview_potential_grid(grid, max_grid_points=18).grid == (25, 29, 16)
+
+
+def test_the_potential_above_its_minimum_starts_at_zero_and_keeps_its_differences() -> None:
+    values = np.arange(8, dtype=float).reshape((2, 2, 2)) - 3.5
+    grid = UepPotentialGrid(
+        lattice_vectors=_CUBE_LATTICE, grid=(2, 2, 2), potential_total_ev=values, gw_factor=5.0
+    )
+
+    shifted = potential_above_minimum(grid)
+
+    assert shifted.potential_total_ev.min() == 0.0
+    assert np.allclose(shifted.potential_total_ev - values, 3.5)
+    assert shifted.gw_factor == 5.0
+
+
+def test_the_level_ceiling_is_the_95th_percentile_unless_that_is_the_minimum() -> None:
+    spiked = np.zeros((10, 10, 10))
+    spiked.flat[:100] = np.linspace(1.0, 3.0, 100)
+    spiked.flat[0] = 500.0
+    grid = UepPotentialGrid(
+        lattice_vectors=_CUBE_LATTICE, grid=(10, 10, 10), potential_total_ev=spiked
+    )
+    assert potential_level_ceiling(grid) == pytest.approx(np.percentile(spiked, 95))
+    assert potential_level_ceiling(grid) < 500.0
+
+    one_spike = np.zeros((10, 10, 10))
+    one_spike.flat[0] = 2.0
+    grid = UepPotentialGrid(
+        lattice_vectors=_CUBE_LATTICE, grid=(10, 10, 10), potential_total_ev=one_spike
+    )
+    assert potential_level_ceiling(grid) == 2.0
+
+
+@pytest.mark.parametrize("gw_factor", [5.0, 10.0])
+def test_the_gaussian_resolution_follows_the_grid_and_the_width(gw_factor: float) -> None:
+    source = load_uep_source(
+        den_fmt_path=_fixture_path("Si2.den_fmt"),
+        castep_path=_fixture_path("Si2.castep"),
+        cell_path=_fixture_path("Si2.cell"),
+        gw_factor=gw_factor,
+    )
+    lattice = np.asarray(source.density.lattice_vectors, dtype=float)
+    g_max = np.min(
+        np.asarray(source.density.grid) // 2 * 2.0 * np.pi / np.linalg.norm(lattice, axis=1)
+    )
+    width = min(pp.core_radius_ang for pp in source.pseudopotentials) / gw_factor
+
+    assert ionic_gaussian_resolution(UepField(source)) == pytest.approx(width * g_max)
 
 
 def test_preview_potential_grid_returns_unchanged_when_below_cap() -> None:
@@ -697,16 +774,6 @@ def test_preview_potential_grid_returns_unchanged_when_below_cap() -> None:
     assert preview.grid == (2, 2, 2)
     assert preview.potential_total_ev is not values
     assert np.allclose(preview.potential_total_ev, values)
-
-
-def test_preview_potential_grid_handles_flat_resample() -> None:
-    values = np.full((8, 8, 8), 3.0, dtype=float)
-    grid = UepPotentialGrid(
-        lattice_vectors=_CUBE_LATTICE, grid=(8, 8, 8), potential_total_ev=values
-    )
-    preview = preview_potential_grid(grid, max_grid_points=4)
-    assert preview.grid == (4, 4, 4)
-    assert np.allclose(preview.potential_total_ev, 3.0)
 
 
 def test_preview_potential_grid_rejects_thin_grid() -> None:
@@ -1461,14 +1528,6 @@ def test_the_iteration_limit_has_one_default() -> None:
     limit = inspect.signature(optimize_muon_position).parameters["max_steps"].default
 
     assert limit == DEFAULT_OPTIMIZER_MAX_STEPS == 300
-
-
-def test_periodic_resampling_guards_axis_and_target_size() -> None:
-    # Private helper: preview_potential_grid only resamples existing axes to at least two points.
-    with pytest.raises(UepError, match="axis is out of range"):
-        uep_module._periodic_resample_axis(np.zeros((4, 4)), 3, axis=5)
-    with pytest.raises(UepError, match="at least two points"):
-        uep_module._periodic_resample_axis(np.zeros((4, 4)), 1, axis=0)
 
 
 def test_isosurface_polygon_ordering_leaves_collinear_points_alone() -> None:

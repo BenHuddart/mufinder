@@ -37,7 +37,12 @@ from mufinder.app.relaxation_analysis_widget import (
 from mufinder.castep_io.geometry_progress import parse_geometry_progress
 from mufinder.domain.models import Structure
 from mufinder.science.relaxation_analysis import RelaxedMuonSite
-from mufinder.science.uep import StationaryPointClassification, UepOptimizationResult
+from mufinder.app.uep_wizard import UepAnalysisDialog
+from mufinder.science.uep import (
+    StationaryPointClassification,
+    UepOptimizationResult,
+    potential_grid,
+)
 
 # Window sizes the dialogs get on small screens, beyond each dialog's own minimum:
 # a 1080p Windows laptop at 150 % scaling (1280x720 logical, minus the taskbar)
@@ -253,6 +258,20 @@ def _polarisation_page() -> QDialog:
     return dialog
 
 
+def _uep_potential() -> QDialog:
+    fixtures = Path("tests/fixtures/uep")
+    dialog = UepAnalysisDialog(
+        source_job_label="uep_source",
+        source_structure_id="11111111-1111-1111-1111-111111111111",
+        den_fmt_path=fixtures / "Si2.den_fmt",
+        castep_path=fixtures / "Si2.castep",
+        cell_path=fixtures / "Si2.cell",
+    )
+    dialog._apply_potential_grid_cache(potential_grid(dialog._field))
+    dialog._tabs.setCurrentWidget(dialog._potential_tab)
+    return dialog
+
+
 PLOT_DIALOGS: dict[str, Callable[[], QDialog]] = {
     "relaxation-clustering-connected": lambda: _relaxation_clustering(0),
     "relaxation-clustering-hierarchical": lambda: _relaxation_clustering(1),
@@ -263,6 +282,7 @@ PLOT_DIALOGS: dict[str, Callable[[], QDialog]] = {
     "convergence-examiner": _convergence_examiner,
     "geometry-progress": _geometry_progress,
     "polarisation-page": _polarisation_page,
+    "uep-potential": _uep_potential,
 }
 
 

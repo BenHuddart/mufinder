@@ -851,7 +851,7 @@ def test_uep_widget_result_cells_are_read_only(qapp) -> None:
         assert item is not None
         assert not bool(item.flags() & Qt.ItemFlag.ItemIsEditable)
     assert widget._table.item(0, widget._TOTAL_ENERGY_COLUMN).text() == "-1.500000"
-    assert widget._table.item(0, widget._POTENTIAL_GRID_COLUMN).text() == "Not calculated"
+    assert widget._table.item(0, widget._POTENTIAL_GRID_COLUMN).text() == ""
 
 
 def test_uep_widget_supercell_shows_the_kpoint_adjustment(qapp) -> None:

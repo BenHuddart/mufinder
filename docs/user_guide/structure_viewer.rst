@@ -115,8 +115,8 @@ place when an overlay changes.
   and end sites of a hop in the selected path of
   :doc:`/user_guide/energy_barriers`.
 - **Isosurfaces and slice planes** show the unperturbed electrostatic
-  potential on the ``Isosurfaces`` and ``Slices`` tabs of the UEP analysis
-  window. ``Hide atoms in front of the planes`` there hides the atoms (and
+  potential on the ``Potential`` tab of the UEP analysis
+  window. ``Hide atoms in front of planes`` there hides the atoms (and
   their bonds and spin arrows) on the camera side of every slice plane. See
   :doc:`/user_guide/uep_workflow`.
 - **Arrows** show the atomic displacements of a phonon mode in

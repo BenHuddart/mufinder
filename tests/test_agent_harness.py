@@ -75,8 +75,7 @@ PINNED_MAIN_WINDOW_SUBMIT_HANDLERS = frozenset(
 
 # App modules that still build their matplotlib canvas directly instead of
 # through ``mufinder.app.plot_canvas.create_plot_canvas``. Each of these already
-# uses constrained or tight layout (or, for the UEP slice colourbar, manual axes
-# with no tick labels), so they are not clipping today. The set may only shrink:
+# uses constrained or tight layout, so they are not clipping today. The set may only shrink:
 # a new embedded plot must use the shared helper.
 PINNED_DIRECT_FIGURE_CANVAS_MODULES = frozenset(
     {
@@ -376,7 +375,7 @@ PINNED_HEX_COLOUR_LITERALS: dict[str, tuple[frozenset[str], str]] = {
     ),
     "app/uep_wizard.py": (
         frozenset({"#dc2626", "#ffffff", "#1f1a17", "#1d4ed8", "#0f766e", "#b91c1c"}),
-        "#314 rebuilds this wizard's plots and overlays; their colours are not worth moving first",
+        "#317 removes the hidden line plot; its overlays' colours are not worth moving first",
     ),
 }
 
@@ -442,8 +441,8 @@ LITERAL_STYLE_CALLS = ("setContentsMargins", "setSpacing", "setPixelSize")
 #: "none" and not a step on a scale, so a call whose literals are all zero is not
 #: counted. Pages move to the scales when they are next rebuilt: lower the count then.
 PINNED_LITERAL_STYLE_CALLS: dict[str, int] = {
-    "setContentsMargins": 86,
-    "setSpacing": 132,
+    "setContentsMargins": 79,
+    "setSpacing": 121,
     "setPixelSize": 12,
 }
 

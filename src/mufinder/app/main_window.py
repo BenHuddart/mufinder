@@ -9857,7 +9857,6 @@ class MainWindow(QMainWindow):
                 den_fmt_path=den_fmt_path,
                 castep_path=castep_path,
                 cell_path=cell_path if cell_path.exists() else None,
-                initial_potential_grid=self._load_uep_potential_grid_for_job(job.id),
                 initial_state=initial_state,
                 parent=self,
             )
@@ -9867,9 +9866,6 @@ class MainWindow(QMainWindow):
 
         dialog.state_changed.connect(
             lambda state, job_id=job.id: self._on_uep_analysis_state_changed(job_id, state)
-        )
-        dialog.potential_grid_ready.connect(
-            lambda payload, job_id=job.id: self._on_uep_potential_grid_ready(job_id, payload)
         )
         dialog.setModal(False)
         dialog.destroyed.connect(
