@@ -24,6 +24,18 @@ from mufinder.persistence.json_store import PROJECT_FOLDER_SUFFIX
 
 _MINIMUM_WIDTH = 520
 _CHARACTERS_NOT_IN_A_NAME = ("/", "\\", "\0")
+# A label only wraps at word boundaries, and a longer word could not fit its line.
+_LONGEST_UNBROKEN_WORD = 40
+_ZERO_WIDTH_SPACE = "\u200b"
+
+
+def _wrappable(text: str) -> str:
+    """Let a label wrap ``text`` anywhere inside a word too long for one line."""
+
+    return " ".join(
+        _ZERO_WIDTH_SPACE.join(word) if len(word) > _LONGEST_UNBROKEN_WORD else word
+        for word in text.split(" ")
+    )
 
 
 class NewProjectDialog(QDialog):
@@ -61,6 +73,7 @@ class NewProjectDialog(QDialog):
 
         self._reason_label = QLabel(self)
         self._reason_label.setWordWrap(True)
+        self._reason_label.setMinimumWidth(1)
         style_warning_text(self._reason_label)
 
         self._buttons = QDialogButtonBox(
@@ -120,8 +133,22 @@ class NewProjectDialog(QDialog):
         self._target_label.setText(text)
         self._target_label.setToolTip(text)
         reason = self._reason_not_to_create()
-        self._reason_label.setText(reason)
+        self._reason_label.setText(_wrappable(reason))
         self._create_button.setEnabled(not reason)
+        # Before the first show the width is not yet the one it will have.
+        if self.isVisible():
+            self._fit_height()
+            self.resize(self.width(), self.minimumHeight())
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 - Qt API naming.
+        super().resizeEvent(event)
+        # A narrower dialog wraps the reason onto more lines.
+        self._fit_height()
+
+    def _fit_height(self) -> None:
+        """Keep room for the reason's lines, so they never squeeze the fields."""
+
+        self.setMinimumHeight(self.layout().totalHeightForWidth(self.width()))
 
     def _reason_not_to_create(self) -> str:
         """Say why the current entries make no usable folder; empty if they do."""
@@ -140,12 +167,16 @@ class NewProjectDialog(QDialog):
         try:
             if not location.is_dir():
                 return "The location is not an existing folder."
-            if not target.exists():
+            # Not exists(), which reports a name too long for a folder as just absent.
+            try:
+                target.stat()
+            except FileNotFoundError:
                 return ""
             if not target.is_dir():
                 return f"{target.name} already exists there and is not a folder."
             if any(target.iterdir()):
                 return f"{target.name} already exists there and is not empty."
         except OSError as exc:
-            return str(exc)
+            cause = (exc.strerror or str(exc)).rstrip(".")
+            return f"That folder cannot be used: {cause[:1].lower()}{cause[1:]}."
         return ""

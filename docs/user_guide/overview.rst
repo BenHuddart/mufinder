@@ -34,7 +34,7 @@ Application shell
 -----------------
 
 - With no project open, the welcome page fills the window: create a project
-  (``New Project``), open one (``Open Project``) or reopen one of the last five
+  (``Create New Project``), open one (``Open Existing Project``) or reopen one of the last five
   (``Recent Projects``, each shown by name and parent folder, with the full path
   in its tooltip). The project navigator and the ``Job Dashboard`` appear once a
   project is open, and keyboard focus starts in the navigator.

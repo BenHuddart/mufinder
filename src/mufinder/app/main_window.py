@@ -1764,7 +1764,7 @@ class MainWindow(QMainWindow):
 
         # macOS moves a QuitRole action to the application menu and names it itself.
         quit_action = file_menu.addAction("Exit" if sys.platform == "win32" else "Quit")
-        quit_action.setShortcuts(QKeySequence.StandardKey.Quit)
+        quit_action.setShortcuts(self._quit_key_bindings())
         quit_action.setMenuRole(QAction.MenuRole.QuitRole)
         quit_action.triggered.connect(self.close)
 
@@ -1812,6 +1812,20 @@ class MainWindow(QMainWindow):
         user_guide_action.triggered.connect(self._open_user_guide)
         about_action = help_menu.addAction(f"About {PRODUCT_NAME}")
         about_action.triggered.connect(self._show_about_dialog)
+
+    @staticmethod
+    def _quit_key_bindings() -> list[QKeySequence]:
+        """Return the platform's Quit keys, with Ctrl+Q first except on Windows.
+
+        What ``StandardKey.Quit`` holds depends on the platform theme, and it can be
+        nothing or only the Exit key. Ctrl+Q is Cmd+Q on macOS.
+        """
+
+        bindings = QKeySequence.keyBindings(QKeySequence.StandardKey.Quit)
+        if sys.platform == "win32":
+            return bindings
+        ctrl_q = QKeySequence("Ctrl+Q")
+        return [ctrl_q, *(binding for binding in bindings if binding != ctrl_q)]
 
     def _open_user_guide(self) -> None:
         QDesktopServices.openUrl(QUrl(DOCUMENTATION_URL))

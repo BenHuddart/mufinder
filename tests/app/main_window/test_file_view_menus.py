@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from pathlib import Path
 
-from PySide6.QtCore import QSettings
+from PySide6.QtCore import QSettings, Qt
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import QApplication, QDockWidget, QMenu, QMessageBox
 import pytest
@@ -78,8 +78,29 @@ def test_quit_has_the_platform_shortcut_and_role(
 
     action = _action(MainWindow(), "File", "Quit")
 
-    assert action.shortcuts() == QKeySequence.keyBindings(QKeySequence.StandardKey.Quit)
+    assert action.shortcut() == QKeySequence("Ctrl+Q")
+    for binding in QKeySequence.keyBindings(QKeySequence.StandardKey.Quit):
+        assert binding in action.shortcuts()
     assert action.menuRole() == QAction.MenuRole.QuitRole
+
+
+@pytest.mark.parametrize(
+    "bindings",
+    [[], [QKeySequence(Qt.Key.Key_Exit)], [QKeySequence("Ctrl+Q")]],
+    ids=["none", "exit-key-only", "ctrl-q-already"],
+)
+def test_ctrl_q_quits_whatever_the_platform_theme_binds(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch, bindings: list[QKeySequence]
+) -> None:
+    monkeypatch.setattr(main_window_module.sys, "platform", "linux")
+    monkeypatch.setattr(main_window_module.QKeySequence, "keyBindings", lambda _key: bindings)
+
+    action = _action(MainWindow(), "File", "Quit")
+
+    assert action.shortcut() == QKeySequence("Ctrl+Q")
+    assert action.shortcuts().count(QKeySequence("Ctrl+Q")) == 1
+    for binding in bindings:
+        assert binding in action.shortcuts()
 
 
 def test_quit_is_exit_on_windows(qapp: QApplication, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -88,6 +109,7 @@ def test_quit_is_exit_on_windows(qapp: QApplication, monkeypatch: pytest.MonkeyP
     action = _action(MainWindow(), "File", "Exit")
 
     assert action.menuRole() == QAction.MenuRole.QuitRole
+    assert QKeySequence("Ctrl+Q") not in action.shortcuts()
 
 
 @pytest.mark.parametrize(

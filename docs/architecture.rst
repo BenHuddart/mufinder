@@ -1919,7 +1919,8 @@ Saving is split between autosave and manual save:
   Project`` or an autosave writes the document. ``ProjectService.unsaved_changes``
   compares it with what the last save left, or what the window left once it had
   finished showing the opened project (``settle_ui_state``): pages tidy some saved
-  forms as they fill, which is no change of the user's. Closing a window asks
+  forms as they fill, which is no change of the user's, and loading brings saved UEP
+  searches to the form the analysis wizard writes. Closing a window asks
   ``Save project?`` only if that comparison finds analysis-session state changed,
   or the last save on closing failed. Otherwise closing writes, without asking,
   whatever else differs from disk: durable state waiting for its coalesced
