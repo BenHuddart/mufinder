@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from functools import partial
+from io import BytesIO
 from pathlib import Path
 
 from matplotlib.colors import to_hex
@@ -683,6 +684,50 @@ def test_band_profile_keeps_the_barrier_label_readable(qapp, energies_mev) -> No
     )
 
     _assert_label_inside_axes_and_clear_of_curve(plot)
+
+    # The smallest the inspector's splitter can make the plot.
+    plot.resize(plot._canvas.minimumSize())
+    qapp.processEvents()
+    plot._canvas.draw()
+    assert plot._canvas.width() == plot._canvas.minimumWidth()
+    _assert_label_inside_axes_and_clear_of_curve(plot)
+    plot.close()
+
+
+@pytest.mark.parametrize("peak", [0.76, 0.74, 0.5, 0.26, 0.24])
+def test_band_profile_barrier_label_fits_the_minimum_width_wherever_the_peak_is(
+    qapp, peak: float
+) -> None:
+    plot = _profile_plot(
+        qapp,
+        [
+            EnergyBarrierPreviewImageRow("Image 1", "", "", 0.0, 0.0),
+            EnergyBarrierPreviewImageRow("Image 2", "", "", peak, 0.495),
+            EnergyBarrierPreviewImageRow("Image 3", "", "", 1.0, 0.283),
+        ],
+    )
+    plot.resize(plot._canvas.minimumSize())
+    qapp.processEvents()
+    plot._canvas.draw()
+
+    label = plot._axes.texts[0].get_window_extent(plot._canvas.get_renderer())
+    assert plot._axes.bbox.x0 <= label.x0 and label.x1 <= plot._axes.bbox.x1
+    plot.close()
+
+
+@pytest.mark.parametrize("file_format", ["png", "svg", "pdf"])
+def test_band_profile_saves_and_keeps_stepping_afterwards(qapp, file_format: str) -> None:
+    plot = _profile_plot(qapp, _sample_preview_rows())
+    background = plot._background
+
+    saved = BytesIO()
+    plot._figure.savefig(saved, format=file_format)
+
+    assert saved.getvalue()
+    assert plot._background is background
+    plot.set_selected_index(2)
+    qapp.processEvents()
+    assert list(plot._selected_marker.get_xdata()) == [1.25]
     plot.close()
 
 

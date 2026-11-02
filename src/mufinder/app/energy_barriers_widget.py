@@ -131,6 +131,8 @@ class _BandProfilePlot(QWidget):
     _LABEL_HEADROOM = 0.25
     # A label ending at the plot's right side stops short of the pop-out button.
     _POP_OUT_BUTTON_CLEARANCE_PT = 24
+    # Wide enough for the barrier label over a peak anywhere along the band.
+    _MINIMUM_CANVAS_SIZE = (320, 160)
     _SERIES_MARKER_SIZE = 4.0
     _HIGHLIGHT_MARKER_SIZE = 8.0
 
@@ -145,7 +147,9 @@ class _BandProfilePlot(QWidget):
         self._selected_marker: Line2D | None = None
         self._background: Any = None
         self._figure, self._canvas = create_plot_canvas(
-            figsize=(4.6, 2.4), facecolor=self._drawn_palette.bg_primary
+            figsize=(4.6, 2.4),
+            facecolor=self._drawn_palette.bg_primary,
+            minimum_size=self._MINIMUM_CANVAS_SIZE,
         )
         self._canvas.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
         self._canvas.setAccessibleName("Reaction profile")
@@ -308,10 +312,18 @@ class _BandProfilePlot(QWidget):
             in_layout=False,
         )
 
-    def _on_draw(self, _event: DrawEvent) -> None:
-        """Keep the plot without the selected-image marker, then paint the marker on it."""
+    def _on_draw(self, event: DrawEvent) -> None:
+        """Keep the plot without the selected-image marker, then paint the marker on it.
 
-        if self._axes is None or self._selected_marker is None or self._canvas.is_saving():
+        A save draws too, on a canvas of its own for vector formats; it changes nothing here.
+        """
+
+        if (
+            self._axes is None
+            or self._selected_marker is None
+            or event.canvas is not self._canvas
+            or self._canvas.is_saving()
+        ):
             return
         self._background = self._canvas.copy_from_bbox(self._axes.bbox)
         self._axes.draw_artist(self._selected_marker)
