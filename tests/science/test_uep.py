@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+import inspect
 import math
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
 
 from mufinder.science import uep as uep_module
 from mufinder.science.uep import (
+    DEFAULT_OPTIMIZER_MAX_STEPS,
     IonicPseudopotential,
     StationaryPointClassification,
     UepError,
@@ -22,7 +25,6 @@ from mufinder.science.uep import (
     UepSlicePlane,
     UepSourceData,
     UepStructure,
-    calculate_optimization_zero_point_energy,
     cartesian_normal_to_lattice_plane_components,
     castep_total_charge,
     classify_stationary_point,
@@ -1372,39 +1374,93 @@ def test_a_saved_optimisation_result_round_trips_and_a_malformed_one_is_refused(
     assert classification_from_dict({"eigenvalues": [1.0, 2.0, 3.0], "positive_count": "x"}) is None
 
 
-def test_optimize_muon_position_can_skip_and_then_restore_quantum_corrections() -> None:
-    source = load_uep_source(
-        den_fmt_path=_fixture_path("Si2.den_fmt"),
-        castep_path=_fixture_path("Si2.castep"),
-        cell_path=_fixture_path("Si2.cell"),
+class _QuadraticField:
+    """A potential with the given curvatures about the origin, in eV/Å²."""
+
+    def __init__(self, curvatures: tuple[float, float, float]) -> None:
+        self._hessian = np.diag(curvatures)
+
+    def fractional_position(self, position):
+        return tuple(float(value) for value in position)
+
+    def potential(self, position):
+        point = np.asarray(position, dtype=float).reshape(3)
+        value = np.array([0.5 * point @ self._hessian @ point])
+        return value, value, np.zeros(1)
+
+    def gradient(self, position):
+        point = np.asarray(position, dtype=float).reshape(3)
+        value = (self._hessian @ point).reshape(1, 3)
+        return value, value, np.zeros((1, 3))
+
+    def hessian(self, position):
+        value = self._hessian.reshape(1, 3, 3)
+        return value, value, np.zeros((1, 3, 3))
+
+
+def test_optimize_muon_position_returns_the_zero_point_energy_of_a_minimum() -> None:
+    field = _QuadraticField((2.0, 3.0, 4.0))
+
+    result = optimize_muon_position(field, start_position_ang=(0.1, -0.2, 0.3))
+
+    assert result.classification.label == "minimum"
+    assert result.zero_point_energy_ev == pytest.approx(
+        zero_point_energy_ev(np.diag((2.0, 3.0, 4.0)))
     )
-    field = UepField(source)
-
-    classical = optimize_muon_position(
-        field,
-        start_position_ang=(1.0, 1.0, 1.0),
-        max_steps=30,
-        include_zero_point_energy=False,
+    assert result.total_energy_ev == pytest.approx(
+        result.classical_energy_ev + result.zero_point_energy_ev
     )
-    quantum = calculate_optimization_zero_point_energy(field, classical)
-    direct = optimize_muon_position(field, start_position_ang=(1.0, 1.0, 1.0), max_steps=30)
-
-    assert classical.zero_point_energy_ev is None
-    assert classical.total_energy_ev is None
-    assert quantum.zero_point_energy_ev is not None
-    assert quantum.total_energy_ev is not None
-    assert quantum.zero_point_energy_ev == pytest.approx(direct.zero_point_energy_ev)
-    assert quantum.total_energy_ev == pytest.approx(direct.total_energy_ev)
-    assert quantum.classical_energy_ev == pytest.approx(direct.classical_energy_ev)
 
 
-# Legacy Cartesian clustering
+def test_optimize_muon_position_returns_no_zero_point_energy_for_a_saddle() -> None:
+    field = _QuadraticField((2.0, 3.0, -4.0))
+
+    result = optimize_muon_position(field, start_position_ang=(0.0, 0.0, 0.0))
+
+    assert result.classification.label == "saddle"
+    assert result.zero_point_energy_ev is None
+    assert result.total_energy_ev is None
 
 
-# Soprano-backed clustering and prepared datasets
+def test_optimize_muon_position_returns_no_zero_point_energy_when_it_does_not_converge(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    field = _QuadraticField((2.0, 3.0, 4.0))
+    monkeypatch.setattr(
+        uep_module,
+        "minimize",
+        lambda *_a, **_k: SimpleNamespace(
+            x=np.array([0.1, 0.1, 0.1]), success=False, message="limit", nit=1
+        ),
+    )
+
+    result = optimize_muon_position(field, start_position_ang=(0.1, 0.1, 0.1))
+
+    assert result.success is False
+    assert result.classification.label == "minimum"
+    assert result.zero_point_energy_ev is None
+    assert result.total_energy_ev is None
 
 
-# Internal guards the public entry points never reach
+def test_the_force_tolerance_is_a_gradient_norm_in_ev_per_angstrom() -> None:
+    field = _QuadraticField((1.0, 1.0, 1.0))
+    start = (0.1, 0.0, 0.0)
+
+    stopped = optimize_muon_position(
+        field, start_position_ang=start, force_tolerance_ev_per_ang=1.0
+    )
+    moved = optimize_muon_position(field, start_position_ang=start, force_tolerance_ev_per_ang=1e-5)
+
+    # The gradient at the start is 0.1 eV/Å: under 1, over 1e-5.
+    assert stopped.optimized_position_ang == pytest.approx(start)
+    assert stopped.iterations == 0
+    assert np.linalg.norm(moved.optimized_position_ang) < 1e-5
+
+
+def test_the_iteration_limit_has_one_default() -> None:
+    limit = inspect.signature(optimize_muon_position).parameters["max_steps"].default
+
+    assert limit == DEFAULT_OPTIMIZER_MAX_STEPS == 300
 
 
 def test_periodic_resampling_guards_axis_and_target_size() -> None:

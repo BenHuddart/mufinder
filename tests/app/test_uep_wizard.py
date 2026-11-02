@@ -13,8 +13,9 @@ import pytest
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QDialog, QPushButton, QSizePolicy, QWidget
+from PySide6.QtWidgets import QDialog, QFrame, QPushButton, QSizePolicy, QWidget
 
+from mufinder.app import theme as theme_module
 from mufinder.app.theme import cluster_color_map, current_palette
 from mufinder.app.uep_wizard import (
     UepAnalysisDialog,
@@ -24,8 +25,11 @@ from mufinder.app.uep_wizard import (
 )
 from mufinder.app.atomic_structure_viewer import MUON_VIEWER_RADIUS_ANG, _CameraState
 from mufinder.domain.models import Structure
+from mufinder.domain.text import plural
 from mufinder.science.site_generation import generate_random_sites, symmetry_equivalent_positions
 from mufinder.science.uep import (
+    DEFAULT_FORCE_TOLERANCE_EV_PER_ANG,
+    DEFAULT_OPTIMIZER_MAX_STEPS,
     StationaryPointClassification,
     load_uep_source,
     UepOptimizationResult,
@@ -76,14 +80,6 @@ def _run_batch_search_inline(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         "mufinder.app.uep_wizard.generate_random_sites", partial(generate_random_sites, seed=7)
     )
-
-
-def _run_batch_zpe_inline(monkeypatch: pytest.MonkeyPatch) -> None:
-    def _start_inline(thread) -> None:
-        thread.run()
-        thread.finished.emit()
-
-    monkeypatch.setattr("mufinder.app.uep_wizard._BatchZpeThread.start", _start_inline)
 
 
 def _run_isosurface_threads_inline(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -158,12 +154,6 @@ def test_uep_analysis_dialog_shrinks_for_small_screens(qapp) -> None:
     assert dialog._isosurface_slider.minimumWidth() == 400
     assert dialog._isosurface_viewer.minimumHeight() == 320
     assert dialog._slice_viewer.minimumHeight() == 320
-
-    assert dialog._batch_sampling_card.minimumHeight() == 240
-    optimizer_card = dialog._batch_run.parentWidget()
-    log_card = dialog._batch_summary.parentWidget()
-    assert optimizer_card.minimumHeight() == 240
-    assert log_card.minimumHeight() == 240
 
     dialog.close()
 
@@ -422,7 +412,6 @@ def test_uep_wizard_initial_state_gw_factor_overrides_default_and_rejects_mismat
     assert restored._source.gw_factor == pytest.approx(7.0)
     assert restored._gw_factor_input.value() == pytest.approx(7.0)
     assert restored._slice_gw_factor_input.value() == pytest.approx(7.0)
-    assert restored._batch_gw_factor_input.value() == pytest.approx(7.0)
     assert restored._potential_grid_cache is None
     restored.close()
 
@@ -468,7 +457,6 @@ def test_uep_wizard_pressing_enter_on_gw_factor_rebuilds_field_and_recalculates_
     assert dialog.state_snapshot()["gw_factor"] == pytest.approx(7.0)
     assert dialog._gw_factor_input.value() == pytest.approx(7.0)
     assert dialog._slice_gw_factor_input.value() == pytest.approx(7.0)
-    assert dialog._batch_gw_factor_input.value() == pytest.approx(7.0)
     assert dialog._probe_output.toPlainText() == ""
     assert not hasattr(dialog, "_probe_promote")
     assert dialog._potential_grid_raw_cache is None
@@ -493,7 +481,6 @@ def test_uep_wizard_leaving_gw_factor_field_without_enter_reverts_to_active_valu
     assert dialog._source.gw_factor == pytest.approx(5.0)
     assert dialog._gw_factor_input.value() == pytest.approx(5.0)
     assert dialog._slice_gw_factor_input.value() == pytest.approx(5.0)
-    assert dialog._batch_gw_factor_input.value() == pytest.approx(5.0)
     dialog.close()
 
 
@@ -510,34 +497,7 @@ def test_uep_wizard_gw_factor_tooltip_and_controls_are_present(qapp) -> None:
     assert "Gaussian width factor" in dialog._gw_factor_input.toolTip()
     assert "Press Enter" in dialog._gw_factor_input.toolTip()
     assert dialog._slice_gw_factor_input.toolTip() == dialog._gw_factor_input.toolTip()
-    assert dialog._batch_gw_factor_input.toolTip() == dialog._gw_factor_input.toolTip()
     assert not any(button.text() == "Apply" for button in dialog.findChildren(QPushButton))
-    dialog.close()
-
-
-def test_uep_wizard_pressing_enter_on_batch_gw_factor_rebuilds_and_syncs_all_tabs(
-    qapp, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    dialog = UepAnalysisDialog(
-        source_job_label="uep_source_row1",
-        source_structure_id="11111111-1111-1111-1111-111111111111",
-        source_structure=_source_structure_with_spins(),
-        den_fmt_path=_fixture_path("Si2.den_fmt"),
-        castep_path=_fixture_path("Si2.castep"),
-        cell_path=_fixture_path("Si2.cell"),
-    )
-
-    started: list[bool] = []
-    monkeypatch.setattr(dialog, "_start_isosurface_grid_calculation", lambda: started.append(True))
-
-    dialog._batch_gw_factor_input.setValue(8.0)
-    dialog._batch_gw_factor_input.returnPressed.emit()
-
-    assert dialog._source.gw_factor == pytest.approx(8.0)
-    assert dialog._gw_factor_input.value() == pytest.approx(8.0)
-    assert dialog._slice_gw_factor_input.value() == pytest.approx(8.0)
-    assert dialog._batch_gw_factor_input.value() == pytest.approx(8.0)
-    assert started == [True]
     dialog.close()
 
 
@@ -678,9 +638,6 @@ def test_uep_wizard_isosurface_muon_management_adds_and_removes_clustered_muons(
             classification=optimization.classification,
         )
 
-    monkeypatch.setattr(
-        "mufinder.app.uep_wizard.calculate_optimization_zero_point_energy", _mock_zpe
-    )
     dialog = UepAnalysisDialog(
         source_job_label="uep_source_row1",
         source_structure_id="11111111-1111-1111-1111-111111111111",
@@ -764,9 +721,6 @@ def test_uep_wizard_editing_isosurface_muon_label_updates_linked_status_and_rest
             classification=optimization.classification,
         )
 
-    monkeypatch.setattr(
-        "mufinder.app.uep_wizard.calculate_optimization_zero_point_energy", _mock_zpe
-    )
     dialog = UepAnalysisDialog(
         source_job_label="uep_source_row1",
         source_structure_id="11111111-1111-1111-1111-111111111111",
@@ -990,31 +944,29 @@ def test_uep_wizard_batch_search_uses_compact_control_card_layout(qapp) -> None:
     assert summary_parent is not None
     assert summary_parent.objectName() == "uepIsosurfaceInfoCard"
     assert dialog._batch_summary.verticalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAsNeeded
-    assert dialog._batch_summary.maximumHeight() == 148
 
-    control_cards = dialog._batch_tab.findChildren(
-        type(summary_parent), options=Qt.FindChildOption.FindChildrenRecursively
-    )
-    object_names = [widget.objectName() for widget in control_cards]
-    assert object_names.count("analysisSliderPanel") >= 2
-    assert object_names.count("uepIsosurfaceInfoCard") >= 1
-    assert dialog._batch_progress.parentWidget() is not None
-    assert dialog._batch_progress.parentWidget().objectName() == "analysisSliderPanel"
-    assert dialog._batch_zpe_progress.parentWidget() is not None
-    assert dialog._batch_zpe_progress.parentWidget().objectName() == "uepIsosurfaceInfoCard"
+    card = dialog._batch_controls_card
+    assert card.objectName() == "analysisSliderPanel"
+    assert [
+        frame.objectName()
+        for frame in dialog._batch_tab.findChildren(QFrame)
+        if frame.objectName() == "analysisSliderPanel"
+    ] == ["analysisSliderPanel"]
+    for control in (
+        dialog._batch_count,
+        dialog._batch_min_muon_muon,
+        dialog._batch_min_muon_atom,
+        dialog._batch_run,
+        dialog._batch_progress,
+        dialog._batch_advanced_toggle,
+    ):
+        assert control.parentWidget() is card
     assert dialog._batch_progress.format() == "Ready"
-    assert dialog._batch_zpe_progress.format() == "Ready"
-    assert dialog._batch_max_attempts.parentWidget() is not None
-    assert dialog._batch_max_attempts.parentWidget().objectName() == "analysisSliderPanel"
-    assert dialog._batch_optimization_tolerance.value() == pytest.approx(1e-5)
-    assert dialog._batch_max_steps.value() == 100
-    assert "pymuon-suite UEP workflow" in dialog._batch_optimization_tolerance.toolTip()
-    assert "E_zp" in dialog._batch_calculate_zpe.toolTip()
-    assert current_palette().accent in dialog._batch_progress.styleSheet()
-    assert current_palette().success in dialog._batch_zpe_progress.styleSheet()
-    assert dialog._batch_gw_factor_input.parentWidget() is not None
-    assert dialog._batch_gw_factor_input.parentWidget().objectName() == "analysisSliderPanel"
-    assert dialog._batch_calculate_zpe.parentWidget() is summary_parent
+    assert dialog._batch_progress.objectName() == "uepBatchProgress"
+    assert dialog._batch_progress.styleSheet() == ""
+    assert not hasattr(dialog, "_batch_calculate_zpe")
+    assert not hasattr(dialog, "_batch_zpe_progress")
+    assert not hasattr(dialog, "_batch_gw_factor_input")
     assert not hasattr(dialog, "_batch_promote")
     assert not hasattr(dialog, "_batch_cluster_threshold")
     assert not hasattr(dialog, "_batch_clustering_button")
@@ -1105,13 +1057,6 @@ def test_uep_wizard_batch_search_default_split_and_headers_are_compact(qapp) -> 
     assert dialog._batch_tab.layout().contentsMargins().top() == 2
     assert dialog._isosurface_tab.layout().contentsMargins().top() == 2
     assert dialog._slices_tab.layout().contentsMargins().top() == 2
-    assert dialog._batch_sampling_card.minimumHeight() == 240
-    optimizer_card = dialog._batch_run.parentWidget()
-    log_card = dialog._batch_summary.parentWidget()
-    assert optimizer_card is not None
-    assert log_card is not None
-    assert optimizer_card.minimumHeight() == 240
-    assert log_card.minimumHeight() == 240
     dialog.close()
 
 
@@ -1139,26 +1084,7 @@ def test_uep_wizard_batch_search_starts_worker_thread_and_shows_busy_progress(
     assert dialog._batch_progress.minimum() == 0
     assert dialog._batch_progress.maximum() == 0
     assert dialog._batch_progress.format() == "Packing starts…"
-    assert dialog._batch_calculate_zpe.isEnabled() is False
-    assert dialog._batch_zpe_progress.format() == "Ready"
-    assert "color: #FFFFFF;" not in dialog._batch_progress.styleSheet()
-    dialog.close()
-
-
-def test_uep_wizard_batch_zpe_before_search_logs_warning(qapp) -> None:
-    dialog = UepAnalysisDialog(
-        source_job_label="uep_source_row1",
-        source_structure_id="11111111-1111-1111-1111-111111111111",
-        source_structure=_source_structure_with_spins(),
-        den_fmt_path=_fixture_path("Si2.den_fmt"),
-        castep_path=_fixture_path("Si2.castep"),
-        cell_path=_fixture_path("Si2.cell"),
-    )
-
-    dialog._run_batch_zpe()
-
-    assert "no successful optimized sites are available yet" in dialog._batch_summary.toPlainText()
-    assert dialog._batch_zpe_progress.format() == "Ready"
+    assert dialog._batch_progress.property("generationState") == "active"
     dialog.close()
 
 
@@ -1185,38 +1111,26 @@ def test_uep_wizard_batch_search_logs_reduced_initial_starts(qapp, monkeypatch) 
 
     dialog._batch_count.setValue(6)
     dialog._batch_min_muon_muon.setValue(1.2)
-    dialog._batch_optimization_tolerance.setValue(2e-5)
+    dialog._batch_force_tolerance.setValue(2e-5)
     dialog._batch_max_steps.setValue(30)
     dialog._run_batch_search()
 
     summary = dialog._batch_summary.toPlainText()
     assert "Requested random starts: 6" in summary
     assert "Initial starts generated: 1" in summary
-    assert "Min muon-muon distance (A): 1.200" in summary
-    assert "Optimization tolerance (eV): 2e-05" in summary
+    assert "Min muon-muon distance (Å): 1.200" in summary
+    assert "Force tolerance (eV/Å): 2e-05" in summary
     assert "muon-muon distance constraint limited packing" in summary
     assert "Grouping: " in summary
     assert "within 0.25 Å and 1 meV" in summary
     assert "available for clustering" not in summary
     assert dialog._batch_progress.format() == "Batch search complete"
-    assert "color: #FFFFFF;" in dialog._batch_progress.styleSheet()
+    assert dialog._batch_progress.property("generationState") == "complete"
     dialog.close()
 
 
 def test_uep_wizard_state_snapshot_restores_generated_analysis(qapp, monkeypatch) -> None:
     _run_batch_search_inline(monkeypatch)
-    _run_batch_zpe_inline(monkeypatch)
-
-    def _mock_zpe(_field, optimization):
-        return replace(
-            optimization,
-            zero_point_energy_ev=0.125,
-            total_energy_ev=optimization.classical_energy_ev + 0.125,
-        )
-
-    monkeypatch.setattr(
-        "mufinder.app.uep_wizard.calculate_optimization_zero_point_energy", _mock_zpe
-    )
     first = UepAnalysisDialog(
         source_job_label="uep_source_row1",
         source_structure_id="11111111-1111-1111-1111-111111111111",
@@ -1230,12 +1144,10 @@ def test_uep_wizard_state_snapshot_restores_generated_analysis(qapp, monkeypatch
     first._line_points.setValue(11)
     first._run_line_sample()
     first._batch_min_muon_muon.setValue(1.2)
-    first._batch_optimization_tolerance.setValue(3e-5)
+    first._batch_force_tolerance.setValue(3e-5)
     first._batch_max_steps.setValue(30)
     first._run_batch_search()
     assert first._latest_batch_results
-    first._latest_batch_results[0] = replace(first._latest_batch_results[0], success=True)
-    first._run_batch_zpe()
     first._batch_grouping_tolerance.setValue(0.4)
     cluster_item = first._batch_table.topLevelItem(0)
     assert cluster_item is not None
@@ -1267,7 +1179,7 @@ def test_uep_wizard_state_snapshot_restores_generated_analysis(qapp, monkeypatch
     assert restored._batch_table.topLevelItemCount() >= 1
     assert restored._batch_count.isEnabled() is True
     assert restored._batch_min_muon_muon.isEnabled() is True
-    assert restored._batch_optimization_tolerance.value() == pytest.approx(3e-5)
+    assert restored._batch_force_tolerance.value() == pytest.approx(3e-5)
     assert [
         result.zero_point_energy_ev is not None for result in restored._latest_batch_results
     ] == expected_zpe_flags
@@ -1279,70 +1191,10 @@ def test_uep_wizard_state_snapshot_restores_generated_analysis(qapp, monkeypatch
     assert restored._batch_grouping_tolerance.value() == pytest.approx(0.4)
     assert restored._latest_batch_summary == first_summary
     assert restored._batch_progress.format() == "Batch search complete"
-    assert "color: #FFFFFF;" in restored._batch_progress.styleSheet()
-    assert restored._batch_zpe_progress.format() == "ZPE calculation complete"
-    assert "color: #FFFFFF;" in restored._batch_zpe_progress.styleSheet()
+    assert restored._batch_progress.property("generationState") == "complete"
     assert "clustering_window_state" not in snapshot
+    assert "batch_zpe_completed" not in snapshot
     restored.close()
-
-
-def test_uep_wizard_batch_zpe_starts_worker_thread_and_updates_progress(qapp, monkeypatch) -> None:
-    _run_batch_search_inline(monkeypatch)
-    dialog = UepAnalysisDialog(
-        source_job_label="uep_source_row1",
-        source_structure_id="11111111-1111-1111-1111-111111111111",
-        source_structure=_source_structure_with_spins(),
-        den_fmt_path=_fixture_path("Si2.den_fmt"),
-        castep_path=_fixture_path("Si2.castep"),
-        cell_path=_fixture_path("Si2.cell"),
-    )
-    dialog._batch_max_steps.setValue(30)
-    dialog._run_batch_search()
-
-    started: list[object] = []
-    monkeypatch.setattr(
-        "mufinder.app.uep_wizard._BatchZpeThread.start", lambda self: started.append(self)
-    )
-    monkeypatch.setattr(dialog, "_batch_has_successful_optimizations", lambda: True)
-
-    dialog._run_batch_zpe()
-
-    assert len(started) == 1
-    assert dialog._batch_zpe_thread is started[0]
-    assert dialog._batch_calculate_zpe.isEnabled() is False
-    assert dialog._batch_zpe_progress.minimum() == 0
-    assert dialog._batch_zpe_progress.maximum() == 0
-    assert dialog._batch_zpe_progress.format() == "Preparing ZPE…"
-    dialog.close()
-
-
-def test_uep_wizard_batch_zpe_populates_quantum_energies(qapp, monkeypatch) -> None:
-    _run_batch_search_inline(monkeypatch)
-    _run_batch_zpe_inline(monkeypatch)
-    dialog = UepAnalysisDialog(
-        source_job_label="uep_source_row1",
-        source_structure_id="11111111-1111-1111-1111-111111111111",
-        source_structure=_source_structure_with_spins(),
-        den_fmt_path=_fixture_path("Si2.den_fmt"),
-        castep_path=_fixture_path("Si2.castep"),
-        cell_path=_fixture_path("Si2.cell"),
-    )
-
-    dialog._batch_max_steps.setValue(30)
-    dialog._run_batch_search()
-    assert all(result.zero_point_energy_ev is None for result in dialog._latest_batch_results)
-    monkeypatch.setattr(dialog, "_batch_has_successful_optimizations", lambda: True)
-
-    dialog._run_batch_zpe()
-
-    assert dialog._batch_zpe_progress.format() == "ZPE calculation complete"
-    assert "color: #FFFFFF;" in dialog._batch_zpe_progress.styleSheet()
-    assert all(
-        result.zero_point_energy_ev is None or isinstance(result.zero_point_energy_ev, float)
-        for result in dialog._latest_batch_results
-    )
-    assert "Stable minima with finite ZPE" in dialog._batch_summary.toPlainText()
-    dialog.close()
 
 
 def test_uep_wizard_restores_isosurface_overlay(qapp) -> None:
@@ -2958,32 +2810,26 @@ def test_a_regrouped_tolerance_is_saved_once_it_settles_not_on_every_edit(
 def test_a_zero_point_pass_leaves_the_groups_and_their_order_alone(qapp, monkeypatch) -> None:
     host = _no_symmetry_host()
     first, second = _two_nearby_sites(host)
+    # The ZPE would reverse the two groups if it took part in their order.
     far = replace(
         second,
         classical_energy_ev=second.classical_energy_ev + 0.01,
         optimized_position_ang=(2.0, 3.0, 3.5),
         optimized_fractional_position=(0.4, 0.5, 0.5),
+        zero_point_energy_ev=0.0,
+        total_energy_ev=second.classical_energy_ev + 0.01,
     )
-    dialog = _dialog_with_endpoints(monkeypatch, [far, first], host)
-    _run_batch_zpe_inline(monkeypatch)
-    # The ZPE would reverse the two groups if it took part in their order.
-    monkeypatch.setattr(
-        "mufinder.app.uep_wizard.calculate_optimization_zero_point_energy",
-        lambda _field, result: replace(
-            result,
-            zero_point_energy_ev=0.0 if result is far else 1.0,
-            total_energy_ev=result.classical_energy_ev + (0.0 if result is far else 1.0),
-        ),
-    )
+    near = replace(first, zero_point_energy_ev=1.0, total_energy_ev=first.classical_energy_ev + 1.0)
+    dialog = _dialog_with_endpoints(monkeypatch, [far, near], host)
+
     dialog._run_batch_search()
-    before = dialog._latest_batch_summary
 
-    dialog._run_batch_zpe()
-
-    assert dialog._latest_batch_summary == before
-    assert [cluster.representative_index for cluster in before.clusters] == [1, 0]
-    assert dialog._latest_batch_results[0].zero_point_energy_ev == 0.0
-    assert "Grouping: " in dialog._batch_summary.toPlainText()
+    summary = dialog._latest_batch_summary
+    assert [cluster.representative_index for cluster in summary.clusters] == [1, 0]
+    assert [dialog._batch_table.topLevelItem(row).text(6) for row in range(2)] == [
+        "1.000000",
+        "0.000000",
+    ]
     dialog.close()
 
 
@@ -3070,26 +2916,6 @@ def test_a_failed_measurement_keeps_the_finished_optimisations(qapp, monkeypatch
     dialog.close()
 
 
-def test_a_zero_point_pass_keeps_the_tolerance_in_use_while_the_field_is_invalid(
-    qapp, monkeypatch
-) -> None:
-    host = _no_symmetry_host()
-    dialog = _dialog_with_endpoints(monkeypatch, _two_nearby_sites(host), host)
-    _run_batch_zpe_inline(monkeypatch)
-    monkeypatch.setattr(
-        "mufinder.app.uep_wizard.calculate_optimization_zero_point_energy",
-        lambda _field, result: result,
-    )
-    dialog._run_batch_search()
-    dialog._batch_grouping_tolerance.setText("0")
-
-    dialog._run_batch_zpe()
-
-    assert dialog._latest_batch_summary.threshold_ang == pytest.approx(0.25)
-    assert dialog._batch_table.topLevelItemCount() == 2
-    dialog.close()
-
-
 def test_a_selection_follows_its_sites_when_the_groups_are_renumbered(qapp, monkeypatch) -> None:
     host = _no_symmetry_host()
     first, second = _two_nearby_sites(host)
@@ -3117,6 +2943,9 @@ def test_a_selection_follows_its_sites_when_the_groups_are_renumbered(qapp, monk
 
 
 def test_a_muon_in_a_viewer_follows_its_site_into_a_new_group(qapp, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "mufinder.app.workflow_table_utils.confirm_destructive", lambda *_a, **_k: True
+    )
     host = _no_symmetry_host()
     dialog = _dialog_with_endpoints(monkeypatch, _two_nearby_sites(host), host)
     dialog._run_batch_search()
@@ -3235,23 +3064,6 @@ def test_a_tolerance_edit_keeps_expanded_groups_expanded(qapp, monkeypatch) -> N
     dialog.close()
 
 
-def test_a_zero_point_pass_keeps_expanded_groups_expanded(qapp, monkeypatch) -> None:
-    host = _no_symmetry_host()
-    dialog = _dialog_with_endpoints(monkeypatch, _two_nearby_sites(host), host)
-    _run_batch_zpe_inline(monkeypatch)
-    monkeypatch.setattr(
-        "mufinder.app.uep_wizard.calculate_optimization_zero_point_energy",
-        lambda _field, result: result,
-    )
-    dialog._run_batch_search()
-    dialog._batch_table.topLevelItem(1).setExpanded(True)
-
-    dialog._run_batch_zpe()
-
-    assert dialog._batch_table.topLevelItem(1).isExpanded()
-    dialog.close()
-
-
 def test_a_search_where_every_start_fails_says_no_minima_were_found(qapp, monkeypatch) -> None:
     host = _no_symmetry_host()
     endpoints = [replace(entry, success=False) for entry in _two_nearby_sites(host)]
@@ -3260,7 +3072,7 @@ def test_a_search_where_every_start_fails_says_no_minima_were_found(qapp, monkey
     dialog._run_batch_search()
 
     assert dialog._batch_table.topLevelItemCount() == 0
-    assert dialog._batch_search_progress.format() == "No minima found"
+    assert dialog._batch_progress.format() == "No minima found"
     assert "Grouping: no minima found. Left out 2 failed optimisations." in (
         dialog._batch_summary.toPlainText()
     )
@@ -3276,7 +3088,7 @@ def test_a_search_where_every_start_fails_says_no_minima_were_found(qapp, monkey
         cell_path=_fixture_path("Si2.cell"),
         initial_state=snapshot,
     )
-    assert restored._batch_search_progress.format() == "No minima found"
+    assert restored._batch_progress.format() == "No minima found"
     restored.close()
 
 
@@ -3297,23 +3109,6 @@ def test_flushing_writes_a_pending_regroup_and_nothing_otherwise(qapp, monkeypat
 
     assert emitted == [pytest.approx(0.5)]
     assert not dialog._grouping_settled_timer.isActive()
-    dialog.close()
-
-
-def test_the_search_log_and_its_button_do_not_overlap_at_the_minimum_window(
-    qapp, monkeypatch
-) -> None:
-    host = _no_symmetry_host()
-    dialog = _dialog_with_endpoints(monkeypatch, _two_nearby_sites(host), host)
-    dialog._run_batch_search()
-    dialog.resize(dialog.minimumSize())
-    dialog.show()
-    qapp.processEvents()
-
-    log_bottom = dialog._batch_summary.geometry().bottom()
-    assert dialog._batch_calculate_zpe.geometry().top() > log_bottom
-    card = dialog._batch_summary.parentWidget()
-    assert dialog._batch_zpe_progress.geometry().bottom() < card.height()
     dialog.close()
 
 
@@ -3439,7 +3234,8 @@ def test_a_gaussian_width_of_zero_then_return_keeps_the_batch_results(qapp, monk
     dialog = _shown_dialog_with_two_sites(qapp, monkeypatch)
     results = list(dialog._latest_batch_results)
     width = dialog._source.gw_factor
-    field = dialog._batch_gw_factor_input
+    dialog._tabs.setCurrentWidget(dialog._isosurface_tab)
+    field = dialog._gw_factor_input
     field.setFocus()
     field.selectAll()
     qapp.processEvents()
@@ -3452,31 +3248,6 @@ def test_a_gaussian_width_of_zero_then_return_keeps_the_batch_results(qapp, monk
     assert dialog._source.gw_factor == width
     assert dialog._latest_batch_results == results
     assert dialog._batch_table.topLevelItemCount() == 2
-    dialog.close()
-
-
-def test_the_zero_point_log_says_minima_and_counts_only_those(qapp, monkeypatch) -> None:
-    host = _no_symmetry_host()
-    first, second = _two_nearby_sites(host)
-    saddle = replace(second, classification=replace(second.classification, label="saddle"))
-    dialog = _dialog_with_endpoints(monkeypatch, [first, saddle], host)
-    _run_batch_zpe_inline(monkeypatch)
-    monkeypatch.setattr(
-        "mufinder.app.uep_wizard.calculate_optimization_zero_point_energy",
-        lambda _field, result: replace(
-            result,
-            zero_point_energy_ev=0.1 if result is first else None,
-            total_energy_ev=None,
-        ),
-    )
-    dialog._run_batch_search()
-
-    dialog._run_batch_zpe()
-
-    log = dialog._batch_summary.toPlainText()
-    assert "Minima available for ZPE: 1" in log
-    assert "Optimized sites" not in log
-    assert "Grouping: 1 minimum in 1 site" in log
     dialog.close()
 
 
@@ -3495,4 +3266,456 @@ def test_the_muon_dialog_says_which_cell_its_positions_are_in(qapp) -> None:
         "Start rows are in the input structure's cell, Custom rows in the job's cell."
     )
     muon_dialog.close()
+    dialog.close()
+
+
+def _si2_dialog(**overrides: object) -> UepAnalysisDialog:
+    return UepAnalysisDialog(
+        source_job_label="uep_source_row1",
+        source_structure_id="11111111-1111-1111-1111-111111111111",
+        source_structure=_source_structure_with_spins(),
+        den_fmt_path=_fixture_path("Si2.den_fmt"),
+        castep_path=_fixture_path("Si2.castep"),
+        cell_path=_fixture_path("Si2.cell"),
+        **overrides,
+    )
+
+
+def _answer_confirmations(monkeypatch, *, answer: bool) -> list[str]:
+    asked: list[str] = []
+
+    def _confirm(_parent, title, *_args, **_kwargs) -> bool:
+        asked.append(title)
+        return answer
+
+    monkeypatch.setattr("mufinder.app.workflow_table_utils.confirm_destructive", _confirm)
+    return asked
+
+
+def test_clicking_run_fills_the_table_with_zero_point_energies_and_nothing_else_to_click(
+    qapp, monkeypatch
+) -> None:
+    _run_batch_search_inline(monkeypatch)
+    dialog = _si2_dialog()
+
+    dialog._batch_run.click()
+
+    assert dialog._batch_table.topLevelItemCount() >= 1
+    for row in range(dialog._batch_table.topLevelItemCount()):
+        cluster = dialog._latest_batch_summary.clusters[row]
+        representative = dialog._latest_batch_results[cluster.representative_index]
+        item = dialog._batch_table.topLevelItem(row)
+        assert representative.zero_point_energy_ev > 0.0
+        assert representative.total_energy_ev == pytest.approx(
+            representative.classical_energy_ev + representative.zero_point_energy_ev
+        )
+        assert item.text(2) == f"{cluster.representative_fractional_position[0]:.6f}"
+        assert item.text(5) == f"{representative.classical_energy_ev:.6f}"
+        assert item.text(6) == f"{representative.zero_point_energy_ev:.6f}"
+        assert item.text(7) == f"{representative.total_energy_ev:.6f}"
+        assert item.childCount() == cluster.size
+    assert not any(
+        button.text() in {"Calculate ZPE", "Clustering"}
+        for button in dialog.findChildren(QPushButton)
+    )
+    dialog.close()
+
+
+def test_the_search_log_counts_the_starts_and_how_they_ended(qapp, monkeypatch) -> None:
+    host = _no_symmetry_host()
+    first, second = _two_nearby_sites(host)
+    saddle = replace(second, classification=replace(second.classification, label="saddle"))
+    failed = replace(first, success=False)
+    dialog = _dialog_with_endpoints(monkeypatch, [first, saddle, failed], host)
+
+    dialog._batch_run.click()
+
+    log = dialog._batch_summary.toPlainText()
+    assert "Requested random starts: 3" in log
+    assert "Initial starts generated: 3" in log
+    assert "Converged: 1 minimum, 1 saddle point. Failed to converge: 1." in log
+    assert "Grouping: 1 minimum in 1 site" in log
+    dialog.close()
+
+
+def test_a_new_search_asks_first_and_cancel_keeps_the_results(qapp, monkeypatch) -> None:
+    _run_batch_search_inline(monkeypatch)
+    asked = _answer_confirmations(monkeypatch, answer=False)
+    dialog = _si2_dialog()
+
+    dialog._batch_run.click()
+    assert asked == []
+    results = list(dialog._latest_batch_results)
+    rows = dialog._batch_table.topLevelItemCount()
+
+    dialog._batch_run.click()
+
+    assert asked == ["Run a new search"]
+    assert dialog._latest_batch_results == results
+    assert dialog._batch_table.topLevelItemCount() == rows
+    assert dialog._batch_progress.format() == "Batch search complete"
+    dialog.close()
+
+
+def test_a_new_search_replaces_the_results_when_confirmed(qapp, monkeypatch) -> None:
+    host = _no_symmetry_host()
+    first, second = _two_nearby_sites(host)
+    remaining = iter([first, second, first])
+    monkeypatch.setattr(
+        "mufinder.app.uep_wizard.optimize_muon_position", lambda *_a, **_k: next(remaining)
+    )
+    asked = _answer_confirmations(monkeypatch, answer=True)
+    _run_batch_search_inline(monkeypatch)
+    dialog = _si2_dialog()
+    dialog._batch_count.setValue(2)
+    dialog._batch_min_muon_muon.setValue(0.1)
+    dialog._batch_run.click()
+    dialog._batch_count.setValue(1)
+
+    dialog._batch_run.click()
+
+    assert asked == ["Run a new search"]
+    assert len(dialog._latest_batch_results) == 1
+    dialog.close()
+
+
+def test_a_failed_new_search_leaves_no_results_behind_it(qapp, monkeypatch) -> None:
+    _run_batch_search_inline(monkeypatch)
+    _answer_confirmations(monkeypatch, answer=True)
+    monkeypatch.setattr("mufinder.app.uep_wizard.QMessageBox.warning", lambda *_a, **_k: None)
+    dialog = _si2_dialog()
+    dialog._batch_run.click()
+
+    emitted: list[dict] = []
+    dialog.state_changed.connect(emitted.append)
+
+    def _fail(**_kwargs):
+        raise ValueError("no room")
+
+    monkeypatch.setattr("mufinder.app.uep_wizard.generate_random_sites", _fail)
+    dialog._batch_run.click()
+
+    assert dialog._latest_batch_results == []
+    assert dialog._batch_table.topLevelItemCount() == 0
+    assert dialog._batch_progress.format() == "Batch search failed"
+    assert dialog._batch_summary.toPlainText() == "Batch search failed: no room"
+    assert dialog._batch_run.isEnabled()
+    # The project hears that the results went, so Generation stops offering them.
+    assert emitted[-1]["batch_results"] == []
+    dialog.close()
+
+
+@pytest.mark.parametrize("input_name", ["_gw_factor_input", "_slice_gw_factor_input"])
+def test_a_width_change_asks_first_and_cancel_keeps_the_results_and_the_field(
+    qapp, monkeypatch, input_name: str
+) -> None:
+    _run_batch_search_inline(monkeypatch)
+    asked = _answer_confirmations(monkeypatch, answer=False)
+    dialog = _si2_dialog()
+    monkeypatch.setattr(dialog, "_start_isosurface_grid_calculation", lambda: None)
+    dialog._batch_run.click()
+    results = list(dialog._latest_batch_results)
+    field = getattr(dialog, input_name)
+
+    field.setValue(7.0)
+    field.returnPressed.emit()
+
+    assert asked == ["Change the Gaussian width factor"]
+    assert dialog._source.gw_factor == pytest.approx(5.0)
+    assert dialog._gw_factor_input.value() == pytest.approx(5.0)
+    assert dialog._slice_gw_factor_input.value() == pytest.approx(5.0)
+    assert dialog._latest_batch_results == results
+    assert dialog._batch_table.topLevelItemCount() >= 1
+    dialog.close()
+
+
+def test_a_confirmed_width_change_discards_the_results(qapp, monkeypatch) -> None:
+    _run_batch_search_inline(monkeypatch)
+    asked = _answer_confirmations(monkeypatch, answer=True)
+    dialog = _si2_dialog()
+    monkeypatch.setattr(dialog, "_start_isosurface_grid_calculation", lambda: None)
+    dialog._batch_run.click()
+
+    dialog._gw_factor_input.setValue(7.0)
+    dialog._gw_factor_input.returnPressed.emit()
+
+    assert asked == ["Change the Gaussian width factor"]
+    assert dialog._source.gw_factor == pytest.approx(7.0)
+    assert dialog._latest_batch_results == []
+    assert dialog._batch_table.topLevelItemCount() == 0
+    assert dialog._batch_progress.format() == "Ready"
+    dialog.close()
+
+
+def test_a_width_change_with_no_results_or_no_change_asks_nothing(qapp, monkeypatch) -> None:
+    _run_batch_search_inline(monkeypatch)
+    asked = _answer_confirmations(monkeypatch, answer=False)
+    dialog = _si2_dialog()
+    monkeypatch.setattr(dialog, "_start_isosurface_grid_calculation", lambda: None)
+
+    dialog._gw_factor_input.setValue(7.0)
+    dialog._gw_factor_input.returnPressed.emit()
+    assert dialog._source.gw_factor == pytest.approx(7.0)
+
+    dialog._batch_run.click()
+    dialog._gw_factor_input.returnPressed.emit()
+
+    assert asked == []
+    assert dialog._latest_batch_results
+    dialog.close()
+
+
+def test_the_tolerance_says_it_is_a_force_and_the_advanced_settings_start_hidden(qapp) -> None:
+    dialog = _si2_dialog()
+    form = dialog._batch_form
+    label_of = lambda control: form.labelForField(control).text()  # noqa: E731
+
+    assert label_of(dialog._batch_force_tolerance) == "Force tolerance (eV/Å)"
+    assert label_of(dialog._batch_max_attempts) == "Max attempts"
+    assert label_of(dialog._batch_max_steps) == "Optimizer max steps"
+    assert "Force threshold" in dialog._batch_force_tolerance.toolTip()
+    assert "pymuon" not in dialog._batch_force_tolerance.toolTip()
+    assert dialog._batch_force_tolerance.value() == pytest.approx(
+        DEFAULT_FORCE_TOLERANCE_EV_PER_ANG
+    )
+    assert dialog._batch_max_steps.value() == DEFAULT_OPTIMIZER_MAX_STEPS
+
+    advanced = (dialog._batch_max_attempts, dialog._batch_force_tolerance, dialog._batch_max_steps)
+    assert all(control.isHidden() for control in advanced)
+    assert not dialog._batch_count.isHidden()
+    dialog._batch_advanced_toggle.click()
+    assert not any(control.isHidden() for control in advanced)
+    assert dialog._batch_advanced_toggle.arrowType() == Qt.ArrowType.DownArrow
+    dialog._batch_advanced_toggle.click()
+    assert all(control.isHidden() for control in advanced)
+    dialog.close()
+
+
+def test_a_search_saved_without_zero_point_energies_says_how_to_get_them(qapp, monkeypatch) -> None:
+    _run_batch_search_inline(monkeypatch)
+    first = _si2_dialog()
+    first._batch_run.click()
+    snapshot = first.state_snapshot()
+    first.close()
+    for entry in snapshot["batch_results"]:
+        entry["zero_point_energy_ev"] = None
+        entry["total_energy_ev"] = None
+    snapshot["batch_zpe_completed"] = False
+
+    restored = _si2_dialog(initial_state=snapshot)
+
+    item = restored._batch_table.topLevelItem(0)
+    assert item.text(5) != ""
+    assert item.text(6) == ""
+    assert item.text(7) == ""
+    assert "saved without zero-point energies" in restored._batch_summary.toPlainText()
+    saved_again = restored.state_snapshot()
+    restored.close()
+
+    reopened = _si2_dialog(initial_state=saved_again)
+    assert reopened._batch_summary.toPlainText().count("saved without zero-point energies") == 1
+    reopened.close()
+
+
+def test_the_controls_and_the_log_fit_the_minimum_window_with_advanced_open(
+    qapp, monkeypatch
+) -> None:
+    host = _no_symmetry_host()
+    dialog = _dialog_with_endpoints(monkeypatch, _two_nearby_sites(host), host)
+    dialog._batch_run.click()
+    dialog._batch_advanced_toggle.click()
+    dialog.resize(dialog.minimumSize())
+    dialog.show()
+    qapp.processEvents()
+
+    card = dialog._batch_controls_card
+    assert dialog._batch_run.geometry().bottom() < card.height()
+    assert dialog._batch_progress.geometry().bottom() < card.height()
+    assert dialog._batch_summary.height() >= dialog._batch_summary.minimumHeight()
+    assert dialog._batch_table.isVisible()
+    dialog.close()
+
+
+def test_a_window_saved_mid_search_reopens_with_an_empty_log(qapp) -> None:
+    restored = _si2_dialog(
+        initial_state={"batch_results": [], "batch_summary_text": "Optimizing starts…"}
+    )
+
+    assert restored._batch_summary.toPlainText() == ""
+    assert restored._batch_progress.format() == "Ready"
+    restored.close()
+
+
+def test_advanced_opens_on_a_saved_value_that_is_not_the_default_and_the_log_records_it(
+    qapp, monkeypatch
+) -> None:
+    _run_batch_search_inline(monkeypatch)
+    old = _si2_dialog(initial_state={"batch_max_steps": 100})
+
+    assert old._batch_advanced_toggle.isChecked()
+    assert old._batch_max_steps.value() == 100
+    assert not old._batch_max_steps.isHidden()
+    old._batch_run.click()
+    assert "Optimizer max steps: 100" in old._batch_summary.toPlainText()
+    old.close()
+
+    plain = _si2_dialog(initial_state={"batch_max_steps": DEFAULT_OPTIMIZER_MAX_STEPS})
+    assert not plain._batch_advanced_toggle.isChecked()
+    plain.close()
+
+
+def test_the_force_tolerance_field_shows_its_smallest_value(qapp) -> None:
+    dialog = _si2_dialog()
+
+    dialog._batch_force_tolerance.setValue(5e-7)
+
+    assert dialog._batch_force_tolerance.hasAcceptableInput()
+    assert dialog._batch_force_tolerance.value() == pytest.approx(5e-7)
+    dialog.close()
+
+
+def test_the_log_alone_reproduces_a_search(qapp, monkeypatch) -> None:
+    _run_batch_search_inline(monkeypatch)
+    dialog = _si2_dialog()
+    dialog._batch_min_muon_atom.setValue(1.3)
+    dialog._batch_max_attempts.setValue(4000)
+
+    dialog._batch_run.click()
+
+    log = dialog._batch_summary.toPlainText()
+    assert "Min muon-muon distance (Å): 0.800" in log
+    assert "Min muon-atom distance (Å): 1.300" in log
+    assert "Max attempts: 4000" in log
+    assert "Force tolerance (eV/Å): 1e-05" in log
+    assert "Optimizer max steps: 300" in log
+    dialog.close()
+
+
+def test_the_force_tolerance_tooltip_states_its_unit_on_the_label_and_the_field(qapp) -> None:
+    dialog = _si2_dialog()
+    field = dialog._batch_force_tolerance
+
+    assert "eV/Å" in field.toolTip()
+    assert dialog._batch_form.labelForField(field).toolTip() == field.toolTip()
+    dialog.close()
+
+
+@pytest.mark.parametrize("checked", [False, True])
+def test_the_advanced_toggle_draws_nothing_behind_its_text(qapp, checked: bool) -> None:
+    previous_sheet = qapp.styleSheet()
+    theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)
+    dialog = _si2_dialog()
+    try:
+        dialog.show()
+        qapp.processEvents()
+        toggle = dialog._batch_advanced_toggle
+        toggle.setChecked(checked)
+        qapp.processEvents()
+        image = dialog._batch_controls_card.grab().toImage()
+        ratio = image.width() / dialog._batch_controls_card.width()
+        corner = toggle.mapTo(dialog._batch_controls_card, toggle.rect().topLeft())
+        background = image.pixelColor(int((corner.x() - 2) * ratio), int(corner.y() * ratio))
+
+        for point in (toggle.rect().topLeft(), toggle.rect().bottomRight()):
+            inside = toggle.mapTo(dialog._batch_controls_card, point)
+            assert image.pixelColor(int(inside.x() * ratio), int(inside.y() * ratio)) == background
+    finally:
+        dialog.close()
+        theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)
+        qapp.setStyleSheet(previous_sheet)
+
+
+def test_a_search_with_no_minima_does_not_read_as_a_success(qapp, monkeypatch) -> None:
+    host = _no_symmetry_host()
+    endpoints = [replace(entry, success=False) for entry in _two_nearby_sites(host)]
+    dialog = _dialog_with_endpoints(monkeypatch, endpoints, host)
+
+    dialog._batch_run.click()
+
+    assert dialog._batch_progress.format() == "No minima found"
+    assert dialog._batch_progress.property("generationState") == "warning"
+    snapshot = dialog.state_snapshot()
+    dialog.close()
+
+    restored = _si2_dialog(initial_state=snapshot)
+    assert restored._batch_progress.property("generationState") == "warning"
+    restored.close()
+
+
+def test_a_search_over_no_sites_replaces_them_without_asking(qapp, monkeypatch) -> None:
+    host = _no_symmetry_host()
+    failed = [replace(entry, success=False) for entry in _two_nearby_sites(host)]
+    dialog = _dialog_with_endpoints(monkeypatch, [*failed, *failed], host)
+    asked = _answer_confirmations(monkeypatch, answer=False)
+    dialog._batch_count.setValue(2)
+    dialog._batch_run.click()
+    assert dialog._batch_table.topLevelItemCount() == 0
+
+    dialog._batch_run.click()
+
+    assert asked == []
+    dialog.close()
+
+
+def test_the_discard_question_counts_what_exists_and_names_muons_only_when_there_are_some(
+    qapp, monkeypatch
+) -> None:
+    _run_batch_search_inline(monkeypatch)
+    details: list[str] = []
+
+    def _confirm(_parent, _title, _text, detail, *_args, **_kwargs) -> bool:
+        details.append(detail)
+        return False
+
+    monkeypatch.setattr("mufinder.app.workflow_table_utils.confirm_destructive", _confirm)
+    dialog = _si2_dialog()
+    dialog._batch_run.click()
+    sites = len(dialog._latest_batch_summary.clusters)
+    starts = len(dialog._latest_batch_results)
+
+    dialog._batch_run.click()
+
+    assert details[-1] == f"This discards {plural(sites, 'site')} from {plural(starts, 'start')}."
+
+    candidate = dialog._clustered_muon_candidates()[0]
+    dialog._add_candidate_muons_to_viewer("slice", [candidate.key], False)
+    dialog._batch_run.click()
+
+    assert details[-1] == (
+        f"This discards {plural(sites, 'site')} from {plural(starts, 'start')} "
+        "and removes 1 muon from the viewers."
+    )
+    dialog.close()
+
+
+def test_the_log_shows_how_a_search_ended_when_it_is_too_long_to_fit(qapp, monkeypatch) -> None:
+    _run_batch_search_inline(monkeypatch)
+    dialog = _si2_dialog()
+    dialog.resize(dialog.minimumSize())
+    dialog.show()
+    qapp.processEvents()
+
+    dialog._batch_run.click()
+    qapp.processEvents()
+
+    log = dialog._batch_summary
+    assert log.verticalScrollBar().maximum() > 0
+    assert log.textCursor().atEnd()
+    assert 0 <= log.cursorRect().top() and log.cursorRect().bottom() <= log.viewport().height()
+    dialog.close()
+
+
+def test_the_log_records_the_gaussian_width_the_search_ran_with(qapp, monkeypatch) -> None:
+    _run_batch_search_inline(monkeypatch)
+    dialog = _si2_dialog(initial_state={"gw_factor": 3.0})
+
+    dialog._batch_run.click()
+
+    assert "Gaussian width factor: 3" in dialog._batch_summary.toPlainText().splitlines()
+    dialog.close()
+
+    dialog = _si2_dialog()
+    dialog._batch_run.click()
+
+    assert "Gaussian width factor: 5" in dialog._batch_summary.toPlainText().splitlines()
     dialog.close()

@@ -15,7 +15,7 @@ from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
 import numpy as np
 from PySide6.QtCore import QItemSelectionModel, QPointF, QRectF, QSize, Qt, QThread, QTimer, Signal
-from PySide6.QtGui import QColor, QPainter, QPen
+from PySide6.QtGui import QColor, QPainter, QPen, QTextCursor
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QButtonGroup,
@@ -27,7 +27,6 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QFrame,
     QGroupBox,
-    QGridLayout,
     QHeaderView,
     QHBoxLayout,
     QLabel,
@@ -41,6 +40,7 @@ from PySide6.QtWidgets import (
     QTabBar,
     QTabWidget,
     QTextEdit,
+    QToolButton,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
@@ -56,16 +56,22 @@ from mufinder.app.theme import (
     cluster_color_map,
     adjust_font_size,
     body_font_family,
+    card_margins,
     controls_scroll_area,
     current_palette,
+    form_spacing,
+    set_progress_bar_state,
     style_hint_text,
     style_section_subtitle,
     style_section_title,
     use_square_top_table_corners,
 )
 from mufinder.domain.models import Structure
+from mufinder.domain.text import plural
 from mufinder.science.site_generation import generate_random_sites, lattice_frac_to_cart
 from mufinder.science.uep import (
+    DEFAULT_FORCE_TOLERANCE_EV_PER_ANG,
+    DEFAULT_OPTIMIZER_MAX_STEPS,
     UepError,
     UepField,
     UepGridSliceSample,
@@ -78,7 +84,6 @@ from mufinder.science.uep import (
     UepProbeResult,
     UepSourceData,
     cartesian_normal_to_lattice_plane_components,
-    calculate_optimization_zero_point_energy,
     classification_from_dict,
     deserialize_potential_grid,
     extract_isosurface,
@@ -108,6 +113,7 @@ from mufinder.science.uep_clustering import (
     relaxed_site_number_map,
     uep_batch_summary_from_dict,
     uep_search_log,
+    uep_search_outcome,
 )
 
 _ISOSURFACE_PREVIEW_MAX_GRID_POINTS = 28
@@ -129,14 +135,13 @@ _GW_FACTOR_TOOLTIP = (
     "MuFinder uses width = pseudopotential core radius / Gaussian width factor. "
     "Press Enter to rebuild the active UEP field and recalculate the full-cell potential grid."
 )
-_BATCH_OPTIMIZATION_TOLERANCE_TOOLTIP = (
-    "Termination tolerance passed to the UEP position optimizer for each batch-search start. "
-    "This matches the pymuon-suite UEP workflow, which exposes the optimizer tolerance rather than a force threshold."
+_DEFAULT_MAX_START_ATTEMPTS = 5000
+_SAVED_WITHOUT_ZPE_TEXT = (
+    "This search was saved without zero-point energies. Run the search again to compute them."
 )
-_BATCH_ZPE_TOOLTIP = (
-    "Evaluate the harmonic zero-point energy after the batch search has already relaxed the candidate muon sites. "
-    "MuFinder uses E_zp = 1/2 sum_i hbar omega_i with omega_i = sqrt(lambda_i / m_mu), where the Hessian eigenvalues "
-    "lambda_i are taken at the optimized UEP minimum."
+_BATCH_FORCE_TOLERANCE_TOOLTIP = (
+    "Force threshold for each start, in eV/Å: the optimizer stops when the norm of the "
+    "potential's gradient falls below this value."
 )
 _VIEWER_SPIN_DISPLAY_THRESHOLD = 0.1
 
@@ -1540,7 +1545,7 @@ class _BatchSearchThread(QThread):
         min_muon_muon: float,
         min_muon_atom: float,
         max_attempts: int,
-        optimization_tolerance_ev: float,
+        force_tolerance_ev_per_ang: float,
         max_steps: int,
         grouping_structure: object,
     ) -> None:
@@ -1553,7 +1558,7 @@ class _BatchSearchThread(QThread):
         self._min_muon_muon = float(min_muon_muon)
         self._min_muon_atom = float(min_muon_atom)
         self._max_attempts = int(max_attempts)
-        self._optimization_tolerance_ev = float(optimization_tolerance_ev)
+        self._force_tolerance_ev_per_ang = float(force_tolerance_ev_per_ang)
         self._max_steps = int(max_steps)
 
     def run(self) -> None:
@@ -1572,8 +1577,12 @@ class _BatchSearchThread(QThread):
             generation_lines = [
                 f"Requested random starts: {self._requested_starts}",
                 f"Initial starts generated: {len(starts)}",
-                f"Min muon-muon distance (A): {self._min_muon_muon:.3f}",
-                f"Optimization tolerance (eV): {self._optimization_tolerance_ev:.4g}",
+                f"Gaussian width factor: {self._field.source.gw_factor:g}",
+                f"Min muon-muon distance (Å): {self._min_muon_muon:.3f}",
+                f"Min muon-atom distance (Å): {self._min_muon_atom:.3f}",
+                f"Max attempts: {self._max_attempts}",
+                f"Force tolerance (eV/Å): {self._force_tolerance_ev_per_ang:.4g}",
+                f"Optimizer max steps: {self._max_steps}",
             ]
             if len(starts) < self._requested_starts:
                 generation_lines.append(
@@ -1592,9 +1601,8 @@ class _BatchSearchThread(QThread):
                 result = optimize_muon_position(
                     self._field,
                     start_position_ang=tuple(point.cartesian),
-                    tolerance_ev=self._optimization_tolerance_ev,
+                    force_tolerance_ev_per_ang=self._force_tolerance_ev_per_ang,
                     max_steps=self._max_steps,
-                    include_zero_point_energy=False,
                 )
                 if self.isInterruptionRequested():
                     return
@@ -1609,80 +1617,8 @@ class _BatchSearchThread(QThread):
                 distances = None
             if self.isInterruptionRequested():
                 return
-            self.batch_ready.emit(results, distances, "\n".join(generation_lines))
-        except Exception as exc:  # noqa: BLE001
-            if self.isInterruptionRequested():
-                return
-            self.failed.emit(str(exc))
-
-
-class _BatchZpeThread(QThread):
-    """Background thread that attaches harmonic ZPE data to optimized sites."""
-
-    prepared = Signal(int, str)
-    progress_changed = Signal(int, int)
-    zpe_ready = Signal(object, str)
-    failed = Signal(str)
-
-    def __init__(
-        self,
-        field: UepField,
-        *,
-        optimizations: list[UepOptimizationResult] | tuple[UepOptimizationResult, ...],
-    ) -> None:
-        super().__init__()
-        self._field = field
-        self._optimizations = tuple(optimizations)
-
-    def run(self) -> None:
-        try:
-            updated = list(self._optimizations)
-            successful_indexes = [
-                index for index, result in enumerate(self._optimizations) if result.success
-            ]
-            minima = sum(
-                self._optimizations[index].classification.label == "minimum"
-                for index in successful_indexes
-            )
-            if self.isInterruptionRequested():
-                return
-            self.prepared.emit(
-                len(successful_indexes),
-                "\n".join(
-                    [
-                        f"Minima available for ZPE: {minima}",
-                        "Evaluating harmonic zero-point energies from the optimized-site Hessians…",
-                    ]
-                ),
-            )
-
-            total = len(successful_indexes)
-            for completed, index in enumerate(successful_indexes, start=1):
-                if self.isInterruptionRequested():
-                    return
-                updated[index] = calculate_optimization_zero_point_energy(
-                    self._field, self._optimizations[index]
-                )
-                if self.isInterruptionRequested():
-                    return
-                self.progress_changed.emit(completed, total)
-
-            stable_minima = sum(
-                1 for index in successful_indexes if updated[index].zero_point_energy_ev is not None
-            )
-            self.zpe_ready.emit(
-                updated,
-                "\n".join(
-                    [
-                        f"Minima available for ZPE: {minima}",
-                        f"Stable minima with finite ZPE: {stable_minima}",
-                        (
-                            "Results with negative Hessian eigenvalues were retained without a ZPE because the optimized extremum is not a stable minimum."
-                            if stable_minima < len(successful_indexes)
-                            else "All minima produced a finite harmonic ZPE."
-                        ),
-                    ]
-                ),
+            self.batch_ready.emit(
+                results, distances, "\n".join([*generation_lines, uep_search_outcome(results)])
             )
         except Exception as exc:  # noqa: BLE001
             if self.isInterruptionRequested():
@@ -1767,7 +1703,6 @@ class UepAnalysisDialog(QDialog):
         self._isosurface_grid_thread: _IsosurfaceGridThread | None = None
         self._isosurface_mesh_thread: _IsosurfaceMeshThread | None = None
         self._batch_search_thread: _BatchSearchThread | None = None
-        self._batch_zpe_thread: _BatchZpeThread | None = None
         self._isosurface_request_id = 0
         self._pending_isosurface_level_ev: float | None = None
         self._pending_isosurface_layer_index: int | None = None
@@ -1898,41 +1833,8 @@ class UepAnalysisDialog(QDialog):
             button.setAutoDefault(False)
             button.setDefault(False)
 
-    @staticmethod
-    def _progress_bar_styles(chunk_color: str, *, text_color: str | None = None) -> str:
-        palette = current_palette()
-        resolved_text_color = palette.text_primary if text_color is None else str(text_color)
-        return (
-            "QProgressBar {"
-            f"border: 1px solid {palette.border};"
-            "border-radius: 7px;"
-            f"background: {palette.bg_surface_alt};"
-            f"color: {resolved_text_color};"
-            "text-align: center;"
-            "min-height: 22px;"
-            "}"
-            "QProgressBar::chunk {"
-            f"background: {chunk_color};"
-            "border-radius: 6px;"
-            "margin: 1px;"
-            "}"
-        )
-
-    def _apply_batch_search_progress_style(self, *, completed: bool) -> None:
-        self._batch_search_progress.setStyleSheet(
-            self._progress_bar_styles(
-                current_palette().accent,
-                text_color="#FFFFFF" if completed else None,
-            )
-        )
-
-    def _apply_batch_zpe_progress_style(self, *, completed: bool) -> None:
-        self._batch_zpe_progress.setStyleSheet(
-            self._progress_bar_styles(
-                current_palette().success,
-                text_color="#FFFFFF" if completed else None,
-            )
-        )
+    def _apply_batch_progress_style(self, *, completed: bool) -> None:
+        set_progress_bar_state(self._batch_progress, "complete" if completed else "active")
 
     @staticmethod
     def _normalized_visible_tab_index(raw_index: object) -> int:
@@ -2512,159 +2414,105 @@ class UepAnalysisDialog(QDialog):
         controls_layout.addWidget(title)
         controls_layout.addWidget(subtitle)
 
-        cards_row = QGridLayout()
+        cards_row = QHBoxLayout()
         cards_row.setContentsMargins(0, 0, 0, 0)
-        cards_row.setHorizontalSpacing(10)
-        cards_row.setVerticalSpacing(10)
+        cards_row.setSpacing(form_spacing())
 
-        sampling_card = QFrame(controls)
-        self._batch_sampling_card = sampling_card
-        sampling_card.setObjectName("analysisSliderPanel")
-        sampling_card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
-        sampling_card.setMinimumHeight(240)
-        sampling_layout = QVBoxLayout(sampling_card)
-        sampling_layout.setContentsMargins(16, 14, 16, 14)
-        sampling_layout.setSpacing(8)
-        sampling_title = QLabel("Sampling", sampling_card)
-        sampling_title.setObjectName("uepIsosurfacePanelTitle")
-        sampling_hint = QLabel(
-            "Specify the density of initial muon positions before running the positiion optimization",
-            sampling_card,
-        )
-        sampling_hint.setWordWrap(True)
-        style_hint_text(sampling_hint)
-        sampling_layout.addWidget(sampling_title)
-        sampling_layout.addWidget(sampling_hint)
-        sampling_form = QFormLayout()
-        sampling_form.setContentsMargins(0, 0, 0, 0)
-        sampling_form.setSpacing(8)
-        sampling_form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-        sampling_form.setFormAlignment(Qt.AlignmentFlag.AlignTop)
-        self._batch_count = QSpinBox(sampling_card)
+        controls_card = QFrame(controls)
+        self._batch_controls_card = controls_card
+        controls_card.setObjectName("analysisSliderPanel")
+        card_layout = QVBoxLayout(controls_card)
+        card_layout.setContentsMargins(card_margins())
+        card_layout.setSpacing(form_spacing())
+
+        search_form = QFormLayout()
+        search_form.setContentsMargins(0, 0, 0, 0)
+        search_form.setSpacing(form_spacing())
+        search_form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        search_form.setFormAlignment(Qt.AlignmentFlag.AlignTop)
+        self._batch_form = search_form
+        self._batch_count = QSpinBox(controls_card)
         self._batch_count.setRange(1, 200)
         self._batch_count.setValue(12)
-        self._batch_min_muon_muon = DecimalLineEdit(sampling_card)
+        self._batch_min_muon_muon = DecimalLineEdit(controls_card)
         self._batch_min_muon_muon.setRange(0.0, 10.0)
         self._batch_min_muon_muon.setValue(0.8)
-        self._batch_min_muon_atom = DecimalLineEdit(sampling_card)
+        self._batch_min_muon_atom = DecimalLineEdit(controls_card)
         self._batch_min_muon_atom.setRange(0.0, 10.0)
         self._batch_min_muon_atom.setValue(1.0)
-        self._batch_max_attempts = QSpinBox(sampling_card)
+        search_form.addRow("Random starts", self._batch_count)
+        search_form.addRow("Min muon-muon distance (Å)", self._batch_min_muon_muon)
+        search_form.addRow("Min muon-atom distance (Å)", self._batch_min_muon_atom)
+
+        self._batch_advanced_toggle = QToolButton(controls_card)
+        self._batch_advanced_toggle.setObjectName("sectionToggleButton")
+        self._batch_advanced_toggle.setText("Advanced")
+        self._batch_advanced_toggle.setAccessibleName("Advanced search settings")
+        self._batch_advanced_toggle.setCheckable(True)
+        self._batch_advanced_toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self._batch_advanced_toggle.setArrowType(Qt.ArrowType.RightArrow)
+        self._batch_advanced_toggle.toggled.connect(self._on_batch_advanced_toggled)
+        search_form.addRow(self._batch_advanced_toggle)
+
+        self._batch_max_attempts = QSpinBox(controls_card)
         self._batch_max_attempts.setRange(10, 500000)
-        self._batch_max_attempts.setValue(5000)
-        sampling_form.addRow("Random starts", self._batch_count)
-        sampling_form.addRow("Min muon-muon distance (A)", self._batch_min_muon_muon)
-        sampling_form.addRow("Min muon-atom distance (A)", self._batch_min_muon_atom)
-        sampling_form.addRow("Max attempts", self._batch_max_attempts)
-        sampling_layout.addLayout(sampling_form)
-        sampling_layout.addStretch(1)
-
-        optimizer_card = QFrame(controls)
-        optimizer_card.setObjectName("analysisSliderPanel")
-        optimizer_card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
-        optimizer_card.setMinimumHeight(240)
-        optimizer_layout = QVBoxLayout(optimizer_card)
-        optimizer_layout.setContentsMargins(16, 14, 16, 14)
-        optimizer_layout.setSpacing(8)
-        optimizer_title = QLabel("Search Controls", optimizer_card)
-        optimizer_title.setObjectName("uepIsosurfacePanelTitle")
-        optimizer_hint = QLabel(
-            "Tune the optimizer effort and convergence tolerance and adjust the Gaussian width factor used to define the size of the ionic charges.",
-            optimizer_card,
-        )
-        optimizer_hint.setWordWrap(True)
-        style_hint_text(optimizer_hint)
-        optimizer_layout.addWidget(optimizer_title)
-        optimizer_layout.addWidget(optimizer_hint)
-        optimizer_form = QFormLayout()
-        optimizer_form.setContentsMargins(0, 0, 0, 0)
-        optimizer_form.setSpacing(8)
-        optimizer_form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-        optimizer_form.setFormAlignment(Qt.AlignmentFlag.AlignTop)
-        self._batch_gw_factor_input = DecimalLineEdit(optimizer_card)
-        self._batch_gw_factor_input.setRange(0.001, 1_000.0)
-        self._batch_gw_factor_input.setDecimals(4)
-        self._batch_gw_factor_input.setValue(float(self._source.gw_factor))
-        self._batch_gw_factor_input.setMinimumWidth(124)
-        self._batch_gw_factor_input.setMaximumWidth(148)
-        self._batch_gw_factor_input.setToolTip(_GW_FACTOR_TOOLTIP)
-        self._batch_gw_factor_input.returnPressed.connect(self._on_gw_factor_return_pressed)
-        self._batch_gw_factor_input.editingFinished.connect(self._on_gw_factor_editing_finished)
-        self._batch_max_steps = QSpinBox(optimizer_card)
+        self._batch_max_attempts.setValue(_DEFAULT_MAX_START_ATTEMPTS)
+        self._batch_force_tolerance = DecimalLineEdit(controls_card)
+        self._batch_force_tolerance.setRange(1e-8, 10.0)
+        self._batch_force_tolerance.setDecimals(8)
+        self._batch_force_tolerance.setValue(DEFAULT_FORCE_TOLERANCE_EV_PER_ANG)
+        self._batch_force_tolerance.setToolTip(_BATCH_FORCE_TOLERANCE_TOOLTIP)
+        self._batch_max_steps = QSpinBox(controls_card)
         self._batch_max_steps.setRange(1, 1000)
-        self._batch_max_steps.setValue(100)
-        self._batch_optimization_tolerance = DecimalLineEdit(optimizer_card)
-        self._batch_optimization_tolerance.setRange(1e-8, 10.0)
-        self._batch_optimization_tolerance.setDecimals(6)
-        self._batch_optimization_tolerance.setValue(1e-5)
-        self._batch_optimization_tolerance.setToolTip(_BATCH_OPTIMIZATION_TOLERANCE_TOOLTIP)
-        optimizer_form.addRow("Gaussian width factor", self._batch_gw_factor_input)
-        optimizer_form.addRow("Optimization tolerance (eV)", self._batch_optimization_tolerance)
-        optimizer_form.addRow("Optimizer max steps", self._batch_max_steps)
-        optimizer_layout.addLayout(optimizer_form)
+        self._batch_max_steps.setValue(DEFAULT_OPTIMIZER_MAX_STEPS)
+        search_form.addRow("Max attempts", self._batch_max_attempts)
+        search_form.addRow("Force tolerance (eV/Å)", self._batch_force_tolerance)
+        search_form.addRow("Optimizer max steps", self._batch_max_steps)
+        search_form.labelForField(self._batch_force_tolerance).setToolTip(
+            _BATCH_FORCE_TOLERANCE_TOOLTIP
+        )
+        card_layout.addLayout(search_form)
+        self._on_batch_advanced_toggled(False)
 
-        self._batch_run = QPushButton("Run Batch Search", optimizer_card)
+        self._batch_run = QPushButton("Run Batch Search", controls_card)
         self._batch_run.clicked.connect(self._run_batch_search)
-        button_row = QHBoxLayout()
-        button_row.setContentsMargins(0, 4, 0, 0)
-        button_row.setSpacing(8)
-        button_row.addWidget(self._batch_run)
-        button_row.addStretch(1)
-        optimizer_layout.addLayout(button_row)
+        self._batch_progress = QProgressBar(controls_card)
+        self._batch_progress.setObjectName("uepBatchProgress")
+        self._batch_progress.setAccessibleName("Batch search progress")
+        self._batch_progress.setRange(0, 1)
+        self._batch_progress.setValue(0)
+        self._batch_progress.setFormat("Ready")
+        self._batch_progress.setTextVisible(True)
+        self._apply_batch_progress_style(completed=False)
+        run_row = QHBoxLayout()
+        run_row.setContentsMargins(0, 0, 0, 0)
+        run_row.setSpacing(form_spacing())
+        run_row.addWidget(self._batch_run)
+        run_row.addWidget(self._batch_progress, 1)
+        card_layout.addLayout(run_row)
+        card_layout.addStretch(1)
 
         log_card = QFrame(controls)
         log_card.setObjectName("uepIsosurfaceInfoCard")
-        log_card.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
-        log_card.setMinimumWidth(250)
-        log_card.setMinimumHeight(240)
         log_layout = QVBoxLayout(log_card)
-        log_layout.setContentsMargins(14, 12, 14, 12)
-        log_layout.setSpacing(8)
+        log_layout.setContentsMargins(card_margins())
+        log_layout.setSpacing(form_spacing())
         log_title = QLabel("Search Log", log_card)
         log_title.setObjectName("uepIsosurfaceLegendTitle")
         self._batch_summary = QTextEdit(log_card)
+        self._batch_summary.setAccessibleName("Search log")
         self._batch_summary.setReadOnly(True)
         self._batch_summary.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self._batch_summary.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        # The log gives way first, so a short window cannot lay the button over it.
         self._batch_summary.setMinimumHeight(96)
-        self._batch_summary.setMaximumHeight(148)
+        # The log takes the height of the controls beside it and scrolls.
+        self._batch_summary.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Ignored)
         self._batch_summary.setPlaceholderText("No batch search has been run yet.")
         log_layout.addWidget(log_title)
         log_layout.addWidget(self._batch_summary, 1)
-        self._batch_calculate_zpe = QPushButton("Calculate ZPE", log_card)
-        self._batch_calculate_zpe.setToolTip(_BATCH_ZPE_TOOLTIP)
-        self._batch_calculate_zpe.clicked.connect(self._run_batch_zpe)
-        log_layout.addWidget(self._batch_calculate_zpe, 0, Qt.AlignmentFlag.AlignLeft)
-        zpe_progress_label = QLabel("ZPE Progress", log_card)
-        zpe_progress_label.setObjectName("uepIsosurfaceMinorLabel")
-        log_layout.addWidget(zpe_progress_label)
-        self._batch_zpe_progress = QProgressBar(log_card)
-        self._batch_zpe_progress.setRange(0, 1)
-        self._batch_zpe_progress.setValue(0)
-        self._batch_zpe_progress.setFormat("Ready")
-        self._batch_zpe_progress.setTextVisible(True)
-        self._apply_batch_zpe_progress_style(completed=False)
-        log_layout.addWidget(self._batch_zpe_progress)
 
-        search_progress_label = QLabel("Search Progress", optimizer_card)
-        search_progress_label.setObjectName("uepIsosurfaceMinorLabel")
-        optimizer_layout.addWidget(search_progress_label)
-        self._batch_search_progress = QProgressBar(optimizer_card)
-        self._batch_search_progress.setRange(0, 1)
-        self._batch_search_progress.setValue(0)
-        self._batch_search_progress.setFormat("Ready")
-        self._batch_search_progress.setTextVisible(True)
-        self._apply_batch_search_progress_style(completed=False)
-        optimizer_layout.addWidget(self._batch_search_progress)
-        self._batch_progress = self._batch_search_progress
-
-        cards_row.addWidget(sampling_card, 0, 0, Qt.AlignmentFlag.AlignTop)
-        cards_row.addWidget(optimizer_card, 0, 1, Qt.AlignmentFlag.AlignTop)
-        cards_row.addWidget(log_card, 0, 2, Qt.AlignmentFlag.AlignTop)
-        cards_row.setColumnStretch(0, 4)
-        cards_row.setColumnStretch(1, 4)
-        cards_row.setColumnStretch(2, 3)
+        cards_row.addWidget(controls_card, 1)
+        cards_row.addWidget(log_card, 1)
         controls_layout.addLayout(cards_row)
 
         results_panel = QWidget(tab)
@@ -2742,6 +2590,17 @@ class UepAnalysisDialog(QDialog):
         layout.addWidget(controls)
         layout.addWidget(splitter, 1)
         return tab
+
+    def _on_batch_advanced_toggled(self, shown: bool) -> None:
+        self._batch_advanced_toggle.setArrowType(
+            Qt.ArrowType.DownArrow if shown else Qt.ArrowType.RightArrow
+        )
+        for control in (
+            self._batch_max_attempts,
+            self._batch_force_tolerance,
+            self._batch_max_steps,
+        ):
+            self._batch_form.setRowVisible(control, shown)
 
     def _create_viewer_muon_dialog(self, *, viewer_kind: str) -> _ManageViewerMuonsDialog:
         dialog = _ManageViewerMuonsDialog(
@@ -5132,7 +4991,7 @@ class UepAnalysisDialog(QDialog):
 
     def _gw_factor_input_widgets(self) -> tuple[DecimalLineEdit, ...]:
         widgets: list[DecimalLineEdit] = []
-        for name in ("_gw_factor_input", "_slice_gw_factor_input", "_batch_gw_factor_input"):
+        for name in ("_gw_factor_input", "_slice_gw_factor_input"):
             widget = getattr(self, name, None)
             if isinstance(widget, DecimalLineEdit):
                 widgets.append(widget)
@@ -5196,7 +5055,6 @@ class UepAnalysisDialog(QDialog):
         self._batch_viewer.set_structure(self._viewer_host_structure)
         self._batch_viewer_summary.setText(_BATCH_VIEWER_IDLE_TEXT)
         self._set_batch_progress_idle()
-        self._set_batch_zpe_progress_idle()
         self._refresh_viewer_muon_dialogs()
 
     def _set_batch_log(self, text: str) -> None:
@@ -5208,18 +5066,6 @@ class UepAnalysisDialog(QDialog):
             return
         existing = self._batch_summary.toPlainText().strip()
         self._batch_summary.setPlainText(f"{existing}\n{message}" if existing else message)
-
-    def _sync_batch_zpe_progress_from_results(self) -> None:
-        if self._latest_batch_results and any(
-            result.zero_point_energy_ev is not None or result.total_energy_ev is not None
-            for result in self._latest_batch_results
-        ):
-            self._set_batch_zpe_progress_complete()
-            return
-        self._set_batch_zpe_progress_idle()
-
-    def _batch_has_successful_optimizations(self) -> bool:
-        return any(result.success for result in self._latest_batch_results)
 
     def _batch_table_position(self, result: UepOptimizationResult) -> tuple[float, float, float]:
         return position_in_source_cell(result, self._grouping_structure())
@@ -5349,6 +5195,14 @@ class UepAnalysisDialog(QDialog):
             self._set_all_gw_factor_inputs(float(self._source.gw_factor))
             return
         if np.isclose(gw_factor, float(self._source.gw_factor)):
+            self._set_all_gw_factor_inputs(float(self._source.gw_factor))
+            self._refresh_gw_factor_controls()
+            return
+        if not self._confirm_discard_batch_results(
+            "Change the Gaussian width factor",
+            f"Change the Gaussian width factor to {gw_factor:g} and discard the search results?",
+            "Change width factor",
+        ):
             self._set_all_gw_factor_inputs(float(self._source.gw_factor))
             self._refresh_gw_factor_controls()
             return
@@ -5647,10 +5501,11 @@ class UepAnalysisDialog(QDialog):
         self._batch_item_by_key = {}
         for cluster in summary.clusters:
             sorted_member_indexes = self._batch_sorted_member_indexes(cluster)
+            representative = results[cluster.representative_index]
             cluster_payload = {
                 "kind": "cluster",
                 "cluster": asdict(cluster),
-                "representative": asdict(results[cluster.representative_index]),
+                "representative": asdict(representative),
                 "display_member_indexes": list(sorted_member_indexes),
             }
             cluster_item = QTreeWidgetItem(
@@ -5660,9 +5515,9 @@ class UepAnalysisDialog(QDialog):
                     self._format_batch_fractional(cluster.representative_fractional_position[0]),
                     self._format_batch_fractional(cluster.representative_fractional_position[1]),
                     self._format_batch_fractional(cluster.representative_fractional_position[2]),
-                    self._format_batch_energy(cluster.minimum_energy_ev),
-                    "",
-                    "",
+                    self._format_batch_energy(representative.classical_energy_ev),
+                    self._format_batch_energy(representative.zero_point_energy_ev),
+                    self._format_batch_energy(representative.total_energy_ev),
                 ]
             )
             cluster_key = self._batch_cluster_key(cluster.cluster_index)
@@ -5701,13 +5556,14 @@ class UepAnalysisDialog(QDialog):
             cluster_item.setExpanded(cluster_key in expanded_keys)
         if summary_text is not None:
             self._batch_summary.setPlainText(summary_text)
+            # The end of the log says how the search went.
+            self._batch_summary.moveCursor(QTextCursor.MoveOperation.End)
         self._batch_progress.setRange(0, max(len(results), 1))
         self._batch_progress.setValue(max(len(results), 1))
-        self._apply_batch_search_progress_style(completed=True)
+        set_progress_bar_state(self._batch_progress, "complete" if summary.clusters else "warning")
         self._batch_progress.setFormat(
             "Batch search complete" if summary.clusters else "No minima found"
         )
-        self._sync_batch_zpe_progress_from_results()
         self._update_batch_table_column_layout()
         if selected_keys or legacy_selected_row is not None:
             self._restore_batch_selection(keys=selected_keys, legacy_row=legacy_selected_row)
@@ -5856,14 +5712,13 @@ class UepAnalysisDialog(QDialog):
             "batch_min_muon_muon": float(self._batch_min_muon_muon.value()),
             "batch_min_muon_atom": float(self._batch_min_muon_atom.value()),
             "batch_max_attempts": int(self._batch_max_attempts.value()),
-            "batch_optimization_tolerance_ev": float(self._batch_optimization_tolerance.value()),
+            "batch_optimization_tolerance_ev": float(self._batch_force_tolerance.value()),
             "batch_max_steps": int(self._batch_max_steps.value()),
             "batch_results": [asdict(result) for result in self._latest_batch_results],
             "batch_summary_data": (
                 None if self._latest_batch_summary is None else asdict(self._latest_batch_summary)
             ),
             "batch_summary_text": self._batch_summary.toPlainText(),
-            "batch_zpe_completed": self._batch_zpe_progress.format() == "ZPE calculation complete",
             "batch_selected_keys": selected_keys,
         }
 
@@ -5904,9 +5759,6 @@ class UepAnalysisDialog(QDialog):
     def _restore_batch_search(self, state: Mapping[str, object]) -> None:
         """Show a saved search and its groups, grouping it when it has none in this form."""
 
-        text = state.get("batch_summary_text")
-        if isinstance(text, str):
-            self._batch_summary.setPlainText(text)
         raw_results = state.get("batch_results")
         results = (
             [
@@ -5919,6 +5771,9 @@ class UepAnalysisDialog(QDialog):
         )
         if not results:
             return
+        text = state.get("batch_summary_text")
+        if isinstance(text, str):
+            self._batch_summary.setPlainText(text)
         summary = uep_batch_summary_from_dict(state.get("batch_summary_data"))
         if summary is not None and not self._summary_fits_results(summary, results):
             summary = None
@@ -5930,10 +5785,18 @@ class UepAnalysisDialog(QDialog):
             return
         raw_selected_keys = state.get("batch_selected_keys")
         selected_row = state.get("batch_selected_row")
+        log = uep_search_log(self._batch_summary.toPlainText(), summary).replace(
+            f"\n{_SAVED_WITHOUT_ZPE_TEXT}", ""
+        )
+        if any(
+            results[cluster.representative_index].zero_point_energy_ev is None
+            for cluster in summary.clusters
+        ):
+            log = "\n".join([log, _SAVED_WITHOUT_ZPE_TEXT])
         self._populate_batch_results(
             results,
             summary,
-            summary_text=uep_search_log(self._batch_summary.toPlainText(), summary),
+            summary_text=log,
             selected_keys=(
                 [str(value) for value in raw_selected_keys]
                 if isinstance(raw_selected_keys, list)
@@ -5990,10 +5853,9 @@ class UepAnalysisDialog(QDialog):
                 (self._isosurface_level_input, "isosurface_level_value"),
                 (self._gw_factor_input, "gw_factor"),
                 (self._slice_gw_factor_input, "gw_factor"),
-                (self._batch_gw_factor_input, "gw_factor"),
                 (self._batch_min_muon_muon, "batch_min_muon_muon"),
                 (self._batch_min_muon_atom, "batch_min_muon_atom"),
-                (self._batch_optimization_tolerance, "batch_optimization_tolerance_ev"),
+                (self._batch_force_tolerance, "batch_optimization_tolerance_ev"),
             ):
                 raw = state.get(key)
                 if raw is not None:
@@ -6213,9 +6075,13 @@ class UepAnalysisDialog(QDialog):
             self._resample_all_slice_planes()
 
             self._restore_batch_search(state)
-            self._sync_batch_zpe_progress_from_results()
-            if bool(state.get("batch_zpe_completed")) and self._latest_batch_results:
-                self._set_batch_zpe_progress_complete()
+            self._batch_advanced_toggle.setChecked(
+                self._batch_max_attempts.value() != _DEFAULT_MAX_START_ATTEMPTS
+                or self._batch_max_steps.value() != DEFAULT_OPTIMIZER_MAX_STEPS
+                or not np.isclose(
+                    self._batch_force_tolerance.value(), DEFAULT_FORCE_TOLERANCE_EV_PER_ANG
+                )
+            )
 
             current_tab = state.get("current_tab")
             self._tabs.setCurrentIndex(
@@ -6303,67 +6169,45 @@ class UepAnalysisDialog(QDialog):
             self._batch_min_muon_muon,
             self._batch_min_muon_atom,
             self._batch_max_attempts,
-            self._batch_optimization_tolerance,
+            self._batch_force_tolerance,
             self._batch_max_steps,
             self._batch_run,
-            self._batch_calculate_zpe,
             self._batch_grouping_tolerance,
         ):
             widget.setEnabled(enabled)
         self._refresh_gw_factor_controls()
 
     def _set_batch_progress_idle(self) -> None:
-        self._apply_batch_search_progress_style(completed=False)
-        self._batch_search_progress.setRange(0, 1)
-        self._batch_search_progress.setValue(0)
-        self._batch_search_progress.setFormat("Ready")
-
-    def _set_batch_zpe_progress_idle(self) -> None:
-        self._apply_batch_zpe_progress_style(completed=False)
-        self._batch_zpe_progress.setRange(0, 1)
-        self._batch_zpe_progress.setValue(0)
-        self._batch_zpe_progress.setFormat("Ready")
-
-    def _set_batch_zpe_progress_complete(self) -> None:
-        completed = max(sum(1 for result in self._latest_batch_results if result.success), 1)
-        self._batch_zpe_progress.setRange(0, completed)
-        self._batch_zpe_progress.setValue(completed)
-        self._apply_batch_zpe_progress_style(completed=True)
-        self._batch_zpe_progress.setFormat("ZPE calculation complete")
+        self._apply_batch_progress_style(completed=False)
+        self._batch_progress.setRange(0, 1)
+        self._batch_progress.setValue(0)
+        self._batch_progress.setFormat("Ready")
 
     def _on_batch_search_prepared(self, total: int, summary_text: str) -> None:
         self._set_batch_log(summary_text)
-        self._apply_batch_search_progress_style(completed=False)
-        self._batch_search_progress.setRange(0, max(int(total), 1))
-        self._batch_search_progress.setValue(0)
-        self._batch_search_progress.setFormat("Optimizing %v/%m starts")
-        self._set_batch_zpe_progress_idle()
+        self._apply_batch_progress_style(completed=False)
+        self._batch_progress.setRange(0, max(int(total), 1))
+        self._batch_progress.setValue(0)
+        self._batch_progress.setFormat("Optimizing %v/%m starts")
 
-    def _on_batch_search_progress_changed(self, completed: int, total: int) -> None:
+    def _on_batch_progress_changed(self, completed: int, total: int) -> None:
         bounded_total = max(int(total), 1)
-        self._apply_batch_search_progress_style(completed=False)
-        if (
-            self._batch_search_progress.maximum() != bounded_total
-            or self._batch_search_progress.minimum() != 0
-        ):
-            self._batch_search_progress.setRange(0, bounded_total)
-            self._batch_search_progress.setFormat("Optimizing %v/%m starts")
-        self._batch_search_progress.setValue(min(max(int(completed), 0), bounded_total))
+        if self._batch_progress.maximum() != bounded_total or self._batch_progress.minimum() != 0:
+            self._batch_progress.setRange(0, bounded_total)
+            self._batch_progress.setFormat("Optimizing %v/%m starts")
+        self._batch_progress.setValue(min(max(int(completed), 0), bounded_total))
 
     def _on_batch_search_ready(self, results: object, distances: object, summary_text: str) -> None:
         if not isinstance(results, list):
             QMessageBox.warning(
                 self, "UEP batch search failed", "Batch search returned an unexpected result."
             )
-            self._apply_batch_search_progress_style(completed=False)
-            self._batch_search_progress.setRange(0, 1)
-            self._batch_search_progress.setValue(0)
-            self._batch_search_progress.setFormat("Batch search failed")
+            self._set_batch_progress_failed()
             return
-        self._apply_batch_search_progress_style(completed=True)
-        self._batch_search_progress.setRange(0, max(len(results), 1))
-        self._batch_search_progress.setValue(max(len(results), 1))
-        self._batch_search_progress.setFormat("Batch search complete")
+        self._apply_batch_progress_style(completed=True)
+        self._batch_progress.setRange(0, max(len(results), 1))
+        self._batch_progress.setValue(max(len(results), 1))
+        self._batch_progress.setFormat("Batch search complete")
         self._batch_minima_distances = (
             distances if isinstance(distances, UepMinimaDistances) else None
         )
@@ -6376,14 +6220,17 @@ class UepAnalysisDialog(QDialog):
                 summary,
                 summary_text=uep_search_log(self._batch_summary.toPlainText(), summary),
             )
-        self._set_batch_zpe_progress_idle()
         self._emit_state_changed()
 
+    def _set_batch_progress_failed(self) -> None:
+        self._apply_batch_progress_style(completed=False)
+        self._batch_progress.setRange(0, 1)
+        self._batch_progress.setValue(0)
+        self._batch_progress.setFormat("Batch search failed")
+
     def _on_batch_search_failed(self, message: str) -> None:
-        self._apply_batch_search_progress_style(completed=False)
-        self._batch_search_progress.setRange(0, 1)
-        self._batch_search_progress.setValue(0)
-        self._batch_search_progress.setFormat("Batch search failed")
+        self._set_batch_progress_failed()
+        self._set_batch_log(f"Batch search failed: {message}")
         QMessageBox.warning(self, "UEP batch search failed", message)
 
     def _on_batch_search_thread_finished(self) -> None:
@@ -6392,85 +6239,42 @@ class UepAnalysisDialog(QDialog):
             self._batch_search_thread = None
         self._set_batch_controls_enabled(True)
 
-    def _on_batch_zpe_prepared(self, total: int, summary_text: str) -> None:
-        self._append_batch_log(summary_text)
-        self._apply_batch_zpe_progress_style(completed=False)
-        self._batch_zpe_progress.setRange(0, max(int(total), 1))
-        self._batch_zpe_progress.setValue(0)
-        self._batch_zpe_progress.setFormat("Evaluating ZPE %v/%m sites")
+    def _confirm_discard_batch_results(self, title: str, text: str, accept_label: str) -> bool:
+        """Ask before an action discards sites the table lists; true when it lists none."""
 
-    def _on_batch_zpe_progress_changed(self, completed: int, total: int) -> None:
-        bounded_total = max(int(total), 1)
-        self._apply_batch_zpe_progress_style(completed=False)
-        if (
-            self._batch_zpe_progress.maximum() != bounded_total
-            or self._batch_zpe_progress.minimum() != 0
-        ):
-            self._batch_zpe_progress.setRange(0, bounded_total)
-            self._batch_zpe_progress.setFormat("Evaluating ZPE %v/%m sites")
-        self._batch_zpe_progress.setValue(min(max(int(completed), 0), bounded_total))
-
-    def _apply_updated_batch_results(
-        self, results: list[UepOptimizationResult], summary_text: str
-    ) -> None:
-        selected_keys = self._selected_batch_keys()
-        expanded_keys = self._expanded_batch_keys()
-        self._latest_batch_results = list(results)
-        self._batch_summary.setPlainText(summary_text)
-        summary = self._group_batch_results(self._latest_batch_results)
-        if summary is not None:
-            self._populate_batch_results(
-                self._latest_batch_results,
-                summary,
-                summary_text=uep_search_log(summary_text, summary),
-                selected_keys=selected_keys,
-                expanded_keys=expanded_keys,
-            )
-        self._refresh_viewer_muon_dialogs()
-
-    def _on_batch_zpe_ready(self, results: object, summary_text: str) -> None:
-        if not isinstance(results, list):
-            QMessageBox.warning(
-                self, "UEP ZPE calculation failed", "ZPE calculation returned an unexpected result."
-            )
-            self._apply_batch_zpe_progress_style(completed=False)
-            self._batch_zpe_progress.setRange(0, 1)
-            self._batch_zpe_progress.setValue(0)
-            self._batch_zpe_progress.setFormat("ZPE calculation failed")
-            return
-        self._apply_updated_batch_results(results, summary_text)
-        self._set_batch_zpe_progress_complete()
-        self._emit_state_changed()
-
-    def _on_batch_zpe_failed(self, message: str) -> None:
-        self._append_batch_log(f"ZPE calculation failed: {message}")
-        self._apply_batch_zpe_progress_style(completed=False)
-        self._batch_zpe_progress.setRange(0, 1)
-        self._batch_zpe_progress.setValue(0)
-        self._batch_zpe_progress.setFormat("ZPE calculation failed")
-        QMessageBox.warning(self, "UEP ZPE calculation failed", message)
-
-    def _on_batch_zpe_thread_finished(self) -> None:
-        sender = self.sender()
-        if sender is None or sender is self._batch_zpe_thread:
-            self._batch_zpe_thread = None
-        self._set_batch_controls_enabled(True)
+        summary = self._latest_batch_summary
+        if summary is None or not summary.clusters:
+            return True
+        detail = (
+            f"This discards {plural(len(summary.clusters), 'site')} "
+            f"from {plural(len(self._latest_batch_results), 'start')}"
+        )
+        muons = sum(
+            entry.source_kind == "clustered"
+            for kind in ("isosurface", "slice")
+            for entry in self._viewer_muons_for(kind)
+        )
+        if muons:
+            detail += f" and removes {plural(muons, 'muon')} from the viewers"
+        return workflow_table_utils.confirm_destructive(
+            self, title, text, f"{detail}.", accept_label
+        )
 
     def _run_batch_search(self) -> None:
-        if self._batch_search_thread is not None or self._batch_zpe_thread is not None:
+        if self._batch_search_thread is not None:
+            return
+        if not self._confirm_discard_batch_results(
+            "Run a new search",
+            "Run a new batch search and replace the current results?",
+            "Run search",
+        ):
             return
 
-        self._clear_clustered_viewer_muons()
+        had_results = bool(self._latest_batch_results)
         self._grouping_settled_timer.stop()
-        self._latest_batch_summary = None
-        self._batch_minima_distances = None
-        self._batch_item_by_key = {}
-        self._batch_table.clear()
-        self._batch_table.setHeaderLabels(_BATCH_TABLE_HEADERS)
-        self._update_batch_table_column_layout()
-        self._batch_viewer.set_structure(self._viewer_host_structure)
-        self._batch_viewer_summary.setText(_BATCH_VIEWER_IDLE_TEXT)
-        self._refresh_viewer_muon_dialogs()
+        self._clear_batch_results()
+        if had_results:
+            self._emit_state_changed()
 
         thread = _BatchSearchThread(
             self._field,
@@ -6486,47 +6290,21 @@ class UepAnalysisDialog(QDialog):
             min_muon_muon=self._batch_min_muon_muon.value(),
             min_muon_atom=self._batch_min_muon_atom.value(),
             max_attempts=self._batch_max_attempts.value(),
-            optimization_tolerance_ev=self._batch_optimization_tolerance.value(),
+            force_tolerance_ev_per_ang=self._batch_force_tolerance.value(),
             max_steps=self._batch_max_steps.value(),
             grouping_structure=self._grouping_structure(),
         )
         self._batch_search_thread = thread
         thread.prepared.connect(self._on_batch_search_prepared)
-        thread.progress_changed.connect(self._on_batch_search_progress_changed)
+        thread.progress_changed.connect(self._on_batch_progress_changed)
         thread.batch_ready.connect(self._on_batch_search_ready)
         thread.failed.connect(self._on_batch_search_failed)
         thread.finished.connect(self._on_batch_search_thread_finished)
         self._set_batch_controls_enabled(False)
-        self._apply_batch_search_progress_style(completed=False)
-        self._batch_search_progress.setRange(0, 0)
-        self._batch_search_progress.setFormat("Packing starts…")
-        self._set_batch_zpe_progress_idle()
+        self._apply_batch_progress_style(completed=False)
+        self._batch_progress.setRange(0, 0)
+        self._batch_progress.setFormat("Packing starts…")
         self._set_batch_log("Packing admissible starts and launching the optimization batch…")
-        thread.start()
-
-    def _run_batch_zpe(self) -> None:
-        if self._batch_search_thread is not None or self._batch_zpe_thread is not None:
-            return
-        if not self._latest_batch_results or not self._batch_has_successful_optimizations():
-            self._append_batch_log(
-                "ZPE warning: no successful optimized sites are available yet. Run Batch Search first and wait for the site optimizations to finish."
-            )
-            return
-
-        thread = _BatchZpeThread(self._field, optimizations=self._latest_batch_results)
-        self._batch_zpe_thread = thread
-        thread.prepared.connect(self._on_batch_zpe_prepared)
-        thread.progress_changed.connect(self._on_batch_zpe_progress_changed)
-        thread.zpe_ready.connect(self._on_batch_zpe_ready)
-        thread.failed.connect(self._on_batch_zpe_failed)
-        thread.finished.connect(self._on_batch_zpe_thread_finished)
-        self._set_batch_controls_enabled(False)
-        self._apply_batch_zpe_progress_style(completed=False)
-        self._batch_zpe_progress.setRange(0, 0)
-        self._batch_zpe_progress.setFormat("Preparing ZPE…")
-        self._append_batch_log(
-            "Launching harmonic zero-point-energy evaluation for the optimized sites…"
-        )
         thread.start()
 
     def closeEvent(self, event) -> None:
@@ -6546,7 +6324,6 @@ class UepAnalysisDialog(QDialog):
             getattr(self, "_isosurface_grid_thread", None),
             getattr(self, "_isosurface_mesh_thread", None),
             getattr(self, "_batch_search_thread", None),
-            getattr(self, "_batch_zpe_thread", None),
         ):
             if thread is None:
                 continue

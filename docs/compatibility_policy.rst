@@ -496,6 +496,20 @@ Compatibility ledger
        rewritten: they keep the numbers they were calculated with until calculated again.
      - Read-side repair. Keep until a saved-project schema version bump includes a
        migration that rewrites saved selections.
+   * - ``batch_zpe_completed``
+     - UEP analysis states in ``ui_state``, ignored by ``mufinder.app.uep_wizard``
+     - Older projects recorded whether the separate zero-point pass had run. The
+       zero-point energy is now part of the search, and the next save of the window's
+       state omits the key. A stored result without a ZPE stays blank until its search
+       is run again.
+     - Read-side tolerance only. Keep until the batch results become durable results.
+   * - ``batch_optimization_tolerance_ev``
+     - UEP analysis states in ``ui_state``, written and read by
+       ``mufinder.app.uep_wizard``
+     - The field is ``Force tolerance (eV/Å)``, a gradient norm in eV/Å, and the key
+       keeps its older name and holds that value, so saved projects restore it.
+     - Keep until the batch results become durable results, then rename with the
+       rest of the search settings.
    * - ``hier`` and ``kmeans`` grouping values on sites, generation runs and
        Journal records
      - ``MuonSite.properties`` of sites made from UEP clusters;
@@ -1153,3 +1167,9 @@ them. ``UepClusterSimilaritySummary`` is ``FeatureClusterSimilarity``,
 replacement of the same shape: group a batch with ``group_uep_minima``. So is the
 lazy ``__getattr__`` in ``mufinder.science.uep`` that resolved the clustering names
 from there; its one minor release of grace ended with 0.6.x.
+
+``calculate_optimization_zero_point_energy`` and the ``include_zero_point_energy``
+argument of ``probe_point`` and ``optimize_muon_position`` are gone:
+``optimize_muon_position`` always returns the zero-point energy. Its ``tolerance_ev``
+argument is ``force_tolerance_ev_per_ang``, because it holds a gradient norm. No alias
+is kept, since nothing outside MuFinder calls them and no project stores them.
