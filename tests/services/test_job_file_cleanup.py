@@ -700,3 +700,28 @@ def test_a_job_whose_saved_name_leaves_its_place_does_not_hold_a_folder(tmp_path
 
     assert outcome.kept == ()
     assert not directory.exists()
+
+
+def test_a_folder_a_later_item_takes_is_not_reported_as_kept(tmp_path: Path) -> None:
+    """A saved name leads the first item into the folder that is the second's own."""
+
+    service, document = _project(tmp_path)
+    stray = service.add_job(
+        document,
+        label="stray",
+        workflow_stage=WorkflowStage.MUON_RELAXATION,
+        calc_type="castep_positivemuon_relaxation",
+    )
+    owner = _job(service, document, "relax_a")
+    directory = _job_directory(document, owner.label)
+    cleanup = _cleanup(document, {stray.label: directory, owner.label: directory})
+
+    outcome = cleanup.execute(
+        [cleanup.plan_item([stray]), cleanup.plan_item([owner])],
+        choose_disposition=lambda _item: "delete",
+        stop_on_error=True,
+    )
+
+    assert not directory.exists()
+    assert outcome.deleted == (directory,)
+    assert outcome.kept == ()

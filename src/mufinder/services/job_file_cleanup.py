@@ -392,7 +392,8 @@ class JobFileCleanup:
                 cancelled,
                 tuple(deleted),
                 tuple(archived),
-                tuple(kept),
+                # A later item of the plan may have taken a folder an earlier one left.
+                tuple(entry for entry in kept if entry.directory.exists()),
             )
 
         for item in _overlapping_folders_together(plan):
