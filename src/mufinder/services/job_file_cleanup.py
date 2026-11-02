@@ -92,6 +92,10 @@ KEPT_AS_NOT_ITS_OWN = (
     "its saved location is not this job's own folder",
     "their saved locations are not these jobs' own folders",
 )
+KEPT_FOR_AN_ARCHIVE = (
+    "it holds a folder you chose to move",
+    "they hold folders you chose to move",
+)
 KEPT_IN_ANOTHER_PLACE = (
     "it belongs to another workflow or charge state",
     "they belong to other workflows or charge states",
@@ -377,6 +381,7 @@ class JobFileCleanup:
         failures: list[JobCleanupFailure] = []
         deleted: list[Path] = []
         archived: list[Path] = []
+        archive_destinations: list[Path] = []
         kept: list[JobCleanupKept] = []
         together = {
             job_id
@@ -416,6 +421,11 @@ class JobFileCleanup:
                         break
                     continue
                 because = self._folder_kept_because(item, together, bound)
+                if because is None and any(
+                    destination.is_relative_to(resolved_path(item.directory))
+                    for destination in archive_destinations
+                ):
+                    because = KEPT_FOR_AN_ARCHIVE
                 if because is not None:
                     document = self._document_getter()
                     label = (
@@ -433,7 +443,8 @@ class JobFileCleanup:
                             self.delete_path(item.directory)
                             deleted.append(item.directory)
                         else:
-                            self.archive_directory(item.directory, item.archive_root)
+                            destination = self.archive_directory(item.directory, item.archive_root)
+                            archive_destinations.append(resolved_path(destination))
                             archived.append(item.directory)
                     except OSError as exc:
                         failures.append(JobCleanupFailure(item, error=exc))

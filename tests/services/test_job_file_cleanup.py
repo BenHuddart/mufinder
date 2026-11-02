@@ -727,3 +727,32 @@ def test_a_folder_a_later_item_takes_is_not_reported_as_kept(tmp_path: Path) -> 
     assert not directory.exists()
     assert outcome.deleted == (directory,)
     assert outcome.kept == ()
+
+
+def test_a_folder_holding_a_folder_just_moved_is_not_offered(tmp_path: Path) -> None:
+    """The default archive place of a nested folder is inside the folder around it."""
+
+    service, document = _project(tmp_path)
+    inner_job = _job(service, document, "relax_a")
+    outer_job = _job(service, document, "relax_b")
+    outer = _job_directory(document, outer_job.label)
+    inner = outer / inner_job.label
+    inner.mkdir()
+    (inner / "moved.castep").write_text("kept", encoding="utf-8")
+    cleanup = _cleanup(document, {inner_job.label: inner, outer_job.label: outer})
+    asked: list[str] = []
+
+    def _answer(item: JobCleanupItem):
+        asked.append(item.label)
+        return "archive"
+
+    outcome = cleanup.execute(
+        [cleanup.plan_item([inner_job]), cleanup.plan_item([outer_job])],
+        choose_disposition=_answer,
+        stop_on_error=True,
+    )
+
+    assert asked == [inner_job.label]
+    assert (outer / ARCHIVE_FOLDER_NAME / inner_job.label / "moved.castep").is_file()
+    assert [entry.directory for entry in outcome.kept] == [outer]
+    assert outcome.archived == (inner,)
