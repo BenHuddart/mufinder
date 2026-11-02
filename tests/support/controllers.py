@@ -97,6 +97,7 @@ def make_context(
         else (lambda **_: None),
         status_message=statuses.append if statuses is not None else (lambda _message: None),
         set_submitted_rows=lambda _keys: None,
+        jobs_free_to_start=lambda jobs: jobs,
         definition_output_directory=definition_output_directory,
         job_output_directory=job_output_directory,
         job_seed_name=job_seed_name,

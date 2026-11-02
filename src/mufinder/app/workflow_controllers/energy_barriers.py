@@ -109,7 +109,7 @@ from mufinder.science.energy_barriers import (
     prepare_transition_state_structures,
 )
 from mufinder.science.site_generation import lattice_cart_to_frac, lattice_frac_to_cart
-from mufinder.workflow import StructureBridgeError, structure_to_spec, write_job_directory
+from mufinder.workflow import StructureBridgeError, structure_to_spec
 from mufinder.workflow.energy_barriers import (
     NUDGED_ELASTIC_BAND_CALC_TYPE,
     NUDGED_ELASTIC_BAND_SET_CALC_TYPE,
@@ -1257,15 +1257,12 @@ class EnergyBarriersController(WorkflowJobController):
             existing = self.job_for_neb_source_key(definition, key)
             if existing is not None:
                 if existing.status == JobStatus.DEFINED and spec is not None:
-                    own_spec = self.spec_for_defined_job(spec, output_root, existing)
-                    if own_spec is not None:
-                        write_job_directory(own_spec, output_root)
+                    self.rewrite_defined_job(spec, output_root, existing)
                 created.append(existing)
                 continue
             if spec is None:
                 continue
-            spec = self.spec_for_new_job(spec, output_root, key)
-            write_job_directory(spec, output_root)
+            spec = self.write_new_job(spec, output_root, key)
             job = self._context.project_service.add_job(
                 document,
                 label=spec.name,

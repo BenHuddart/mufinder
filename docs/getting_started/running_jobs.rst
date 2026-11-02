@@ -470,10 +470,11 @@ written into as it stands.
 
 An older project can hold two jobs in one folder. Opening it changes nothing, and
 neither job's files or records change until you act. Finished jobs stay as they are,
-and their results still read. A job waiting to run in such a
-folder is not started: ``Jobs not started`` names it and its folder under ``Details``,
-and the other jobs of the submission go ahead. Remove its row and add it again, and
-the new job gets a folder of its own. The folder stays, because the other job uses it.
+and their results still read. A job waiting to run in such a folder is not started:
+``Jobs not started`` names it and its folder under ``Details``, and the other jobs of
+the submission go ahead. ``Continue relaxation…`` refuses it the same way. Remove its
+row and add it again, and the new job gets a folder of its own. The folder stays,
+because the other job uses it.
 
 Reset and its clean-up
 ~~~~~~~~~~~~~~~~~~~~~~

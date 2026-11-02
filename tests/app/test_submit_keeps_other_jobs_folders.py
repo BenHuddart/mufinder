@@ -258,6 +258,32 @@ class TestAProjectAlreadyHoldingBothInOneFolder:
 
         assert _hashes(project.files) == before
         assert project.started == []
+        assert job.status == JobStatus.FAILED
+        assert project.asked == []
+        assert len(project.warned) == 1
+
+    def test_continue_relaxation_is_refused_before_anything_changes(
+        self, project: _Submission, monkeypatch
+    ) -> None:
+        _item, job = self._shared(project, JobStatus.FAILED)
+        before = _hashes(project.files)
+        monkeypatch.setattr(
+            project.controller,
+            "continue_job",
+            lambda *args, **kwargs: pytest.fail("continued a refused job"),
+        )
+
+        project.window._continue_relaxation_row(
+            controller=project.controller,
+            view=project.window._muon_relaxation_view,
+            key=ROW_KEY,
+            autosave_failure_message="",
+        )
+
+        assert _hashes(project.files) == before
+        assert job.status == JobStatus.FAILED
+        assert project.seed() == SEED
+        assert len(project.warned) == 1
 
     def test_a_defined_job_is_not_sent_to_a_cluster(
         self, project: _Submission, monkeypatch

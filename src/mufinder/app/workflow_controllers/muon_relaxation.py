@@ -69,7 +69,7 @@ from mufinder.services.site_relaxations import record_site_relaxation
 from mufinder.science.lattice import lattice_frac_to_cart, wrap_fractional
 from mufinder.science.relaxation_analysis import muon_fractional_position_from_cell
 from mufinder.services.relaxation_import import seed_is_usable
-from mufinder.workflow import StructureBridgeError, render_job, write_job_directory
+from mufinder.workflow import StructureBridgeError, render_job
 from mufinder.workflow.muon_site import (
     ACTIVE_MUON_RELAXATION_DEFINITION_KEY,
     MUON_RELAXATION_DEFINITION_CALC_TYPE,
@@ -606,7 +606,9 @@ class MuonRelaxationController(WorkflowJobController):
             if existing_job is not None:
                 if existing_job.status == JobStatus.DEFINED and spec is not None:
                     saved_seed = seed_mapping.get(key, seed_mapping.get(row.label))
-                    own_spec = self.spec_for_defined_job(
+                    if isinstance(saved_seed, str):
+                        saved_seed = saved_seed.strip()
+                    own_spec = self.rewrite_defined_job(
                         spec,
                         charge_root,
                         existing_job,
@@ -614,13 +616,11 @@ class MuonRelaxationController(WorkflowJobController):
                     )
                     if own_spec is not None:
                         seed_mapping[key] = own_spec.name
-                        write_job_directory(own_spec, charge_root)
                 created.append(existing_job)
                 continue
             if spec is None:
                 continue
-            spec = self.spec_for_new_job(spec, charge_root, key)
-            write_job_directory(spec, charge_root)
+            spec = self.write_new_job(spec, charge_root, key)
             job = self._context.project_service.add_job(
                 document,
                 label=row.label,

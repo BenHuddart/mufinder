@@ -372,10 +372,10 @@ def free_job_seed(seed: str, parent: Path) -> str:
     would have had is in use.
     """
 
-    if not (parent / seed).exists():
+    if not os.path.lexists(parent / seed):
         return seed
     index = 2
-    while (parent / f"{seed}_{index}").exists():
+    while os.path.lexists(parent / f"{seed}_{index}"):
         index += 1
     return f"{seed}_{index}"
 

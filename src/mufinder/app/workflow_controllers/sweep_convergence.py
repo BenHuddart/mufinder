@@ -61,7 +61,7 @@ from mufinder.services.definition_mappings import (
     sweep_definition_context_matches,
     sync_equivalent_mappings,
 )
-from mufinder.workflow import StructureBridgeError, structure_to_spec, write_job_directory
+from mufinder.workflow import StructureBridgeError, structure_to_spec
 
 from mufinder.app.convergence_adapter import convergence_job_name, expand_convergence_jobs
 from mufinder.app.convergence_types import (
@@ -453,12 +453,9 @@ class SweepConvergenceController(WorkflowJobController):
                 existing = self.job_for_sweep_key(definition, key)
                 if existing is not None:
                     if existing.status == JobStatus.DEFINED:
-                        own_spec = self.spec_for_defined_job(job_spec, output_root, existing)
-                        if own_spec is not None:
-                            write_job_directory(own_spec, output_root)
+                        self.rewrite_defined_job(job_spec, output_root, existing)
                     continue
-                job_spec = self.spec_for_new_job(job_spec, output_root, self.mapping_key(key))
-                write_job_directory(job_spec, output_root)
+                job_spec = self.write_new_job(job_spec, output_root, self.mapping_key(key))
                 job = self._context.project_service.add_job(
                     document,
                     label=job_spec.name,

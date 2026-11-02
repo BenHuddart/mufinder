@@ -47,7 +47,7 @@ from mufinder.services.definition_mappings import (
     sync_equivalent_mappings,
 )
 from mufinder.services.job_artifacts import ParsedJobArtifacts
-from mufinder.workflow import StructureBridgeError, write_job_directory
+from mufinder.workflow import StructureBridgeError
 
 from mufinder.app.uep_adapter import expand_uep_jobs
 from mufinder.app.uep_types import UepConfig, UepRunState, UepSourceRow
@@ -256,15 +256,12 @@ class UepController(WorkflowJobController):
             existing = self.job_for_key(definition, label)
             if existing is not None:
                 if existing.status == JobStatus.DEFINED and spec is not None:
-                    own_spec = self.spec_for_defined_job(spec, output_root, existing)
-                    if own_spec is not None:
-                        write_job_directory(own_spec, output_root)
+                    self.rewrite_defined_job(spec, output_root, existing)
                 created.append(existing)
                 continue
             if spec is None:
                 continue
-            spec = self.spec_for_new_job(spec, output_root, label)
-            write_job_directory(spec, output_root)
+            spec = self.write_new_job(spec, output_root, label)
             job = self._context.project_service.add_job(
                 document,
                 label=spec.name,

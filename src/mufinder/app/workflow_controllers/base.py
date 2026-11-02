@@ -59,6 +59,7 @@ from mufinder.services.project_service import (
     definitions_for_stage,
     job_for_mapping_key,
 )
+from mufinder.workflow import write_job_directory
 from mufinder.workflow.types import JobSpec
 
 from mufinder.app.workflow_table_utils import RESET_FAILED_ACTION_TEXT
@@ -100,6 +101,8 @@ class WorkflowControllerContext:
     #: Names the rows the submission in progress covers, ``()`` once it is over,
     #: so the backends' status message can report what applies to those rows.
     set_submitted_rows: Callable[[Sequence[object]], None]
+    #: Returns the jobs given less those in a folder another job uses, telling the user why.
+    jobs_free_to_start: Callable[[list[Job]], list[Job]]
 
     # Cross-workflow job/definition readers. These belong here (not in any Deps
     # class) because they read durable job/definition state the same way for
@@ -242,12 +245,16 @@ class WorkflowJobController:
         }
 
     def _row_job_ids(self, keys: Collection[str]) -> set[UUID]:
-        """Return the native jobs any definition binds to the rows ``keys`` name."""
+        """Return the native jobs any definition binds to the rows ``keys`` name.
+
+        A job still running counts as another job, since a second run in its folder would
+        overwrite it, and so does an import.
+        """
 
         return {
             job.id
             for job in self.jobs_for_removed_rows(keys)
-            if IMPORTED_JOB_TAG not in (job.tags or ())
+            if IMPORTED_JOB_TAG not in (job.tags or ()) and job.status not in ACTIVE_JOB_STATUSES
         }
 
     def _folder_taken(self, directory: Path, together: Collection[UUID]) -> bool:
@@ -260,21 +267,28 @@ class WorkflowJobController:
             directory, together=together
         )
 
-    def spec_for_new_job(self, spec: JobSpec, output_root: Path, key: object) -> JobSpec:
-        """Return ``spec``, under a free name when another job uses the folder of its own.
+    def write_new_job(self, spec: JobSpec, output_root: Path, key: object) -> JobSpec:
+        """Write a new job's inputs and return the spec they went under.
 
-        The row ``key`` names keeps a folder its earlier jobs used. A folder no job's records
-        use is taken as it stands, as it is for a row removed and added again.
+        Its own name, or a free one when another job uses the folder of that name. The row
+        ``key`` names keeps a folder its earlier jobs used. A folder no job's records use is
+        taken as it stands, as it is for a row removed and added again.
         """
 
-        if not self._folder_taken(output_root / spec.name, self._row_job_ids({str(key)})):
-            return spec
-        return replace(spec, name=free_job_seed(spec.name, output_root))
+        if self._folder_taken(output_root / spec.name, self._row_job_ids({str(key)})):
+            spec = replace(spec, name=free_job_seed(spec.name, output_root))
+        write_job_directory(spec, output_root)
+        return spec
 
-    def spec_for_defined_job(
+    def job_may_write_folder(self, job: Job, directory: Path) -> bool:
+        """Return whether ``job``'s inputs may be rewritten in ``directory``."""
+
+        return not self._folder_taken(directory, self.folder_sharers(job))
+
+    def rewrite_defined_job(
         self, spec: JobSpec, output_root: Path, job: Job, *, name: str | None = None
     ) -> JobSpec | None:
-        """Return ``spec`` to rewrite ``job``'s inputs from, named for ``job``'s own folder.
+        """Rewrite ``job``'s inputs in its own folder and return the spec they went under.
 
         ``name`` defaults to the job's label, which names its folder in every workflow that
         records no seed. ``None`` when another job uses that folder: its files stay as they
@@ -282,9 +296,11 @@ class WorkflowJobController:
         """
 
         name = job.label if name is None else name
-        if self._folder_taken(output_root / name, self.folder_sharers(job)):
+        if not self.job_may_write_folder(job, output_root / name):
             return None
-        return replace(spec, name=name)
+        spec = replace(spec, name=name)
+        write_job_directory(spec, output_root)
+        return spec
 
     def directory_companions(self, job: Job) -> list[Job]:
         """Return the jobs that share ``job``'s output directory by design.
@@ -492,6 +508,19 @@ class WorkflowJobController:
         if not plan.has_jobs:
             self._context.show_info("No ready jobs", self.no_ready_message)
             return
+
+        # Before any reset: a job left in another job's folder keeps its record as it is.
+        startable = [
+            job
+            for job in plan.jobs
+            if job.status == JobStatus.DEFINED or job_is_resubmittable_after_dismissal(job)
+        ]
+        free = {job.id for job in self._context.jobs_free_to_start(startable)}
+        refused = {job.id for job in startable} - free
+        if refused:
+            plan = replace(plan, jobs=tuple(job for job in plan.jobs if job.id not in refused))
+            if not plan.has_jobs:
+                return
 
         dismissed_jobs = [job for job in plan.jobs if job_is_resubmittable_after_dismissal(job)]
         if dismissed_jobs:

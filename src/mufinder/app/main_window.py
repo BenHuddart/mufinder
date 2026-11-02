@@ -5934,6 +5934,8 @@ class MainWindow(QMainWindow):
         job = jobs[0]
         if job.status not in CONTINUABLE_JOB_STATUSES:
             return
+        if not self._without_jobs_in_another_jobs_folder([job]):
+            return
 
         seed = view.continue_relaxation_dialog_seed(key)
         if seed is None:
@@ -6037,6 +6039,7 @@ class MainWindow(QMainWindow):
             request_dashboard_flush=lambda **kwargs: self._request_dashboard_flush(**kwargs),
             persist_ui_state=lambda **kwargs: self._persist_document_ui_state(**kwargs),
             status_message=lambda message: self.statusBar().showMessage(message),
+            jobs_free_to_start=lambda jobs: self._without_jobs_in_another_jobs_folder(jobs),
             set_submitted_rows=lambda keys: self._set_submitted_rows(keys),
             definition_output_directory=lambda definition: definition_output_directory(
                 self._document, definition

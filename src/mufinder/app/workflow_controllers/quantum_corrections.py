@@ -1071,7 +1071,7 @@ class QuantumCorrectionsController(WorkflowJobController):
             if existing is not None:
                 if existing.status == JobStatus.DEFINED:
                     seed_name = self.seed_name_for_key(definition, key)
-                    if self.spec_for_defined_job(spec, output_root, existing, name=seed_name):
+                    if self.job_may_write_folder(existing, output_root / seed_name):
                         existing.label = spec.name
                         _write_job_directory(spec, output_root, seed_name=seed_name)
                         source_runs[key] = spec.provenance["source_relaxation_run_id"]

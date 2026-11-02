@@ -566,11 +566,11 @@ defined by two of these modules, and a pinned count may only fall.
        the same folder or one holding or inside it, for a removal and a submission
        alike. Every workflow controller reaches it as
        ``WorkflowControllerContext.job_file_cleanup``: ``materialize`` writes through
-       ``WorkflowJobController.spec_for_new_job``, which gives a new job a free name when
-       another job uses its folder, and ``spec_for_defined_job``, which leaves the files
-       alone. The submit backends refuse a job left that way
-       (``jobs_in_another_jobs_folder``). A row's earlier jobs and its
-       ``directory_companions`` do not count (``folder_sharers``).
+       ``WorkflowJobController.write_new_job``, which gives a new job a free name when
+       another job uses its folder, and ``rewrite_defined_job``, which leaves the files
+       alone. A submission refuses a job left that way before any reset
+       (``jobs_in_another_jobs_folder``). A row's earlier jobs, unless still running, and
+       its ``directory_companions`` do not count (``folder_sharers``).
    * - ``mufinder.services.job_progress``
      - The geometry-optimisation progress of running jobs: which jobs report it
        (``job_reports_geometry_progress``), where their ``.castep`` is
