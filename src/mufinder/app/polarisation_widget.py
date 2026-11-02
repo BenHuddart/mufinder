@@ -747,7 +747,7 @@ class PolarisationWidget(QWidget):
                 table.insertRow(row)
                 stale = self._document is not None and bool(stale_sources(self._document, record))
                 status = "Stale" if stale else "Current"
-                if self._document is not None and older_method_sources(self._document, record):
+                if older_method_sources(record):
                     status += ", older method"
                 if record.estimate:
                     status += ", estimate"
@@ -822,8 +822,8 @@ class PolarisationWidget(QWidget):
                 "simulation ran. Recalculate it to use the current fields."
             )
         self._stale_note.setVisible(bool(stale))
-        older = older_method_sources(self._document, record) if record and self._document else []
-        self._older_method_note.setText(_older_fields_note(older))
+        older = older_method_sources(record) if record else []
+        self._older_method_note.setText(_older_fields_note(older, stale))
         self._older_method_note.setVisible(bool(older))
         warnings = record.simulation.warnings if record is not None else ()
         self._warning_note.setText("\n".join(warnings))
@@ -1123,32 +1123,38 @@ class PolarisationWidget(QWidget):
         if path is None:
             return
         try:
-            older = older_method_sources(self._document, record) if self._document else []
-            Path(path).write_text(export_text(record, older_sources=older), encoding="utf-8")
+            stale = stale_sources(self._document, record) if self._document else []
+            Path(path).write_text(export_text(record, stale=stale), encoding="utf-8")
         except OSError as exc:
             report_export_failed(self, exc)
             return
         report_export_saved(self, path)
 
 
-def _older_fields_note(sources: Sequence[SimulationSource]) -> str:
-    """The note for a simulation whose ``sources`` hold fields from an older method."""
+def _older_fields_note(older: Sequence[SimulationSource], stale: Sequence[SimulationSource]) -> str:
+    """The note for a simulation that ran from the ``older`` sources' fields.
 
-    names = ", ".join(source.title for source in sources)
-    return (
-        f"The fields of {names} were calculated with an older method. "
-        "Calculate them to update, then recalculate this simulation."
+    A source also in ``stale`` has had its fields replaced, so only the simulation
+    is left to run again.
+    """
+
+    names = ", ".join(source.title for source in older)
+    update = (
+        "Recalculate it to update."
+        if all(source in stale for source in older)
+        else "Calculate them to update, then recalculate this simulation."
     )
+    return f"This simulation used fields of {names} calculated with an older method. {update}"
 
 
 def export_text(
     record: PolarisationSimulationRecord,
     *,
-    older_sources: Sequence[SimulationSource] = (),
+    stale: Sequence[SimulationSource] = (),
 ) -> str:
     """The simulation as text: a header, the time block, a blank line, the spectrum block.
 
-    ``older_sources`` are the sources whose fields come from an older method.
+    ``stale`` are the sources whose fields were replaced since the simulation ran.
     """
 
     static = record.simulation.static
@@ -1159,8 +1165,9 @@ def export_text(
     ]
     if record.estimate:
         lines.append(f"# Estimate: {UNRELAXED_RESULTS_NOTE}")
-    if older_sources:
-        lines.append(f"# Older method: {_older_fields_note(older_sources)}")
+    older = older_method_sources(record)
+    if older:
+        lines.append(f"# Older method: {_older_fields_note(older, stale)}")
     for key, value in record.settings.to_json().items():
         lines.append(f"# {key}: {value}")
     for warning in record.simulation.warnings:

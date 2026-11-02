@@ -708,8 +708,11 @@ class MagneticFieldWidget(QWidget):
         action_row.addStretch(1)
         action_row.addWidget(self._polarisation_button)
         results_layout.addLayout(action_row)
-        results_layout.addWidget(self._calculation_status)
-        results_layout.addWidget(self._older_method_note)
+        # The note shares the status row, so showing it does not move the table.
+        status_row = QHBoxLayout()
+        status_row.addWidget(self._calculation_status, 1)
+        status_row.addWidget(self._older_method_note, 1)
+        results_layout.addLayout(status_row)
         results_layout.addWidget(self._result_table)
         results_layout.addWidget(self._breakdown_label)
         results_layout.addWidget(self._breakdown_table)
@@ -1542,12 +1545,15 @@ class MagneticFieldWidget(QWidget):
     def _refresh_older_method_note(self) -> None:
         """Show the older-method note while the table holds results that predate the method."""
 
-        state = self._field_results_state
         self._older_method_note.setVisible(
-            self._result_table.rowCount() > 0
-            and isinstance(state, Mapping)
-            and uses_older_method(state)
+            self._result_table.rowCount() > 0 and self._results_use_older_method()
         )
+
+    def _results_use_older_method(self) -> bool:
+        """Return whether the shown field results predate the current calculation method."""
+
+        state = self._field_results_state
+        return isinstance(state, Mapping) and uses_older_method(state)
 
     def _refresh_field_breakdown(self) -> None:
         """List the field terms that sum to the selected result row.
@@ -1970,6 +1976,9 @@ class MagneticFieldWidget(QWidget):
             )
             return
         dialog = MagneticFieldDistributionDialog(
-            results, self, estimate=self._results_are_estimates()
+            results,
+            self,
+            estimate=self._results_are_estimates(),
+            older_method=self._results_use_older_method(),
         )
         dialog.exec()

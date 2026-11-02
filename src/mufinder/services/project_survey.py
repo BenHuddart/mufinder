@@ -39,6 +39,7 @@ from mufinder.services.magnetic_field_results import (
     field_result_site_source,
     is_unrelaxed_site_source,
     magnetic_field_result,
+    uses_older_method,
 )
 from mufinder.services.project_document import (
     ProjectDocument,
@@ -417,6 +418,7 @@ def _magnetic_layers(document: ProjectDocument, host: Structure) -> list[SurveyL
         estimate = is_unrelaxed_site_source(
             field_result_site_source(result.data, form if isinstance(form, Mapping) else None)
         )
+        older = uses_older_method(result.data)
         markers = []
         for entry in commensurate_field_entries(result):
             position = _triplet(entry.get("muon_position"))
@@ -428,9 +430,12 @@ def _magnetic_layers(document: ProjectDocument, host: Structure) -> list[SurveyL
                 SurveyMarker(
                     _wrap(position),
                     SurveyMarkerKind.SITE,
-                    f"≈{magnitude:.3g} T" if estimate else f"{magnitude:.3g} T",
+                    ("≈" if estimate else "")
+                    + f"{magnitude:.3g} T"
+                    + (" (older)" if older else ""),
                     f"{site_label} · |B| = {magnitude:.4g} T"
-                    + (" · unrelaxed UEP site estimate" if estimate else ""),
+                    + (" · unrelaxed UEP site estimate" if estimate else "")
+                    + (" · calculated with an older method" if older else ""),
                 )
             )
         title = str(workspace.get("title", "")).strip() or "Magnetic fields"

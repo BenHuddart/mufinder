@@ -150,10 +150,11 @@ exists again. A simulation that uses a field result computed at an unrelaxed
 UEP site is marked ``estimate``, with the same note as on the Magnetic Fields
 page.
 
-A simulation whose field results were calculated with an older method (see
-:ref:`older-method-results`) has ``older method`` in its ``Status`` and a note
-naming those field results. Calculating them again on their page makes the
-simulation ``Stale``, and ``Recalculate`` then brings it up to date.
+A simulation records which method calculated the fields it ran from. If that
+was an older method (see :ref:`older-method-results`), its ``Status`` includes
+``older method`` and a note names those field results. Calculating them again on
+their page makes the status ``Stale, older method``, because the stored traces
+still came from the older fields, and ``Recalculate`` then brings it up to date.
 
 Exported data
 -------------

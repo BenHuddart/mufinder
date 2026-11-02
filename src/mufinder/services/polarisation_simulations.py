@@ -27,10 +27,14 @@ an unrelaxed UEP site.
 
 Recalculating or removing a source's fields replaces or deletes its field
 record. The simulation is then stale (:func:`stale_sources`): it is kept,
-and can be recalculated once every source has fields again. A source whose
-field record predates the current calculation method is listed by
-:func:`older_method_sources`; the simulation records no method version of its
-own, because recalculating those fields makes it stale.
+and can be recalculated once every source has fields again.
+
+Each source also records the calculation-method version of its fields when the
+simulation ran, in ``calculation_version``. The stored traces came from those
+fields whatever has happened to them since, so :func:`older_method_sources`
+reads this version and not the current field record: a simulation of older
+fields stays marked after the fields are recalculated, until it is run again.
+A source with no version recorded counts as older.
 """
 
 from __future__ import annotations
@@ -59,6 +63,7 @@ from mufinder.science.polarisation_simulation import (
     simulate_polarisation,
 )
 from mufinder.services.magnetic_field_results import (
+    CALCULATION_VERSION_KEY,
     MAGNETIC_FIELD_PAGE_OWNER,
     MAGNETIC_FIELD_RESULT_TYPE,
     MUON_POLARISATION_RESULT_TYPE,
@@ -134,20 +139,28 @@ class FieldSource:
 
 @dataclass(frozen=True, slots=True)
 class SimulationSource:
-    """One source of a simulation, with its weight and the field record it used."""
+    """One source of a simulation, with its weight and the field record it used.
+
+    ``calculation_version`` is the method version of those fields when the
+    simulation ran, ``None`` when they had none.
+    """
 
     owner: str
     record_id: str
     title: str
     weight: float = 1.0
+    calculation_version: object = None
 
     def to_json(self) -> dict[str, object]:
-        return {
+        payload: dict[str, object] = {
             "owner": self.owner,
             "record_id": self.record_id,
             "title": self.title,
             "weight": float(self.weight),
         }
+        if self.calculation_version is not None:
+            payload[CALCULATION_VERSION_KEY] = self.calculation_version
+        return payload
 
     @classmethod
     def from_json(cls, payload: Mapping[str, Any]) -> SimulationSource:
@@ -156,6 +169,7 @@ class SimulationSource:
             record_id=str(payload["record_id"]),
             title=str(payload.get("title", "")),
             weight=float(payload.get("weight", 1.0)),
+            calculation_version=payload.get(CALCULATION_VERSION_KEY),
         )
 
 
@@ -311,15 +325,16 @@ def prepare_polarisation_simulation(
             raise PolarisationError(f"{source.title or source.owner} has no field results")
         if not source.weight >= 0.0:
             raise PolarisationError("source weights must be >= 0")
+        data = record.data if isinstance(record.data, Mapping) else {}
         used.append(
             SimulationSource(
                 owner=source.owner,
                 record_id=str(record.id),
                 title=titles[source.owner],
                 weight=float(source.weight),
+                calculation_version=data.get(CALCULATION_VERSION_KEY),
             )
         )
-        data = record.data if isinstance(record.data, Mapping) else {}
         field_results.append(tuple(_field_results(data)))
         site_sources.append(field_result_site_source(data))
     return PolarisationSimulationRequest(
@@ -497,16 +512,15 @@ def stale_sources(
 
 
 def older_method_sources(
-    document: ProjectDocument, record: PolarisationSimulationRecord | SimulationSummary
+    record: PolarisationSimulationRecord | SimulationSummary,
 ) -> list[SimulationSource]:
-    """Return the sources whose stored fields were calculated with an older method."""
+    """Return the sources whose fields, when ``record`` ran, came from an older method."""
 
-    older = []
-    for source in record.sources:
-        current = magnetic_field_result(document, source.owner, MAGNETIC_FIELD_RESULT_TYPE)
-        if current is not None and uses_older_method(current.data):
-            older.append(source)
-    return older
+    return [
+        source
+        for source in record.sources
+        if uses_older_method({CALCULATION_VERSION_KEY: source.calculation_version})
+    ]
 
 
 def _field_source(document: ProjectDocument, owner: str, title: str) -> FieldSource | None:

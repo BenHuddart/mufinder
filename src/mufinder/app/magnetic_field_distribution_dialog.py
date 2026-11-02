@@ -33,7 +33,10 @@ from mufinder.science.field_histograms import (
     summed_probability_steps,
 )
 from mufinder.science.magnetic_fields import MagneticFieldError
-from mufinder.services.magnetic_field_results import UNRELAXED_SITE_NOTE
+from mufinder.services.magnetic_field_results import (
+    OLDER_METHOD_RESULTS_NOTE,
+    UNRELAXED_SITE_NOTE,
+)
 
 
 class MagneticFieldDistributionDialog(QDialog):
@@ -45,10 +48,12 @@ class MagneticFieldDistributionDialog(QDialog):
         parent: QWidget | None = None,
         *,
         estimate: bool = False,
+        older_method: bool = False,
     ) -> None:
         super().__init__(parent)
         self._results = self._coerce_results(results)
         self._estimate = estimate
+        self._older_method = older_method
         self._series_error: str | None = None
         label = self._title_label()
         self.setWindowTitle(f"Field Distribution - {label}")
@@ -167,7 +172,15 @@ class MagneticFieldDistributionDialog(QDialog):
             label = str(getattr(self._results[0], "site_label", "Field distribution"))
         else:
             label = f"{len(self._results)} field distributions"
-        return f"{label} (unrelaxed estimate)" if self._estimate else label
+        marks = [
+            mark
+            for mark, applies in (
+                ("unrelaxed estimate", self._estimate),
+                ("older method", self._older_method),
+            )
+            if applies
+        ]
+        return f"{label} ({', '.join(marks)})" if marks else label
 
     def _distribution_series(self) -> list[tuple[np.ndarray, np.ndarray, np.ndarray, str]]:
         return distribution_series(self._results)
@@ -238,6 +251,8 @@ class MagneticFieldDistributionDialog(QDialog):
         ]
         if self._estimate:
             lines.append(f"# Estimate: {UNRELAXED_SITE_NOTE}")
+        if self._older_method:
+            lines.append(f"# Older method: {OLDER_METHOD_RESULTS_NOTE}")
         for index, result in enumerate(self._results, start=1):
             label = str(getattr(result, "site_label", f"site {index}"))
             position = getattr(result, "muon_position", None)

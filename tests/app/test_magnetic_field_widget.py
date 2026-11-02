@@ -684,6 +684,76 @@ def test_clearing_older_field_results_clears_the_note(qapp, tmp_path) -> None:
     page.close()
 
 
+def _page_with_a_field(document, **version) -> MagneticFieldWidget:
+    page = MagneticFieldWidget()
+    page.set_document(document)
+    page.set_form_state(
+        {
+            "magnetic_field_results": {
+                "kind": "commensurate",
+                "results": [{"site_label": "site 1", "total_T": [0.0, 0.0, 1.0]}],
+                **version,
+            }
+        }
+    )
+    page.resize(1200, 1000)
+    page.show()
+    QApplication.processEvents()
+    return page
+
+
+def test_the_older_method_line_does_not_move_the_table_or_raise_the_minimum(qapp, tmp_path) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "layout.mufinder", "Layout")
+    service.add_structure(document, feo_host_structure())
+    older = _page_with_a_field(document)
+    current = _page_with_a_field(document, **{CALCULATION_VERSION_KEY: CALCULATION_METHOD_VERSION})
+
+    assert older._older_method_note.isVisible()
+    assert not current._older_method_note.isVisible()
+    assert older._result_table.y() == current._result_table.y()
+    assert older.minimumSizeHint().height() == current.minimumSizeHint().height()
+    older.close()
+    current.close()
+
+
+def test_the_distribution_plot_of_an_older_result_is_marked(qapp, tmp_path, monkeypatch) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "plot.mufinder", "Plot")
+    service.add_structure(document, feo_host_structure())
+    marks: list[dict[str, bool]] = []
+
+    class _Dialog:
+        def __init__(self, _results, _parent=None, **kwargs):
+            marks.append(kwargs)
+
+        def exec(self):
+            return QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(magnetic_field_widget_module, "MagneticFieldDistributionDialog", _Dialog)
+    distribution = {
+        "kind": "distribution",
+        "results": [
+            {
+                "site_label": "site 1",
+                "muon_position": [0.0, 0.0, 0.0],
+                "fields_T": [[0.0, 0.0, 1.0], [0.0, 0.0, 3.0]],
+                "histogram_centres_T": [1.0, 3.0],
+                "histogram_counts": [4.0, 2.0],
+            }
+        ],
+    }
+    for version in ({}, {CALCULATION_VERSION_KEY: CALCULATION_METHOD_VERSION}):
+        page = MagneticFieldWidget()
+        page.set_document(document)
+        page.set_form_state({"magnetic_field_results": {**distribution, **version}})
+        page._result_table.selectRow(0)
+        page._open_distribution_plot()
+        page.close()
+
+    assert [mark["older_method"] for mark in marks] == [True, False]
+
+
 def test_every_calculated_result_is_stored_with_the_method_version(
     qapp, tmp_path, monkeypatch
 ) -> None:
@@ -3036,7 +3106,7 @@ def test_magnetic_field_widget_opens_incommensurate_distribution_plot(
     opened: list[object] = []
 
     class _Dialog:
-        def __init__(self, results, parent=None, *, estimate=False):
+        def __init__(self, results, parent=None, **_marks):
             opened.append(tuple(results))
 
         def exec(self):
@@ -3090,7 +3160,7 @@ def test_magnetic_field_widget_opens_selected_distribution_plots_together(
     opened: list[tuple[object, ...]] = []
 
     class _Dialog:
-        def __init__(self, results, parent=None, *, estimate=False):
+        def __init__(self, results, parent=None, **_marks):
             opened.append(tuple(results))
 
         def exec(self):
@@ -3125,7 +3195,7 @@ def test_magnetic_field_widget_plots_a_restored_distribution(qapp, tmp_path, mon
     opened: list[tuple[object, ...]] = []
 
     class _Dialog:
-        def __init__(self, results, parent=None, *, estimate=False):
+        def __init__(self, results, parent=None, **_marks):
             opened.append(tuple(results))
 
         def exec(self):

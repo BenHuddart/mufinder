@@ -1511,8 +1511,8 @@ Results from an older method
 A correction to a calculation can change what the same inputs give, so every
 result records the version of the method that calculated it. A stored result
 from an older version, or with no version recorded, shows one line: ``Calculated
-with an older method. Calculate to update.`` The line appears above the results
-table on the Magnetic Fields page and in the results of the ``Dipolar Tensor``
+with an older method. Calculate to update.`` The line appears beside the results
+status on the Magnetic Fields page and in the results of the ``Dipolar Tensor``
 and ``Nuclear Relaxation`` dialogs.
 
 The line means the numbers shown may differ from what the same inputs give now.
@@ -1520,8 +1520,13 @@ MuFinder never rewrites or recalculates them on its own, so they stay exactly as
 calculated, and saving, reopening or saving a workspace keeps them and the line.
 The calculation's ``Calculate`` button replaces them with new numbers and clears
 the line. Each of the three results has its own line and its own ``Calculate``.
-A simulation that uses older fields says so on the Polarisation page (see
-:doc:`polarisation`).
+
+The mark follows older field values wherever they go. The distribution plot
+title ends in ``(older method)``, its ``Export Data…`` file carries an ``# Older
+method:`` header line, and the project survey's local-field marker ends in
+``(older)``, for example ``≈1.06 T (older)``. A simulation that used older fields
+says so on the Polarisation page and in its export until it is run again, even
+after those fields are recalculated (see :doc:`polarisation`).
 
 For developers: the muon-site source is stored as ``site_source`` (``uep_clustering``,
 ``relaxation_clustering`` or ``custom``), and the method version as
