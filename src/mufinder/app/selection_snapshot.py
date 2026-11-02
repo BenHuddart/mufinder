@@ -48,7 +48,7 @@ from PySide6.QtWidgets import (
 )
 
 from mufinder.app.eliding_label import ElidingComboBox
-from mufinder.app.theme import SPACING
+from mufinder.app.theme import SPACING, track_item_view_corners
 
 KeyT = TypeVar("KeyT")
 
@@ -351,6 +351,7 @@ class RowControlsTable(QTableWidget):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.setTabKeyNavigation(False)
+        track_item_view_corners(self)
 
     def focusNextPrevChild(self, next: bool) -> bool:  # noqa: A002, N802 - Qt API naming.
         if next and self.isVisible() and QApplication.focusWidget() is self:
