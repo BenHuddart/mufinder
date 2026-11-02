@@ -216,3 +216,23 @@ def test_a_name_too_long_for_a_folder_says_so_plainly(tmp_path: Path) -> None:
 
     assert not dialog._create_button.isEnabled()
     assert _reason(dialog) == "That folder cannot be used: file name too long."
+
+
+def test_a_height_set_by_hand_moves_only_by_the_reasons_change(tmp_path: Path) -> None:
+    _not_empty(tmp_path, "word " * 12 + "end")
+    dialog = _shown(_dialog(tmp_path))
+    dialog.resize(dialog.width(), 300)
+    QApplication.processEvents()
+
+    dialog._name_edit.setText("C")
+    dialog._name_edit.setText("Co")
+    QApplication.processEvents()
+    assert dialog.height() == 300
+
+    dialog._name_edit.setText("word " * 12 + "end")
+    QApplication.processEvents()
+    assert dialog.height() > 300
+
+    dialog._name_edit.setText("Co")
+    QApplication.processEvents()
+    assert dialog.height() == 300

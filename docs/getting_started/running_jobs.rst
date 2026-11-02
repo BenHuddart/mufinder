@@ -256,7 +256,9 @@ right-click menu, or Delete/Backspace):
 - If a save fails while closing, for example on a read-only folder or a full
   disk, the reason is shown and the window stays open, whether or not closing
   asked first. The next close asks, so ``Don't save`` is always a way out. The
-  file that could not be written keeps its earlier content.
+  file that could not be written keeps its earlier content. The exception is a
+  project with only an upgrade or tidying from opening it to write: that closes
+  without a message, and opening it next time does the same work again.
 
 The Job Dashboard
 -----------------

@@ -1923,8 +1923,10 @@ Saving is split between autosave and manual save:
   searches to the form the analysis wizard writes. Closing a window asks
   ``Save project?`` only if that comparison finds analysis-session state changed,
   or the last save on closing failed. Otherwise closing writes, without asking,
-  whatever else differs from disk: durable state waiting for its coalesced
-  autosave, and the project home's stage, which moves with every page visited.
+  whatever else differs from disk. If durable state waiting for its coalesced
+  autosave cannot be written, the window stays open. If the only thing to write is
+  what loading upgraded or tidied, or the project home's stage, which moves with
+  every page visited, a failed write closes anyway and the next open redoes it.
   Opening a different project flushes the autosave but does not prompt, so
   unsaved analysis-session state is discarded; save first.
 - The manual-save bucket holds exploratory UI state: UEP wizard tab choices,

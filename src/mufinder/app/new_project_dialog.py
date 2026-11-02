@@ -137,8 +137,10 @@ class NewProjectDialog(QDialog):
         self._create_button.setEnabled(not reason)
         # Before the first show the width is not yet the one it will have.
         if self.isVisible():
+            # Only by the reason's change: the user may have made the dialog taller.
+            previous_height, previous_minimum = self.height(), self.minimumHeight()
             self._fit_height()
-            self.resize(self.width(), self.minimumHeight())
+            self.resize(self.width(), previous_height + self.minimumHeight() - previous_minimum)
 
     def resizeEvent(self, event) -> None:  # noqa: N802 - Qt API naming.
         super().resizeEvent(event)

@@ -205,8 +205,12 @@ class UnsavedChanges(Enum):
     """What a save of a project would keep that is not on disk yet."""
 
     NONE = "none"
+    #: Only what opening the project or moving around in it produced: an upgrade or a
+    #: tidied search from loading, and the stage the project home opens at. Redone next
+    #: time if it cannot be written, so nothing is lost.
+    TIDYING = "tidying"
     #: Worth keeping but not worth a question: job state waiting for its coalesced
-    #: autosave, and the stage the project home opens at.
+    #: autosave, say. Lost if it cannot be written.
     ROUTINE = "routine"
     #: A layout or viewer choice, which only a save keeps.
     UI_STATE = "ui_state"
@@ -273,6 +277,10 @@ class ProjectService:
         # left in memory: what ``unsaved_changes`` compares against.
         self._settled_ui_state: dict[str, _SettledUiState] = {}
         self._manifest_hashes: dict[str, str] = {}
+        # project_root -> what loading upgraded and no save has written yet: each entity
+        # key with its hash as loaded, and whether the schema version moved.
+        self._upgraded_entities: dict[str, dict[tuple[str, str, str], str]] = {}
+        self._upgraded_schema: set[str] = set()
         # (project_root, entity_type, entity_id) -> hash of the canonical
         # serialized payload last persisted for that entity. "entity_id" is the
         # entity UUID string for real entities, and a sentinel ("ui_state") for
@@ -335,6 +343,8 @@ class ProjectService:
             del self._content_hashes[key]
         self._settled_ui_state.pop(root_key, None)
         self._manifest_hashes.pop(root_key, None)
+        self._upgraded_entities.pop(root_key, None)
+        self._upgraded_schema.discard(root_key)
 
     def create_project(self, project_root: Path, name: str) -> ProjectDocument:
         """Create a new project document and persist baseline files."""
@@ -436,8 +446,15 @@ class ProjectService:
         ui_key = (root_key, self._UI_STATE_ENTITY_TYPE, self._UI_STATE_ENTITY_ID)
         if self._content_hashes.get(ui_key) != self._payload_hash(to_jsonable(document.ui_state)):
             self._content_hashes.pop(ui_key, None)
-        if stored_version == stored_schema_version(manifest):
-            self._manifest_hashes[root_key] = self._manifest_hash(document)
+        self._manifest_hashes[root_key] = self._manifest_hash(document)
+        if stored_version != stored_schema_version(manifest):
+            self._upgraded_schema.add(root_key)
+        self._upgraded_entities[root_key] = {
+            (root_key, entity_type, entity_id): self._payload_hash(to_jsonable(entity))
+            for entity_type, entities in self._entity_groups(document)
+            for entity_id, entity in entities
+            if (entity_type, entity_id) in unsaved_keys
+        }
 
         issues = self.validate_document(document)
         if issues:
@@ -524,6 +541,8 @@ class ProjectService:
             written += 1
         self._settled_ui_state[root_key] = _SettledUiState.of(ui_payload, ui_digest)
         self._manifest_hashes[root_key] = self._manifest_hash(document)
+        self._upgraded_entities.pop(root_key, None)
+        self._upgraded_schema.discard(root_key)
 
         trace.log_summary(extra=f"entity_files_written={written} entity_files_skipped={skipped}")
 
@@ -553,8 +572,16 @@ class ProjectService:
             and self._payload_hash(settled.with_quiet_keys(payload)) != settled.digest
         ):
             return UnsavedChanges.UI_STATE
-        if ui_state_moved or self._durable_state_unwritten(document, root_key):
+        if self._durable_state_unwritten(document, root_key):
             return UnsavedChanges.ROUTINE
+        ui_key = (root_key, self._UI_STATE_ENTITY_TYPE, self._UI_STATE_ENTITY_ID)
+        if (
+            ui_state_moved
+            or ui_key not in self._content_hashes
+            or root_key in self._upgraded_schema
+            or self._upgraded_entities.get(root_key)
+        ):
+            return UnsavedChanges.TIDYING
         return UnsavedChanges.NONE
 
     def _manifest_hash(self, document: ProjectDocument) -> str:
@@ -565,19 +592,18 @@ class ProjectService:
         return self._payload_hash(payload)
 
     def _durable_state_unwritten(self, document: ProjectDocument, root_key: str) -> bool:
-        """Whether the manifest or any entity differs from what was last written."""
+        """Whether the manifest or an entity holds more than loading's upgrades left."""
 
         if self._manifest_hashes.get(root_key) != self._manifest_hash(document):
             return True
-        ui_key = (root_key, self._UI_STATE_ENTITY_TYPE, self._UI_STATE_ENTITY_ID)
-        if ui_key not in self._content_hashes:
-            return True
+        upgraded = self._upgraded_entities.get(root_key, {})
         live_keys: set[tuple[str, str, str]] = set()
         for entity_type, entities in self._entity_groups(document):
             for entity_id, entity in entities:
                 key = (root_key, entity_type, entity_id)
                 live_keys.add(key)
-                if self._content_hashes.get(key) != self._payload_hash(to_jsonable(entity)):
+                digest = self._payload_hash(to_jsonable(entity))
+                if digest not in (self._content_hashes.get(key), upgraded.get(key)):
                     return True
         return any(
             key[0] == root_key and key[1] != self._UI_STATE_ENTITY_TYPE and key not in live_keys

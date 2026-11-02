@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
+import json
+import os
 from pathlib import Path
 
 from PySide6.QtCore import QSettings, Qt
@@ -12,6 +14,7 @@ import pytest
 
 from mufinder.app import main_window as main_window_module
 from mufinder.app.main_window import MainWindow
+from mufinder.domain.enums import WorkflowStage
 from mufinder.services.project_service import ProjectService
 from tests.support.main_window import answer_new_project
 
@@ -488,6 +491,140 @@ def test_an_unchanged_project_in_a_read_only_folder_closes(
 
     assert window.close() is True
     assert answered_choices == []
+
+
+# --- Closing a project in a read-only folder ------------------------------------
+
+
+@pytest.fixture
+def read_only(tmp_path: Path) -> Iterator[Callable[[Path], None]]:
+    """Make a project's folders read-only, and writable again after the test."""
+
+    roots: list[Path] = []
+
+    def _modes(root: Path, mode: int) -> None:
+        for folder in [root, *(path for path in root.rglob("*") if path.is_dir())]:
+            folder.chmod(mode)
+
+    def _make(root: Path) -> None:
+        roots.append(root)
+        _modes(root, 0o555)
+
+    yield _make
+    for root in roots:
+        _modes(root, 0o755)
+
+
+_NEEDS_FILE_MODES = pytest.mark.skipif(
+    not hasattr(os, "geteuid") or os.geteuid() == 0, reason="needs file modes"
+)
+
+
+def _record_critical(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    titles: list[str] = []
+    monkeypatch.setattr(QMessageBox, "critical", lambda _parent, title, _text: titles.append(title))
+    return titles
+
+
+def _edit_json(path: Path, **changes: object) -> None:
+    payload = json.loads(path.read_text())
+    payload.update(changes)
+    path.write_text(json.dumps(payload))
+
+
+@_NEEDS_FILE_MODES
+@pytest.mark.parametrize("older", ["tidying", "migration"])
+def test_read_only_tidying_or_a_migration_closes_silently_and_waits_for_next_time(
+    window: MainWindow,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    answered_choices: list,
+    read_only: Callable[[Path], None],
+    older: str,
+) -> None:
+    root = _project(tmp_path)
+    if older == "tidying":
+        _edit_json(root / "state.json", default_cut_off_energy=500.0)
+    else:
+        _edit_json(root / "project.json", schema_version=1)
+    before = {path: path.read_bytes() for path in root.rglob("*.json")}
+    read_only(root)
+    critical = _record_critical(monkeypatch)
+    assert window.open_project(root)
+    QApplication.processEvents()
+
+    assert window.close() is True
+
+    assert critical == []
+    assert answered_choices == []
+    assert {path: path.read_bytes() for path in root.rglob("*.json")} == before
+
+
+@_NEEDS_FILE_MODES
+def test_read_only_home_stage_closes_silently(
+    window: MainWindow,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    answered_choices: list,
+    read_only: Callable[[Path], None],
+) -> None:
+    root = _project(tmp_path)
+    read_only(root)
+    critical = _record_critical(monkeypatch)
+    assert window.open_project(root)
+    window.show_page("host_structure")
+
+    assert window.close() is True
+
+    assert critical == []
+    assert answered_choices == []
+
+
+@_NEEDS_FILE_MODES
+def test_read_only_job_state_blocks_and_the_next_close_asks(
+    window: MainWindow,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    answered_choices: list,
+    read_only: Callable[[Path], None],
+) -> None:
+    root = _project(tmp_path)
+    read_only(root)
+    critical = _record_critical(monkeypatch)
+    assert window.open_project(root)
+    window._project_service.add_job(
+        window._document,
+        label="Relax",
+        workflow_stage=WorkflowStage.PRISTINE_RELAXATION,
+        calc_type="castep_pristine_relaxation",
+    )
+
+    assert window.close() is False
+
+    assert critical == ["Save blocked"]
+    assert answered_choices == []
+    assert window.close() is False
+    assert len(answered_choices) == 1
+
+
+@_NEEDS_FILE_MODES
+def test_read_only_user_change_asks_and_a_failed_save_blocks(
+    window: MainWindow,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    answered_choices: list,
+    read_only: Callable[[Path], None],
+) -> None:
+    root = _project(tmp_path)
+    read_only(root)
+    critical = _record_critical(monkeypatch)
+    assert window.open_project(root)
+    _change_a_viewer_choice(window)
+
+    assert window.close() is False
+
+    assert len(answered_choices) == 1
+    assert critical == ["Save blocked"]
 
 
 # --- New Project ----------------------------------------------------------------

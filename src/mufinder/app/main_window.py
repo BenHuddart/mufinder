@@ -1412,7 +1412,13 @@ class MainWindow(QMainWindow):
                 self._resume_after_abandoned_close()
                 event.ignore()
                 return
-            if answer == "save":
+            if answer == "tidy":
+                try:
+                    self._project_service.save_project(self._document)
+                except (OSError, ValueError) as exc:
+                    # Opening the project next time makes it again, so nothing is lost.
+                    _LOG.info("Closed without writing a tidied project: %s", exc)
+            elif answer == "save":
                 try:
                     self._project_service.save_project(self._document)
                 except (OSError, ValueError) as exc:
@@ -1469,7 +1475,7 @@ class MainWindow(QMainWindow):
         super().closeEvent(event)
 
     def _answer_for_saving_on_close(self) -> str:
-        """Return ``save``, ``discard`` or ``cancel``, asking only if the user must choose."""
+        """Return ``save``, ``tidy``, ``discard`` or ``cancel``, asking only if the user must choose."""
 
         assert self._document is not None
         self._flush_uep_analysis_dialogs()
@@ -1484,9 +1490,10 @@ class MainWindow(QMainWindow):
                 escape="cancel",
                 destructive=("discard",),
             )
-        # Nothing to decide. "discard" here has nothing to discard, and writes
-        # nothing, so an unchanged project on a read-only folder still closes.
-        return "save" if changes is UnsavedChanges.ROUTINE else "discard"
+        # Nothing to decide. "discard" here has nothing to discard, and writes nothing.
+        return {UnsavedChanges.ROUTINE: "save", UnsavedChanges.TIDYING: "tidy"}.get(
+            changes, "discard"
+        )
 
     def _resume_after_abandoned_close(self) -> None:
         """Restart what ``closeEvent`` stopped, now that the window stays open."""

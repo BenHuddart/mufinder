@@ -424,14 +424,14 @@ def test_the_home_stage_alone_is_routine(tmp_path: Path) -> None:
     document = _saved_project(tmp_path, service)
 
     document.ui_state[PROJECT_HOME_STAGE_KEY] = "uep"
-    assert service.unsaved_changes(document) is UnsavedChanges.ROUTINE
+    assert service.unsaved_changes(document) is UnsavedChanges.TIDYING
 
     document.ui_state["layout"] = "wide"
     assert service.unsaved_changes(document) is UnsavedChanges.UI_STATE
 
     service.save_project(document)
     document.ui_state[PROJECT_HOME_STAGE_KEY] = "convergence"
-    assert service.unsaved_changes(document) is UnsavedChanges.ROUTINE
+    assert service.unsaved_changes(document) is UnsavedChanges.TIDYING
 
 
 def test_entities_and_the_manifest_are_routine(tmp_path: Path) -> None:
@@ -468,7 +468,7 @@ def test_a_document_this_service_never_saw_counts_as_changed(tmp_path: Path) -> 
     assert ProjectService().unsaved_changes(document) is UnsavedChanges.UI_STATE
 
 
-def test_an_upgrade_made_on_load_is_routine_until_saved(tmp_path: Path) -> None:
+def test_an_upgrade_made_on_load_is_tidying_until_saved(tmp_path: Path) -> None:
     service = ProjectService()
     document = _saved_project(tmp_path, service)
     store = ProjectStore(document.project_root)
@@ -478,12 +478,12 @@ def test_an_upgrade_made_on_load_is_routine_until_saved(tmp_path: Path) -> None:
 
     reopened = service.load_project(document.project_root)
 
-    assert service.unsaved_changes(reopened) is UnsavedChanges.ROUTINE
+    assert service.unsaved_changes(reopened) is UnsavedChanges.TIDYING
     service.save_project(reopened)
     assert service.unsaved_changes(reopened) is UnsavedChanges.NONE
 
 
-def test_a_retired_ui_state_key_dropped_on_load_is_routine_until_saved(tmp_path: Path) -> None:
+def test_a_retired_ui_state_key_dropped_on_load_is_tidying_until_saved(tmp_path: Path) -> None:
     service = ProjectService()
     document = _saved_project(tmp_path, service)
     store = ProjectStore(document.project_root)
@@ -491,6 +491,55 @@ def test_a_retired_ui_state_key_dropped_on_load_is_routine_until_saved(tmp_path:
 
     reopened = service.load_project(document.project_root)
 
-    assert service.unsaved_changes(reopened) is UnsavedChanges.ROUTINE
+    assert service.unsaved_changes(reopened) is UnsavedChanges.TIDYING
     service.save_project(reopened)
     assert service.unsaved_changes(reopened) is UnsavedChanges.NONE
+
+
+def test_a_change_on_top_of_a_load_upgrade_is_routine(tmp_path: Path) -> None:
+    service = ProjectService()
+    document = _saved_project(tmp_path, service)
+    store = ProjectStore(document.project_root)
+    manifest = store.read_json(store.project_manifest_path)
+    manifest["schema_version"] = 1
+    store.write_json(store.project_manifest_path, manifest)
+    reopened = service.load_project(document.project_root)
+
+    reopened.project.name = "Renamed"
+
+    assert service.unsaved_changes(reopened) is UnsavedChanges.ROUTINE
+
+
+def test_an_entity_a_migration_changed_is_tidying_until_changed_again(
+    tmp_path: Path, monkeypatch
+) -> None:
+    service = ProjectService()
+    document, job, _result = _populated_document(service, tmp_path / "entity.mufinder")
+    entity_key = ("jobs", str(job.id))
+    monkeypatch.setattr(
+        "mufinder.services.project_service.migrate_project_payloads",
+        lambda *_args: {entity_key},
+    )
+
+    reopened = service.load_project(document.project_root)
+    assert service.unsaved_changes(reopened) is UnsavedChanges.TIDYING
+
+    reopened.jobs[job.id].status = JobStatus.COMPLETED
+    assert service.unsaved_changes(reopened) is UnsavedChanges.ROUTINE
+
+    service.save_project(reopened)
+    assert service.unsaved_changes(reopened) is UnsavedChanges.NONE
+
+
+def test_a_failed_save_leaves_a_load_upgrade_to_do_next_time(tmp_path: Path) -> None:
+    service = ProjectService()
+    document = _saved_project(tmp_path, service)
+    store = ProjectStore(document.project_root)
+    store.write_json(store.state_path, {next(iter(RETIRED_UI_STATE_KEYS)): 1})
+
+    assert service.unsaved_changes(service.load_project(document.project_root)) is (
+        UnsavedChanges.TIDYING
+    )
+    assert service.unsaved_changes(service.load_project(document.project_root)) is (
+        UnsavedChanges.TIDYING
+    )

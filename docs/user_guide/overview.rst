@@ -78,7 +78,8 @@ Application shell
   choices are kept until ``Save Project`` or the next autosave. Closing the window
   asks to save only when layouts or viewer choices changed since then; otherwise
   it writes anything still waiting for an autosave, such as the stage the project
-  home opens at, and closes.
+  home opens at, and closes. An upgrade or the home stage that cannot be written,
+  on a read-only folder say, does not stop it closing.
 
 Workflow stages
 ---------------
