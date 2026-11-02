@@ -153,7 +153,10 @@ removed); re-pin the analysis to refresh them.
 
 Every site has one row. A site without a result shows ``–`` in the result columns.
 A result whose site is no longer eligible, because its relaxation was reset or
-removed, has no row; its job stays in the Job Dashboard.
+removed, keeps a read-only row after the sites, labelled ``(site no longer
+eligible)``, with its ``ZPE``, widths and ``w1``. ``Open Analysis`` still opens it. It
+has no energy to rank, so it takes no part in ``dE + ZPE``, and no job action reaches
+it.
 
 ``Site``
    For a pinned row, the summary label: the Wyckoff label and cluster, such as
@@ -176,7 +179,8 @@ removed, has no row; its job stays in the Job Dashboard.
    The ranking once zero-point energy is counted: the site's relaxed total energy
    plus its muon ZPE, relative to the lowest such sum among the sites with a
    result and the same charge state and cell composition. Until every site in the
-   group has a result, its zero can move as more results arrive. See
+   group has a result, its zero can move as more results arrive, and a site with
+   ``dE`` above 0 can read ``0.000``. See
    `Ranking sites with zero-point energy`_.
 ``Widths (Å)``
    The muon's zero-point width ``sqrt(ħ / (2 m_μ ω))`` along each of those modes,
@@ -191,6 +195,12 @@ removed, has no row; its job stays in the Job Dashboard.
    an older project whose singlepoint is still in progress shows that job's
    status (see :ref:`singlepoint records <quantum-singlepoint-records>`). A site
    shows its result while this reads ``completed``.
+
+A ``⚠`` beside ``ZPE`` and ``dE + ZPE`` means the result was stored with a warning,
+and the row's tooltip gives it: a selected muon mode with a non-positive frequency,
+which the total leaves out, or the wrong muon mass (see `Muon mass`_). The number is
+the stored one, but do not rank the site by it: a non-positive muon mode means the
+geometry is a saddle, not a minimum.
 
 Energies are shown to three decimals. Hover a column header for its definition,
 and a row for what the table has no column for:

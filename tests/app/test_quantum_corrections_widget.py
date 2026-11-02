@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from PySide6.QtCore import QEvent
+from PySide6.QtCore import QEvent, Qt
 from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import QGroupBox, QHeaderView, QLabel
 
@@ -192,6 +192,115 @@ def test_a_rejected_rename_restores_the_site_cell(qapp) -> None:
     assert widget._sources_table.item(0, 0).text() == "Site 0"
 
 
+def test_source_table_selects_rows_by_key(qapp) -> None:
+    widget = QuantumCorrectionsWidget()
+    widget.set_sources([_row(0, "failed"), _row(1, "failed")])
+
+    assert widget.select_rows_for_keys(["no-such-site"]) is False
+    assert widget.select_rows_for_keys(["site-1"]) is True
+    assert widget.selected_source_keys() == ["site-1"]
+
+
+def test_corrected_energy_header_says_its_zero_is_among_sites_with_a_result(qapp) -> None:
+    tooltip = dict(SITE_COLUMNS)["dE + ZPE (eV)"]
+
+    assert "lowest such sum among sites with a result" in tooltip
+    assert "\n" not in tooltip
+
+
+# --- a result flagged when it was stored ---------------------------------------------------
+
+
+def test_a_row_with_phonon_warnings_marks_its_zpe_and_ranking_and_says_why(qapp) -> None:
+    widget = QuantumCorrectionsWidget()
+    warning = "Selected muon-dominated modes include non-positive frequencies."
+    widget.set_sources(
+        [
+            _completed(0, zpe="0.654", corrected_energy="+0.353", warnings=(warning,)),
+            _completed(1),
+        ]
+    )
+    table = widget._sources_table
+
+    # The numbers are unchanged; the mark sits beside them.
+    assert table.item(0, 3).text() == "0.654 ⚠"
+    assert table.item(0, 4).text() == "+0.353 ⚠"
+    assert table.item(1, 3).text() == "0.558"
+    assert table.item(1, 4).text() == "0.000"
+    for column in range(table.columnCount()):
+        assert table.item(0, column).toolTip().startswith(f"⚠ {warning}\n")
+    assert "⚠" not in table.item(1, 0).toolTip()
+
+
+# --- a result whose site is no longer eligible ----------------------------------------------
+
+
+def _no_site_row(result_id: str = "result-old") -> QuantumSourceRow:
+    return QuantumSourceRow(
+        key="",
+        label="quantum_phonon_old (site no longer eligible)",
+        charge_state="–",
+        relative_energy="–",
+        displacements="",
+        source_job="",
+        num_farms_display="–",
+        status="completed",
+        zpe="0.700",
+        widths="0.30 0.20 0.10",
+        witness="-0.010",
+        muon_modes="1000.0, 2000.0, 3000.0",
+        result_id=result_id,
+    )
+
+
+def test_a_result_with_no_site_is_read_only_and_opens_its_analysis(qapp) -> None:
+    widget = QuantumCorrectionsWidget()
+    widget.set_sources([_row(0), _no_site_row()])
+    opened: list[str] = []
+    widget.analysis_requested.connect(opened.append)
+    table = widget._sources_table
+
+    assert not table.item(1, 0).flags() & Qt.ItemFlag.ItemIsEditable
+    assert "no longer eligible" in table.item(1, 0).toolTip()
+    assert "Displacements" not in table.item(1, 0).toolTip()
+
+    table.selectRow(1)
+    assert widget._open_analysis_button.isEnabled()
+    widget._open_analysis_button.click()
+    assert opened == ["result-old"]
+
+
+def test_a_result_with_no_site_never_reaches_a_job_action(qapp) -> None:
+    widget = QuantumCorrectionsWidget()
+    widget.set_sources([_row(0), _no_site_row()])
+    local: list[list[str]] = []
+    configured: list[object] = []
+    widget.submit_local_requested.connect(local.append)
+    widget.configure_requested.connect(configured.append)
+
+    widget._submit_local_button.click()
+    widget._batch_configure_button.click()
+    assert local == [["site-0"]]
+    assert configured == [["site-0"]]
+
+    widget._sources_table.selectRow(1)
+    assert widget.selected_source_keys() == []
+    widget._batch_configure_button.click()
+    widget._submit_local_button.click()
+    assert configured == [["site-0"]]
+    assert local[-1] == []
+
+
+def test_a_result_with_no_site_does_not_count_as_a_site_but_hands_off(qapp) -> None:
+    widget = QuantumCorrectionsWidget()
+    widget.set_sources([_no_site_row()])
+
+    assert widget._source_label.text() == "0 pinned from Muon Sites"
+    assert widget._run_status_label.text() == "No sites to run"
+    assert widget._batch_configure_button.isEnabled() is False
+    assert not widget._next_button.isHidden()
+
+
 # --- step 1: sites -----------------------------------------------------------------------
 
 
@@ -378,6 +487,31 @@ def test_open_analysis_acts_on_the_one_selected_row_with_a_result(qapp) -> None:
     widget._sources_table.selectAll()
     assert button.isEnabled() is False
     assert widget._results_status_label.text() == "Select a site"
+
+
+def test_tab_order_follows_the_steps_as_drawn(qapp) -> None:
+    widget = QuantumCorrectionsWidget()
+    widget.set_sources([_completed(0)])
+    expected = [
+        widget._site_scope._link,
+        widget._site_scope._checkbox,
+        widget._batch_configure_button,
+        widget._submit_local_button,
+        widget._submit_cluster_button,
+        widget._reset_failed_button,
+        widget._open_analysis_button,
+        widget._next_button,
+        widget._sources_table,
+    ]
+
+    seen = []
+    current = expected[0]
+    while len(seen) < len(expected):
+        if current in expected:
+            seen.append(current)
+        current = current.nextInFocusChain()
+
+    assert seen == expected
 
 
 # --- layout ------------------------------------------------------------------------------

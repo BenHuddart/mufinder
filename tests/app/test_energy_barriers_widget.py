@@ -30,16 +30,6 @@ _sample_structure = partial(
 )
 
 
-
-
-
-
-
-
-
-
-
-
 def _path_row(key: str = "path-a", hop: str = "A → B", **fields) -> EnergyBarrierSourceRow:
     fields.setdefault("path_length", "1.2 Å")
     fields.setdefault("status", "ready")
@@ -671,8 +661,6 @@ def test_reaction_coordinate_profile_click_selects_nearest_point(qapp) -> None:
     assert selected == [2]
 
 
-
-
 def test_energy_barriers_widget_shows_task_farm_column(qapp) -> None:
     """The path table surfaces each path's configured farm count.
 
@@ -804,14 +792,6 @@ def test_energy_barriers_remove_selected_confirms_with_path_wording(
     )
 
 
-
-
-
-
-
-
-
-
 def test_energy_barriers_run_all_when_nothing_selected_and_shared_menu(
     qapp, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -865,8 +845,6 @@ def test_energy_barriers_run_all_when_nothing_selected_and_shared_menu(
     assert inspected == [["path-a", "path-b"]]
 
 
-
-
 def _path_source(key: str) -> EnergyBarrierSourceRow:
     return EnergyBarrierSourceRow(
         key=key,
@@ -908,26 +886,3 @@ def test_source_table_widgets_share_targeting_and_action_state(
 
     assert run == [["first", "second"]]
     assert configured == [["second"]]
-
-
-def test_source_table_selects_rows_by_key(qapp) -> None:
-    widget = QuantumCorrectionsWidget()
-    widget.set_sources(
-        [
-            QuantumSourceRow(
-                key=key,
-                label=key,
-                charge_state="Muonium",
-                relative_energy="0.0 eV",
-                displacements="9",
-                source_job="relax",
-                num_farms_display="",
-                status="failed",
-            )
-            for key in ("site-a", "site-b")
-        ]
-    )
-
-    assert widget.select_rows_for_keys(["no-such-site"]) is False
-    assert widget.select_rows_for_keys(["site-b"]) is True
-    assert widget.selected_source_keys() == ["site-b"]

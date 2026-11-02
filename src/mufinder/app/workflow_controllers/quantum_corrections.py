@@ -63,11 +63,13 @@ from mufinder.domain.models import (
     Result,
     as_aware_utc,
 )
+from mufinder.domain.text import natural_sort_key
 from mufinder.services.job_artifacts import ParsedJobArtifacts
 from mufinder.services.job_results import parse_numeric
 from mufinder.services.quantum_results import (
     W1_DEFINITION,
     mode_widths_from_result_data,
+    phonon_warnings_from_result_data,
     w1_from_result_data,
 )
 from mufinder.services.job_paths import (
@@ -230,6 +232,23 @@ def _muon_mode_texts(data: Mapping[str, object]) -> tuple[str, str]:
         ", ".join(f"{frequency:.1f}" for frequency, _width in pairs),
         " ".join(f"{width:.2f}" for _frequency, width in pairs),
     )
+
+
+def _result_cells(result: Result) -> dict[str, object]:
+    """Return a row's fields read from its stored phonon result, ``dE + ZPE`` aside."""
+
+    data = result.data if isinstance(result.data, dict) else {}
+    muon_modes, widths = _muon_mode_texts(data)
+    return {
+        "zpe": _format_three_decimals(parse_numeric(data.get("muon_zpe_total_eV"))),
+        "widths": widths or NO_VALUE_TEXT,
+        # A payload stored before ``w1_definition`` holds the witness in an earlier
+        # form; ``w1_from_result_data`` recomputes it as ``P - 3``.
+        "witness": _format_three_decimals(w1_from_result_data(data)),
+        "muon_modes": muon_modes,
+        "result_id": str(result.id),
+        "warnings": phonon_warnings_from_result_data(data),
+    }
 
 
 def _legacy_method_notice(rows: list[tuple[str, str]]) -> tuple[str, str]:
@@ -1195,6 +1214,7 @@ class QuantumCorrectionsController(WorkflowJobController):
             return
 
         source_rows: list[QuantumSourceRow] = []
+        listed_job_ids: set[UUID] = set()
         quantum_states = self.build_states()
         candidates = self.candidates()
         definition = self.active_definition()
@@ -1236,22 +1256,44 @@ class QuantumCorrectionsController(WorkflowJobController):
             )
             result = results.get(candidate.key)
             if result is not None:
-                muon_modes, widths = _muon_mode_texts(result.data)
                 row = replace(
                     row,
-                    zpe=_format_three_decimals(parse_numeric(result.data.get("muon_zpe_total_eV"))),
                     corrected_energy=_format_three_decimals(
                         corrected_energies.get(candidate.key), signed=True
                     ),
-                    widths=widths or NO_VALUE_TEXT,
-                    # A payload stored before ``w1_definition`` holds the witness in an
-                    # earlier form; ``w1_from_result_data`` recomputes it as ``P - 3``.
-                    witness=_format_three_decimals(w1_from_result_data(result.data)),
-                    muon_modes=muon_modes,
-                    result_id=str(result.id),
+                    **_result_cells(result),
                 )
             source_rows.append(row)
-        self._view.set_sources(source_rows)
+            job = self.phonon_job_for_key(definition, candidate.key)
+            if job is not None:
+                listed_job_ids.add(job.id)
+        self._view.set_sources(source_rows + self._rows_without_a_site(listed_job_ids))
+
+    def _newest_phonon_results(self) -> dict[UUID, Result]:
+        """Return the newest phonon result of each job, or a result with no job under its own id.
+
+        A naive ``created_at`` from an older project is read as UTC.
+        """
+
+        document = self._context.document()
+        if document is None:
+            return {}
+        newest: dict[UUID, Result] = {}
+        for result in document.results.values():
+            if result.result_type != QUANTUM_PHONON_CALC_TYPE:
+                continue
+            run = (
+                document.runs.get(result.calculation_run_id)
+                if result.calculation_run_id is not None
+                else None
+            )
+            owner = run.job_id if run is not None and run.job_id is not None else result.id
+            current = newest.get(owner)
+            if current is None or as_aware_utc(result.created_at) > as_aware_utc(
+                current.created_at
+            ):
+                newest[owner] = result
+        return newest
 
     def _site_results(
         self,
@@ -1261,39 +1303,47 @@ class QuantumCorrectionsController(WorkflowJobController):
         """Return each site's phonon result: the newest of its job, while that job is completed.
 
         A job that is running again or has been reset no longer stands behind the
-        numbers of an earlier run. A naive ``created_at`` from an older project is
-        read as UTC.
+        numbers of an earlier run.
+        """
+
+        newest = self._newest_phonon_results()
+        results: dict[str, Result] = {}
+        for candidate in candidates:
+            job = self.phonon_job_for_key(definition, candidate.key)
+            if job is None or job.status != JobStatus.COMPLETED or job.id not in newest:
+                continue
+            results[candidate.key] = newest[job.id]
+        return results
+
+    def _rows_without_a_site(self, listed_job_ids: set[UUID]) -> list[QuantumSourceRow]:
+        """Return a read-only row for each result that no listed site's job stands behind.
+
+        Its relaxation was reset or removed, or its job is gone, so it has no energy to
+        rank; it keeps its numbers and its analysis window.
         """
 
         document = self._context.document()
         if document is None:
-            return {}
-        newest_by_job: dict[UUID, Result] = {}
-        for result in document.results.values():
-            run = (
-                document.runs.get(result.calculation_run_id)
-                if result.calculation_run_id is not None
-                else None
+            return []
+        rows: list[tuple[tuple[object, ...], QuantumSourceRow]] = []
+        for owner, result in self._newest_phonon_results().items():
+            if owner in listed_job_ids:
+                continue
+            job = document.jobs.get(owner)
+            label = (job.label if job is not None else "") or "Quantum phonon"
+            row = QuantumSourceRow(
+                key="",
+                label=f"{label} (site no longer eligible)",
+                charge_state=NO_VALUE_TEXT,
+                relative_energy=NO_VALUE_TEXT,
+                displacements="",
+                source_job="",
+                num_farms_display=NO_VALUE_TEXT,
+                status="completed",
+                **_result_cells(result),
             )
-            if (
-                result.result_type != QUANTUM_PHONON_CALC_TYPE
-                or not isinstance(result.data, dict)
-                or run is None
-                or run.job_id is None
-            ):
-                continue
-            current = newest_by_job.get(run.job_id)
-            if current is None or as_aware_utc(result.created_at) > as_aware_utc(
-                current.created_at
-            ):
-                newest_by_job[run.job_id] = result
-        results: dict[str, Result] = {}
-        for candidate in candidates:
-            job = self.phonon_job_for_key(definition, candidate.key)
-            if job is None or job.status != JobStatus.COMPLETED or job.id not in newest_by_job:
-                continue
-            results[candidate.key] = newest_by_job[job.id]
-        return results
+            rows.append(((job is None, natural_sort_key(label), str(result.id)), row))
+        return [row for _order, row in sorted(rows, key=lambda pair: pair[0])]
 
 
 def _stored_source_keys(config: dict, definition: CalculationDefinition) -> list[str]:

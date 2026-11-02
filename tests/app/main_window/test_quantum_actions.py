@@ -317,6 +317,38 @@ def test_reopening_a_closed_analysis_keeps_track_of_the_new_window(
     constructed[1].close()
 
 
+def test_a_result_whose_site_is_gone_still_opens_its_analysis(
+    main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = main_window
+    result, phonon_path = _completed_quantum_row(window, tmp_path)
+    doc = window._document
+    for site in doc.sites.values():
+        site.clear_relaxation()
+    window._refresh_quantum_corrections_view()
+    constructed: list[dict[str, object]] = []
+
+    class _FakeDialog(QDialog):
+        def __init__(self, **kwargs) -> None:
+            constructed.append(kwargs)
+            super().__init__(kwargs["parent"])
+
+    monkeypatch.setattr(quantum_controller_module, "QuantumPhononAnalysisDialog", _FakeDialog)
+    view = window._quantum_corrections_view
+
+    assert view._sources_table.rowCount() == 1
+    assert view._sources_table.item(0, 0).text() == (
+        "quantum_phonon_siteA (site no longer eligible)"
+    )
+    assert view._sources_table.item(0, 3).text() == "0.500"
+    view._sources_table.selectRow(0)
+    view._open_analysis_button.click()
+
+    assert constructed[0]["phonon_path"] == str(phonon_path)
+    assert constructed[0]["site_label"] == "quantum_phonon_siteA"
+    window._quantum_corrections_controller.analysis_dialog(result.id).close()
+
+
 def test_next_step_goes_to_energy_barriers(main_window, tmp_path: Path) -> None:
     window = main_window
     _completed_quantum_row(window, tmp_path)

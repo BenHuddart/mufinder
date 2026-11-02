@@ -79,4 +79,23 @@ def mode_widths_from_result_data(data: Mapping[str, object]) -> tuple[float, ...
     return tuple(widths)
 
 
-__all__ = ["W1_DEFINITION", "mode_widths_from_result_data", "w1_from_result_data"]
+def phonon_warnings_from_result_data(data: Mapping[str, object]) -> tuple[str, ...]:
+    """Return the warnings stored with a phonon payload under ``phonon_warnings``.
+
+    They are what :func:`~mufinder.science.quantum_phonons.muon_zpe` raised: a wrong
+    muon mass, or a selected muon mode with a non-positive frequency, which the ZPE
+    total leaves out. Anything but non-empty text is ignored.
+    """
+
+    stored = data.get("phonon_warnings")
+    if not isinstance(stored, list):
+        return ()
+    return tuple(text for text in stored if isinstance(text, str) and text.strip())
+
+
+__all__ = [
+    "W1_DEFINITION",
+    "mode_widths_from_result_data",
+    "phonon_warnings_from_result_data",
+    "w1_from_result_data",
+]

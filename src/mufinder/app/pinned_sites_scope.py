@@ -35,6 +35,9 @@ class PinnedSitesScopeBar(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(4)
 
+        # Tab order follows the order of creation, and the link is drawn first here.
+        if link_always_shown:
+            self._link = QPushButton(CHANGE_ON_MUON_SITES_TEXT, self)
         self._checkbox = QCheckBox(SHOW_EVERY_RELAXED_SITE_TEXT, self)
         self._checkbox.setToolTip(
             "Off: list the distinct sites pinned to the Muon Sites summary.\n"
@@ -49,10 +52,6 @@ class PinnedSitesScopeBar(QWidget):
         self._notice.setWordWrap(True)
         style_hint_text(self._notice)
         notice_row.addWidget(self._notice, 1)
-        self._link = QPushButton(
-            CHANGE_ON_MUON_SITES_TEXT if link_always_shown else GO_TO_MUON_SITES_TEXT, self
-        )
-        self._link.clicked.connect(self.open_muon_sites_requested)
         if link_always_shown:
             controls = QHBoxLayout()
             controls.setContentsMargins(0, 0, 0, 0)
@@ -62,9 +61,11 @@ class PinnedSitesScopeBar(QWidget):
             controls.addStretch(1)
             layout.addLayout(controls)
         else:
+            self._link = QPushButton(GO_TO_MUON_SITES_TEXT, self)
             self._link.setObjectName("overviewActionButton")
             layout.addWidget(self._checkbox)
             notice_row.addWidget(self._link)
+        self._link.clicked.connect(self.open_muon_sites_requested)
         self._notice_row = QWidget(self)
         self._notice_row.setLayout(notice_row)
         layout.addWidget(self._notice_row)

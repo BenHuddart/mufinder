@@ -9553,7 +9553,6 @@ class MainWindow(QMainWindow):
             message += "\n\nSkipped:\n" + "\n".join(skipped)
         QMessageBox.information(self, title, message)
 
-
     def _on_uep_source_structure_selection_requested(self, payload: object) -> None:
         if self._document is None:
             return

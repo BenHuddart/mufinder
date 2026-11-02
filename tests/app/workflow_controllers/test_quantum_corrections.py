@@ -11,7 +11,7 @@ from __future__ import annotations
 import math
 import time
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
 
@@ -233,6 +233,97 @@ def test_quantum_controller_shows_the_corrected_energy_of_sites_with_a_result(
     assert (rows[key_b].zpe, rows[key_b].corrected_energy) == ("0.654", "+0.353")
     assert rows[key_b].result_id == str(result_b.id)
     assert rows[key_b].status == "completed"
+
+
+def test_quantum_controller_flags_a_stored_warning_without_changing_the_numbers(
+    tmp_path: Path,
+) -> None:
+    """A saddle's non-positive muon mode is left out of the ZPE and warned about when stored.
+
+    Hand-checked: 0.257 + 0.654 - 0.558 = +0.353 still reads +0.353, with the warning beside it.
+    """
+
+    warning = "Selected muon-dominated modes include non-positive frequencies."
+    service = ProjectService()
+    document, definition, candidates, output_root = _seed_quantum_document(service, tmp_path)
+    key_a, key_b = list(candidates)
+    document.sites[candidates[key_a].site.id].total_energy_eV = -100.0
+    document.sites[candidates[key_b].site.id].total_energy_eV = -99.743
+    job_a = _bind_phonon(service, document, definition, key_a, status=JobStatus.COMPLETED)
+    job_b = _bind_phonon(service, document, definition, key_b, status=JobStatus.COMPLETED)
+    _store_phonon_result(document, job_a, {"muon_zpe_total_eV": 0.558})
+    _store_phonon_result(
+        document, job_b, {"muon_zpe_total_eV": 0.654, "phonon_warnings": [warning, 7, ""]}
+    )
+    controller = _quantum_document_controller(service, document, output_root)
+    controller.refresh_view()
+
+    rows = {row.key: row for row in controller._view.sources[-1]}
+    assert rows[key_a].warnings == ()
+    assert rows[key_b].warnings == (warning,)
+    assert (rows[key_b].zpe, rows[key_b].corrected_energy) == ("0.654", "+0.353")
+
+
+def test_quantum_controller_keeps_a_row_for_a_result_whose_site_is_gone(tmp_path: Path) -> None:
+    """Hand-checked: the sites rank 0.000 and +0.353 as if the 0.100 eV orphan were not there."""
+
+    service = ProjectService()
+    document, definition, candidates, output_root = _seed_quantum_document(service, tmp_path)
+    key_a, key_b = list(candidates)
+    document.sites[candidates[key_a].site.id].total_energy_eV = -100.0
+    document.sites[candidates[key_b].site.id].total_energy_eV = -99.743
+    job_a = _bind_phonon(service, document, definition, key_a, status=JobStatus.COMPLETED)
+    job_b = _bind_phonon(service, document, definition, key_b, status=JobStatus.COMPLETED)
+    _store_phonon_result(document, job_a, {"muon_zpe_total_eV": 0.558})
+    _store_phonon_result(document, job_b, {"muon_zpe_total_eV": 0.654})
+    orphan_job = _quantum_job(service, document, "quantum_phonon_old", QUANTUM_PHONON_CALC_TYPE)
+    orphan_job.status = JobStatus.COMPLETED
+    start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    _store_phonon_result(document, orphan_job, {"muon_zpe_total_eV": 0.9}, start)
+    orphan = _store_phonon_result(
+        document,
+        orphan_job,
+        {"muon_zpe_total_eV": 0.1, "w1_entanglement_witness": -0.25, "w1_definition": "p"},
+        start + timedelta(minutes=1),
+    )
+    jobless_run = CalculationRun(status=JobStatus.COMPLETED)
+    document.runs[jobless_run.id] = jobless_run
+    jobless = Result(
+        result_type=QUANTUM_PHONON_CALC_TYPE,
+        calculation_run_id=jobless_run.id,
+        data={"muon_zpe_total_eV": 0.2},
+    )
+    document.results[jobless.id] = jobless
+    controller = _quantum_document_controller(service, document, output_root)
+    controller.set_show_every_site(True)
+
+    rows = controller._view.sources[-1]
+    assert [row.corrected_energy for row in rows[:2]] == ["0.000", "+0.353"]
+    first, second = rows[2:]
+    assert first.label == "quantum_phonon_old (site no longer eligible)"
+    assert (first.key, first.result_id) == ("", str(orphan.id))
+    assert (first.zpe, first.witness) == ("0.100", "-0.250")
+    assert (first.relative_energy, first.corrected_energy) == ("–", "–")
+    assert first.status == "completed"
+    assert second.label == "Quantum phonon (site no longer eligible)"
+    assert second.result_id == str(jobless.id)
+    assert controller.phonon_result(first.result_id) is orphan
+
+
+def test_quantum_controller_leaves_an_earlier_run_of_a_listed_job_out_of_the_table(
+    tmp_path: Path,
+) -> None:
+    """A row's own job running again shows on that row; its old result gets no second row."""
+
+    service = ProjectService()
+    document, definition, candidates, output_root = _seed_quantum_document(service, tmp_path)
+    key = next(iter(candidates))
+    job = _bind_phonon(service, document, definition, key, status=JobStatus.RUNNING)
+    _store_phonon_result(document, job, {"muon_zpe_total_eV": 0.5})
+    controller = _quantum_document_controller(service, document, output_root)
+    controller.refresh_view()
+
+    assert all(row.key for row in controller._view.sources[-1])
 
 
 def test_quantum_controller_shows_no_result_while_the_job_is_not_completed(
