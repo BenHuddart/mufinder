@@ -20,11 +20,19 @@ class ElidingLabel(QLabel):
     A plain ``QLabel`` reports its whole text as its minimum width, so a long
     text would stop whatever holds it from shrinking. ``text()`` still returns
     the full text, always shown as plain text. With word wrap on, it is a plain
-    wrapping ``QLabel``.
+    wrapping ``QLabel``. The ellipsis goes at the end unless ``elide_mode`` says
+    otherwise; a path keeps both its ends with ``ElideMiddle``.
     """
 
-    def __init__(self, text: str = "", parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        text: str = "",
+        parent: QWidget | None = None,
+        *,
+        elide_mode: Qt.TextElideMode = Qt.TextElideMode.ElideRight,
+    ) -> None:
         super().__init__(text, parent)
+        self._elide_mode = elide_mode
         # Eliding paints the characters as they are; wrapping must not read them as HTML.
         self.setTextFormat(Qt.TextFormat.PlainText)
 
@@ -32,12 +40,21 @@ class ElidingLabel(QLabel):
         hint = super().minimumSizeHint()
         return hint if self.wordWrap() else QSize(0, hint.height())
 
+    def displayed_text(self) -> str:
+        """Return the text as painted: whole if it fits or wraps, else elided."""
+
+        if self.wordWrap():
+            return self.text()
+        return self.fontMetrics().elidedText(
+            self.text(), self._elide_mode, self.contentsRect().width()
+        )
+
     def paintEvent(self, event) -> None:  # noqa: N802 - Qt API naming.
         if self.wordWrap():
             super().paintEvent(event)
             return
         rect = self.contentsRect()
-        text = self.fontMetrics().elidedText(self.text(), Qt.TextElideMode.ElideRight, rect.width())
+        text = self.displayed_text()
         painter = QPainter(self)
         self.style().drawItemText(
             painter,

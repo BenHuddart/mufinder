@@ -290,7 +290,8 @@ defined by two of these modules, and a pinned count may only fall.
      - Owns
    * - ``mufinder.app.eliding_label``
      - The single-line label that elides instead of widening its parent
-       (``ElidingLabel``) and the combo box whose current text elides instead
+       (``ElidingLabel``, at the end or, for a path, in the middle) and the
+       combo box whose current text elides instead
        of clipping (``ElidingComboBox``)
    * - ``mufinder.app.workflow_table_utils``
      - Workflow row tables (``create_workflow_table``,

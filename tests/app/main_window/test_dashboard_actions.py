@@ -1481,6 +1481,7 @@ def _shown_dashboard(window, tmp_path, statuses):
         for index, status in enumerate(statuses)
     ]
     window._document = doc
+    window._sync_project_panels()
     window._refresh_jobs_table()
     window.resize(1400, 1000)
     window.show()
@@ -2608,18 +2609,30 @@ def test_every_workflow_page_can_select_a_job_row(main_window, tmp_path: Path) -
         assert view.select_rows_for_keys(["no such row"]) is False
 
 
-def test_default_dock_height_shows_about_five_rows(main_window, qapp) -> None:
+@pytest.mark.parametrize("open_before_showing", [False, True])
+def test_default_dock_height_shows_about_five_rows(
+    main_window, qapp, tmp_path: Path, open_before_showing: bool
+) -> None:
+    # The dock stays hidden until a project opens, which may be after the first show.
     window = main_window
+    root = ProjectService().create_project(tmp_path / "height.mufinder", "Height").project_root
     window.resize(1400, 1000)
+    if open_before_showing:
+        assert window.open_project(root)
     window.show()
     try:
         qapp.processEvents()
-        window._apply_default_jobs_dock_height()
-        qapp.processEvents()
+        if not open_before_showing:
+            assert window.open_project(root)
 
         table = window._jobs_table
         row_height = table.verticalHeader().defaultSectionSize()
-        assert table.viewport().height() == pytest.approx(5 * row_height, abs=row_height // 2)
+        # The default applies on a later pass of the event loop, once the show is laid out.
+        for _attempt in range(100):
+            if abs(table.viewport().height() - 5 * row_height) <= row_height // 4:
+                break
+            QTest.qWait(20)
+        assert table.viewport().height() == pytest.approx(5 * row_height, abs=row_height // 4)
     finally:
         window.hide()
 
@@ -2711,6 +2724,7 @@ def test_dashboard_runtime_tick_writes_only_visible_active_rows_that_changed(
     _freeze_dashboard_clock(monkeypatch, now)
     _add_scaled_dashboard_jobs(service, doc, now=now)
     window._document = doc
+    window._sync_project_panels()
     window.resize(1400, 900)
     window.show()
     try:
