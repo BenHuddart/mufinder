@@ -330,20 +330,18 @@ The three muon modes are one longitudinal mode L along the complex and two
 transverse modes T1 and T2 across it.
 
 .. figure:: ../_generated/screenshots/n2_quantum_corrections_page.webp
-   :alt: The Quantum Corrections page with the pinned alpha-N2 site completed,
-         and a result row: ZPE 0.576 eV, muon modes 2749.6, 3246.4 and
-         3301.1 cm-1, widths 0.23, 0.21 and 0.21 Angstrom, and w1 -0.1377.
+   :alt: The Quantum Corrections page with the pinned alpha-N2 site completed:
+         ZPE 0.576 eV, widths 0.23, 0.21 and 0.21 Angstrom, and w1 -0.138.
 
-   ``Completed Results`` for the α-N₂ site: the ZPE, the three muon modes,
-   their widths and ``w1``.
+   The α-N₂ site's row: the ZPE, the widths along the three muon modes and ``w1``.
 
-``Completed Results``
+The site's row
    ``ZPE`` reads 0.576 eV, the sum of 0.170 (L), 0.201 (T1) and 0.205 eV (T2),
-   the paper's 0.17, 0.20 and 0.20 eV. ``Muon modes (cm⁻¹)`` lists the modes
+   the paper's 0.17, 0.20 and 0.20 eV. The row's tooltip lists the modes
    at :math:`\hbar\omega_j = 2\,\mathrm{ZPE}_j`: 2749.6 cm⁻¹ for L and
    3246.4 and 3301.1 cm⁻¹ for the T pair (1 eV is 8065.5 cm⁻¹). ``w1`` is
    :math:`P - 3 = -0.14`: the three modes carry 2.86 of the muon's total
-   participation of 3. ``Width (Å)`` lists the harmonic zero-point widths
+   participation of 3. ``Widths (Å)`` lists the harmonic zero-point widths
    :math:`\Delta x = \sqrt{0.01842 / 0.341} \approx 0.232` Å for L and about
    0.213 Å for T1 and T2, a sizeable fraction of the 1.27 Å muon–nitrogen
    distance.

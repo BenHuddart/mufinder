@@ -1163,8 +1163,8 @@ def open_phonon_analysis(window: MainWindow) -> QWidget:
         for result in window._document.results.values()
         if isinstance(result.data, dict) and "muon_zpe_total_eV" in result.data
     )
-    window._on_launch_quantum_phonon_analysis(str(result.id))
-    return window._quantum_analysis_dialogs[result.id]
+    window._quantum_corrections_controller.open_analysis(str(result.id))
+    return window._quantum_corrections_controller.analysis_dialog(result.id)
 
 
 def calculate_corner_tensor(dialog: QWidget) -> None:
@@ -1382,7 +1382,7 @@ SCENES: dict[str, Scene] = {
     ),
     # Quantum corrections.
     "quantum_corrections_page": Scene(
-        results_project, "quantum_corrections", Page("_quantum_corrections_view", (1100, 680))
+        results_project, "quantum_corrections", Page("_quantum_corrections_view", (1100, 340))
     ),
     "phonon_analysis_window": Scene(
         results_project,

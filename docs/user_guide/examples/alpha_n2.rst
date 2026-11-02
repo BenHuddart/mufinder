@@ -135,32 +135,30 @@ pseudopotentials Gomilšek *et al.* used.
    The row's configuration before submission. ``Displacements required``
    reads 195, three for each of the 65 atoms.
 
-Once the phonon job completes, ``Completed Results`` lists the harmonic
-answer.
+Once the phonon job completes, the site's row holds the harmonic answer.
 
 .. figure:: ../../_generated/screenshots/n2_quantum_corrections_page.webp
-   :alt: The Quantum Corrections page with the pinned alpha-N2 site completed,
-         and a result row: ZPE 0.576 eV, muon modes 2749.6, 3246.4 and
-         3301.1 cm-1, widths 0.23, 0.21 and 0.21 Angstrom, and w1 -0.1377.
+   :alt: The Quantum Corrections page with the pinned alpha-N2 site completed:
+         ZPE 0.576 eV, widths 0.23, 0.21 and 0.21 Angstrom, and w1 -0.138.
 
    The completed phonon run of the pinned site.
 
 - ``ZPE (eV)`` is 0.576: the sum of 0.170 eV for the longitudinal mode L, along
   the complex, and 0.201 and 0.205 eV for the two transverse modes across it.
   Gomilšek *et al.* give 0.17, 0.20 and 0.20 eV, 0.58 eV in total.
-- ``Muon modes (cm⁻¹)`` lists L at 2749.6 cm⁻¹ and the transverse modes at
+- The row's tooltip lists L at 2749.6 cm⁻¹ and the transverse modes at
   3246.4 and 3301.1 cm⁻¹, within the ranges the paper reports (about
   2700–2950 and 3200–3400 cm⁻¹). The two transverse modes are not
   degenerate: in this supercell they lie 55 cm⁻¹ apart.
-- ``Width (Å)`` lists the zero-point widths 0.23, 0.21 and 0.21 Å, a sizeable
+- ``Widths (Å)`` lists the zero-point widths 0.23, 0.21 and 0.21 Å, a sizeable
   fraction of the 1.27 Å muon–nitrogen bond.
-- ``w1`` is −0.1377: the three muon modes carry 2.86 of the muon's total
+- ``w1`` is −0.138: the three muon modes carry 2.86 of the muon's total
   participation of 3, so the muon's motion is mixed with the nitrogens'.
 
 The phonon modes
 ----------------
 
-``Launch Analysis`` opens the analysis window on the ``Phonon Modes`` tab, with
+``Open Analysis`` opens the analysis window on the ``Phonon Modes`` tab, with
 the L mode selected. The table ends with the modes that matter here.
 
 .. figure:: ../../_generated/screenshots/n2_phonon_modes.webp
@@ -198,7 +196,7 @@ rule, the three highest frequencies.
 Widths
 ------
 
-``Width (Å)`` in ``Completed Results`` gives the harmonic zero-point width
+``Widths (Å)`` in the site's row gives the harmonic zero-point width
 :math:`\Delta x = \sqrt{\hbar / (2 m_\mu \omega)}` of each muon mode with the
 muon mass: 0.23 Å for L and 0.21 Å for each mode across the complex. These are
 the harmonic weakly-bound widths of Gomilšek *et al.*, 0.23, 0.21 and 0.21 Å.

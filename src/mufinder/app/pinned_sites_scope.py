@@ -4,8 +4,10 @@ Quantum corrections, energy barriers and the Magnetic Fields muon-site dialog
 list the sites pinned to the Muon Sites summary by default. This bar holds the
 "Show every relaxed site" check box that widens the list to every eligible
 relaxed site, and a notice with a "Go to Muon Sites →" link for when a charge
-state has no pin (or a pinned site no longer resolves). The choice itself is
-stored per workflow by :mod:`mufinder.services.muon_sites_summary`.
+state has no pin (or a pinned site no longer resolves). A page that shows its
+flow as steps keeps the link in view beside the check box instead, as "Change on
+Muon Sites →", with the notice below them. The choice itself is stored per
+workflow by :mod:`mufinder.services.muon_sites_summary`.
 """
 
 from __future__ import annotations
@@ -13,10 +15,11 @@ from __future__ import annotations
 from PySide6.QtCore import QSignalBlocker, Signal
 from PySide6.QtWidgets import QCheckBox, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
-from mufinder.app.theme import style_hint_text
+from mufinder.app.theme import form_spacing, style_hint_text
 
 SHOW_EVERY_RELAXED_SITE_TEXT = "Show every relaxed site"
 GO_TO_MUON_SITES_TEXT = "Go to Muon Sites →"
+CHANGE_ON_MUON_SITES_TEXT = "Change on Muon Sites →"
 
 
 class PinnedSitesScopeBar(QWidget):
@@ -25,7 +28,7 @@ class PinnedSitesScopeBar(QWidget):
     show_every_site_toggled = Signal(bool)
     open_muon_sites_requested = Signal()
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(self, parent: QWidget | None = None, *, link_always_shown: bool = False) -> None:
         super().__init__(parent)
         self.setObjectName("pinnedSitesScopeBar")
         layout = QVBoxLayout(self)
@@ -38,7 +41,6 @@ class PinnedSitesScopeBar(QWidget):
             "On: list every eligible relaxed site, including relaxed copies of the same site."
         )
         self._checkbox.toggled.connect(self.show_every_site_toggled)
-        layout.addWidget(self._checkbox)
 
         notice_row = QHBoxLayout()
         notice_row.setContentsMargins(0, 0, 0, 0)
@@ -47,10 +49,22 @@ class PinnedSitesScopeBar(QWidget):
         self._notice.setWordWrap(True)
         style_hint_text(self._notice)
         notice_row.addWidget(self._notice, 1)
-        self._link = QPushButton(GO_TO_MUON_SITES_TEXT, self)
-        self._link.setObjectName("overviewActionButton")
+        self._link = QPushButton(
+            CHANGE_ON_MUON_SITES_TEXT if link_always_shown else GO_TO_MUON_SITES_TEXT, self
+        )
         self._link.clicked.connect(self.open_muon_sites_requested)
-        notice_row.addWidget(self._link)
+        if link_always_shown:
+            controls = QHBoxLayout()
+            controls.setContentsMargins(0, 0, 0, 0)
+            controls.setSpacing(form_spacing())
+            controls.addWidget(self._link)
+            controls.addWidget(self._checkbox)
+            controls.addStretch(1)
+            layout.addLayout(controls)
+        else:
+            self._link.setObjectName("overviewActionButton")
+            layout.addWidget(self._checkbox)
+            notice_row.addWidget(self._link)
         self._notice_row = QWidget(self)
         self._notice_row.setLayout(notice_row)
         layout.addWidget(self._notice_row)

@@ -241,7 +241,7 @@ def _build_results(directory: Path, *, submit_phonon: bool) -> Path:
         window._set_active_route("quantum_corrections")
         key = pinned_key(window)
         when_modal("QuantumCorrectionsConfigDialog", _configure_phonon_row)
-        window._on_configure_quantum_corrections_source([key])
+        window._quantum_corrections_controller.configure_sources([key])
         if submit_phonon:
             with synthetic_runs(window, _phonon_outputs):
                 window._quantum_corrections_controller.submit([key], target="local")
@@ -300,21 +300,21 @@ def show_molecules(axis: str) -> Callable[[QWidget], None]:
 
 
 def open_configuration(window: MainWindow) -> None:
-    """Click ``Configure...`` on the pinned site's row."""
+    """Click ``Configure…`` with the pinned site as the only row."""
 
-    window._on_configure_quantum_corrections_source([pinned_key(window)])
+    window._quantum_corrections_controller.configure_sources([pinned_key(window)])
 
 
 def open_analysis(window: MainWindow) -> QWidget:
-    """Click ``Launch Analysis`` on the completed phonon result."""
+    """Click ``Open Analysis`` on the site with the completed phonon result."""
 
     result = next(
         result
         for result in window._document.results.values()
         if isinstance(result.data, dict) and "muon_zpe_total_eV" in result.data
     )
-    window._on_launch_quantum_phonon_analysis(str(result.id))
-    return window._quantum_analysis_dialogs[result.id]
+    window._quantum_corrections_controller.open_analysis(str(result.id))
+    return window._quantum_corrections_controller.analysis_dialog(result.id)
 
 
 def _show_tab(analysis: QWidget, title: str) -> None:
@@ -396,7 +396,7 @@ SCENES: dict[str, Scene] = {
         Page("_muon_sites_summary_view", (1100, 800), prepare=frame_viewers),
     ),
     "n2_quantum_corrections_page": Scene(
-        results_project, "quantum_corrections", Page("_quantum_corrections_view", (1100, 520))
+        results_project, "quantum_corrections", Page("_quantum_corrections_view", (1100, 340))
     ),
     "n2_quantum_configuration_dialog": Scene(
         configured_project,

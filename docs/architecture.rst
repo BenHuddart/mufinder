@@ -404,7 +404,11 @@ defined by two of these modules, and a pinned count may only fall.
      - The "Show every relaxed site" check box, pinned-sites notice and
        ``Go to Muon Sites →`` link above a downstream site list
        (``PinnedSitesScopeBar``), shared by quantum corrections, energy
-       barriers and the Magnetic Fields muon-site dialog.
+       barriers and the Magnetic Fields muon-site dialog. A page with steps keeps
+       the link in view as ``Change on Muon Sites →`` (``link_always_shown``).
+   * - ``mufinder.app.workflow_steps``
+     - The numbered step rows at the top of a page that shows its flow
+       (``WorkflowSteps``): number, title, where the step stands and its actions.
    * - ``mufinder.app.workflow_row_widget``
      - The label-keyed row-table widget base that pristine relaxation, muon
        relaxation and UEP subclass (``RowTableWidget``, and
@@ -642,7 +646,8 @@ defined by two of these modules, and a pinned count may only fall.
      - Read-only source queries over the project document: the relaxed muon
        sites eligible for quantum corrections, one per charge state a site was
        relaxed in (``site_charge_state_relaxation_jobs``,
-       ``quantum_source_key``), their relative energies,
+       ``quantum_source_key``), their relative energies with and without the
+       muon ZPE,
        labels, seed names and stored ``sources`` entries, and
        the settings a follow-on row inherits from its source relaxation's
        input files (``source_relaxation_parameter_values``); the generated
@@ -1096,8 +1101,9 @@ entries), the table fill with the per-status colour of the Status cell and
 any per-row Configure button with the shared targeting rule, and the
 action-state refresh that enables Configure Selected from the selection.
 
-A subclass declares its status and Configure columns (energy barriers has no
-Configure column: its rows are configured from the selection), the workflow named on
+A subclass declares its status and Configure columns (``None`` for a table
+whose rows are configured from the selection, as in energy barriers and quantum
+corrections), the workflow named on
 the Configure button and the names of its configure and run signals as class
 attributes, so each widget keeps its own signal names. It implements three
 public hooks: ``source_row_values`` (the text of the leading columns),
@@ -1105,8 +1111,9 @@ public hooks: ``source_row_values`` (the text of the leading columns),
 (its own actions for the selected rows). Quantum corrections and hyperfine
 coupling share ``RelaxedSiteSourceTableWidget`` on top of it, which adds the
 source count label, the pinned-sites scope bar, the editable site label and a
-"Reset Failed Jobs..." button beside the run buttons; quantum corrections adds
-the farm column and hyperfine coupling the ``Use in Magnetic Fields`` action;
+"Reset Failed Jobs..." button beside the run buttons; quantum corrections shows
+its flow as steps above one table with the result columns and no Configure column,
+and hyperfine coupling adds the ``Use in Magnetic Fields`` action;
 energy barriers adds the endpoint pair that generates paths, the View column, path
 removal and the NEB inspector, and its view is created lazily (see
 Construction).
@@ -1575,8 +1582,12 @@ Controller summary
        Its source rows come from :mod:`mufinder.services.source_candidates`.
        Recovery is the shared failed-job reset; ``directory_companions`` names
        a row's legacy singlepoint so the reset may clean the directory it
-       shares with the phonon job. It also owns the Configure dialog's lock
-       explanation (``configure_request``).
+       shares with the phonon job. It also owns the Configure dialog
+       (``configure_sources``, with its lock explanation from
+       ``configure_request``), the site rename and the analysis window
+       (``open_analysis``). ``refresh_view`` builds one row per site: the newest
+       result of the site's job while that job is completed, and ``dE + ZPE``
+       from ``quantum_source_corrected_relative_energies``.
    * - ``HyperfineCouplingController``
      - One magres job per relaxed-site source, bound through
        ``job_ids_by_label`` and written to ``<output>/<job label>``; row

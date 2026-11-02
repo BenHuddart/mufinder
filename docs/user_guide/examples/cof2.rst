@@ -226,7 +226,7 @@ modes in the supercell, below a host band that ends at 600 cm⁻¹.
 
 .. figure:: ../../_generated/screenshots/quantum_corrections_page.webp
    :alt: The Quantum Corrections page with the 4c site's completed phonon job:
-         a muon ZPE of 0.689 eV from modes at 3076, 3473 and 4570 cm-1.
+         a muon ZPE of 0.689 eV and its widths and witness.
 
    The phonon result of the 4c site.
 

@@ -453,6 +453,30 @@ def quantum_source_relative_energies(
     )
 
 
+def quantum_source_corrected_relative_energies(
+    candidates: Iterable[QuantumSourceCandidate],
+    muon_zpe_eV_by_key: Mapping[str, float | None],
+) -> dict[str, float | None]:
+    """Return each source's zero-point-corrected energy relative to its comparable minimum.
+
+    The corrected energy is the relaxation's absolute final total energy plus the
+    muon ZPE of the source's phonon result. The groups are those of
+    :func:`quantum_source_relative_energies`, and each source is reported relative
+    to the lowest corrected energy in its group, so only sources with both numbers
+    take part. A source without a total energy or a ZPE maps to ``None``.
+    """
+
+    entries: dict[str, tuple[object, float | None]] = {}
+    for candidate in candidates:
+        zpe = muon_zpe_eV_by_key.get(candidate.key)
+        energy = candidate.total_energy_eV
+        entries[candidate.key] = (
+            quantum_source_energy_group(candidate),
+            None if energy is None or zpe is None else float(energy) + float(zpe),
+        )
+    return grouped_relative_energies(entries)
+
+
 def quantum_source_energy_group(candidate: QuantumSourceCandidate) -> object:
     """Return what makes a relaxed source's energy comparable: its charge state and cell."""
 

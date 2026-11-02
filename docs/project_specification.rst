@@ -531,8 +531,8 @@ Quantum corrections
   failed jobs and manual sites without relaxation provenance are not valid
   sources.
 - The workflow is row-driven: each eligible relaxed site runs one CASTEP
-  phonon job. The source table exposes per-row ``Displacements``
-  (``3 × atom count``) and ``Farms``, and the row's status is its job's status,
+  phonon job. The table shows each row's ``Farms``, its tooltip gives
+  ``Displacements`` (``3 × atom count``), and the row's status is its job's status,
   ``ready`` before it has one. A row's parameters are editable while it has no
   job or its job is ``defined``, and read-only otherwise with a one-line
   reason; a failed, stopped or cancelled job recovers through the shared
@@ -557,7 +557,9 @@ Quantum corrections
   submission until it finishes or is cancelled.
 - Parsed results persist the selected muon-dominated modes, per-mode and total
   zero-point energy, witness metrics, output files and source relaxation
-  provenance. A ``Launch Analysis`` action opens an interactive window with a
+  provenance. The page lists each site once, with its result and its energy
+  corrected by the muon ZPE, ``dE + ZPE``. ``Open Analysis`` on a selected site
+  opens an interactive window with a
   ``Phonon Modes`` tab (all Gamma-point modes, the muon-dominated subset
   highlighted, one selected mode synchronized to a muonated-structure viewer
   with amplitude-controlled playback) and a ``Muon Coupling`` tab

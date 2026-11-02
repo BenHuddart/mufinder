@@ -5,9 +5,13 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from PySide6.QtCore import QEvent
+from PySide6.QtWidgets import QApplication, QDialog
 
 import mufinder.app.main_window as main_window_module
+import mufinder.app.workflow_controllers.quantum_corrections as quantum_controller_module
 from mufinder.domain.enums import JobStatus, WorkflowStage
+from mufinder.domain.models import CalculationRun, Result
 from mufinder.services.project_service import ProjectService
 from mufinder.workflow.quantum import QUANTUM_PHONON_CALC_TYPE
 from tests.support.main_window import stage_quantum_row
@@ -168,6 +172,9 @@ class _FakeConfigDialog:
     def num_farms(self) -> int:
         return 4
 
+    def num_farms_edited(self) -> bool:
+        return True
+
 
 def test_configuring_a_ready_row_edits_every_parameter(
     main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -181,7 +188,7 @@ def test_configuring_a_ready_row_edits_every_parameter(
     definition, candidate, _singlepoint = stage_quantum_row(window, service, doc)
     opened: list[dict[str, object]] = []
     monkeypatch.setattr(
-        main_window_module,
+        quantum_controller_module,
         "QuantumCorrectionsConfigDialog",
         lambda **kwargs: _FakeConfigDialog(opened, **kwargs),
     )
@@ -209,7 +216,7 @@ def test_configuring_a_failed_row_is_read_only_until_it_is_reset(
     )
     opened: list[dict[str, object]] = []
     monkeypatch.setattr(
-        main_window_module,
+        quantum_controller_module,
         "QuantumCorrectionsConfigDialog",
         lambda **kwargs: _FakeConfigDialog(opened, **kwargs),
     )
@@ -223,4 +230,114 @@ def test_configuring_a_failed_row_is_read_only_until_it_is_reset(
     window._quantum_corrections_view.configure_requested.emit([candidate.key])
 
     assert opened[-1]["read_only"] is False
+    window.close()
+
+
+def _completed_quantum_row(window, tmp_path: Path):
+    """Stage a row whose phonon job completed, with a result pointing at a phonon file."""
+
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "quantum_result.mufinder", "QuantumResult")
+    window._document = doc
+    definition, candidate, _singlepoint = stage_quantum_row(window, service, doc)
+    phonon = service.add_job(
+        doc,
+        label="quantum_phonon_siteA",
+        workflow_stage=WorkflowStage.QUANTUM_CORRECTIONS,
+        calc_type=QUANTUM_PHONON_CALC_TYPE,
+    )
+    phonon.status = JobStatus.COMPLETED
+    definition.parameters["phonon_job_ids_by_label"] = {candidate.key: str(phonon.id)}
+    phonon_path = doc.project_root / "site.phonon"
+    phonon_path.write_text("phonon\n", encoding="utf-8")
+    run = CalculationRun(job_id=phonon.id, status=JobStatus.COMPLETED)
+    result = Result(
+        calculation_run_id=run.id,
+        result_type=QUANTUM_PHONON_CALC_TYPE,
+        data={"phonon_file": str(phonon_path), "muon_zpe_total_eV": 0.5},
+    )
+    doc.runs[run.id] = run
+    doc.results[result.id] = result
+    window._refresh_ui_after_project_change()
+    window._refresh_quantum_corrections_view()
+    return result, phonon_path
+
+
+def test_open_analysis_opens_the_selected_site_titled_by_site_and_charge(
+    main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = main_window
+    result, phonon_path = _completed_quantum_row(window, tmp_path)
+    constructed: list[dict[str, object]] = []
+
+    class _FakeDialog(QDialog):
+        def __init__(self, **kwargs) -> None:
+            constructed.append(kwargs)
+            super().__init__(kwargs["parent"])
+
+    monkeypatch.setattr(quantum_controller_module, "QuantumPhononAnalysisDialog", _FakeDialog)
+    view = window._quantum_corrections_view
+
+    view._sources_table.selectRow(0)
+    view._open_analysis_button.click()
+    view._open_analysis_button.click()
+
+    assert len(constructed) == 1
+    assert constructed[0]["phonon_path"] == str(phonon_path)
+    assert constructed[0]["site_label"] == "siteA, positive muon"
+    assert constructed[0]["parent"] is window
+    dialog = window._quantum_corrections_controller.analysis_dialog(result.id)
+    assert dialog.isVisible()
+    dialog.close()
+
+
+def test_reopening_a_closed_analysis_keeps_track_of_the_new_window(
+    main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = main_window
+    result, _phonon_path = _completed_quantum_row(window, tmp_path)
+    constructed: list[QDialog] = []
+
+    class _FakeDialog(QDialog):
+        def __init__(self, **kwargs) -> None:
+            super().__init__(kwargs["parent"])
+            constructed.append(self)
+
+    monkeypatch.setattr(quantum_controller_module, "QuantumPhononAnalysisDialog", _FakeDialog)
+    controller = window._quantum_corrections_controller
+
+    controller.open_analysis(str(result.id))
+    constructed[0].close()
+    controller.open_analysis(str(result.id))
+    QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    controller.open_analysis(str(result.id))
+
+    assert len(constructed) == 2
+    assert controller.analysis_dialog(result.id) is constructed[1]
+    constructed[1].close()
+
+
+def test_next_step_goes_to_energy_barriers(main_window, tmp_path: Path) -> None:
+    window = main_window
+    _completed_quantum_row(window, tmp_path)
+    view = window._quantum_corrections_view
+    assert not view._next_button.isHidden()
+
+    view._next_button.click()
+
+    assert window._main_stack.currentWidget() is window._energy_barriers_view
+
+
+def test_page_fits_the_default_window_width(main_window, tmp_path: Path) -> None:
+    window = main_window
+    _completed_quantum_row(window, tmp_path)
+    window._set_active_route("quantum_corrections")
+    window.resize(1333, 864)
+    window.show()
+    QApplication.processEvents()
+
+    view = window._quantum_corrections_view
+    assert window._main_stack.currentWidget() is view
+    assert window.width() == 1333
+    assert view.minimumSizeHint().width() <= view.width()
     window.close()

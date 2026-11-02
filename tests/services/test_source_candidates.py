@@ -56,6 +56,7 @@ from mufinder.services.source_candidates import (
     quantum_source_key,
     quantum_source_label,
     quantum_source_labels_by_key,
+    quantum_source_corrected_relative_energies,
     quantum_source_relative_energies,
     relaxation_sources_for_labels,
     selected_energy_barrier_endpoint_keys,
@@ -239,6 +240,49 @@ def test_quantum_source_relative_energies_group_by_charge_state_and_cell(
     assert relative[str(b.id)] == pytest.approx(0.5)
     assert relative[str(supercell.id)] == pytest.approx(0.0)
     assert relative[str(muonium.id)] == pytest.approx(0.0)
+
+
+def test_quantum_source_corrected_energies_add_the_zpe_within_each_group(
+    document: ProjectDocument,
+) -> None:
+    """Hand-checked: E + ZPE, less the lowest such sum with the same charge state and cell.
+
+    A and B are the GdRu2Si2 sites to three decimals: dE +0.257, ZPE 0.558 and 0.654, so
+    B is (-10.000 + 0.257 + 0.654) - (-10.000 + 0.558) = +0.353 eV above A.
+    """
+
+    a = _add_relaxed_source(document, "A", energy=-10.0)
+    b = _add_relaxed_source(document, "B", energy=-9.743)
+    unrun = _add_relaxed_source(document, "unrun", energy=-11.0)
+    no_energy = _add_relaxed_source(document, "no energy", energy=None)
+    supercell = _add_relaxed_source(document, "S", energy=-40.0, extra_species=("Si", "Si"))
+    muonium_low = _add_relaxed_source(
+        document, "M1", energy=-8.0, charge_state=MUONIUM_CHARGE_STATE
+    )
+    muonium_high = _add_relaxed_source(
+        document, "M2", energy=-8.1, charge_state=MUONIUM_CHARGE_STATE
+    )
+
+    corrected = quantum_source_corrected_relative_energies(
+        eligible_quantum_source_candidates(document),
+        {
+            str(a.id): 0.558,
+            str(b.id): 0.654,
+            str(no_energy.id): 0.5,
+            str(supercell.id): 0.6,
+            # The lower classical site carries 0.3 eV more ZPE: the order swaps.
+            str(muonium_low.id): 0.5,
+            str(muonium_high.id): 0.8,
+        },
+    )
+
+    assert corrected[str(a.id)] == pytest.approx(0.0)
+    assert corrected[str(b.id)] == pytest.approx(0.353)
+    assert corrected[str(unrun.id)] is None
+    assert corrected[str(no_energy.id)] is None
+    assert corrected[str(supercell.id)] == pytest.approx(0.0)
+    assert corrected[str(muonium_low.id)] == pytest.approx(0.0)
+    assert corrected[str(muonium_high.id)] == pytest.approx(0.2)
 
 
 def test_quantum_source_labels_deduplicate_in_candidate_order(document: ProjectDocument) -> None:

@@ -238,6 +238,10 @@ class QuantumCorrectionsConfigDialog(ParameterDialog):
         self._num_farms_spin.setRange(1, 9999)
         self._num_farms_spin.setValue(max(1, int(num_farms)))
         self._num_farms_spin.setEnabled(not read_only)
+        self._num_farms_edited = False
+        self._num_farms_spin.valueChanged.connect(self._mark_num_farms_edited)
+        # Typing the value already shown changes nothing, but it is still a choice.
+        self._num_farms_spin.lineEdit().textEdited.connect(self._mark_num_farms_edited)
 
         farms_row = QHBoxLayout()
         farms_row.addWidget(QLabel("Farms", self))
@@ -250,6 +254,14 @@ class QuantumCorrectionsConfigDialog(ParameterDialog):
 
     def num_farms(self) -> int:
         return max(1, int(self._num_farms_spin.value()))
+
+    def num_farms_edited(self) -> bool:
+        """Return whether the user changed the farm count since the dialog opened."""
+
+        return self._num_farms_edited
+
+    def _mark_num_farms_edited(self) -> None:
+        self._num_farms_edited = True
 
 
 class HyperfineCouplingConfigDialog(ParameterDialog):

@@ -37,7 +37,7 @@ from PySide6.QtWidgets import (
 from mufinder.app.energy_barriers_widget import EnergyBarrierSourceRow
 from mufinder.app.hyperfine_coupling_widget import HyperfineResultRow, HyperfineSourceRow
 from mufinder.app.magnetic_analysis_dialogs import NuclearRelaxationDialog
-from mufinder.app.quantum_corrections_widget import QuantumResultRow, QuantumSourceRow
+from mufinder.app.quantum_corrections_widget import QuantumSourceRow
 from mufinder.domain.charge_states import MUONIUM_CHARGE_STATE, POSITIVE_MUON_CHARGE_STATE
 from mufinder.services.magnetic_field_results import (
     MAGNETIC_FIELD_PAGE_OWNER,
@@ -148,7 +148,6 @@ def _show_quantum_rows(window) -> None:
     view.set_sources(
         [QuantumSourceRow("mu1", "mu1", "Positive muon", "0.00", "9", "relax-mu1", "1", "ready")]
     )
-    view.set_results([QuantumResultRow("mu1", "mu1", "0.58", "1, 2, 3", "0.1", "0.0", "completed")])
 
 
 def _show_energy_barrier_rows(window) -> None:
@@ -280,7 +279,7 @@ def test_census_counts_the_row_controls_of_every_page_that_lists_rows(
         "muon_relaxations": window._muon_relaxation_view._table,
         "polarisation": window._polarisation_view._sources_table,
         "hyperfine_coupling": window._hyperfine_coupling_view._results_table,
-        "quantum_corrections": window._quantum_corrections_view._results_table,
+        "quantum_corrections": window._quantum_corrections_view._sources_table,
         "energy_barriers": window._energy_barriers_view._sources_table,
     }
 

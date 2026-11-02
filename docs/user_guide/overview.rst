@@ -315,7 +315,8 @@ Gamma-point CASTEP phonon calculation for each, with explicit muon mass and
 gyromagnetic ratio (finite displacement by default, with optional task
 farming). Completed results give
 the muon zero-point energy, covariance and correlation tensors, ``w1`` /
-``w2`` witnesses and the harmonic widths of the muon modes, shown in an
+``w2`` witnesses, the harmonic widths of the muon modes and each site's energy
+corrected by its zero-point energy (``dE + ZPE``), shown on the page and in an
 interactive analysis window. Together they say how much zero-point energy each
 site carries, how far the muon spreads, and whether its motion is entangled
 with the host, which decides how far a harmonic estimate can be trusted.
