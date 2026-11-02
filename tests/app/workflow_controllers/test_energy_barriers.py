@@ -333,6 +333,11 @@ def test_energy_barriers_show_path_shows_the_hop_until_a_band_exists(tmp_path: P
     band = view.neb_previews[-1]
     assert band["title"] == "siteA → siteB  ·  2.5 Å  ·  7 images"
     assert band["image_rows"][1].label == "Image 2"
+    # The fixture's band moves one atom 1.568 Å in six equal steps.
+    assert band["image_rows"][1].distance == "0.261 Å"
+    assert band["image_rows"][-1].distance_value == pytest.approx(1.5681, abs=5e-5)
+    assert band["image_rows"][0].energy == "0 meV"
+    assert band["image_rows"][3].energy == "+121 meV"
 
     controller.show_path("")
     assert view.cleared_previews[-1] is None
@@ -358,6 +363,17 @@ def test_energy_barriers_show_path_says_why_it_cannot_show_a_path(tmp_path: Path
     (tmp_path / "gone.ts").write_text("not a band", encoding="utf-8")
     controller.show_path("source-key")
     assert view.cleared_previews[-1] == "siteA → siteB: the band file could not be read"
+
+    # The last image of the band has another cell, so no distance along the band exists.
+    lines = _NEB_TS_FIXTURE.read_text(encoding="utf-8").splitlines()
+    last_cell_line = max(index for index, line in enumerate(lines) if "<-- h" in line)
+    first_value = lines[last_cell_line].split()[0]
+    lines[last_cell_line] = lines[last_cell_line].replace(first_value, "9.00000000E+000", 1)
+    (tmp_path / "gone.ts").write_text("\n".join(lines), encoding="utf-8")
+    controller.show_path("source-key")
+    assert view.cleared_previews[-1] == (
+        "siteA → siteB: The band's images must share the same simulation cell."
+    )
 
 
 def test_energy_barriers_endpoints_sharing_a_label_name_their_job(tmp_path: Path) -> None:

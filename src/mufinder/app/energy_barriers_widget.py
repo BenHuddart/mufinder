@@ -2,20 +2,16 @@
 
 from __future__ import annotations
 
-import math
 from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import Any
 
-from PySide6.QtCore import QPointF, QRectF, QSize, Qt, Signal
-from PySide6.QtGui import (
-    QColor,
-    QFontMetricsF,
-    QKeyEvent,
-    QMouseEvent,
-    QPainter,
-    QPainterPath,
-    QPen,
-)
+from matplotlib.axes import Axes
+from matplotlib.backend_bases import DrawEvent, KeyEvent, MouseButton, MouseEvent
+from matplotlib.lines import Line2D
+import numpy as np
+from PySide6.QtCore import QEvent, QSize, Qt, Signal
+from PySide6.QtGui import QCursor
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -24,7 +20,6 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QPushButton,
-    QSizePolicy,
     QSplitter,
     QToolButton,
     QToolTip,
@@ -34,6 +29,7 @@ from PySide6.QtWidgets import (
 
 from mufinder.app.atomic_structure_viewer import AtomicStructureViewer
 from mufinder.app.pinned_sites_scope import PinnedSitesScopeBar
+from mufinder.app.plot_canvas import PlotFrame, create_plot_canvas
 from mufinder.app.theme import (
     STRUCTURE_OVERLAY_COLOURS,
     arrow_icon,
@@ -43,6 +39,7 @@ from mufinder.app.theme import (
     page_margins,
     plot_series_colours,
     style_hint_text,
+    style_plot_axes,
     style_section_subtitle,
     style_section_title,
 )
@@ -54,8 +51,10 @@ from mufinder.app.workflow_table_utils import (
     bind_delete_shortcuts,
     confirm_row_removal,
     create_workflow_table,
+    format_energy_mev,
     workflow_row_is_locked,
 )
+from mufinder.domain.constants import MEV_PER_EV
 from mufinder.domain.models import Structure
 
 # The path table shows up to this many rows when the page has room, and always holds
@@ -102,355 +101,306 @@ class EnergyBarrierPreviewImageRow:
     """One image entry in the NEB preview panel."""
 
     label: str
-    reaction_coordinate: str
+    #: Cumulative distance along the band from the first image.
+    distance: str
+    #: Energy relative to the first image.
     energy: str
-    reaction_coordinate_value: float
-    energy_value: float
+    distance_value: float  # Å
+    energy_value: float  # eV, absolute
 
 
-def _nice_ticks(low: float, high: float, target_count: int = 4) -> list[float]:
-    """Return round-valued axis ticks covering ``[low, high]``."""
+class _BandProfilePlot(QWidget):
+    """Reaction profile of one band: E − E₀ in meV against distance along the band in Å.
 
-    span = high - low
-    if span <= 0.0 or not math.isfinite(span):
-        return [low]
-    raw_step = span / max(target_count, 1)
-    magnitude = 10.0 ** math.floor(math.log10(raw_step))
-    step = 10.0 * magnitude
-    for multiplier in (1.0, 2.0, 5.0, 10.0):
-        candidate = multiplier * magnitude
-        if span / candidate <= target_count:
-            step = candidate
-            break
-    first = math.ceil(low / step) * step
-    ticks: list[float] = []
-    value = first
-    while value <= high + step * 1e-9:
-        ticks.append(round(value, 12))
-        value += step
-    return ticks or [low]
+    The plot is the single scrub surface for the inspector: clicking or dragging
+    selects the nearest image, and Left/Right arrow keys step through images once
+    the plot has focus. It marks the transition state, the highest image, with the
+    forward barrier beside it.
 
-
-def _format_tick(value: float) -> str:
-    return f"{value:.4g}"
-
-
-class _ReactionCoordinateProfile(QWidget):
-    """Reaction-coordinate profile plot used by the NEB inspector.
-
-    The plot is the single scrub surface for the inspector: clicking or
-    dragging selects the nearest image, and Left/Right arrow keys step
-    through images once the plot has focus.
-
-    Energies render relative to the initial image (E − E₀), so the axis stays
-    readable even though absolute CASTEP energies are ~10⁵ eV.
+    Stepping happens at the pace of the keyboard, with the structure viewer
+    following, so it repaints the selected-image marker alone over a saved copy of
+    the rest of the plot.
     """
 
     point_selected = Signal(int)
 
     _HOVER_DISTANCE = 18.0
+    # Below this a band has no barrier to mark, only rounding.
+    _MIN_BARRIER_EV = 1e-9
+    # Room above the highest image for its label, as a share of the energy range.
+    _LABEL_HEADROOM = 0.25
+    # A label ending at the plot's right side stops short of the pop-out button.
+    _POP_OUT_BUTTON_CLEARANCE_PT = 24
+    _SERIES_MARKER_SIZE = 4.0
+    _HIGHLIGHT_MARKER_SIZE = 8.0
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._rows: list[EnergyBarrierPreviewImageRow] = []
+        self._energies_mev = np.empty(0)
         self._selected_index = 0
-        self._hover_index: int | None = None
         self._dragging = False
-        # A small hard minimum plus an Expanding policy lets the plot shrink
-        # gracefully in short panes instead of overpainting the widgets below
-        # (layouts squeeze cells below preferred size when space runs out, and
-        # a large minimumHeight would make the widget overflow its cell).
-        self.setMinimumHeight(80)
-        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        self.setMouseTracking(True)
-        self.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
-        self.setAccessibleName("Reaction coordinate profile")
-
-    def sizeHint(self) -> QSize:  # noqa: N802 - Qt API naming.
-        return QSize(460, 240)
+        self._drawn_palette = current_palette()
+        self._axes: Axes | None = None
+        self._selected_marker: Line2D | None = None
+        self._background: Any = None
+        self._figure, self._canvas = create_plot_canvas(
+            figsize=(4.6, 2.4), facecolor=self._drawn_palette.bg_primary
+        )
+        self._canvas.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
+        self._canvas.setAccessibleName("Reaction profile")
+        self._frame = PlotFrame(self._canvas, title="Reaction profile", parent=self)
+        # Moving the canvas between windows can lose the release of a drag.
+        self._frame.popped_out_changed.connect(self._end_drag)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self._frame)
+        self._canvas.mpl_connect("draw_event", self._on_draw)
+        self._canvas.mpl_connect("button_press_event", self._on_press)
+        self._canvas.mpl_connect("motion_notify_event", self._on_motion)
+        self._canvas.mpl_connect("button_release_event", self._on_release)
+        self._canvas.mpl_connect("figure_leave_event", self._on_leave)
+        self._canvas.mpl_connect("key_press_event", self._on_key_press)
 
     def clear_profile(self) -> None:
+        self._frame.show_here()
+        if not self._rows:
+            return
         self._rows = []
         self._selected_index = 0
-        self._hover_index = None
         self._dragging = False
-        self.update()
+        self._draw_profile()
 
     def set_profile(
         self, rows: list[EnergyBarrierPreviewImageRow], *, selected_index: int = 0
     ) -> None:
-        self._rows = list(rows)
-        self._selected_index = max(0, min(selected_index, len(self._rows) - 1)) if self._rows else 0
-        if self._hover_index is not None and self._hover_index >= len(self._rows):
-            self._hover_index = None
-        self.update()
+        """Draw ``rows``; the same rows again only move the selected-image marker."""
+
+        rows = list(rows)
+        if rows == self._rows:
+            self.set_selected_index(selected_index)
+            return
+        self._rows = rows
+        self._selected_index = self._clamped(selected_index)
+        self._draw_profile()
 
     def point_count(self) -> int:
         return len(self._rows)
 
+    def selected_index(self) -> int:
+        return self._selected_index
+
     def set_selected_index(self, index: int) -> None:
-        if not self._rows:
-            self._selected_index = 0
-        else:
-            self._selected_index = max(0, min(index, len(self._rows) - 1))
-        self.update()
-
-    def mousePressEvent(self, event: QMouseEvent) -> None:  # noqa: N802 - Qt API naming.
-        if event.button() != Qt.MouseButton.LeftButton or not self._rows:
-            super().mousePressEvent(event)
+        index = self._clamped(index)
+        if index == self._selected_index:
             return
-        index = self._nearest_index(event.position())
-        if index is not None:
-            self._dragging = True
-            if index != self._selected_index:
-                self.point_selected.emit(index)
-        super().mousePressEvent(event)
+        self._selected_index = index
+        self._move_selected_marker()
 
-    def mouseMoveEvent(self, event: QMouseEvent) -> None:  # noqa: N802 - Qt API naming.
-        if not self._rows:
-            super().mouseMoveEvent(event)
-            return
-        if self._dragging:
-            index = self._nearest_index(event.position(), horizontal_only=True)
-            if index is not None and index != self._selected_index:
-                self.point_selected.emit(index)
-        else:
-            hover = self._nearest_index(event.position(), max_distance=self._HOVER_DISTANCE)
-            if hover != self._hover_index:
-                self._hover_index = hover
-                self.update()
-            self.setCursor(
-                Qt.CursorShape.PointingHandCursor
-                if hover is not None
-                else Qt.CursorShape.ArrowCursor
-            )
-            if hover is not None:
-                row = self._rows[hover]
-                QToolTip.showText(
-                    event.globalPosition().toPoint(),
-                    f"{row.label}\nReaction coordinate: {row.reaction_coordinate}\nE − E₀: {row.energy}",
-                    self,
-                )
-        super().mouseMoveEvent(event)
+    def changeEvent(self, event: QEvent) -> None:  # noqa: N802 - Qt API naming.
+        super().changeEvent(event)
+        if (
+            event.type()
+            in {
+                QEvent.Type.PaletteChange,
+                QEvent.Type.ApplicationPaletteChange,
+                QEvent.Type.StyleChange,
+            }
+            and current_palette() != self._drawn_palette
+        ):
+            self._draw_profile()
 
-    def mouseReleaseEvent(self, event: QMouseEvent) -> None:  # noqa: N802 - Qt API naming.
-        self._dragging = False
-        super().mouseReleaseEvent(event)
+    def _clamped(self, index: int) -> int:
+        return max(0, min(index, len(self._rows) - 1)) if self._rows else 0
 
-    def leaveEvent(self, event) -> None:  # noqa: N802 - Qt API naming.
-        if self._hover_index is not None:
-            self._hover_index = None
-            self.update()
-        self.unsetCursor()
-        super().leaveEvent(event)
+    def _draw_profile(self) -> None:
+        """Lay out the whole plot for the current rows and palette."""
 
-    def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802 - Qt API naming.
-        if self._rows and event.key() in (Qt.Key.Key_Left, Qt.Key.Key_Right):
-            delta = -1 if event.key() == Qt.Key.Key_Left else 1
-            target = max(0, min(self._selected_index + delta, len(self._rows) - 1))
-            if target != self._selected_index:
-                self.point_selected.emit(target)
-            event.accept()
-            return
-        super().keyPressEvent(event)
-
-    def paintEvent(self, event) -> None:  # noqa: N802 - Qt API naming.
-        super().paintEvent(event)
         palette = current_palette()
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        painter.fillRect(self.rect(), QColor(palette.bg_primary))
-
-        text_color = QColor(palette.text_muted)
+        self._drawn_palette = palette
+        self._figure.set_facecolor(palette.bg_primary)
+        self._background = None
+        self._figure.clear()
+        self._axes = None
+        self._selected_marker = None
         if not self._rows:
-            painter.setPen(text_color)
-            painter.drawText(self.rect(), int(Qt.AlignmentFlag.AlignCenter), "No profile loaded")
-            painter.end()
+            self._canvas.draw_idle()
             return
 
-        geometry = self._plot_geometry()
-        if geometry is None:
-            painter.end()
+        axes = self._figure.add_subplot()
+        self._axes = axes
+        style_plot_axes(axes, facecolor=palette.bg_primary)
+        distances = [row.distance_value for row in self._rows]
+        absolute = np.array([row.energy_value for row in self._rows], dtype=float)
+        energies = (absolute - absolute[0]) * MEV_PER_EV
+        self._energies_mev = energies
+        axes.plot(
+            distances,
+            energies,
+            color=plot_series_colours().energy,
+            marker="o",
+            markersize=self._SERIES_MARKER_SIZE,
+        )
+        self._mark_transition_state(axes, distances, energies)
+        self._selected_marker = axes.plot(
+            [distances[self._selected_index]],
+            [energies[self._selected_index]],
+            linestyle="none",
+            marker="o",
+            markersize=self._HIGHLIGHT_MARKER_SIZE,
+            markerfacecolor=palette.success,
+            markeredgecolor=palette.bg_primary,
+            # Drawn by _on_draw and _move_selected_marker, not with the rest of the figure.
+            animated=True,
+        )[0]
+        axes.set_xlabel("Distance along band (Å)")
+        axes.set_ylabel("E − E₀ (meV)")
+        self._canvas.draw_idle()
+
+    def _mark_transition_state(
+        self, axes: Axes, distances: Sequence[float], energies: np.ndarray
+    ) -> None:
+        """Mark the highest image and label the rise to it from the initial image."""
+
+        if not np.any(np.isfinite(energies)):
             return
-        bounds, points, x_ticks, y_ticks = geometry
-        metrics = QFontMetricsF(painter.font())
-        axis_color = QColor(palette.border)
-        grid_color = QColor(palette.bg_surface_alt)
-        series_color = QColor(plot_series_colours().energy)
-        hover_color = QColor(palette.accent_hover)
-        highlight_color = QColor(palette.success)
-        annotation_color = QColor(palette.seal_gold)
-
-        min_x, max_x, min_y, max_y = self._data_ranges()
-
-        def x_pixel(value: float) -> float:
-            return bounds.left() + (value - min_x) / (max_x - min_x) * bounds.width()
-
-        def y_pixel(value: float) -> float:
-            return bounds.bottom() - (value - min_y) / (max_y - min_y) * bounds.height()
-
-        # Horizontal gridlines with y tick labels.
-        for tick in y_ticks:
-            y = y_pixel(tick)
-            painter.setPen(QPen(grid_color, 1.0))
-            painter.drawLine(QPointF(bounds.left(), y), QPointF(bounds.right(), y))
-            painter.setPen(text_color)
-            label_rect = QRectF(
-                0.0,
-                y - metrics.height() / 2.0,
-                bounds.left() - 6.0,
-                metrics.height(),
-            )
-            painter.drawText(
-                label_rect,
-                int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter),
-                _format_tick(tick),
-            )
-
-        # X ticks with labels.
-        for tick in x_ticks:
-            x = x_pixel(tick)
-            painter.setPen(QPen(axis_color, 1.0))
-            painter.drawLine(QPointF(x, bounds.bottom()), QPointF(x, bounds.bottom() + 4.0))
-            painter.setPen(text_color)
-            label_rect = QRectF(x - 48.0, bounds.bottom() + 6.0, 96.0, metrics.height())
-            painter.drawText(label_rect, int(Qt.AlignmentFlag.AlignHCenter), _format_tick(tick))
-
-        # Axis lines.
-        painter.setPen(QPen(axis_color, 1.0))
-        painter.drawLine(bounds.bottomLeft(), bounds.bottomRight())
-        painter.drawLine(bounds.bottomLeft(), bounds.topLeft())
-
-        # Barrier annotation: dashed guides from the initial-image energy level
-        # up to the peak image, labelled with the forward barrier height.
-        energies = self._relative_energies()
-        peak_index = max(range(len(energies)), key=lambda index: energies[index])
-        barrier = energies[peak_index] - energies[0]
-        if barrier > 1e-9:
-            base_y = y_pixel(energies[0])
-            peak_point = points[peak_index]
-            dashed = QPen(annotation_color, 1.2, Qt.PenStyle.DashLine)
-            painter.setPen(dashed)
-            painter.drawLine(QPointF(points[0][0], base_y), QPointF(peak_point[0], base_y))
-            painter.drawLine(QPointF(peak_point[0], base_y), QPointF(peak_point[0], peak_point[1]))
-            painter.setPen(annotation_color)
-            label = f"{barrier:.3g} eV"
-            label_width = metrics.horizontalAdvance(label)
-            label_x = peak_point[0] + 8.0
-            if label_x + label_width > bounds.right():
-                label_x = peak_point[0] - 8.0 - label_width
-            label_y = (base_y + peak_point[1]) / 2.0 + metrics.ascent() / 2.0
-            painter.drawText(QPointF(label_x, label_y), label)
-
-        # Energy series.
-        if len(points) >= 2:
-            path = QPainterPath()
-            path.moveTo(*points[0])
-            for point in points[1:]:
-                path.lineTo(*point)
-            painter.setPen(QPen(series_color, 2.0))
-            painter.drawPath(path)
-
-        # Image markers, with hover and selection emphasis.
-        for index, point in enumerate(points):
-            if index == self._selected_index:
-                color, radius = highlight_color, 5.0
-            elif index == self._hover_index:
-                color, radius = hover_color, 5.0
-            else:
-                color, radius = series_color, 4.0
-            painter.setBrush(color)
-            painter.setPen(QPen(QColor(palette.bg_primary), 1.5))
-            painter.drawEllipse(QPointF(point[0], point[1]), radius, radius)
-
-        # Axis titles.
-        painter.setPen(text_color)
-        title_rect = QRectF(
-            bounds.left(),
-            self.rect().bottom() - metrics.height() - 2.0,
-            bounds.width(),
-            metrics.height(),
+        peak = int(np.nanargmax(energies))
+        barrier_mev = float(energies[peak])
+        if barrier_mev / MEV_PER_EV <= self._MIN_BARRIER_EV:
+            return
+        palette = current_palette()
+        peak_distance = distances[peak]
+        axes.plot(
+            [distances[0], peak_distance, peak_distance],
+            [0.0, 0.0, barrier_mev],
+            color=palette.seal_gold,
+            linestyle="--",
+            linewidth=1.2,
         )
-        painter.drawText(title_rect, int(Qt.AlignmentFlag.AlignHCenter), "Reaction coordinate")
-        y_title = "E − E₀ (eV)"
-        painter.save()
-        painter.translate(metrics.ascent() + 2.0, bounds.center().y())
-        painter.rotate(-90)
-        painter.drawText(QPointF(-metrics.horizontalAdvance(y_title) / 2.0, 0.0), y_title)
-        painter.restore()
-        painter.end()
-
-    def _relative_energies(self) -> list[float]:
-        offset = self._rows[0].energy_value if self._rows else 0.0
-        return [row.energy_value - offset for row in self._rows]
-
-    def _data_ranges(self) -> tuple[float, float, float, float]:
-        coordinates = [row.reaction_coordinate_value for row in self._rows]
-        energies = self._relative_energies()
-        min_x, max_x = min(coordinates), max(coordinates)
-        min_y, max_y = min(energies), max(energies)
-        if abs(max_x - min_x) < 1e-12:
-            min_x -= 0.5
-            max_x += 0.5
-        if abs(max_y - min_y) < 1e-12:
-            min_y -= 0.5
-            max_y += 0.5
-        return min_x, max_x, min_y, max_y
-
-    def _plot_geometry(
-        self,
-    ) -> tuple[QRectF, list[tuple[float, float]], list[float], list[float]] | None:
-        if not self._rows:
-            return None
-        metrics = QFontMetricsF(self.font())
-        min_x, max_x, min_y, max_y = self._data_ranges()
-        x_ticks = _nice_ticks(min_x, max_x, 5)
-        y_ticks = _nice_ticks(min_y, max_y, 4)
-        y_tick_width = max(
-            (metrics.horizontalAdvance(_format_tick(tick)) for tick in y_ticks), default=0.0
+        axes.plot(
+            [peak_distance],
+            [barrier_mev],
+            linestyle="none",
+            marker="D",
+            markersize=self._HIGHLIGHT_MARKER_SIZE,
+            markerfacecolor=palette.seal_gold,
+            markeredgecolor=palette.bg_primary,
         )
-        left = metrics.height() + 8.0 + y_tick_width + 6.0
-        bottom = 2.0 * metrics.height() + 12.0
-        top = metrics.height() + 8.0
-        right = 14.0
-        bounds = QRectF(self.rect()).adjusted(left, top, -right, -bottom)
-        if bounds.width() <= 1.0 or bounds.height() <= 1.0:
-            return None
-        points: list[tuple[float, float]] = []
-        for row, energy in zip(self._rows, self._relative_energies()):
-            x_fraction = (row.reaction_coordinate_value - min_x) / (max_x - min_x)
-            y_fraction = (energy - min_y) / (max_y - min_y)
-            points.append(
-                (
-                    bounds.left() + x_fraction * bounds.width(),
-                    bounds.bottom() - y_fraction * bounds.height(),
-                )
-            )
-        return bounds, points, x_ticks, y_ticks
+        # Above the highest image no curve can pass, whatever the band's shape.
+        low, high = axes.get_ylim()
+        axes.set_ylim(low, high + self._LABEL_HEADROOM * (high - low))
+        along_band = (peak_distance - distances[0]) / max(distances[-1] - distances[0], 1e-12)
+        if along_band < 0.25:
+            alignment, offset = "left", 0
+        elif along_band > 0.75:
+            alignment, offset = "right", -self._POP_OUT_BUTTON_CLEARANCE_PT
+        else:
+            alignment, offset = "center", 0
+        axes.annotate(
+            f"Forward {format_energy_mev(barrier_mev / MEV_PER_EV)}",
+            xy=(peak_distance, barrier_mev),
+            xytext=(offset, 6),
+            textcoords="offset points",
+            horizontalalignment=alignment,
+            verticalalignment="bottom",
+            color=palette.text_primary,
+            clip_on=True,
+            in_layout=False,
+        )
+
+    def _on_draw(self, _event: DrawEvent) -> None:
+        """Keep the plot without the selected-image marker, then paint the marker on it."""
+
+        if self._axes is None or self._selected_marker is None or self._canvas.is_saving():
+            return
+        self._background = self._canvas.copy_from_bbox(self._axes.bbox)
+        self._axes.draw_artist(self._selected_marker)
+
+    def _move_selected_marker(self) -> None:
+        if self._axes is None or self._selected_marker is None:
+            return
+        self._selected_marker.set_data(
+            [self._rows[self._selected_index].distance_value],
+            [self._energies_mev[self._selected_index]],
+        )
+        if self._background is None:
+            self._canvas.draw_idle()
+            return
+        self._canvas.restore_region(self._background)
+        self._axes.draw_artist(self._selected_marker)
+        self._canvas.blit(self._axes.bbox)
 
     def _nearest_index(
         self,
-        position: QPointF,
+        event: MouseEvent,
         *,
         max_distance: float | None = None,
         horizontal_only: bool = False,
     ) -> int | None:
-        geometry = self._plot_geometry()
-        if geometry is None:
+        """Return the image nearest ``event``; matplotlib's events count device pixels."""
+
+        if self._axes is None:
             return None
-        points = geometry[1]
-        if not points:
+        points = self._axes.transData.transform(
+            np.column_stack(([row.distance_value for row in self._rows], self._energies_mev))
+        )
+        distances = np.abs(points[:, 0] - event.x)
+        if not horizontal_only:
+            distances = np.hypot(distances, points[:, 1] - event.y)
+        distances = np.nan_to_num(distances, nan=np.inf)
+        nearest = int(np.argmin(distances))
+        if not np.isfinite(distances[nearest]):
             return None
-        if horizontal_only:
-            distances = [abs(point[0] - position.x()) for point in points]
-        else:
-            distances = [
-                math.hypot(point[0] - position.x(), point[1] - position.y()) for point in points
-            ]
-        nearest = min(range(len(points)), key=lambda index: distances[index])
-        if max_distance is not None and distances[nearest] > max_distance:
+        if (
+            max_distance is not None
+            and distances[nearest] > max_distance * self._canvas.device_pixel_ratio
+        ):
             return None
         return nearest
+
+    def _select(self, index: int | None) -> None:
+        if index is not None and index != self._selected_index:
+            self.point_selected.emit(index)
+
+    def _on_press(self, event: MouseEvent) -> None:
+        # A popped-out plot's zoom and pan tools hold this lock and own the mouse.
+        if event.button is not MouseButton.LEFT or self._canvas.widgetlock.locked():
+            return
+        self._dragging = True
+        self._select(self._nearest_index(event))
+
+    def _on_motion(self, event: MouseEvent) -> None:
+        if self._dragging:
+            self._select(self._nearest_index(event, horizontal_only=True))
+            return
+        # The cursor and the pointer belong to a zoom or pan tool while it holds the lock.
+        if self._canvas.widgetlock.locked():
+            return
+        hover = self._nearest_index(event, max_distance=self._HOVER_DISTANCE)
+        if hover is None:
+            self._canvas.unsetCursor()
+            QToolTip.hideText()
+            return
+        self._canvas.setCursor(Qt.CursorShape.PointingHandCursor)
+        row = self._rows[hover]
+        QToolTip.showText(
+            QCursor.pos(),
+            f"{row.label}\nDistance along band: {row.distance}\nE − E₀: {row.energy}",
+            self._canvas,
+        )
+
+    def _on_release(self, _event: MouseEvent) -> None:
+        self._dragging = False
+
+    def _end_drag(self) -> None:
+        self._dragging = False
+
+    def _on_leave(self, _event: object) -> None:
+        self._canvas.unsetCursor()
+
+    def _on_key_press(self, event: KeyEvent) -> None:
+        if self._rows and event.key in ("left", "right"):
+            self._select(self._clamped(self._selected_index + (-1 if event.key == "left" else 1)))
 
 
 def _build_image_stepper(
@@ -467,7 +417,7 @@ def _build_image_stepper(
     prev_button.setIcon(arrow_icon("left"))
     prev_button.setText("")
     prev_button.setAutoRepeat(True)
-    prev_button.setToolTip("Previous image along the reaction coordinate.")
+    prev_button.setToolTip("Previous image along the band.")
     prev_button.setAccessibleName("Previous image")
     prev_button.clicked.connect(lambda: on_step(-1))
     position_label = QLabel("", parent)
@@ -476,7 +426,7 @@ def _build_image_stepper(
     next_button.setIcon(arrow_icon("right"))
     next_button.setText("")
     next_button.setAutoRepeat(True)
-    next_button.setToolTip("Next image along the reaction coordinate.")
+    next_button.setToolTip("Next image along the band.")
     next_button.setAccessibleName("Next image")
     next_button.clicked.connect(lambda: on_step(1))
     return prev_button, position_label, next_button
@@ -486,7 +436,7 @@ class _ViewerPopoutWindow(QWidget):
     """Floating tool window that hosts the inspector's structure viewer.
 
     The ``Qt.Tool`` flag keeps the window above the main window while the
-    application is active, so scrubbing the reaction coordinate from the main
+    application is active, so scrubbing the band from the main
     window does not bury the popped-out viewer. A mirrored image stepper lets
     the user step through images from this window directly.
     """
@@ -743,7 +693,7 @@ class EnergyBarriersWidget(SourceTableWidget):
         controls_layout.setContentsMargins(0, 0, 0, 0)
         controls_layout.setSpacing(form_spacing())
 
-        self._profile_plot = _ReactionCoordinateProfile(self._band_controls)
+        self._profile_plot = _BandProfilePlot(self._band_controls)
         self._profile_plot.point_selected.connect(self._apply_preview_index)
         controls_layout.addWidget(self._profile_plot, 1)
 
@@ -969,6 +919,7 @@ class EnergyBarriersWidget(SourceTableWidget):
         self._preview_structures = list(structures)
         self._preview_reset_pending = True
         self._band_controls.setVisible(True)
+        self._profile_plot.set_profile(self._preview_rows, selected_index=selected_index)
         self._apply_preview_index(selected_index)
 
     def clear_neb_preview(self, *, title: str | None = None) -> None:
@@ -1059,10 +1010,8 @@ class EnergyBarriersWidget(SourceTableWidget):
 
         row = self._preview_rows[clamped]
         structure = self._preview_structures[clamped]
-        self._preview_summary.setText(
-            f"Reaction coordinate {row.reaction_coordinate}  ·  E − E₀ {row.energy}"
-        )
-        self._profile_plot.set_profile(self._preview_rows, selected_index=clamped)
+        self._preview_summary.setText(f"{row.distance} along the band  ·  E − E₀ {row.energy}")
+        self._profile_plot.set_selected_index(clamped)
         self._preview_position_label.setText(f"Image {clamped + 1} / {len(self._preview_rows)}")
         self._preview_prev_button.setEnabled(clamped > 0)
         self._preview_next_button.setEnabled(clamped < len(self._preview_rows) - 1)
