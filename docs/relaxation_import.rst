@@ -108,6 +108,9 @@ Properties that constrain the design:
   second calculation, and is listed once. ``<seed>_farmNNN.castep`` is one image
   of a task farm, not a run.
 - **A run of another task is refused.** The ``.castep`` echo says what it ran.
+- **What the search cannot open is reported.** A locked folder, or one past the
+  system's path limit, may hold runs, so it is named rather than passed over, and
+  a scan that found nothing else does not claim the folder holds no outputs.
 - **A local input may be stale.** In dataset A the local
   ``.param`` beside an input declares an LDA functional, ``basis_precision:
   FINE`` and ``elec_energy_tol: 1E-10``, while the corresponding ``.castep``
@@ -209,6 +212,9 @@ Decisions
      - Normalise from the ``.castep`` record; archive byte-exact originals.
    * - Host structure
      - Require a matching host: the import refuses until one is loaded.
+   * - Choosing the batch to remove
+     - By position in the list, with each batch named by its source folder and
+       import time, since one folder can be imported more than once.
    * - Removing an imported row
      - Cascade-check references, then delete row, job, run, result, structure,
        site and files together.

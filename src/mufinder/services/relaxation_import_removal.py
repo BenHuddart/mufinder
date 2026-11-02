@@ -40,7 +40,7 @@ from uuid import UUID
 from mufinder.domain.constants import IMPORTED_JOB_TAG
 from mufinder.domain.enums import WorkflowStage
 from mufinder.domain.models import ProvenanceRecord
-from mufinder.domain.text import plural
+from mufinder.domain.text import plain_error, plural
 from mufinder.persistence.codec import uuid_or_none
 
 #: Provenance action for one removal. ``services.journal`` renders nothing for
@@ -281,7 +281,7 @@ def remove_imported_relaxations(
             try:
                 shutil.rmtree(directory)
             except OSError as exc:
-                errors.append(f"Could not delete {directory.name}: {exc}")
+                errors.append(f"Could not delete {directory.name}: {plain_error(exc)}.")
 
     record: ProvenanceRecord | None = None
     if removed:

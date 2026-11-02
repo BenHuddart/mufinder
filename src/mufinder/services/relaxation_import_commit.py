@@ -72,7 +72,7 @@ from mufinder.domain.models import (
     next_job_created_at,
     utc_now,
 )
-from mufinder.domain.text import plural
+from mufinder.domain.text import plain_error, plural
 from mufinder.science.lattice import lattice_frac_to_cart, vector_length, wrap_fractional
 from mufinder.services.relaxation_import import (
     MUON_SPECIES,
@@ -391,7 +391,7 @@ def _materialise_files(
     except Exception as exc:  # noqa: BLE001 - reported, never fatal
         warnings.append(
             f"Could not render {seed_name}.cell, so downstream jobs will not inherit "
-            f"this run's k-point grid: {exc}"
+            f"this run's k-point grid: {plain_error(exc)}."
         )
 
     try:
@@ -409,7 +409,7 @@ def _materialise_files(
     except Exception as exc:  # noqa: BLE001 - reported, never fatal
         warnings.append(
             f"Could not render {seed_name}.param, so downstream jobs will not inherit "
-            f"this run's cutoff: {exc}"
+            f"this run's cutoff: {plain_error(exc)}."
         )
 
     return written, warnings
@@ -617,7 +617,9 @@ def commit_relaxation_import(
         try:
             relaxed = parse_cell_file(run.out_cell_path, geometry_only=True)
         except Exception as exc:  # noqa: BLE001
-            skipped.append((run.display_name, f"Could not read the relaxed cell: {exc}"))
+            skipped.append(
+                (run.display_name, f"Could not read the relaxed cell: {plain_error(exc)}.")
+            )
             continue
 
         species = _relabelled(relaxed.species, run.muon_label)

@@ -178,6 +178,8 @@ class RowTableWidget(QWidget):
     #: Starting widths of the label and supercell columns; the user can drag them.
     #: The supercell width shows a name like ``YBa2Cu3O7 2x2x1`` in full.
     _LABEL_COLUMN_WIDTH = 130
+    #: The widest a read-only row's label widens the column, in average characters.
+    _READ_ONLY_LABEL_CHARACTERS = 48
     _SUPERCELL_COLUMN_WIDTH = 164
     _STATUS_COLUMN: int
     _CONFIGURE_COLUMN: int
@@ -398,6 +400,19 @@ class RowTableWidget(QWidget):
         header.setSectionResizeMode(self._REMOVE_COLUMN, QHeaderView.ResizeMode.Fixed)
         table.setColumnWidth(self._REMOVE_COLUMN, 34)
         return table
+
+    def _fit_read_only_label(self, table: QTableWidget, item: QTableWidgetItem) -> None:
+        """Widen the label column to a label the user cannot shorten, up to a limit.
+
+        A read-only row keeps the name it arrived with, so the width that suits a
+        typed label would clip it for good. A longer one elides; its tooltip holds it.
+        """
+
+        limit = table.fontMetrics().averageCharWidth() * self._READ_ONLY_LABEL_CHARACTERS
+        needed = table.sizeHintForIndex(table.indexFromItem(item)).width()
+        width = min(needed, limit)
+        if width > table.columnWidth(self._LABEL_COLUMN):
+            table.setColumnWidth(self._LABEL_COLUMN, width)
 
     def _all_tables(self) -> tuple[QTableWidget, ...]:
         return self._tables
@@ -799,7 +814,7 @@ class RowTableWidget(QWidget):
                 flags |= Qt.ItemFlag.ItemIsEditable
                 label_item.setToolTip("")
             elif read_only:
-                label_item.setToolTip(self._READ_ONLY_ROW_TOOLTIP)
+                label_item.setToolTip(f"{label_item.text()}\n{self._READ_ONLY_ROW_TOOLTIP}")
             else:
                 label_item.setToolTip(_LOCKED_LABEL_TOOLTIP)
             label_item.setFlags(flags)
@@ -808,6 +823,8 @@ class RowTableWidget(QWidget):
             font = label_item.font()
             font.setItalic(read_only)
             label_item.setFont(font)
+            if read_only:
+                self._fit_read_only_label(target, label_item)
         row_label = self._row_display_label(row, table=target)
         if isinstance(supercell_combo, QComboBox):
             supercell_combo.setEnabled(not locked)

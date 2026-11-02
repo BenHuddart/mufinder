@@ -40,3 +40,23 @@ def test_natural_sort_key_keeps_non_decimal_digits_as_text() -> None:
 )
 def test_space_group_text_writes_screw_axes_as_subscripts(symbol: str, expected: str) -> None:
     assert space_group_text(symbol) == expected
+
+
+def test_plain_error_drops_the_errno_and_the_path() -> None:
+    import errno
+
+    from mufinder.domain.text import plain_error
+
+    assert plain_error(PermissionError(errno.EACCES, "Permission denied", "/a/b")) == (
+        "permission denied"
+    )
+    assert plain_error(FileNotFoundError(errno.ENOENT, "No such file", "/a/b")) == (
+        "it is no longer there"
+    )
+    assert plain_error(OSError(errno.ENAMETOOLONG, "File name too long", "/a/b")) == (
+        "the path is too long"
+    )
+    assert plain_error(OSError(errno.ENOSPC, "No space left on device", "/a/b")) == (
+        "no space left on device"
+    )
+    assert plain_error(ValueError("Unknown block FOO.")) == "Unknown block FOO"

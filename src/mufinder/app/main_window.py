@@ -123,8 +123,12 @@ from mufinder.app.energy_barriers_widget import (
 from mufinder.app.export_dialogs import open_containing_folder
 from mufinder.app.failed_job_dialog import FailedJobAction, FailedJobDialog
 from mufinder.app.kpoint_convergence_widget import KPointConvergenceWidget
-from mufinder.app.relaxation_import_dialog import RelaxationImportDialog, start_relaxation_scan
-from mufinder.domain.text import plural
+from mufinder.app.relaxation_import_dialog import (
+    RelaxationImportDialog,
+    choose_import_batch,
+    start_relaxation_scan,
+)
+from mufinder.domain.text import plain_error, plural
 from mufinder.services.relaxation_import import RelaxationFolderScan
 from mufinder.services.relaxation_import_commit import IMPORT_ACTIONS, commit_relaxation_import
 from mufinder.services.relaxation_import_removal import (
@@ -8752,6 +8756,9 @@ class MainWindow(QMainWindow):
             return
 
         if not scan.runs:
+            if scan.unreadable:
+                QMessageBox.information(self, "Could not read folder", scan.unreadable_note)
+                return
             QMessageBox.information(
                 self,
                 "Nothing to import",
@@ -8803,7 +8810,7 @@ class MainWindow(QMainWindow):
             )
         except OSError as exc:
             QMessageBox.warning(
-                self, "Import failed", f"Could not write the imported files:\n{exc}"
+                self, "Import failed", f"Could not write the imported files: {plain_error(exc)}."
             )
             return
 
@@ -8864,12 +8871,10 @@ class MainWindow(QMainWindow):
             return
 
         labels = [f"{label} ({plural(count, 'relaxation')})" for label, count, _batch_id in batches]
-        choice, accepted = QInputDialog.getItem(
-            self, "Remove Imported Relaxations", "Import batch", labels, 0, False
-        )
-        if not accepted:
+        chosen = choose_import_batch(self, labels)
+        if chosen is None:
             return
-        batch_id = batches[labels.index(choice)][2]
+        batch_id = batches[chosen][2]
 
         refs = imported_relaxations_in_batch(document, batch_id)
         directories = {
@@ -8937,7 +8942,11 @@ class MainWindow(QMainWindow):
         return {"rows": [row for row in rows if str(row.get("site_id", "")) not in removed]}
 
     def _imported_relaxation_batches(self) -> list[tuple[str, int, UUID]]:
-        """Return ``(label, count, batch_id)`` for every import batch present."""
+        """Return ``(label, count, batch_id)`` for every import batch, oldest first.
+
+        A label names the source folder and when it was imported, since one folder
+        can be imported more than once. A batch whose record is missing comes last.
+        """
 
         document = self._document
         if document is None:
@@ -8949,22 +8958,34 @@ class MainWindow(QMainWindow):
                 counts[str(raw)] = counts.get(str(raw), 0) + 1
 
         labels: dict[str, str] = {}
+        order: dict[str, float] = {}
         for record in document.provenance:
             if record.action not in IMPORT_ACTIONS:
                 continue
             raw_batch = record.parameters.get("batch_id")
             source = record.parameters.get("source_folder")
             if raw_batch:
-                labels[str(raw_batch)] = Path(str(source)).name if source else "imported batch"
+                folder = Path(str(source)).name if source else "imported batch"
+                when = record.timestamp.astimezone()
+                labels[str(raw_batch)] = f"{folder}, imported {when:%d %b %Y at %H:%M:%S}"
+                order[str(raw_batch)] = when.timestamp()
 
-        batches: list[tuple[str, int, UUID]] = []
+        batches: list[tuple[float, str, int, UUID]] = []
         for raw_batch, count in counts.items():
             try:
                 batch_id = UUID(raw_batch)
             except ValueError:
                 continue
-            batches.append((labels.get(raw_batch, "imported batch"), count, batch_id))
-        return sorted(batches, key=lambda item: item[0])
+            batches.append(
+                (
+                    order.get(raw_batch, float("inf")),
+                    labels.get(raw_batch, "imported batch"),
+                    count,
+                    batch_id,
+                )
+            )
+        batches.sort(key=lambda item: item[:2])
+        return [(label, count, batch_id) for _when, label, count, batch_id in batches]
 
     def merge_imported_relaxation_rows(
         self,

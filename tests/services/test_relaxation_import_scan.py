@@ -7,6 +7,7 @@ boundary).
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -719,7 +720,7 @@ class TestAnyFolder:
 
         run = scan_relaxation_folder(tmp_path).runs[0]
 
-        assert "The .castep output could not be read." in run.blockers
+        assert "Could not read mu.castep: corrupt." in run.blockers
 
     def test_a_blocked_runs_parameter_disagreement_is_not_reported(self, tmp_path: Path) -> None:
         """A phonon run beside a stale ``.param`` has one thing to say."""
@@ -825,3 +826,127 @@ def test_the_old_module_names_still_resolve() -> None:
         relaxation_import_commit.RelaxationImportOutcome
     )
     assert legacy_import_removal.plan_removal is relaxation_import_removal.plan_removal
+
+
+needs_permissions = pytest.mark.skipif(
+    os.geteuid() == 0, reason="root reads everything, whatever the mode"
+)
+
+
+class TestWhatTheScanCouldNotRead:
+    @needs_permissions
+    def test_a_locked_subfolder_is_reported(self, tmp_path: Path) -> None:
+        write_run(tmp_path / "open")
+        locked = tmp_path / "locked"
+        locked.mkdir()
+        locked.chmod(0)
+        try:
+            scan = scan_relaxation_folder(tmp_path)
+        finally:
+            locked.chmod(0o755)
+
+        assert [run.relative_name for run in scan.runs] == ["open/mu"]
+        assert scan.unreadable == (("locked", "permission denied"),)
+        assert any(
+            "1 location" in line and "locked (permission denied)" in line for line in scan.warnings
+        )
+
+    @needs_permissions
+    def test_an_unreadable_chosen_folder_says_so(self, tmp_path: Path) -> None:
+        locked = tmp_path / "locked"
+        locked.mkdir()
+        locked.chmod(0)
+        try:
+            scan = scan_relaxation_folder(locked)
+        finally:
+            locked.chmod(0o755)
+
+        assert scan.runs == ()
+        assert scan.unreadable_note == "Could not read this folder: permission denied."
+
+    def test_a_tree_beyond_the_path_limit_is_reported(self, tmp_path: Path) -> None:
+        name = "d" * 200
+        current = os.open(tmp_path, os.O_RDONLY)
+        try:
+            for _level in range(25):
+                os.mkdir(name, dir_fd=current)
+                deeper = os.open(name, os.O_RDONLY, dir_fd=current)
+                os.close(current)
+                current = deeper
+            handle = os.open("mu.castep", os.O_CREAT | os.O_WRONLY, dir_fd=current)
+            os.close(handle)
+        finally:
+            os.close(current)
+
+        try:
+            scan = scan_relaxation_folder(tmp_path)
+
+            assert scan.runs == ()
+            assert scan.unreadable[0][1] == "the path is too long"
+            assert "the path is too long" in scan.unreadable_note
+            assert len(scan.unreadable_note) < 300
+        finally:
+            _remove_deep_tree(tmp_path, name)
+
+    @needs_permissions
+    def test_an_unreadable_output_gives_one_plain_reason(self, tmp_path: Path) -> None:
+        write_run(tmp_path)
+        output = tmp_path / "mu.castep"
+        output.chmod(0)
+        try:
+            run = scan_relaxation_folder(tmp_path).runs[0]
+        finally:
+            output.chmod(0o644)
+
+        assert "Could not read mu.castep: permission denied." in run.blockers
+        everything = " ".join((*run.blockers, *run.warnings))
+        assert "Errno" not in everything
+        assert str(tmp_path) not in everything
+        assert "charge state" not in everything
+
+    @needs_permissions
+    def test_an_unreadable_cell_gives_a_plain_reason(self, tmp_path: Path) -> None:
+        write_run(tmp_path)
+        cell = tmp_path / "mu.cell"
+        cell.chmod(0)
+        try:
+            run = scan_relaxation_folder(tmp_path).runs[0]
+        finally:
+            cell.chmod(0o644)
+
+        everything = " ".join((*run.blockers, *run.warnings))
+        assert "Could not read mu.cell: permission denied." in everything
+        assert "Errno" not in everything
+        assert str(tmp_path) not in everything
+
+
+def _remove_deep_tree(root: Path, name: str) -> None:
+    """Remove a tree too deep for a path to reach, working down by file descriptor."""
+
+    import shutil
+
+    shutil.rmtree(root / name)
+
+
+class TestChargeWording:
+    def test_a_host_only_run_claims_no_charge_state(self, tmp_path: Path) -> None:
+        write_run(
+            tmp_path,
+            "host",
+            input_text=host_only_cell(),
+            out_text=host_only_cell(),
+            castep_kwargs={"charge": "0.000"},
+        )
+
+        run = scan_relaxation_folder(tmp_path).runs[0]
+
+        assert run.charge_state is None
+        assert run.has_no_muon
+
+    def test_an_undetermined_charge_says_what_will_happen(self, tmp_path: Path) -> None:
+        write_run(tmp_path, castep_kwargs={"charge": "  7.000"})
+
+        run = scan_relaxation_folder(tmp_path).runs[0]
+
+        assert any("imported as a positive muon" in item for item in run.warnings)
+        assert not any("choose" in item for item in run.warnings)

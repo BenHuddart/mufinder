@@ -24,12 +24,15 @@ from pathlib import Path
 from PySide6.QtCore import QObject, Qt, QThread, Signal, Slot
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QComboBox,
     QDialog,
     QDialogButtonBox,
+    QFormLayout,
     QHBoxLayout,
     QHeaderView,
     QLabel,
     QPushButton,
+    QStyledItemDelegate,
     QTableWidget,
     QTableWidgetItem,
     QTextEdit,
@@ -38,7 +41,7 @@ from PySide6.QtWidgets import (
 
 from mufinder.app.theme import style_section_subtitle, style_section_title, track_item_view_corners
 from mufinder.domain.charge_states import muon_charge_state_label
-from mufinder.domain.text import plural
+from mufinder.domain.text import plain_error, plural
 from mufinder.services.relaxation_import import (
     DetectedRun,
     RelaxationFolderScan,
@@ -82,7 +85,7 @@ class RelaxationScanWorker(QObject):
                 progress=self.progressed.emit,
             )
         except Exception as exc:  # noqa: BLE001 - reported to the user, never raised across threads
-            self.failed.emit(str(exc))
+            self.failed.emit(plain_error(exc))
             return
         self.completed.emit(scan)
 
@@ -183,6 +186,14 @@ def run_notes(run: DetectedRun) -> str:
     return " ".join(notes)
 
 
+class _ElideMiddleDelegate(QStyledItemDelegate):
+    """Keep both ends of a path visible: the folder it starts in and the seed it ends in."""
+
+    def initStyleOption(self, option, index) -> None:  # noqa: N802 - Qt API naming.
+        super().initStyleOption(option, index)
+        option.textElideMode = Qt.TextElideMode.ElideMiddle
+
+
 class RelaxationImportDialog(QDialog):
     """Choose which detected CASTEP relaxations to import."""
 
@@ -193,6 +204,9 @@ class RelaxationImportDialog(QDialog):
     _SUPERCELL_COLUMN = 4
     _ENERGY_COLUMN = 5
     _NOTES_COLUMN = 6
+    #: The widest the Run column opens, in average characters. Past this a path
+    #: elides, because the reason a run was refused is what has to stay on screen.
+    _RUN_COLUMN_CHARACTERS = 32
 
     def __init__(self, scan: RelaxationFolderScan, parent=None) -> None:
         super().__init__(parent)
@@ -221,10 +235,14 @@ class RelaxationImportDialog(QDialog):
             summary.setReadOnly(True)
             summary.setPlainText("\n".join(f"- {line}" for line in notes))
             summary.setMaximumHeight(96)
+            summary.setAccessibleName("Scan Notes")
             layout.addWidget(summary)
 
         self._table = QTableWidget(0, 7, self)
         track_item_view_corners(self._table)
+        self._table.setAccessibleName("CASTEP Runs Found")
+        self._table.setWordWrap(False)
+        self._table.setItemDelegateForColumn(self._RUN_COLUMN, _ElideMiddleDelegate(self._table))
         self._table.setHorizontalHeaderLabels(
             ["Import", "Run", "Charge", "Status", "Supercell", "Energy (eV)", "Notes"]
         )
@@ -272,16 +290,20 @@ class RelaxationImportDialog(QDialog):
             )
             self._table.setItem(row, self._SELECT_COLUMN, check)
 
-            self._table.setItem(row, self._RUN_COLUMN, QTableWidgetItem(run.display_name))
-            charge = (
-                muon_charge_state_label(run.charge_state) if run.charge_state else "undetermined"
-            )
+            run_item = QTableWidgetItem(run.display_name)
+            run_item.setToolTip(run.display_name)
+            self._table.setItem(row, self._RUN_COLUMN, run_item)
+            if run.charge_state:
+                charge = muon_charge_state_label(run.charge_state)
+            else:
+                charge = "" if run.has_no_muon else "undetermined"
             self._table.setItem(row, self._CHARGE_COLUMN, QTableWidgetItem(charge))
             self._table.setItem(row, self._STATUS_COLUMN, QTableWidgetItem(_status_text(run)))
 
             matrix = run.supercell_matrix
+            # No matrix on a refused run means none was established, not a unit cell.
             supercell = (
-                "unit cell"
+                ("unit cell" if run.importable else "")
                 if matrix is None
                 else f"{matrix[0][0]}x{matrix[1][1]}x{matrix[2][2]}"
                 if _is_diagonal(matrix)
@@ -298,6 +320,13 @@ class RelaxationImportDialog(QDialog):
 
         self._table.itemChanged.connect(self._on_item_changed)
         self._table.resizeColumnsToContents()
+        self._table.setColumnWidth(
+            self._RUN_COLUMN,
+            min(
+                self._table.columnWidth(self._RUN_COLUMN),
+                self._table.fontMetrics().averageCharWidth() * self._RUN_COLUMN_CHARACTERS,
+            ),
+        )
         self._table.horizontalHeader().setSectionResizeMode(
             self._NOTES_COLUMN, QHeaderView.ResizeMode.Stretch
         )
@@ -338,11 +367,51 @@ class RelaxationImportDialog(QDialog):
         return selected
 
 
+class ImportBatchChooser(QDialog):
+    """Choose one import batch, by position in the list.
+
+    Not ``QInputDialog.getItem``, which returns only the chosen text: two batches
+    may read the same, and removing the first of them when the second was picked
+    deletes the only copy of its results.
+    """
+
+    def __init__(self, labels: list[str], parent=None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Remove Imported Relaxations")
+        layout = QFormLayout(self)
+        self._combo = QComboBox(self)
+        self._combo.addItems(labels)
+        self._combo.setAccessibleName("Import batch")
+        layout.addRow("Import batch", self._combo)
+        buttons = QDialogButtonBox(self)
+        buttons.addButton(QDialogButtonBox.StandardButton.Cancel)
+        buttons.addButton("Remove…", QDialogButtonBox.ButtonRole.AcceptRole)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addRow(buttons)
+
+    def selected_index(self) -> int:
+        """Return the position of the chosen batch in the list given."""
+
+        return self._combo.currentIndex()
+
+
+def choose_import_batch(parent, labels: list[str]) -> int | None:
+    """Ask which import batch to remove; return its position, or ``None`` if cancelled."""
+
+    dialog = ImportBatchChooser(labels, parent)
+    if dialog.exec() != QDialog.DialogCode.Accepted:
+        return None
+    return dialog.selected_index()
+
+
 def _is_diagonal(matrix) -> bool:
     return all(matrix[i][j] == 0 for i in range(3) for j in range(3) if i != j)
 
 
 __all__ = [
+    "ImportBatchChooser",
+    "choose_import_batch",
     "RelaxationImportDialog",
     "RelaxationScanWorker",
     "run_notes",

@@ -78,10 +78,12 @@ The import dialog
 
 The dialog lists each ``.castep`` found with the columns ``Import``, ``Run``,
 ``Charge``, ``Status``, ``Supercell``, ``Energy (eV)``, and ``Notes``. ``Run`` is
-the file's path under the chosen folder, without its suffix. Converged runs are
+the file's path under the chosen folder, without its suffix, shortened in the
+middle when it is long, with the whole path in its tooltip. Converged runs are
 pre-ticked; runs that cannot be imported are shown unticked and disabled, with
-the reason in ``Notes``. A summary above the table reports parameter
-disagreements and undetermined charge states.
+the reason in ``Notes``. ``Charge`` is empty for a run with no muon. A summary
+above the table reports parameter disagreements, undetermined charge states and
+anything the search could not read.
 
 What can be imported
 --------------------
@@ -108,10 +110,15 @@ What can be imported
 - When the project has no active muon-relaxation definition, the import creates
   one and makes it active.
 - Each imported row is labelled ``Imported <seed>``, with a suffix when that label
-  is already in use: ``Imported <seed> (2)``.
+  is already in use: ``Imported <seed> (2)``. The table's ``Label`` column widens to fit it, and its
+  tooltip gives it whole.
 - A ``.castep`` that repeats another of the same name byte for byte, as a copied
   results folder does, counts once. The per-image ``<seed>_farmNNN.castep``
   outputs of a task farm are not runs.
+- A folder the search cannot open, because it is locked or its path is too long
+  for the system, is reported rather than passed over, since runs may be inside
+  it. If nothing else was found, the message says so instead of reporting no
+  outputs.
 - Importing the same folder again creates new entries; runs already imported
   are not detected and skipped.
 
@@ -153,9 +160,10 @@ Removing an import
 
 1. Choose ``File > Remove Imported Relaxations…``.
 2. In the ``Remove Imported Relaxations`` dialog, pick the ``Import batch`` to
-   remove.
-3. Read the confirmation, which names what will be deleted, and confirm. The
-   default answer is ``No``.
+   remove and click ``Remove…``. Each batch is named by its source folder and when
+   it was imported, with the number of relaxations it holds.
+3. Read the confirmation, which names what will be deleted. Its buttons are
+   ``Remove <N> relaxations`` and ``Cancel``, and ``Cancel`` is the default.
 
 MuFinder refuses while anything still references an imported site, its run or
 its structure; the message lists what still uses them. Otherwise it deletes the

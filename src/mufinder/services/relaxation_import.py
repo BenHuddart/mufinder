@@ -28,11 +28,12 @@ from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import hashlib
 import os
 from pathlib import Path
 import re
+import stat
 
 from mufinder.castep_io.cell_parser import ParsedCell, parse_cell_file
 from mufinder.castep_io.output_parser import CastepResult, parse_castep_output
@@ -40,7 +41,7 @@ from mufinder.castep_io.param_parser import parse_param_file
 from mufinder.castep_io.run_parameters import CastepRunParameters, parse_run_parameters
 from mufinder.castep_io.schema import keyword_catalog_source_info
 from mufinder.domain.charge_states import MUONIUM_CHARGE_STATE, POSITIVE_MUON_CHARGE_STATE
-from mufinder.domain.text import plural
+from mufinder.domain.text import plain_error, plural
 from mufinder.science.supercell_matching import (
     SupercellDetection,
     detect_supercell_matrix_from_lattices,
@@ -83,6 +84,19 @@ _SOURCE_PRIORITY = (SOURCE_CASTEP, SOURCE_PARAM, SOURCE_CELL)
 #: writer applies — of order 1e-6. Leaving comparison's 0.2 in place here would accept
 #: a 7% lattice mismatch as a supercell and import a run against the wrong host.
 IMPORT_SUPERCELL_TOLERANCE = 1e-3
+
+
+#: How many unreadable locations a note names before it counts the rest.
+_UNREADABLE_SHOWN = 3
+#: A path in a note is cut to this many characters, keeping both ends.
+_NOTE_PATH_LENGTH = 60
+
+
+def _shortened(path: str) -> str:
+    if len(path) <= _NOTE_PATH_LENGTH:
+        return path
+    half = (_NOTE_PATH_LENGTH - 1) // 2
+    return f"{path[:half]}…{path[-half:]}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -167,6 +181,12 @@ class DetectedRun:
 
         return self.relative_name or self.seed_name
 
+    @property
+    def has_no_muon(self) -> bool:
+        """Return whether the run was refused for holding no muon."""
+
+        return self.blockers == (NO_MUON_BLOCKER,)
+
 
 @dataclass(frozen=True, slots=True)
 class RelaxationFolderScan:
@@ -179,6 +199,28 @@ class RelaxationFolderScan:
     #: but — deliberately — never blocks an import.
     catalog_origin: str | None = None
     warnings: tuple[str, ...] = ()
+    #: ``(path under the folder, why)`` for what the search could not look inside,
+    #: ``"."`` being the folder itself. Runs may be there, unlisted.
+    unreadable: tuple[tuple[str, str], ...] = ()
+
+    @property
+    def unreadable_note(self) -> str:
+        """Return what the search could not look inside, in a sentence, or ``""``."""
+
+        if not self.unreadable:
+            return ""
+        if self.unreadable[0][0] == ".":
+            return f"Could not read this folder: {self.unreadable[0][1]}."
+        shown = [
+            f"{_shortened(name)} ({reason})" for name, reason in self.unreadable[:_UNREADABLE_SHOWN]
+        ]
+        hidden = len(self.unreadable) - len(shown)
+        if hidden:
+            shown.append(f"and {hidden} more")
+        return (
+            f"Could not read {plural(len(self.unreadable), 'location')} under this folder, "
+            f"so any runs inside are not listed: {', '.join(shown)}."
+        )
 
     @property
     def importable_runs(self) -> tuple[DetectedRun, ...]:
@@ -358,17 +400,16 @@ def _host_composition_blockers(
 
 
 def _scan_castep(path: Path) -> tuple[CastepResult | None, CastepRunParameters | None, list[str]]:
-    warnings: list[str] = []
-    result: CastepResult | None = None
-    run_parameters: CastepRunParameters | None = None
     try:
         result = parse_castep_output(path)
     except Exception as exc:  # noqa: BLE001 - a bad file must not end the scan
-        warnings.append(f"Could not read {path.name}: {exc}")
+        return None, None, [f"Could not read {path.name}: {plain_error(exc)}."]
+    warnings: list[str] = []
+    run_parameters: CastepRunParameters | None = None
     try:
         run_parameters = parse_run_parameters(path)
     except Exception as exc:  # noqa: BLE001 - a bad file must not end the scan
-        warnings.append(f"Could not read the parameter echo in {path.name}: {exc}")
+        warnings.append(f"Could not read the parameter echo in {path.name}: {plain_error(exc)}.")
     return result, run_parameters, warnings
 
 
@@ -423,7 +464,10 @@ def _detect_run(
     run_param_path = files.get(_PARAM)
 
     result, run_parameters, castep_warnings = _scan_castep(castep_path)
-    warnings.extend(castep_warnings)
+    if result is None:
+        blockers.extend(castep_warnings)
+    else:
+        warnings.extend(castep_warnings)
     if _PARAM in refused:
         warnings.append(f"{refused[_PARAM]} Its parameters are not read.")
 
@@ -440,7 +484,7 @@ def _detect_run(
             try:
                 input_cell = parse_cell_file(input_cell_path, geometry_only=True)
             except Exception:  # noqa: BLE001
-                warnings.append(f"Could not read {input_cell_path.name}: {exc}")
+                warnings.append(f"Could not read {input_cell_path.name}: {plain_error(exc)}.")
                 # Blocking, not merely a warning: the initial muon position and
                 # the supercell matrix are both recovered from this file, so
                 # without it there is nothing to anchor the imported site to.
@@ -448,7 +492,7 @@ def _detect_run(
             else:
                 warnings.append(
                     f"Read only the geometry of {input_cell_path.name}; a k-point grid "
-                    f"it states that the .castep does not report is not imported: {exc}"
+                    f"it states that the .castep does not report is not imported: {plain_error(exc)}."
                 )
     else:
         blockers.append(refused.get(_CELL, f"No {seed_name}.cell was found for this run."))
@@ -460,7 +504,7 @@ def _detect_run(
             # outside the loaded keyword catalog.
             out_cell = parse_cell_file(out_cell_path, geometry_only=True)
         except Exception as exc:  # noqa: BLE001 - see the input-cell note above
-            warnings.append(f"Could not read {out_cell_path.name}: {exc}")
+            warnings.append(f"Could not read {out_cell_path.name}: {plain_error(exc)}.")
             blockers.append("The relaxed -out.cell could not be parsed.")
     else:
         blockers.append(
@@ -477,7 +521,7 @@ def _detect_run(
                 if item.canonical_name and item.error is None
             }
         except Exception as exc:  # noqa: BLE001 - see the input-cell note above
-            warnings.append(f"Could not read {run_param_path.name}: {exc}")
+            warnings.append(f"Could not read {run_param_path.name}: {plain_error(exc)}.")
 
     cell_values: dict[str, object] = {}
     if input_cell is not None and input_cell.cell_file.kpoint_mp_grid is not None:
@@ -540,10 +584,10 @@ def _detect_run(
         charge_state = _charge_state_from_charge(param_values.get("charge"))
         if charge_state is not None:
             charge_state_source = SOURCE_PARAM
-    if charge_state is None:
+    if charge_state is None and result is not None:
         warnings.append(
             "The muon charge state could not be determined from the .castep or .param; "
-            "choose one before importing."
+            "it will be imported as a positive muon."
         )
 
     detection: SupercellDetection | None = None
@@ -570,9 +614,7 @@ def _detect_run(
 
     completed = bool(result.completed) if result is not None else False
     converged = result.geom_converged if result is not None else None
-    if result is None:
-        blockers.append("The .castep output could not be read.")
-    elif not completed:
+    if result is not None and not completed:
         blockers.append("The CASTEP run did not complete.")
     if input_cell is not None and out_cell is not None and not _same_atoms(input_cell, out_cell):
         blockers.append(
@@ -584,6 +626,8 @@ def _detect_run(
     task = str(parameters.get("task") or "").strip().upper()
     if no_muon:
         blockers, warnings, conflicts = [NO_MUON_BLOCKER], [], ()
+        # Charge says what a muon is, and here there is none to describe.
+        charge_state = charge_state_source = muon_label = None
     elif task and task != _GEOMETRY_OPTIMISATION_TASK:
         blockers = [f"This is a {task} run, not a geometry optimisation."]
         warnings, conflicts = [], ()
@@ -713,18 +757,37 @@ class _RunFiles:
     refused: dict[str, str]
 
 
-def _discover_runs(root: Path) -> list[_RunFiles]:
-    """Find every ``.castep`` under ``root`` and pair each with its other files."""
+def _discover_runs(root: Path) -> tuple[list[_RunFiles], tuple[tuple[str, str], ...]]:
+    """Find every ``.castep`` under ``root`` and pair each with its other files.
+
+    Also returns what the search could not look inside: ``os.walk`` otherwise
+    passes over a locked folder, or one past the path limit, in silence.
+    """
+
+    unreadable: list[tuple[str, str]] = []
+
+    def note_unreadable(error: OSError) -> None:
+        location = os.path.relpath(error.filename or root, root)
+        unreadable.append((location, plain_error(error)))
 
     outputs: list[Path] = []
     found: dict[str, dict[str, list[Path]]] = {_CELL: {}, _OUT_CELL: {}, _PARAM: {}}
-    for directory, subdirectories, names in os.walk(root):
+    for directory, subdirectories, names in os.walk(root, onerror=note_unreadable):
         subdirectories.sort()
         for name in sorted(names):
             path = Path(directory) / name
             if name.endswith(_CASTEP_SUFFIX):
                 seed = name[: -len(_CASTEP_SUFFIX)]
-                if not _FARM_OUTPUT_RE.search(seed) and path.is_file():
+                if _FARM_OUTPUT_RE.search(seed):
+                    continue
+                try:
+                    is_file = stat.S_ISREG(path.stat().st_mode)
+                except FileNotFoundError:  # A dangling link holds no run.
+                    continue
+                except OSError as exc:
+                    unreadable.append((os.path.relpath(path, root), plain_error(exc)))
+                    continue
+                if is_file:
                     outputs.append(path)
             elif name.endswith(_OUT_CELL_SUFFIX):
                 found[_OUT_CELL].setdefault(name[: -len(_OUT_CELL_SUFFIX)], []).append(path)
@@ -773,7 +836,7 @@ def _discover_runs(root: Path) -> list[_RunFiles]:
                     f"{path.name} could belong to several runs under this folder, "
                     "so MuFinder cannot tell which one it belongs to."
                 )
-    return runs
+    return runs, tuple(unreadable)
 
 
 def scan_relaxation_folder(
@@ -805,7 +868,7 @@ def scan_relaxation_folder(
             "Setup > CASTEP to improve it. This does not affect the relaxed structures themselves."
         )
 
-    discovered = _discover_runs(root_path)
+    discovered, unreadable = _discover_runs(root_path)
     runs: list[DetectedRun] = []
     for position, files in enumerate(discovered, start=1):
         if progress is not None:
@@ -823,12 +886,15 @@ def scan_relaxation_folder(
             )
         )
 
-    return RelaxationFolderScan(
+    scan = RelaxationFolderScan(
         root=root_path,
         runs=tuple(runs),
         catalog_origin=catalog.origin if catalog is not None else None,
-        warnings=tuple(warnings),
+        unreadable=unreadable,
     )
+    if unreadable:
+        warnings.append(scan.unreadable_note)
+    return replace(scan, warnings=tuple(warnings))
 
 
 __all__ = [

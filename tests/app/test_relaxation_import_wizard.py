@@ -368,7 +368,7 @@ class TestRemovalAction:
         assert len(batches) == 1
         label, count, _batch_id = batches[0]
         assert count == 2
-        assert label == "runs"
+        assert label.startswith("runs, imported ")
 
     def test_removal_refuses_while_something_still_uses_the_sites(
         self,
@@ -394,8 +394,8 @@ class TestRemovalAction:
             lambda *args, **kwargs: warned.append(args[2]),
         )
         monkeypatch.setattr(
-            "mufinder.app.main_window.QInputDialog.getItem",
-            lambda *args, **kwargs: (args[3][0], True),
+            "mufinder.app.main_window.choose_import_batch",
+            lambda *args, **kwargs: 0,
         )
         asked: list[int] = []
         monkeypatch.setattr(
@@ -422,8 +422,8 @@ class TestRemovalAction:
     ) -> None:
         self._imported_window(window, tmp_path, host_structure)
         monkeypatch.setattr(
-            "mufinder.app.main_window.QInputDialog.getItem",
-            lambda *args, **kwargs: (args[3][0], True),
+            "mufinder.app.main_window.choose_import_batch",
+            lambda *args, **kwargs: 0,
         )
         monkeypatch.setattr(window, "_persist_document_ui_state", lambda **kwargs: None)
         monkeypatch.setattr(window, "_refresh_muon_sites_summary", lambda **kwargs: None)
@@ -450,8 +450,8 @@ class TestRemovalAction:
 
         outcome = self._imported_window(window, tmp_path, host_structure)
         monkeypatch.setattr(
-            "mufinder.app.main_window.QInputDialog.getItem",
-            lambda *args, **kwargs: (args[3][0], True),
+            "mufinder.app.main_window.choose_import_batch",
+            lambda *args, **kwargs: 0,
         )
         monkeypatch.setattr(
             workflow_table_utils, "confirm_destructive", lambda *args, **kwargs: False
@@ -753,8 +753,8 @@ class TestProvenanceReachesDisk:
 
         TestRemovalAction()._imported_window(window, tmp_path, host_structure)
         monkeypatch.setattr(
-            "mufinder.app.main_window.QInputDialog.getItem",
-            lambda *args, **kwargs: (args[3][0], True),
+            "mufinder.app.main_window.choose_import_batch",
+            lambda *args, **kwargs: 0,
         )
         monkeypatch.setattr(window, "_persist_document_ui_state", lambda **kwargs: None)
         monkeypatch.setattr(window, "_refresh_muon_sites_summary", lambda **kwargs: None)
@@ -795,8 +795,8 @@ class TestRemoveThenReimport:
 
     def _remove(self, window: MainWindow, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(
-            "mufinder.app.main_window.QInputDialog.getItem",
-            lambda *args, **kwargs: (args[3][0], True),
+            "mufinder.app.main_window.choose_import_batch",
+            lambda *args, **kwargs: 0,
         )
         monkeypatch.setattr(
             "mufinder.app.main_window.QMessageBox.warning", lambda *args, **kwargs: None
@@ -940,11 +940,12 @@ class TestBatchImportedEarlier:
         document = window._document
 
         batches = window._imported_relaxation_batches()
-        assert [(label, count) for label, count, _batch in batches] == [("older", 2)]
+        assert [count for _label, count, _batch in batches] == [2]
+        assert batches[0][0].startswith("older, imported ")
 
         monkeypatch.setattr(
-            "mufinder.app.main_window.QInputDialog.getItem",
-            lambda *args, **kwargs: (args[3][0], True),
+            "mufinder.app.main_window.choose_import_batch",
+            lambda *args, **kwargs: 0,
         )
         monkeypatch.setattr(
             "mufinder.app.main_window.workflow_table_utils.confirm_destructive",
@@ -982,3 +983,234 @@ class TestBatchImportedEarlier:
         from mufinder.app.muon_generation_widget import MuonGenerationWidget
 
         assert MuonGenerationWidget._display_generation_method("imported_legacy") == "imported"
+
+
+class TestChoosingABatch:
+    """The batch removed is the one picked, even when two came from one folder."""
+
+    def _import_twice(self, window: MainWindow, tmp_path: Path, host: Structure):
+        from mufinder.services.relaxation_import_commit import commit_relaxation_import
+
+        window._document = _document(tmp_path, host)
+        document = window._document
+        output_root = document.project_root / "files" / "muon_relaxation"
+        folder = build_folder(tmp_path / "sites", sites=(1,))
+        outcomes = []
+        for _attempt in range(2):
+            scan = _scan(folder)
+            outcome = commit_relaxation_import(
+                document,
+                scan=scan,
+                runs=scan.importable_runs,
+                host_structure=host,
+                output_root=output_root,
+                existing_labels=[item.label for done in outcomes for item in done.imported],
+            )
+            window.merge_imported_relaxation_rows(outcome, output_directory=output_root)
+            window._project_service.append_provenance(document, outcome.provenance)
+            outcomes.append(outcome)
+        return outcomes
+
+    def test_the_second_batch_is_the_one_deleted_through_the_real_chooser(
+        self,
+        window: MainWindow,
+        tmp_path: Path,
+        host_structure: Structure,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from PySide6.QtCore import QTimer
+        from PySide6.QtWidgets import QApplication, QComboBox, QDialog, QDialogButtonBox
+
+        first, second = self._import_twice(window, tmp_path, host_structure)
+        document = window._document
+        # Same folder, same second, same count: identical text must not matter.
+        for record in document.provenance:
+            record.timestamp = document.provenance[0].timestamp
+        monkeypatch.setattr(
+            workflow_table_utils, "confirm_destructive", lambda *args, **kwargs: True
+        )
+        monkeypatch.setattr(window, "_persist_document_ui_state", lambda **kwargs: None)
+        monkeypatch.setattr(window, "_refresh_muon_sites_summary", lambda **kwargs: None)
+        seen: list[list[str]] = []
+
+        def _pick_second() -> None:
+            dialog = QApplication.activeModalWidget()
+            assert isinstance(dialog, QDialog)
+            combo = dialog.findChild(QComboBox)
+            seen.append([combo.itemText(index) for index in range(combo.count())])
+            combo.setCurrentIndex(1)
+            box = dialog.findChild(QDialogButtonBox)
+            next(
+                button
+                for button in box.buttons()
+                if box.buttonRole(button) == QDialogButtonBox.ButtonRole.AcceptRole
+            ).click()
+
+        QTimer.singleShot(0, _pick_second)
+        window._on_remove_imported_relaxations()
+
+        assert len(seen) == 1 and len(seen[0]) == 2
+        kept, removed = first.imported[0], second.imported[0]
+        assert kept.site_id in document.sites
+        assert kept.job_directory.is_dir()
+        assert removed.site_id not in document.sites
+        assert not removed.job_directory.exists()
+
+    def test_cancelling_the_chooser_removes_nothing(
+        self, window: MainWindow, tmp_path: Path, host_structure: Structure
+    ) -> None:
+        from PySide6.QtCore import QTimer
+        from PySide6.QtWidgets import QApplication
+
+        first, second = self._import_twice(window, tmp_path, host_structure)
+        QTimer.singleShot(0, lambda: QApplication.activeModalWidget().reject())
+
+        window._on_remove_imported_relaxations()
+
+        assert first.imported[0].site_id in window._document.sites
+        assert second.imported[0].site_id in window._document.sites
+
+    def test_batches_are_named_apart_by_when_they_were_imported(
+        self, window: MainWindow, tmp_path: Path, host_structure: Structure
+    ) -> None:
+        from datetime import UTC, datetime
+
+        self._import_twice(window, tmp_path, host_structure)
+        records = [
+            record
+            for record in window._document.provenance
+            if record.action == "import_castep_relaxations"
+        ]
+        records[0].timestamp = datetime(2026, 3, 4, 10, 0, 0, tzinfo=UTC)
+        records[1].timestamp = datetime(2026, 3, 5, 10, 0, 0, tzinfo=UTC)
+
+        labels = [label for label, _count, _batch in window._imported_relaxation_batches()]
+
+        assert len(set(labels)) == 2
+        assert labels[0].startswith("sites, imported 04 Mar 2026 at ")
+        assert labels[1].startswith("sites, imported 05 Mar 2026 at ")
+
+
+class TestDialogLayout:
+    LONG = "/".join(["a_rather_long_folder_name"] * 5)
+
+    def _dialog(self, qapp, tmp_path: Path) -> RelaxationImportDialog:
+        from tests.services.test_relaxation_import_scan import _input_cell, write_run
+
+        wrong = _input_cell().replace("8.0 0.0 0.0", "9.0 0.0 0.0")
+        write_run(tmp_path / self.LONG, "seed", input_text=wrong, out_text=wrong)
+        dialog = RelaxationImportDialog(_scan(tmp_path))
+        dialog.show()
+        qapp.processEvents()
+        return dialog
+
+    def test_a_long_path_leaves_status_and_notes_on_screen(self, qapp, tmp_path: Path) -> None:
+        dialog = self._dialog(qapp, tmp_path)
+        table = dialog._table
+        viewport = table.viewport().width()
+
+        assert table.columnViewportPosition(dialog._NOTES_COLUMN) < viewport / 1.5
+        assert (
+            table.columnViewportPosition(dialog._STATUS_COLUMN)
+            + table.columnWidth(dialog._STATUS_COLUMN)
+            <= viewport
+        )
+        assert table.horizontalScrollBar().maximum() == 0
+        dialog.close()
+
+    def test_the_full_path_is_in_the_tooltip_and_the_middle_is_elided(
+        self, qapp, tmp_path: Path
+    ) -> None:
+        from PySide6.QtCore import Qt
+        from PySide6.QtWidgets import QStyleOptionViewItem
+
+        dialog = self._dialog(qapp, tmp_path)
+        table = dialog._table
+        item = table.item(0, dialog._RUN_COLUMN)
+
+        assert item.text() == f"{self.LONG}/seed"
+        assert item.toolTip() == f"{self.LONG}/seed"
+        option = QStyleOptionViewItem()
+        table.itemDelegateForColumn(dialog._RUN_COLUMN).initStyleOption(
+            option, table.indexFromItem(item)
+        )
+        assert option.textElideMode == Qt.TextElideMode.ElideMiddle
+        dialog.close()
+
+    def test_a_short_path_is_not_given_extra_width(self, qapp, tmp_path: Path) -> None:
+        dialog = RelaxationImportDialog(_scan(build_folder(tmp_path, sites=(1,))))
+        table = dialog._table
+
+        assert table.columnWidth(dialog._RUN_COLUMN) < 300
+        dialog.close()
+
+    def test_the_table_and_the_summary_have_accessible_names(self, qapp, tmp_path: Path) -> None:
+        from PySide6.QtWidgets import QTextEdit
+
+        dialog = RelaxationImportDialog(_scan(build_folder(tmp_path, sites=(1,))))
+
+        assert dialog._table.accessibleName() == "CASTEP Runs Found"
+        summary = dialog.findChild(QTextEdit)
+        if summary is not None:
+            assert summary.accessibleName() == "Scan Notes"
+        dialog.close()
+
+    def test_a_summary_box_is_named_when_there_are_notes(self, qapp, tmp_path: Path) -> None:
+        from PySide6.QtWidgets import QTextEdit
+
+        folder = build_folder(tmp_path, sites=(1,), param_text=_run_param(xc="LDA"))
+        dialog = RelaxationImportDialog(_scan(folder))
+
+        assert dialog.findChild(QTextEdit).accessibleName() == "Scan Notes"
+        dialog.close()
+
+    def test_a_run_that_is_not_a_supercell_does_not_claim_the_unit_cell(
+        self, qapp, tmp_path: Path
+    ) -> None:
+        dialog = self._dialog(qapp, tmp_path)
+
+        assert dialog._table.item(0, dialog._SUPERCELL_COLUMN).text() == ""
+        dialog.close()
+
+    def test_a_host_only_row_shows_no_charge(self, qapp, tmp_path: Path) -> None:
+        from tests.services.test_relaxation_import_scan import host_only_cell, write_run
+
+        write_run(
+            tmp_path,
+            "host",
+            input_text=host_only_cell(),
+            out_text=host_only_cell(),
+            castep_kwargs={"charge": "0.000"},
+        )
+        dialog = RelaxationImportDialog(_scan(tmp_path))
+
+        assert dialog._table.item(0, dialog._CHARGE_COLUMN).text() == ""
+        dialog.close()
+
+
+class TestUnreadableFolders:
+    def test_a_folder_that_cannot_be_read_is_not_reported_as_empty(
+        self,
+        window: MainWindow,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        host_structure: Structure,
+    ) -> None:
+        from dataclasses import replace
+
+        from mufinder.services.relaxation_import import scan_relaxation_folder
+
+        window._document = _document(tmp_path, host_structure)
+        window._relaxation_scan_host = host_structure
+        shown: list[tuple[str, str]] = []
+        monkeypatch.setattr(
+            "mufinder.app.main_window.QMessageBox.information",
+            lambda *args, **kwargs: shown.append((args[1], args[2])),
+        )
+        scan = replace(scan_relaxation_folder(tmp_path), unreadable=((".", "permission denied"),))
+
+        window._on_relaxation_scan_completed(scan)
+
+        assert shown == [
+            ("Could not read folder", "Could not read this folder: permission denied.")
+        ]
