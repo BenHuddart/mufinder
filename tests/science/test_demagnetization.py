@@ -930,6 +930,30 @@ def test_refusal_figure_is_rounded_up_so_within_holds(size: tuple[float, float])
     assert true_error <= stated <= 2.0 * true_error
 
 
+def test_extreme_saved_values_are_refusals_rather_than_other_errors() -> None:
+    plate = DemagnetizingSample.from_json(
+        {
+            **DemagnetizingSample.image_plate(
+                np.ones((8, 8), dtype=bool), (1.0, 1.0), 0.1
+            ).to_json(),
+            "plate_size": [1e308, 1e308],
+            "plate_thickness": 1e-308,
+        }
+    )
+    with pytest.raises(DemagnetizationError, match="too thin"):
+        sample_fourier_box(plate)
+
+    for spacing in ([float("nan"), 1.0, 1.0], [float("inf"), 1.0, 1.0]):
+        grid = DemagnetizingSample.from_json(
+            {
+                **DemagnetizingSample.voxel_grid(np.ones((2, 2, 2), dtype=bool), 1.0).to_json(),
+                "voxel_spacing": spacing,
+            }
+        )
+        with pytest.raises(DemagnetizationError, match="spacing"):
+            sample_fourier_box(grid)
+
+
 def test_plate_at_the_thin_limit_is_not_refused_for_rounding_its_edges() -> None:
     outline = np.ones((64, 64), dtype=bool)
 

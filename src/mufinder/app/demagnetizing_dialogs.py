@@ -46,6 +46,7 @@ from mufinder.app.viewer_dialog import StructureViewerDialog
 from mufinder.science.demagnetization import (
     DemagnetizationError,
     DemagnetizingSample,
+    FourierDemagnetizingResult,
     SampleOrientation,
     fourier_demagnetizing_result,
     principal_demagnetizing_tensor,
@@ -417,6 +418,7 @@ class DemagnetizingFieldAdvancedDialog(StructureViewerDialog):
         # rotation saved without crystal directions, or directions with no host.
         self._seed = sample
         self._principal: tuple[DemagnetizingSample, np.ndarray] | None = None
+        self._fourier_result: FourierDemagnetizingResult | None = None
         self._cancelled_shape: DemagnetizingSample | None = None
         self._orientation_mode = QComboBox(self)
         for key, label in DEMAG_ORIENTATION_OPTIONS:
@@ -724,21 +726,25 @@ class DemagnetizingFieldAdvancedDialog(StructureViewerDialog):
             # A plate far thinner than it is wide takes seconds, so a Fourier shape runs off
             # the GUI thread, with a busy dialog once it takes noticeably long.
             try:
-                tensor = (
+                result = (
                     run_blocking_call(
                         self,
-                        lambda: principal_demagnetizing_tensor(shape),
+                        lambda: fourier_demagnetizing_result(shape),
                         title="Advanced Demagnetizing Field",
                         description="Calculating the demagnetizing tensor…",
                         cancellable=True,
                     )
                     if shape.uses_fourier_method
-                    else principal_demagnetizing_tensor(shape)
+                    else None
                 )
             except BlockingCallCancelled:
                 self._cancelled_shape = shape
                 raise
-            self._principal = (shape, tensor)
+            self._fourier_result = result
+            self._principal = (
+                shape,
+                principal_demagnetizing_tensor(shape) if result is None else result.tensor,
+            )
         return self._principal[1]
 
     def _sync(self, *_args: object) -> None:
@@ -776,8 +782,9 @@ class DemagnetizingFieldAdvancedDialog(StructureViewerDialog):
                 f"[{tensor[1, 0]:.5f}, {tensor[1, 1]:.5f}, {tensor[1, 2]:.5f}], "
                 f"[{tensor[2, 0]:.5f}, {tensor[2, 1]:.5f}, {tensor[2, 2]:.5f}]]"
             )
-            if sample.uses_fourier_method:
-                result = fourier_demagnetizing_result(sample)
+            if self._fourier_result is not None and sample.uses_fourier_method:
+                # Kept from the worker: asking again could recalculate here on the GUI thread.
+                result = self._fourier_result
                 box = " x ".join(str(n) for n in result.box_shape)
                 text += (
                     f"\nTr N = {result.trace:.5f} from {result.voxel_count} voxels in a "

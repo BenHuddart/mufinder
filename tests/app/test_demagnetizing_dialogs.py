@@ -122,11 +122,11 @@ def test_demagnetizing_dialog_calculates_a_fourier_shape_off_the_gui_thread(
     qapp, monkeypatch
 ) -> None:
     threads = []
-    tensor = demagnetizing_dialogs_module.principal_demagnetizing_tensor
+    calculate = demagnetizing_dialogs_module.fourier_demagnetizing_result
     monkeypatch.setattr(
         demagnetizing_dialogs_module,
-        "principal_demagnetizing_tensor",
-        lambda shape: threads.append(threading.current_thread()) or tensor(shape),
+        "fourier_demagnetizing_result",
+        lambda shape: threads.append(threading.current_thread()) or calculate(shape),
     )
 
     dialog = _demag_dialog(monkeypatch, sample=photo_plate_sample())
@@ -134,10 +134,11 @@ def test_demagnetizing_dialog_calculates_a_fourier_shape_off_the_gui_thread(
     assert threads and threads[0] is not threading.main_thread()
     assert dialog._use_button.isEnabled()
     assert "Tr N = 1.00000" in dialog._tensor_label.text()
-    # Changing only the orientation reuses it.
+    # Changing only the orientation reuses it, without asking on the GUI thread.
     threads.clear()
     dialog._sync()
     assert threads == []
+    assert "Tr N = 1.00000" in dialog._tensor_label.text()
     dialog.close()
 
 

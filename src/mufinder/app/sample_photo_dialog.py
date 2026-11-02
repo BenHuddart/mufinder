@@ -33,7 +33,6 @@ from mufinder.app.theme import (
 )
 from mufinder.domain.text import plural
 from mufinder.science.demagnetization import (
-    PLATE_NARROW_OUTLINE_CELLS,
     DemagnetizationError,
     DemagnetizingSample,
     PlatePhoto,
@@ -55,8 +54,6 @@ PHOTO_FILE_FILTER = "Images (*.png *.jpg *.jpeg *.tif *.tiff *.bmp);;All files (
 _PREVIEW_SIZE = (440, 330)
 #: How long a preview waits after the last edit before it redraws, in milliseconds.
 PREVIEW_DEBOUNCE_MS = 150
-# The largest error in a factor measured on rectangles this many voxels across, rounded up.
-_NARROW_OUTLINE_ERROR = {1: 0.06, 2: 0.04, 3: 0.03, 4: 0.02, 5: 0.02, 6: 0.02, 7: 0.01}
 
 
 def load_greyscale_image(path: str | Path, *, max_edge: int = PHOTO_WORKING_EDGE) -> np.ndarray:
@@ -97,13 +94,13 @@ def demag_length_input(value: float, *, step: float = 0.25) -> QDoubleSpinBox:
 def narrow_outline_warning(sample: DemagnetizingSample) -> str:
     """Return a warning for a plate outline too few voxels across to trust, or an empty string."""
 
-    cells = sample.plate_cells_across()
-    if cells >= PLATE_NARROW_OUTLINE_CELLS:
+    error = sample.plate_narrow_outline_error()
+    if error is None:
         return ""
+    cells = sample.plate_cells_across()
     return (
         f"The outline is only {plural(cells, 'voxel')} across, so a factor can be off by up to "
-        f"about {_NARROW_OUTLINE_ERROR[cells]:g}. A Rectangular prism is exact for a "
-        "rectangular sample."
+        f"about {error:g}. A Rectangular prism is exact for a rectangular sample."
     )
 
 

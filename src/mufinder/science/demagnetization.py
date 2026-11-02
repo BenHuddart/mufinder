@@ -37,8 +37,8 @@ _ORTHOGONAL_TOL_DEG = 1e-6
 FOURIER_PADDING = 2.5
 #: Voxels along the longest edge, thickness included, of a plate outlined in a photograph.
 PLATE_FOURIER_GRID = 256
-#: Below this many voxels across, a plate's outline is too coarse to trust without a warning.
-PLATE_NARROW_OUTLINE_CELLS = 8
+# How far a factor can be off for an outline this many voxels across; 8 and more go unwarned.
+_NARROW_OUTLINE_ERROR = {1: 0.06, 2: 0.04, 3: 0.03, 4: 0.02, 5: 0.02, 6: 0.02, 7: 0.01}
 #: How far the trace of a computed tensor may differ from 1 before it is refused.
 _TRACE_TOLERANCE = 0.01
 _MIN_PADDING = 2.0
@@ -346,6 +346,15 @@ class DemagnetizingSample:
         """Return how many voxels the narrower side of an ``image_plate`` outline spans."""
 
         return min(_trimmed_outline(self._plate_layout()[0]).shape)
+
+    def plate_narrow_outline_error(self) -> float | None:
+        """Return how far a factor can be off for an outline this narrow, or ``None`` if not narrow.
+
+        The figures are the largest errors measured on rectangles this many voxels across,
+        rounded up. The check reads the outline's bounding box only.
+        """
+
+        return _NARROW_OUTLINE_ERROR.get(self.plate_cells_across())
 
     def _plate_layout(self) -> tuple[np.ndarray, int, Triplet]:
         """Return a plate's in-plane voxels, its layers and the voxel edges, without extruding."""
@@ -868,6 +877,8 @@ def fourier_box_shape(
     """
 
     step = _spacing3(spacing)
+    if not all(math.isfinite(edge) for edge in step):
+        raise DemagnetizationError("spacing must be finite")
     pad = float(padding)
     if not math.isfinite(pad) or pad < _MIN_PADDING:
         raise DemagnetizationError(f"padding must be at least {_MIN_PADDING:g}")
@@ -926,10 +937,7 @@ def _plate_box(
     edges = (*sample.plate_size, float(sample.plate_thickness))
     if max(edges) > _THINNEST_PLATE_RATIO * min(edges):
         raise DemagnetizationError(_plate_refusal(sample))
-    try:
-        box = fourier_box_shape((*outline.shape, layers), step, FOURIER_PADDING)
-    except OverflowError:
-        raise DemagnetizationError(_plate_refusal(sample)) from None
+    box = fourier_box_shape((*outline.shape, layers), step, FOURIER_PADDING)
     if math.prod(box) > _MAX_PLATE_BOX_VOXELS:
         raise DemagnetizationError(_plate_refusal(sample))
     return outline, layers, step, box
@@ -939,9 +947,12 @@ def _plate_refusal(sample: DemagnetizingSample) -> str:
     width, height = sample.plate_size
     thickness = float(sample.plate_thickness)
     if min(width, height) >= _INFINITE_PLATE_MIN_RATIO * thickness:
-        off_by = _rounded_up(
-            1.0 - demagnetizing_factors_rectangular_prism((width, height, thickness))[2]
-        )
+        try:
+            exact = demagnetizing_factors_rectangular_prism((width, height, thickness))[2]
+        except ArithmeticError:
+            # Proportions too extreme to evaluate, where the plate is an infinite one to rounding.
+            exact = 1.0
+        off_by = _rounded_up(1.0 - exact)
         return (
             f"the plate is too thin: its longest edge can be at most {_THINNEST_PLATE_RATIO} "
             f"times its thickness. Choose Infinite plate, which has its normal along c and is "
@@ -1192,6 +1203,7 @@ def _positive_triplet(
         a, b, c = (float(value) for value in values)
     except (TypeError, ValueError) as exc:
         raise DemagnetizationError(f"{name} must contain three numbers") from exc
-    if a <= 0.0 or b <= 0.0 or c <= 0.0:
+    # Written so that NaN is refused too.
+    if not (a > 0.0 and b > 0.0 and c > 0.0):
         raise DemagnetizationError(f"{name} values must be positive")
     return (a, b, c)

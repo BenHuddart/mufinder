@@ -1093,6 +1093,34 @@ def test_calculation_failing_after_a_reload_leaves_the_reloaded_results_alone(
     widget.close()
 
 
+def test_missing_dependency_clears_the_page_but_not_the_saved_results(
+    qapp, tmp_path, monkeypatch
+) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "dependency.mufinder", "Dependency")
+    service.add_structure(document, feo_host_structure())
+    widget = MagneticFieldWidget()
+    widget.set_document(document)
+    widget.set_model(MagneticStructureModel(components=(z_moment_component("one", "One", 0),)))
+    widget._selected_muon_site = custom_muon_site((0.25, 0.5, 0.75))
+    widget._sync_enabled_state()
+
+    def _missing(*_args, **_kwargs):
+        raise magnetic_field_widget_module.MagneticFieldDependencyError("muesr is not installed")
+
+    monkeypatch.setattr(
+        magnetic_field_widget_module, "run_prepared_magnetic_field_calculation", _missing
+    )
+    saved: list[dict] = []
+    widget.form_state_changed.connect(saved.append)
+
+    widget.calculate_fields()
+
+    assert widget._calculation_status.text().startswith("Results unavailable:")
+    assert saved == []
+    widget.close()
+
+
 def test_advanced_demag_dialog_is_deleted_once_it_has_been_read(qapp, monkeypatch) -> None:
     monkeypatch.setattr(
         demagnetizing_dialogs_module.DemagnetizingFieldAdvancedDialog,

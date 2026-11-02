@@ -89,7 +89,6 @@ from mufinder.science.nuclear_relaxation import (
 )
 from mufinder.services.magnetic_field_calculation import (
     COMMENSURATE_RESULTS,
-    NonFiniteFieldError,
     cancelled_status,
     non_finite_field_label,
     prepare_dipolar_tensor_calculation,
@@ -1091,7 +1090,7 @@ class MagneticFieldWidget(QWidget):
             self._clear_results(clear_state=True)
             self._calculation_status.setText(status)
 
-        def fail(status: str) -> None:
+        def fail(status: str, *, save: bool = True) -> None:
             if self._page_reloads != reloads:
                 # As below: the reloaded page keeps its own results.
                 self._calculation_status.setText(
@@ -1099,8 +1098,9 @@ class MagneticFieldWidget(QWidget):
                 )
                 return
             refuse(status)
-            # The earlier results are gone; save that so they do not come back on reopening.
-            self._emit_form_state_changed()
+            if save:
+                # The earlier results are gone; save that so they do not come back on reopening.
+                self._emit_form_state_changed()
 
         if self._host_structure is None:
             refuse("Results: load a host structure first.")
@@ -1157,10 +1157,8 @@ class MagneticFieldWidget(QWidget):
             )
             return
         except MagneticFieldDependencyError as exc:
-            refuse(f"Results unavailable: {exc}")
-            return
-        except NonFiniteFieldError as exc:
-            fail(f"Calculation failed: {exc}")
+            # A missing dependency says nothing about the results saved already.
+            fail(f"Results unavailable: {exc}", save=False)
             return
         except Exception as exc:  # noqa: BLE001 - muesr and muLFC raise untyped errors
             fail(f"Calculation failed: {exc}")
