@@ -337,7 +337,6 @@ class QuantumConfigureRequest(SourceConfigureRequest):
     """
 
     locked_reason: str
-    num_farms_differ: bool = False
 
 
 class QuantumCorrectionsController(WorkflowJobController):
@@ -635,7 +634,6 @@ class QuantumCorrectionsController(WorkflowJobController):
             num_farms=_agreed(num_farms_values, default=1),
             species_options=merge_species_options(candidate.structure for candidate in candidates),
             locked_reason=locked_reason,
-            num_farms_differ=len(set(num_farms_values)) > 1,
         )
 
     def apply_configuration(
@@ -678,7 +676,6 @@ class QuantumCorrectionsController(WorkflowJobController):
                 QuantumCorrectionsConfigDialog,
                 specs=self.parameter_specs(),
                 num_farms=request.num_farms,
-                num_farms_differ=request.num_farms_differ,
                 intro_text=request.intro_text,
                 read_only=request.read_only,
                 species_options=request.species_options,
@@ -1075,13 +1072,13 @@ class QuantumCorrectionsController(WorkflowJobController):
                     _write_job_directory(
                         spec, output_root, seed_name=self.seed_name_for_key(definition, key)
                     )
-                    source_runs[key] = str(self._source_run_id(key))
+                    source_runs[key] = spec.provenance["source_relaxation_run_id"]
                 created.append(existing)
                 continue
             seed_name = self._seed_for_new_job(definition, key, output_root=output_root)
             seed_mapping[key] = seed_name
             _write_job_directory(spec, output_root, seed_name=seed_name)
-            source_runs[key] = str(self._source_run_id(key))
+            source_runs[key] = spec.provenance["source_relaxation_run_id"]
             job = self._context.project_service.add_job(
                 document,
                 label=spec.name,
@@ -1098,12 +1095,6 @@ class QuantumCorrectionsController(WorkflowJobController):
                 failure_message=("Quantum Corrections jobs were generated, but autosave failed.")
             )
         return jobs
-
-    def _source_run_id(self, key: str) -> UUID | None:
-        """Return the relaxation run the row ``key`` currently reads."""
-
-        candidate = self.candidate_by_key(key)
-        return candidate.run.id if candidate is not None else None
 
     def _seed_for_new_job(
         self, definition: CalculationDefinition, key: str, *, output_root: Path

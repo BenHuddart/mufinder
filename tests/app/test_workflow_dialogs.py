@@ -477,28 +477,6 @@ def test_run_source_configure_dialog_builds_each_editor_once(qapp, monkeypatch, 
     assert list(dialog._rows)[:4] == list(workflow_basic_parameter_names())[:4]
 
 
-def test_quantum_dialog_says_when_farm_counts_differ_until_the_control_is_edited(qapp) -> None:
-    dialog = QuantumCorrectionsConfigDialog(specs=[], num_farms=1, num_farms_differ=True)
-    spin = dialog._num_farms_spin
-    assert spin.text() == "Differs"
-    assert dialog.num_farms_edited() is False
-
-    spin.selectAll()
-    QTest.keyClicks(spin.lineEdit(), "1")
-
-    assert dialog.num_farms_edited() is True
-    assert dialog.num_farms() == 1
-    assert spin.text() == "1"
-    dialog.deleteLater()
-
-
-def test_quantum_dialog_shows_a_shared_farm_count_plainly(qapp) -> None:
-    dialog = QuantumCorrectionsConfigDialog(specs=[], num_farms=1)
-
-    assert dialog._num_farms_spin.text() == "1"
-    dialog.deleteLater()
-
-
 def test_quantum_dialog_counts_typing_the_shown_farm_count_as_an_edit(qapp) -> None:
     dialog = QuantumCorrectionsConfigDialog(specs=[], num_farms=1)
 

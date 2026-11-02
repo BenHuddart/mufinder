@@ -333,53 +333,68 @@ def test_a_group_of_only_flagged_sites_falls_back_to_them(document: ProjectDocum
 _T0 = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
 
 
-def _state_of(document, site, *, recorded=None, submitted=None, relaxed=None, job_relaxed=None):
+def _state_of(
+    document, site, *, recorded=None, created=_T0, submitted=None, relaxed=None, job_relaxed=None
+):
     candidate = next(
         item for item in eligible_quantum_source_candidates(document) if item.key == str(site.id)
     )
     candidate.run.completed_at = relaxed
     candidate.job.completed_at = job_relaxed
-    phonon = Job(label="phonon", submitted_at=submitted)
+    phonon = Job(label="phonon", created_at=created, submitted_at=submitted)
     return phonon_zpe_source_state(candidate, phonon, recorded), candidate
 
 
 def test_a_recorded_source_run_decides_whatever_the_timestamps(document: ProjectDocument) -> None:
     site = _add_relaxed_source(document, "A", energy=-10.0)
     later = _T0 + timedelta(hours=1)
+    _state, candidate = _state_of(document, site)
 
-    state, candidate = _state_of(document, site, recorded=None, submitted=_T0, relaxed=later)
-    current_id = str(candidate.run.id)
-
-    state, _ = _state_of(document, site, recorded=current_id, submitted=_T0, relaxed=later)
+    state, _ = _state_of(
+        document, site, recorded=str(candidate.run.id), submitted=_T0, relaxed=later
+    )
     assert state is PhononZpeSource.CURRENT
-    state, _ = _state_of(document, site, recorded=str(uuid4()), submitted=later, relaxed=_T0)
+    state, _ = _state_of(document, site, recorded=str(uuid4()), created=later, relaxed=_T0)
     assert state is PhononZpeSource.EARLIER
 
 
-def test_an_unrecorded_source_run_is_read_from_the_timestamps(document: ProjectDocument) -> None:
+def test_an_unrecorded_source_run_is_settled_only_where_the_timestamps_prove_it(
+    document: ProjectDocument,
+) -> None:
     site = _add_relaxed_source(document, "A", energy=-10.0)
-    later = _T0 + timedelta(hours=1)
+    hour = timedelta(hours=1)
 
-    # The relaxation finished before the phonon job was submitted, so the job read it.
-    state, _ = _state_of(document, site, submitted=later, relaxed=_T0)
+    # Finished before the job existed: every input the job ever wrote read this run.
+    state, _ = _state_of(document, site, created=_T0 + hour, relaxed=_T0)
     assert state is PhononZpeSource.CURRENT
-    # It finished after: the job can only have read an earlier run. A naive stamp reads as UTC.
-    state, _ = _state_of(document, site, submitted=_T0.replace(tzinfo=None), relaxed=later)
+    # Finished after the job's last submission: the job cannot have read it. A naive stamp is UTC.
+    state, _ = _state_of(document, site, submitted=_T0.replace(tzinfo=None), relaxed=_T0 + hour)
     assert state is PhononZpeSource.EARLIER
     # The relaxation job's own stamp stands in for its run's.
-    state, _ = _state_of(document, site, submitted=_T0, relaxed=None, job_relaxed=later)
+    state, _ = _state_of(document, site, submitted=_T0, relaxed=None, job_relaxed=_T0 + hour)
     assert state is PhononZpeSource.EARLIER
+    # Finished between the two: a resubmission need not have rewritten the inputs.
+    state, _ = _state_of(document, site, submitted=_T0 + 2 * hour, relaxed=_T0 + hour)
+    assert state is PhononZpeSource.UNCONFIRMED
 
 
-@pytest.mark.parametrize(
-    ("submitted", "relaxed"), [(None, _T0), (_T0, None), (None, None)], ids=["job", "run", "both"]
-)
-def test_a_source_run_that_cannot_be_told_is_unconfirmed(
-    document: ProjectDocument, submitted, relaxed
+@pytest.mark.parametrize("submitted", [None, _T0 + timedelta(hours=2)], ids=["unsent", "sent"])
+def test_a_source_run_with_no_relaxation_stamp_is_unconfirmed(
+    document: ProjectDocument, submitted
 ) -> None:
     site = _add_relaxed_source(document, "A", energy=-10.0)
 
-    state, _ = _state_of(document, site, submitted=submitted, relaxed=relaxed)
+    state, _ = _state_of(document, site, submitted=submitted, relaxed=None)
+
+    assert state is PhononZpeSource.UNCONFIRMED
+
+
+def test_a_source_run_after_an_unsent_job_was_created_is_unconfirmed(
+    document: ProjectDocument,
+) -> None:
+    site = _add_relaxed_source(document, "A", energy=-10.0)
+
+    state, _ = _state_of(document, site, relaxed=_T0 + timedelta(hours=1))
 
     assert state is PhononZpeSource.UNCONFIRMED
 

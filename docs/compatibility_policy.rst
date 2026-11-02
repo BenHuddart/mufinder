@@ -220,6 +220,14 @@ Compatibility ledger
        directory resolving to the seed it ran under.
      - Project-file shim, read only for rows that hold a legacy singlepoint
        job. Keep both keys with the ``castep_quantum_singlepoint`` readers.
+   * - Phonon jobs with no ``phonon_source_run_ids_by_label`` entry
+     - Quantum Corrections ``castep_quantum_phonon_set`` definitions;
+       ``phonon_zpe_source_state`` (``mufinder.services.source_candidates``)
+     - ``materialize`` records the relaxation run each phonon job's inputs were
+       written from. A job with no entry is settled by its timestamps where they
+       prove the answer, and is otherwise unconfirmed and left out of ``dE + ZPE``.
+     - Read-time shim for stored jobs. Keep while projects may hold such jobs; a
+       job gains an entry the next time its inputs are written.
    * - ``recommended_cutoff_*`` project fields
      - ``Project`` / project manifest
      - Persisted project defaults used by current cutoff, k-point, relaxation,

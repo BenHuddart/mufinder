@@ -338,12 +338,13 @@ def test_an_old_record_is_read_from_its_timestamps(tmp_path: Path) -> None:
     candidate = next(item for item in controller.candidates() if item.key == key_b)
     start = datetime(2026, 1, 1, tzinfo=timezone.utc)
     document.runs[candidate.run.id].completed_at = start
-    job_b.submitted_at = start + timedelta(hours=1)
+    job_b.created_at = start + timedelta(hours=1)
+    job_b.submitted_at = start + timedelta(hours=2)
 
     row = _rows_by_key(controller)[key_b]
     assert (row.zpe_mark, row.corrected_energy) == ("", "+0.353")
 
-    document.runs[candidate.run.id].completed_at = start + timedelta(hours=2)
+    document.runs[candidate.run.id].completed_at = start + timedelta(hours=3)
     row = _rows_by_key(controller)[key_b]
     assert (row.zpe_mark, row.corrected_energy) == ("earlier", "–")
 
@@ -1811,19 +1812,6 @@ def test_quantum_controller_configure_keeps_differing_farm_counts_unless_changed
         for name, key in (("a", key_a), ("b", key_b))
     }
     assert farms == expected
-
-
-def test_quantum_configure_request_says_when_farm_counts_differ(tmp_path: Path) -> None:
-    service = ProjectService()
-    document, definition, candidates, output_root = _seed_quantum_document(service, tmp_path)
-    key_a, key_b = list(candidates)
-    controller = _quantum_document_controller(service, document, output_root)
-    assert controller.configure_request([key_a, key_b]).num_farms_differ is False
-
-    store_workflow_row_configuration(definition, key_a, {"num_farms": 4})
-
-    assert controller.configure_request([key_a, key_b]).num_farms_differ is True
-    assert controller.configure_request([key_a]).num_farms_differ is False
 
 
 def test_quantum_controller_says_why_an_analysis_cannot_open(qapp, tmp_path: Path) -> None:

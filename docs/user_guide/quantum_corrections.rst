@@ -73,8 +73,8 @@ The page shows the flow as three numbered steps above one table of sites.
    - ``Configure…`` opens the row settings for the selected sites, or with
      nothing selected for every site not yet run. Check the electronic settings
      (inherited from the source relaxation, see `Configuration dialog`_) and set
-     ``Farms`` if you want task farming; when the sites differ it reads ``Differs``
-     and they keep theirs unless you change it. The settings stay editable until the site's job
+     ``Farms`` if you want task farming; sites with different farm counts keep
+     theirs unless you change it. The settings stay editable until the site's job
      is submitted.
    - ``Run Selected Locally`` and ``Run Selected on Cluster`` submit the selected
      sites. With nothing selected the buttons read ``Run All Locally`` /
@@ -209,10 +209,11 @@ keeps its place in the ranking.
 ``ZPE`` reads ``(earlier)`` when the phonon job read an earlier relaxation of the site
 than the one it now points at, for example after ``Continue relaxation…``. The sum
 would add a new energy to a ZPE from another geometry, so the row shows ``–`` under
-``dE + ZPE`` and takes no part in the ranking until its phonon job runs again.
-MuFinder records the run each phonon job's inputs were written from. A job from before
-that record is read from its timestamps: a relaxation that finished after the job was
-submitted cannot be the one it read. If a stamp is missing, ``ZPE`` reads
+``dE + ZPE`` and takes no part in this table's ranking until its phonon job runs
+again. MuFinder records the run each phonon job's inputs were written from. A job
+without that record is settled by its timestamps only where they prove the answer: a
+relaxation that finished before the job was created is the one it read, and one that
+finished after its last submission cannot be. Otherwise ``ZPE`` reads
 ``(unconfirmed)``, and the row is left out in the same way, because nothing shows that
 the two numbers belong together.
 

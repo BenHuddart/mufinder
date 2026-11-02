@@ -471,11 +471,11 @@ def phonon_zpe_source_state(
     """Return whether a phonon job read the relaxation run its site now points at.
 
     ``recorded_run_id`` is the run written down when the job's inputs were written, and
-    it decides. A job with no record was read from its timestamps: inputs are written
-    at submission, so a relaxation that finished after the job was submitted cannot be
-    the one it read, and one that finished before it is. Without both stamps nothing
-    tells them apart, and the state is unconfirmed. A naive stamp from an older project
-    is read as UTC.
+    it decides. A job with no record is judged by its timestamps, and only where they
+    prove the answer: a job's inputs are written after the job is created and before it
+    is submitted, so a relaxation that finished before the job was created is the one it
+    read, and one that finished after its latest submission cannot be. Anything else,
+    including a missing stamp, is unconfirmed. A naive stamp is read as UTC.
     """
 
     if isinstance(recorded_run_id, str) and recorded_run_id.strip():
@@ -485,11 +485,14 @@ def phonon_zpe_source_state(
             else PhononZpeSource.EARLIER
         )
     relaxed_at = candidate.run.completed_at or candidate.job.completed_at
-    if relaxed_at is None or phonon_job.submitted_at is None:
+    if relaxed_at is None:
         return PhononZpeSource.UNCONFIRMED
-    if as_aware_utc(relaxed_at) > as_aware_utc(phonon_job.submitted_at):
+    relaxed = as_aware_utc(relaxed_at)
+    if relaxed <= as_aware_utc(phonon_job.created_at):
+        return PhononZpeSource.CURRENT
+    if phonon_job.submitted_at is not None and relaxed > as_aware_utc(phonon_job.submitted_at):
         return PhononZpeSource.EARLIER
-    return PhononZpeSource.CURRENT
+    return PhononZpeSource.UNCONFIRMED
 
 
 @dataclass(frozen=True, slots=True)
@@ -531,18 +534,16 @@ def quantum_source_corrected_relative_energies(
         total = float(energy) + float(zpe)
         if np.isfinite(total):
             sums[candidate.key] = (quantum_source_energy_group(candidate), total)
-    zeros: dict[object, float] = {}
+    # Sorting on (flagged, total) makes a flagged source the zero only when its group has no other.
+    zeros: dict[object, tuple[bool, float]] = {}
     for key, (group, total) in sums.items():
-        if key not in flagged_keys:
-            zeros[group] = min(total, zeros.get(group, total))
-    fallback: dict[object, float] = {}
-    for key, (group, total) in sums.items():
-        if group not in zeros:
-            fallback[group] = min(total, fallback.get(group, total))
-    zeros.update(fallback)
+        rank = (key in flagged_keys, total)
+        zeros[group] = min(rank, zeros.get(group, rank))
     return CorrectedEnergies(
-        values={key: sums[key][1] - zeros[sums[key][0]] if key in sums else None for key in keys},
-        zero_from_flagged=frozenset(key for key, (group, _t) in sums.items() if group in fallback),
+        values={
+            key: sums[key][1] - zeros[sums[key][0]][1] if key in sums else None for key in keys
+        },
+        zero_from_flagged=frozenset(key for key, (group, _t) in sums.items() if zeros[group][0]),
     )
 
 
