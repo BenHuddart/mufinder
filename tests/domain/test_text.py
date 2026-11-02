@@ -108,7 +108,7 @@ def test_kept_folders_message_says_why_for_one_folder() -> None:
 
 def test_kept_folders_message_sorts_and_agrees_for_several() -> None:
     reasons = ("another job uses it", "other jobs use them")
-    kept = [KeptFolder(name, reasons) for name in ("Mu_10", "Mu_2", "Mu_2")]
+    kept = [KeptFolder(name, reasons) for name in ("Mu_10", "Mu_2")]
 
     assert kept_folders_message(kept).splitlines() == [
         "MuFinder kept 2 folders because other jobs use them.",
@@ -124,4 +124,14 @@ def test_kept_folders_message_with_mixed_reasons_gives_each_under_details() -> N
         "MuFinder kept 2 folders. Details gives the reason for each.",
         "- 'a': one.",
         "- 'b': other.",
+    ]
+
+
+def test_kept_folders_message_counts_folders_that_share_a_name() -> None:
+    kept = [KeptFolder("x", ("one", "")), KeptFolder("x", ("other", ""))]
+
+    assert kept_folders_message(kept).splitlines() == [
+        "MuFinder kept 2 folders. Details gives the reason for each.",
+        "- 'x': one.",
+        "- 'x': other.",
     ]

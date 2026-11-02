@@ -810,6 +810,24 @@ class TestDashboardReset:
         assert _tree(item.job_directory) == imported_tree
         assert project.status() == "Reset 2 failed jobs; cleaned 1 folder; kept 1"
 
+    def test_folders_sharing_a_name_in_two_charge_folders_count_as_two(
+        self, project: _Project
+    ) -> None:
+        project.import_batch("runs", (1,))
+        positive = self._failed_native(project, "positive", "same")
+        muonium = project.native(label="neutral", seed="same", charge="muonium")
+        muonium.status = JobStatus.FAILED
+        self._folder(project, "same")
+        other = project.output_root / "muonium" / "same"
+        other.mkdir(parents=True)
+        (other / "same.cell").write_text("input")
+        (other / "same.castep").write_text("output")
+
+        project.window._reset_failed_jobs([positive, muonium], cleanup_choice=True)
+
+        assert _tree(other) == ["same.cell"]
+        assert project.status() == "Reset 2 failed jobs; cleaned 2 folders"
+
     def test_keeping_files_says_nothing_about_folders(self, project: _Project) -> None:
         project.import_batch("runs", (1,))
         job = self._failed_native(project, "native", "own")

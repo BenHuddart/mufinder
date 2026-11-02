@@ -5590,7 +5590,7 @@ class MainWindow(QMainWindow):
         *,
         cleanup_choice: bool,
         detach_convergence: bool,
-    ) -> tuple[int, list[str], tuple[list[str], list[KeptFolder]]]:
+    ) -> tuple[int, list[str], tuple[list[Path], list[KeptFolder]]]:
         """Clean, reset, and record provenance for already-vetted terminal jobs.
 
         Shared core of the dashboard/table "Reset failed jobs" action and of the
@@ -5611,8 +5611,9 @@ class MainWindow(QMainWindow):
 
         cleanup_errors: list[str] = []
         reset_count = 0
-        cleaned_folders: dict[str, None] = {}
-        kept_folders: dict[str, KeptFolder] = {}
+        # By place, since folders in different charge folders can share a name.
+        cleaned_folders: dict[Path, None] = {}
+        kept_folders: dict[Path | str, KeptFolder] = {}
         # Never clean a directory another job still depends on. Jobs reset
         # together may share one, and so may a job's directory companions (a
         # Quantum Corrections phonon job with the legacy singlepoint an older
@@ -5649,18 +5650,18 @@ class MainWindow(QMainWindow):
                 name = refused_dir.name if refused_dir is not None else job.label
                 # Without the path that closes it: the folder's name goes with the reason.
                 reason = cleanup_refusals[job.id].removeprefix(f"- {job.label}: ").split(" (")[0]
-                kept_folders[name] = KeptFolder(name, (reason, ""))
+                kept_folders[refused_dir or job.label] = KeptFolder(name, (reason, ""))
             elif cleanup_choice:
                 output_dir = self._job_output_directory(job)
                 if output_dir is not None and output_dir.exists() and output_dir.is_dir():
                     try:
                         self._job_file_cleanup.clear_directory_contents(output_dir)
                         cleaned_output_directory = True
-                        cleaned_folders[output_dir.name] = None
+                        cleaned_folders[output_dir] = None
                     except OSError as exc:
                         cleanup_errors.append(f"- {job.label}: {exc}")
                         reason = plain_error(exc)
-                        kept_folders[output_dir.name] = KeptFolder(output_dir.name, (reason, ""))
+                        kept_folders[output_dir] = KeptFolder(output_dir.name, (reason, ""))
 
             try:
                 self._project_service.reset_failed_job(job)

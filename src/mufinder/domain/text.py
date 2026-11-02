@@ -136,12 +136,12 @@ def folder_outcome_status(
 
 
 def kept_folders_message(kept: Sequence[KeptFolder]) -> str:
-    """Return why folders were kept: one line to show, then a line per folder for Details."""
+    """Return why folders were kept: one line to show, then a line per folder for Details.
 
-    folders = sorted(
-        {folder.name: folder for folder in kept}.values(),
-        key=lambda folder: natural_sort_key(folder.name),
-    )
+    Each entry is a folder of its own: two in different charge folders can share a name.
+    """
+
+    folders = sorted(kept, key=lambda folder: natural_sort_key(folder.name))
     count = plural(len(folders), "folder")
     reasons = {folder.because for folder in folders}
     one, several = next(iter(reasons))
