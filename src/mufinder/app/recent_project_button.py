@@ -9,8 +9,8 @@ from PySide6.QtWidgets import QPushButton, QSizePolicy, QVBoxLayout, QWidget
 
 from mufinder.app.eliding_label import ElidingLabel
 from mufinder.app.theme import SPACING
+from mufinder.persistence.json_store import PROJECT_FOLDER_SUFFIX
 
-_PROJECT_FOLDER_SUFFIX = ".mufinder"
 # What the entry asks for when a layout has room to spare; never the path's width.
 _PREFERRED_WIDTH = 320
 
@@ -27,7 +27,7 @@ class RecentProjectButton(QPushButton):
         self.project_path = project_path
         path = Path(project_path)
         # A folder called only ".mufinder" keeps its whole name.
-        name = path.name.removesuffix(_PROJECT_FOLDER_SUFFIX) or path.name or project_path
+        name = path.name.removesuffix(PROJECT_FOLDER_SUFFIX) or path.name or project_path
 
         self._name_label = ElidingLabel(name, self)
         self._name_label.setObjectName("recentProjectName")

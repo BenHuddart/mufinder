@@ -99,7 +99,8 @@ Storage layout:
 Persistence requirements:
 
 - projects are saved and loaded explicitly, and closing a visible session with
-  an open project prompts to save first
+  an open project prompts to save first when workflow UI state changed since the
+  last save
 - workflow-relevant UI state is persisted where appropriate
 - provenance and the source files needed for reproducibility are preserved
 - cross-entity references are validated before save

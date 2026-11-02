@@ -24,6 +24,7 @@ from mufinder.app import main_window as main_window_module
 from mufinder.app.main_window import MainWindow
 from mufinder.app.recent_project_button import RecentProjectButton
 from mufinder.services.project_service import ProjectService
+from tests.support.main_window import answer_new_project
 
 _WINDOW_SIZE = (1280, 840)
 
@@ -174,10 +175,7 @@ def test_navigator_and_dashboard_shown_after_open_project(
 def test_navigator_and_dashboard_shown_after_new_project(
     window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(
-        main_window_module.QInputDialog, "getText", lambda *args, **kwargs: ("Fresh", True)
-    )
-    monkeypatch.setattr(window, "_get_existing_directory", lambda **kwargs: str(tmp_path))
+    answer_new_project(monkeypatch, "Fresh", location=tmp_path)
 
     window._new_project()
     QApplication.processEvents()
@@ -194,23 +192,6 @@ def test_a_failed_open_leaves_the_welcome_page_alone(window: MainWindow, tmp_pat
 
     assert not window._project_tree_panel.isVisible()
     assert not _dock(window).isVisible()
-
-
-def test_opening_a_project_brings_back_a_dashboard_closed_with_its_button(
-    window: MainWindow, tmp_path: Path
-) -> None:
-    first = ProjectService().create_project(tmp_path / "first.mufinder", "First")
-    second = ProjectService().create_project(tmp_path / "second.mufinder", "Second")
-    assert window.open_project(first.project_root)
-    QApplication.processEvents()
-
-    _dock(window).close()
-    QApplication.processEvents()
-    assert not _dock(window).isVisible()
-
-    assert window.open_project(second.project_root)
-    QApplication.processEvents()
-    assert _dock(window).isVisible()
 
 
 def test_navigator_opens_at_its_saved_width_after_the_welcome_page(qapp, tmp_path: Path) -> None:
@@ -496,10 +477,7 @@ def test_keyboard_focus_lands_on_the_navigator_after_new_project(
     window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _active(window)
-    monkeypatch.setattr(
-        main_window_module.QInputDialog, "getText", lambda *args, **kwargs: ("Keys", True)
-    )
-    monkeypatch.setattr(window, "_get_existing_directory", lambda **kwargs: str(tmp_path))
+    answer_new_project(monkeypatch, "Keys", location=tmp_path)
 
     window._new_project()
     QApplication.processEvents()

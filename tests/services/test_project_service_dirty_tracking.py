@@ -17,8 +17,14 @@ from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.domain.models import Result
 from mufinder.persistence import json_store
 from mufinder.persistence.json_store import ProjectStore
+from mufinder.persistence.migrations import RETIRED_UI_STATE_KEYS
 from mufinder.persistence.codec import to_jsonable
-from mufinder.services.project_service import ProjectService
+from mufinder.services.project_service import (
+    ProjectDocument,
+    ProjectService,
+    UnsavedChanges,
+)
+from mufinder.services.project_summary import PROJECT_HOME_STAGE_KEY
 from tests.support.structures import silicon_oxide_host
 
 
@@ -347,3 +353,250 @@ def test_failed_save_leaves_the_earlier_project_loadable_and_a_later_save_recove
     # The failed write was not recorded as saved, so the next save writes it.
     service.save_project(doc)
     assert ProjectService().load_project(root).ui_state["some_form"] == {"a": 2}
+
+
+def _saved_project(tmp_path: Path, service: ProjectService) -> ProjectDocument:
+    return service.create_project(tmp_path / "changes.mufinder", "Changes")
+
+
+def test_nothing_is_unsaved_after_a_save_or_a_load(tmp_path: Path) -> None:
+    service = ProjectService()
+    document = _saved_project(tmp_path, service)
+    document.ui_state["layout"] = "wide"
+    document.project.name = "Edited"
+    service.save_project(document)
+
+    assert service.unsaved_changes(document) is UnsavedChanges.NONE
+
+    reopened = service.load_project(document.project_root)
+
+    assert service.unsaved_changes(reopened) is UnsavedChanges.NONE
+
+
+def test_a_ui_state_change_is_unsaved_until_a_save_and_undoing_it_clears_it(
+    tmp_path: Path,
+) -> None:
+    service = ProjectService()
+    document = _saved_project(tmp_path, service)
+
+    document.ui_state["layout"] = "wide"
+    assert service.unsaved_changes(document) is UnsavedChanges.UI_STATE
+
+    del document.ui_state["layout"]
+    assert service.unsaved_changes(document) is UnsavedChanges.NONE
+
+    document.ui_state["layout"] = "wide"
+    service.save_project(document)
+    assert service.unsaved_changes(document) is UnsavedChanges.NONE
+
+
+def test_a_failed_save_leaves_the_change_unsaved(tmp_path: Path, monkeypatch) -> None:
+    service = ProjectService()
+    document = _saved_project(tmp_path, service)
+    document.ui_state["layout"] = "wide"
+
+    def _full_disk(*_args, **_kwargs) -> None:
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(ProjectStore, "write_json", _full_disk)
+    with pytest.raises(OSError):
+        service.save_project(document)
+
+    assert service.unsaved_changes(document) is UnsavedChanges.UI_STATE
+
+
+def test_settling_takes_the_current_ui_state_as_the_baseline_but_still_writes_it(
+    tmp_path: Path,
+) -> None:
+    service = ProjectService()
+    document = _saved_project(tmp_path, service)
+    document.ui_state["tidied_form"] = {"a": 1}
+
+    service.settle_ui_state(document)
+
+    assert service.unsaved_changes(document) is UnsavedChanges.NONE
+    service.save_project(document)
+    assert service.load_project(document.project_root).ui_state["tidied_form"] == {"a": 1}
+
+
+def test_the_home_stage_alone_is_routine(tmp_path: Path) -> None:
+    service = ProjectService()
+    document = _saved_project(tmp_path, service)
+
+    document.ui_state[PROJECT_HOME_STAGE_KEY] = "uep"
+    assert service.unsaved_changes(document) is UnsavedChanges.TIDYING
+
+    document.ui_state["layout"] = "wide"
+    assert service.unsaved_changes(document) is UnsavedChanges.UI_STATE
+
+    service.save_project(document)
+    document.ui_state[PROJECT_HOME_STAGE_KEY] = "convergence"
+    assert service.unsaved_changes(document) is UnsavedChanges.TIDYING
+
+
+def test_entities_and_the_manifest_are_routine(tmp_path: Path) -> None:
+    service = ProjectService()
+    document = _saved_project(tmp_path, service)
+    job = service.add_job(
+        document,
+        label="Relax",
+        workflow_stage=WorkflowStage.PRISTINE_RELAXATION,
+        calc_type="castep_pristine_relaxation",
+    )
+    assert service.unsaved_changes(document) is UnsavedChanges.ROUTINE
+    service.save_project(document)
+    assert service.unsaved_changes(document) is UnsavedChanges.NONE
+
+    job.status = JobStatus.COMPLETED
+    assert service.unsaved_changes(document) is UnsavedChanges.ROUTINE
+    service.save_project(document)
+
+    del document.jobs[job.id]
+    assert service.unsaved_changes(document) is UnsavedChanges.ROUTINE
+    service.save_project(document)
+    assert service.unsaved_changes(document) is UnsavedChanges.NONE
+
+    document.project.name = "Renamed"
+    assert service.unsaved_changes(document) is UnsavedChanges.ROUTINE
+    service.save_project(document)
+    assert service.unsaved_changes(document) is UnsavedChanges.NONE
+
+
+def test_a_document_this_service_never_saw_counts_as_changed(tmp_path: Path) -> None:
+    document = _saved_project(tmp_path, ProjectService())
+
+    assert ProjectService().unsaved_changes(document) is UnsavedChanges.UI_STATE
+
+
+def test_an_upgrade_made_on_load_is_tidying_until_saved(tmp_path: Path) -> None:
+    service = ProjectService()
+    document = _saved_project(tmp_path, service)
+    store = ProjectStore(document.project_root)
+    manifest = store.read_json(store.project_manifest_path)
+    manifest["schema_version"] = 1
+    store.write_json(store.project_manifest_path, manifest)
+
+    reopened = service.load_project(document.project_root)
+
+    assert service.unsaved_changes(reopened) is UnsavedChanges.TIDYING
+    service.save_project(reopened)
+    assert service.unsaved_changes(reopened) is UnsavedChanges.NONE
+
+
+def test_a_retired_ui_state_key_dropped_on_load_is_tidying_until_saved(tmp_path: Path) -> None:
+    service = ProjectService()
+    document = _saved_project(tmp_path, service)
+    store = ProjectStore(document.project_root)
+    store.write_json(store.state_path, {next(iter(RETIRED_UI_STATE_KEYS)): 1})
+
+    reopened = service.load_project(document.project_root)
+
+    assert service.unsaved_changes(reopened) is UnsavedChanges.TIDYING
+    service.save_project(reopened)
+    assert service.unsaved_changes(reopened) is UnsavedChanges.NONE
+
+
+def test_a_change_on_top_of_a_load_upgrade_is_routine(tmp_path: Path) -> None:
+    service = ProjectService()
+    document = _saved_project(tmp_path, service)
+    store = ProjectStore(document.project_root)
+    manifest = store.read_json(store.project_manifest_path)
+    manifest["schema_version"] = 1
+    store.write_json(store.project_manifest_path, manifest)
+    reopened = service.load_project(document.project_root)
+
+    reopened.project.name = "Renamed"
+
+    assert service.unsaved_changes(reopened) is UnsavedChanges.ROUTINE
+
+
+def test_an_entity_a_migration_changed_is_tidying_until_changed_again(
+    tmp_path: Path, monkeypatch
+) -> None:
+    service = ProjectService()
+    document, job, _result = _populated_document(service, tmp_path / "entity.mufinder")
+    entity_key = ("jobs", str(job.id))
+    monkeypatch.setattr(
+        "mufinder.services.project_service.migrate_project_payloads",
+        lambda *_args: {entity_key},
+    )
+
+    reopened = service.load_project(document.project_root)
+    assert service.unsaved_changes(reopened) is UnsavedChanges.TIDYING
+
+    reopened.jobs[job.id].status = JobStatus.COMPLETED
+    assert service.unsaved_changes(reopened) is UnsavedChanges.ROUTINE
+
+    service.save_project(reopened)
+    assert service.unsaved_changes(reopened) is UnsavedChanges.NONE
+
+
+def test_a_failed_save_leaves_a_load_upgrade_to_do_next_time(tmp_path: Path) -> None:
+    service = ProjectService()
+    document = _saved_project(tmp_path, service)
+    store = ProjectStore(document.project_root)
+    store.write_json(store.state_path, {next(iter(RETIRED_UI_STATE_KEYS)): 1})
+
+    assert service.unsaved_changes(service.load_project(document.project_root)) is (
+        UnsavedChanges.TIDYING
+    )
+    assert service.unsaved_changes(service.load_project(document.project_root)) is (
+        UnsavedChanges.TIDYING
+    )
+
+
+def _reopened_after_downgrade(tmp_path: Path, service: ProjectService) -> ProjectDocument:
+    document = _saved_project(tmp_path, service)
+    store = ProjectStore(document.project_root)
+    manifest = store.read_json(store.project_manifest_path)
+    manifest["schema_version"] = 1
+    store.write_json(store.project_manifest_path, manifest)
+    return service.load_project(document.project_root)
+
+
+def test_deleting_an_entity_a_migration_changed_is_routine(tmp_path: Path, monkeypatch) -> None:
+    service = ProjectService()
+    document, job, _result = _populated_document(service, tmp_path / "deleted.mufinder")
+    monkeypatch.setattr(
+        "mufinder.services.project_service.migrate_project_payloads",
+        lambda *_args: {("jobs", str(job.id))},
+    )
+    reopened = service.load_project(document.project_root)
+
+    del reopened.jobs[job.id]
+
+    assert service.unsaved_changes(reopened) is UnsavedChanges.ROUTINE
+
+
+def test_saving_tidying_swallows_a_failure_that_left_the_disk_alone(
+    tmp_path: Path, monkeypatch
+) -> None:
+    service = ProjectService()
+    reopened = _reopened_after_downgrade(tmp_path, service)
+
+    def _refuse(*_args, **_kwargs) -> None:
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(ProjectStore, "write_json", _refuse)
+
+    service.save_tidying(reopened)
+
+    assert service.unsaved_changes(reopened) is UnsavedChanges.TIDYING
+
+
+def test_saving_tidying_reports_an_upgrade_left_half_written(tmp_path: Path, monkeypatch) -> None:
+    service = ProjectService()
+    reopened = _reopened_after_downgrade(tmp_path, service)
+    store = ProjectStore(reopened.project_root)
+    write_json = ProjectStore.write_json
+
+    def _manifest_only(self, path, payload) -> None:
+        if path != store.project_manifest_path:
+            raise OSError(28, "No space left on device")
+        write_json(self, path, payload)
+
+    monkeypatch.setattr(ProjectStore, "write_json", _manifest_only)
+    reopened.ui_state["tidied"] = True
+
+    with pytest.raises(OSError):
+        service.save_tidying(reopened)
