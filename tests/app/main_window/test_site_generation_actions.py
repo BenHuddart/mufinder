@@ -135,6 +135,24 @@ def test_muon_generation_table_uses_natural_candidate_label_order(
     window.close()
 
 
+def test_site_without_generation_method_lists_under_an_unknown_method(
+    main_window, tmp_path: Path
+) -> None:
+    window = main_window
+    service = ProjectService()
+    window._document = service.create_project(tmp_path / "no_method.mufinder", "NoMethod")
+    site = MuonSite(label="mu1", status="generated")
+    window._document.sites[site.id] = site
+
+    window._refresh_muon_generation_table()
+
+    table = window._muon_generation_view._site_table
+    assert table.item(0, 0).text() == "Earlier starts: Unknown method, 1 start"
+    assert table.item(1, 0).text() == "mu1"
+    assert table.item(1, 1).text() == ""
+    window.close()
+
+
 def test_random_generation_runs_in_worker_and_updates_estimated_distance(
     main_window, qapp, tmp_path: Path
 ) -> None:

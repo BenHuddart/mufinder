@@ -305,6 +305,15 @@ def test_generated_uep_sites_are_offered_for_every_uep_cluster_method(tmp_path, 
     assert option.fractional_position == (0.25, 0.25, 0.25)
 
 
+def test_site_without_generation_method_is_not_offered_as_a_uep_site(tmp_path) -> None:
+    document = uep_cluster_document(tmp_path)
+    document.ui_state.pop(UEP_ANALYSIS_STATES_KEY)
+    site = MuonSite(label="No method", initial_fractional_position=[0.25, 0.25, 0.25])
+    document.sites[site.id] = site
+
+    assert uep_cluster_muon_site_options(document, feo_host_structure()) == []
+
+
 def test_stored_uep_batch_cluster_site_is_not_offered(tmp_path) -> None:
     """A ``uep_batch_cluster`` site that an older project stored is left off the site list."""
 
