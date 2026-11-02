@@ -374,7 +374,9 @@ defined by two of these modules, and a pinned count may only fall.
      - Targeting for in-row controls (``SelectionSnapshotPushButton``,
        ``SelectionSnapshotToolButton``, ``resolve_target_keys``): which rows an
        in-row button acts on when its row is, or is not, part of a multi-row
-       selection, and the three-way prompt.
+       selection, and the three-way prompt. ``RowControlsCell`` holds several
+       controls in one cell, and ``RowControlsTable`` gives them their keyboard
+       path and passes focus on when a row leaves.
    * - ``mufinder.app.blocking_call``
      - Running a blocking call off the GUI thread with the caller's
        synchronous semantics (``run_blocking_call``): user input is held back,
