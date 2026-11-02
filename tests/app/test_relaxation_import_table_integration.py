@@ -15,7 +15,7 @@ do:
    signature matches the widget's — without which every imported row renders
    "ready" with no energy.
 
-Fixtures are hand-authored: see ``docs/legacy_import.rst``.
+Fixtures are hand-authored: see ``docs/relaxation_import.rst``.
 """
 
 from __future__ import annotations
@@ -39,7 +39,7 @@ def window(qapp) -> MainWindow:
 
 def _imported_job(status: JobStatus = JobStatus.COMPLETED) -> Job:
     return Job(
-        label="Legacy Site 1",
+        label="Imported Host_1",
         workflow_stage=WorkflowStage.MUON_RELAXATION,
         calc_type="castep_positivemuon_relaxation",
         status=status,
@@ -191,7 +191,7 @@ class TestContinuationIsBlocked:
         controller = window._muon_relaxation_controller
         monkeypatch.setattr(controller, "jobs_for_keys", lambda keys: [_imported_job()])
 
-        assert controller.row_is_continuable("positivemuon:Legacy Site 1") is False
+        assert controller.row_is_continuable("positivemuon:Imported Host_1") is False
 
     def test_a_native_completed_row_is_still_continuable(
         self, window: MainWindow, monkeypatch: pytest.MonkeyPatch
@@ -210,7 +210,7 @@ class TestReadOnlyRendering:
             "rows": [
                 {
                     "site_id": str(uuid4()),
-                    "label": "Legacy Site 1" if imported else "Site 1",
+                    "label": "Imported Host_1" if imported else "Site 1",
                     "fractional_position": [0.1, 0.2, 0.3],
                     "charge_state": "positive_muon",
                     "supercell_matrix": None,
@@ -277,7 +277,7 @@ class TestReadOnlyRendering:
         widget.set_form_state(self._state(imported=True))
         table = widget._table_for_charge_state("positive_muon")
 
-        assert table.item(0, widget._LABEL_COLUMN).text() == "Legacy Site 1"
+        assert table.item(0, widget._LABEL_COLUMN).text() == "Imported Host_1"
 
 
 class TestMergingABatch:
@@ -286,11 +286,11 @@ class TestMergingABatch:
 
     def _import_into(self, window: MainWindow, tmp_path: Path):
         from mufinder.domain.models import Project, Structure
-        from mufinder.services.legacy_import import scan_legacy_folder
-        from mufinder.services.legacy_import_commit import commit_legacy_import
+        from mufinder.services.relaxation_import import scan_relaxation_folder
+        from mufinder.services.relaxation_import_commit import commit_relaxation_import
         from mufinder.services.project_service import ProjectDocument
 
-        from tests.services.test_legacy_import_scan import HOST_LATTICE, build_folder
+        from tests.services.test_relaxation_import_scan import HOST_LATTICE, build_folder
 
         host = Structure(
             label="Host",
@@ -305,10 +305,10 @@ class TestMergingABatch:
         document.structures[host.id] = host
         window._document = document
 
-        folder = build_folder(tmp_path / "legacy", sites=(1, 2))
-        scan = scan_legacy_folder(folder, host_lattice=HOST_LATTICE)
+        folder = build_folder(tmp_path / "runs", sites=(1, 2))
+        scan = scan_relaxation_folder(folder, host_lattice=HOST_LATTICE)
         output_root = document.project_root / "files" / "muon_relaxation"
-        outcome = commit_legacy_import(
+        outcome = commit_relaxation_import(
             document,
             scan=scan,
             runs=scan.importable_runs,
@@ -392,14 +392,14 @@ class TestMergingABatch:
         definition = window._muon_relaxation_controller.active_definition()
         before = dict(definition.parameters["job_ids_by_label"])
 
-        from mufinder.services.legacy_import import scan_legacy_folder
-        from mufinder.services.legacy_import_commit import commit_legacy_import
-        from tests.services.test_legacy_import_scan import HOST_LATTICE, build_folder
+        from mufinder.services.relaxation_import import scan_relaxation_folder
+        from mufinder.services.relaxation_import_commit import commit_relaxation_import
+        from tests.services.test_relaxation_import_scan import HOST_LATTICE, build_folder
 
         host = document.structures[document.project.host_structure_id]
-        folder = build_folder(tmp_path / "legacy2", sites=(3,), seed="Other")
-        scan = scan_legacy_folder(folder, host_lattice=HOST_LATTICE)
-        outcome = commit_legacy_import(
+        folder = build_folder(tmp_path / "runs2", sites=(3,), seed="Other")
+        scan = scan_relaxation_folder(folder, host_lattice=HOST_LATTICE)
+        outcome = commit_relaxation_import(
             document,
             scan=scan,
             runs=scan.importable_runs,
@@ -421,7 +421,7 @@ class TestMergingABatch:
 class TestImportedRowParameters:
     """An imported row reports the parameters its run actually used.
 
-    The row is what a user reads to learn what a legacy calculation was run
+    The row is what a user reads to learn what a calculation was run
     with. Showing the workflow's current defaults instead is not a cosmetic
     problem: the defaults are plausible values for the same material, so a wrong
     cutoff or tolerance reads as fact.
@@ -567,7 +567,7 @@ class TestSignatureStability:
         self, window: MainWindow, tmp_path: Path
     ) -> None:
         """The realistic trigger: adopting the very cutoff and grid a
-        convergence run on this system recommends, which the legacy run also
+        convergence run on this system recommends, which the imported run also
         used."""
 
         _document, _outcome, _merged = self._import_into(window, tmp_path)

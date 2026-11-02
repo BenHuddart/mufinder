@@ -609,10 +609,10 @@ def uep_castep_text(
     return "\n".join(lines) + "\n"
 
 
-def legacy_castep_text(
+def relaxation_castep_text(
     *, energy: float, converged: bool, cut_off_ev: float, spin_polarized: bool
 ) -> str:
-    """A legacy run's CASTEP output: the header lines the importer reads and the result."""
+    """The CASTEP output of a run outside MuFinder: the header lines the importer reads and the result."""
 
     tail = " Geometry optimization completed successfully.\n\n" if converged else ""
     spin = "spin-polarized" if spin_polarized else "non-spin-polarized"

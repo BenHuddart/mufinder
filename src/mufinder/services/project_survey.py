@@ -567,6 +567,7 @@ def _method_label(method: str | None) -> str:
         "uep_cluster": "UEP site",
         "uep_cluster_member": "UEP site member",
         "uep_batch_cluster": "UEP site",
+        "imported": "imported",
         "imported_legacy": "imported",
     }.get(method or "", method or "unknown method")
 

@@ -138,8 +138,8 @@ visible. Without a catalog:
   Hubbard U calculation, which makes the relaxed structure unreadable in the
   workflows that parse an output cell (UEP, pristine relaxation, muon
   relaxation). With a catalog loaded the same file loads.
-- Recovering parameters from legacy relaxations is less complete (see
-  :doc:`/user_guide/legacy_import`).
+- Recovering parameters from imported relaxations is less complete (see
+  :doc:`/user_guide/relaxation_import`).
 - At startup a prompt, ``CASTEP keyword catalog needed``, offers ``Open CASTEP
   Setup…`` or ``Not Now``; tick ``Don't show this again`` to dismiss it
   permanently.

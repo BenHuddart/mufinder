@@ -75,7 +75,7 @@ from ..synthetic import (
     castep_text,
     cell_text,
     den_fmt_text,
-    legacy_castep_text,
+    relaxation_castep_text,
     triatomic_phonon_text,
     uep_castep_text,
 )
@@ -914,45 +914,45 @@ def expand_journal_batch(page: QWidget) -> None:
     settle(QApplication.instance())
 
 
-# --- The legacy folder ----------------------------------------------------------
+# --- The folder of CASTEP runs --------------------------------------------------
 
-_LEGACY_RUNS = (  # start in host fractional coordinates, site, converged
+_IMPORT_RUNS = (  # start in host fractional coordinates, site, converged
     ((0.03, 0.47, 0.06), "4c", True),
     ((0.47, 0.04, 0.29), "T_A", True),
     ((0.61, 0.80, 0.07), "T_F", False),
 )
 
 
-def _legacy_folder(root: Path) -> Path:
-    """A legacy working folder of three CoF2 positive-muon relaxations, in the documented layout.
+def _relaxation_folder(root: Path) -> Path:
+    """A folder of three CoF2 positive-muon relaxations, one subfolder each.
 
     Hand-authored, with the positive-muon cluster energies: see
-    docs/legacy_import.rst, "Research data boundary". Site 3 stopped before
+    docs/relaxation_import.rst, "Research data boundary". Site 3 stopped before
     its geometry converged.
     """
 
     from mufinder.science.supercell import build_supercell_structure
 
     supercell, _spins = build_supercell_structure(cof2_host(), SUPERCELL_2X2X2)
-    for index, (start, kind, converged) in enumerate(_LEGACY_RUNS, start=1):
+    for index, (start, kind, converged) in enumerate(_IMPORT_RUNS, start=1):
         site, energy_above, _entries = POSITIVE_SITES[kind]
         relaxed, _distance = _nearest_image(start, site)
         species = [*supercell.species, "H:mu"]
         initial = [*supercell.fractional_positions, [value / 2.0 for value in start]]
         final = [*supercell.fractional_positions, [float(value) % 1.0 / 2.0 for value in relaxed]]
-        stem = f"CoF2_{index}"
-        for folder in ("input", "results", f"run/site{index}"):
-            (root / folder).mkdir(parents=True, exist_ok=True)
-        (root / "input" / f"{stem}.cell").write_text(
+        stem = f"CoF2_{kind}"
+        run = root / f"site{index}"
+        run.mkdir(parents=True, exist_ok=True)
+        (run / f"{stem}.cell").write_text(
             cell_text(supercell.lattice_vectors, species, initial) + "\nFIX_ALL_CELL : TRUE\n",
             encoding="utf-8",
         )
-        (root / "results" / f"{stem}-out.cell").write_text(
+        (run / f"{stem}-out.cell").write_text(
             cell_text(supercell.lattice_vectors, species, final), encoding="utf-8"
         )
         energy = POSITIVE_ENERGY_EV + energy_above + 0.0011 * index
-        (root / "results" / f"{stem}.castep").write_text(
-            legacy_castep_text(
+        (run / f"{stem}.castep").write_text(
+            relaxation_castep_text(
                 energy=energy,
                 converged=converged,
                 cut_off_ev=ADOPTED_CUTOFF_EV,
@@ -960,19 +960,11 @@ def _legacy_folder(root: Path) -> Path:
             ),
             encoding="utf-8",
         )
-        (root / f"run/site{index}" / f"{stem}.param").write_text(
+        (run / f"{stem}.param").write_text(
             "task : geometryoptimisation\ncharge : +1\nxc_functional : PBE\ncut_off_energy : 600 eV\n"
             "spin_polarized : true\nwrite_cell_structure : true\ngeom_max_iter : 300\n",
             encoding="utf-8",
         )
-    x = COF2_X
-    (root / "CoF2.cif").write_text(
-        f"data_CoF2\n_symmetry_space_group_name_H-M 'P 42/m n m'\n_cell_length_a {COF2_A:.6f}\n"
-        f"_cell_length_b {COF2_A:.6f}\n_cell_length_c {COF2_C:.6f}\n_cell_angle_alpha 90\n_cell_angle_beta 90\n"
-        "_cell_angle_gamma 90\nloop_\n_atom_site_label\n_atom_site_fract_x\n_atom_site_fract_y\n_atom_site_fract_z\n"
-        f"Co 0 0 0\nF {x:.4f} {x:.4f} 0\n",
-        encoding="utf-8",
-    )
     return root
 
 
@@ -1189,10 +1181,10 @@ def calculate_fluorine_second_moment(dialog: QWidget) -> None:
     dialog._calculate_button.click()
 
 
-def open_legacy_import(window: MainWindow) -> None:
-    """Scan a synthetic legacy folder and open ``Import Legacy Relaxations`` on it.
+def open_relaxation_import(window: MainWindow) -> None:
+    """Scan a synthetic folder and open ``Import CASTEP Relaxations`` on it.
 
-    ``File > Import Legacy Relaxations...`` scans on a worker thread after a
+    ``File > Import CASTEP Relaxations...`` scans on a worker thread after a
     folder dialog; the scene runs the same scan in this thread. Its notice that
     no keyword catalog is installed, true only of the scratch settings, is
     dropped as the other scenes hide it.
@@ -1200,12 +1192,12 @@ def open_legacy_import(window: MainWindow) -> None:
 
     from dataclasses import replace
 
-    from mufinder.app.legacy_import_dialog import LegacyImportDialog
-    from mufinder.services.legacy_import import scan_legacy_folder
+    from mufinder.app.relaxation_import_dialog import RelaxationImportDialog
+    from mufinder.services.relaxation_import import scan_relaxation_folder
 
     host = window._project_service.active_host_structure(window._document)
-    root = _legacy_folder(scratch_directory("legacy-") / "cof2-muon-sites")
-    scan = scan_legacy_folder(
+    root = _relaxation_folder(scratch_directory("relaxations-") / "cof2-muon-sites")
+    scan = scan_relaxation_folder(
         root,
         host_lattice=[list(row) for row in host.lattice_vectors],
         host_species=list(host.species),
@@ -1214,7 +1206,7 @@ def open_legacy_import(window: MainWindow) -> None:
         scan,
         warnings=tuple(warning for warning in scan.warnings if "keyword catalog" not in warning),
     )
-    LegacyImportDialog(scan, parent=window).exec()
+    RelaxationImportDialog(scan, parent=window).exec()
 
 
 # --- Scenes -------------------------------------------------------------------
@@ -1446,10 +1438,10 @@ SCENES: dict[str, Scene] = {
     "energy_barriers_page": Scene(
         results_project, "energy_barriers", Page("_energy_barriers_view", (1100, 740))
     ),
-    # The legacy importer.
-    "legacy_import_dialog": Scene(
+    # The relaxation importer.
+    "relaxation_import_dialog": Scene(
         fixture_project,
         None,
-        Dialog(open_legacy_import, kind="LegacyImportDialog", prepare=focus_default_button),
+        Dialog(open_relaxation_import, kind="RelaxationImportDialog", prepare=focus_default_button),
     ),
 }

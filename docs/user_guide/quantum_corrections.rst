@@ -40,7 +40,7 @@ Quantum Corrections needs:
   ``Muon Sites > Relaxations`` and let them complete. Every site whose
   relaxation completed successfully appears automatically on the Quantum
   Corrections page (see `Source eligibility`_). Relaxations brought in through
-  :doc:`/user_guide/legacy_import` are eligible too.
+  :doc:`/user_guide/relaxation_import` are eligible too.
 - **A decision about which sites matter.** A phonon calculation is expensive
   (roughly three displacements per atom with finite displacement), so the page
   lists the distinct sites pinned to the ``Muon Sites`` summary by default:
@@ -306,7 +306,7 @@ pin's charge state):
   state;
 - that run, and the job that produced it, completed successfully;
 - the job is a muon relaxation from ``Muon Sites -> Relaxations``, or a
-  relaxation brought in through :doc:`/user_guide/legacy_import`;
+  relaxation brought in through :doc:`/user_guide/relaxation_import`;
 - the run produced a parsed relaxed structure;
 - the relaxed structure contains an ``H:mu`` atom.
 

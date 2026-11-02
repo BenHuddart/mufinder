@@ -265,7 +265,7 @@ The package
   of superposed Gaussian atomic shells (``den_fmt_text``) with the
   single-point output the UEP analysis reads beside it (``uep_castep_text``),
   a Gamma-point ``.phonon`` file for a linear X–μ–X complex embedded in a
-  supercell (``triatomic_phonon_text``) and legacy-run outputs. It imports no Qt, so tests import it directly.
+  supercell (``triatomic_phonon_text``) and imported-run outputs. It imports no Qt, so tests import it directly.
 - ``examples/`` holds one module per example project. Each defines its
   project builders, the scene steps only its scenes use, and ``SCENES``, a
   dictionary from screenshot name to ``Scene``.
@@ -370,7 +370,7 @@ cites the values they reproduce, and the workflow pages and the
   local field. Its CASTEP outputs are synthetic, tuned to published values. It
   holds every scene of the tutorial and of the project home, host structure,
   supercell, convergence, pristine relaxation, UEP, site generation,
-  relaxation analysis, comparison table, legacy import, journal and
+  relaxation analysis, comparison table, relaxation import, journal and
   job-running pages, plus the CoF₂ scenes of the Magnetic Fields page (the
   antiferromagnet, its dipolar tensor and its nuclear relaxation).
 - ``fe.py``: bcc iron, the ferromagnet scenes of the Magnetic Fields page and
@@ -443,9 +443,9 @@ thread with seeded random starts, so every build finds the same minima.
 its output for the geometry progress window. Reopening a project ends its local
 jobs, since no local runner survives the application, so that scene puts the
 job back in the running state the local runner keeps and points the progress
-monitor at its ``.castep``. The legacy-importer scene scans a hand-authored
-legacy folder of three CoF₂ runs in the documented layout (see
-:doc:`/legacy_import`, "Research data boundary") and drops the scan's notice
+monitor at its ``.castep``. The relaxation-import scene scans a hand-authored
+folder of three CoF₂ runs (see
+:doc:`/relaxation_import`, "Research data boundary") and drops the scan's notice
 that no keyword catalog is installed, as the other scenes hide it.
 
 The iron example

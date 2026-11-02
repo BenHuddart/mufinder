@@ -17,7 +17,13 @@ from pathlib import Path
 import posixpath
 from typing import TYPE_CHECKING
 
-from mufinder.domain.charge_states import MUON_RELAXATION_CALC_TYPES, is_muon_relaxation_calc_type
+from mufinder.domain.charge_states import (
+    MUON_RELAXATION_CALC_TYPES,
+    MUONIUM_CHARGE_STATE,
+    POSITIVE_MUON_CHARGE_STATE,
+    is_muon_relaxation_calc_type,
+    muon_charge_state_prefix,
+)
 from mufinder.domain.enums import WorkflowStage
 from mufinder.domain.models import CalculationDefinition, Job
 from mufinder.workflow.naming import job_name
@@ -110,7 +116,11 @@ def _muon_relaxation_job_directory(base: Path, params: Mapping[str, object], job
     if isinstance(seed_mapping, dict):
         raw_seed = seed_mapping.get(matching_key)
         if isinstance(raw_seed, str) and raw_seed.strip():
-            seed_name = raw_seed.strip()
+            # The folder that was written, if one has exactly this name: the trimmed
+            # name is a different folder, possibly another job's. Otherwise trimmed,
+            # as a saved seed with stray spaces has always been read.
+            exact = (base / prefix / raw_seed).is_dir()
+            seed_name = raw_seed if exact else raw_seed.strip()
     if seed_name == job.label:
         remote_seed = remote_directory_seed_name(job)
         if remote_seed:
@@ -209,6 +219,42 @@ def job_output_directory(
     for fallback in fallback_candidates:
         if fallback.exists() and fallback.is_dir():
             return fallback
+    return None
+
+
+def job_directory_refusal(project_root: Path, job: Job | None, directory: Path) -> str | None:
+    """Return why ``directory`` must not be deleted as a job's own folder, or ``None``.
+
+    The last check before any job folder goes, on every route. A job's folder comes
+    from names saved in the project: ``.`` or ``..`` resolves to a folder holding every
+    other job, and an absolute name to a folder that is not the project's at all. So
+    the place is checked once resolved, and a name alone is never enough.
+    """
+
+    if ".." in directory.parts:
+        return f"its folder name leads out of its own folder ({directory.name!r})"
+    # Before resolving, which would look through it: a link is not the job's folder,
+    # whatever it points at, and deleting one neither removes nor refuses.
+    if directory.is_symlink():
+        return f"its folder is a link to somewhere else ({directory.name!r})"
+    resolved = directory.resolve()
+    files_root = project_root.resolve() / "files"
+    if not resolved.is_relative_to(files_root):
+        return f"its folder is outside this project's job folders ({resolved})"
+    if len(resolved.relative_to(files_root).parts) < 2:
+        return f"its folder is the folder of a whole workflow ({resolved.name!r})"
+    charge_folders = {
+        muon_charge_state_prefix(POSITIVE_MUON_CHARGE_STATE),
+        muon_charge_state_prefix(MUONIUM_CHARGE_STATE),
+    }
+    # By place, not name alone: a job inside a charge folder may have a seed of that name.
+    if (
+        job is not None
+        and is_muon_relaxation_calc_type(job.calc_type)
+        and resolved.name in charge_folders
+        and resolved.parent.name not in charge_folders
+    ):
+        return f"its folder is the one shared by a whole charge state ({resolved.name!r})"
     return None
 
 

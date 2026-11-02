@@ -6,7 +6,7 @@ warning, it becomes a dangling id in a saved project. Each referrer is therefore
 tested individually rather than through one composite case, so a scan that stops
 covering one of them fails a test that names it.
 
-Fixtures are hand-authored: see ``docs/legacy_import.rst``.
+Fixtures are hand-authored: see ``docs/relaxation_import.rst``.
 """
 
 from __future__ import annotations
@@ -18,9 +18,9 @@ import pytest
 
 from mufinder.domain.enums import WorkflowStage
 from mufinder.domain.models import CalculationDefinition, ComparisonTable, Project, Structure
-from mufinder.services.legacy_import import scan_legacy_folder
-from mufinder.services.legacy_import_commit import commit_legacy_import
-from mufinder.services.legacy_import_removal import (
+from mufinder.services.relaxation_import import scan_relaxation_folder
+from mufinder.services.relaxation_import_commit import commit_relaxation_import
+from mufinder.services.relaxation_import_removal import (
     REMOVAL_ACTION,
     detach_rows_from_definition,
     find_references,
@@ -30,7 +30,7 @@ from mufinder.services.legacy_import_removal import (
 )
 from mufinder.services.project_service import ProjectDocument
 
-from tests.services.test_legacy_import_scan import HOST_LATTICE, build_folder
+from tests.services.test_relaxation_import_scan import HOST_LATTICE, build_folder
 
 
 @pytest.fixture()
@@ -53,10 +53,10 @@ def imported(tmp_path: Path, host_structure: Structure):
     document = ProjectDocument(project_root=tmp_path / "project", project=project)
     document.structures[host_structure.id] = host_structure
 
-    scan = scan_legacy_folder(
-        build_folder(tmp_path / "legacy", sites=(1, 2)), host_lattice=HOST_LATTICE
+    scan = scan_relaxation_folder(
+        build_folder(tmp_path / "runs", sites=(1, 2)), host_lattice=HOST_LATTICE
     )
-    outcome = commit_legacy_import(
+    outcome = commit_relaxation_import(
         document,
         scan=scan,
         runs=scan.importable_runs,

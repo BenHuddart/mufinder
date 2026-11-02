@@ -40,8 +40,8 @@ Application shell
   project is open, and keyboard focus starts in the navigator.
 - The ``File`` menu creates (``New Project…``), opens (``Open Project…``),
   reopens (``Open Recent``) and saves (``Save Project``) projects, and holds
-  ``Import Legacy Relaxations…`` and ``Remove Imported Relaxations…`` (see
-  :doc:`/user_guide/legacy_import`). ``New Project…``, ``Open Project…``, ``Save
+  ``Import CASTEP Relaxations…`` and ``Remove Imported Relaxations…`` (see
+  :doc:`/user_guide/relaxation_import`). ``New Project…``, ``Open Project…``, ``Save
   Project`` and ``Quit`` (``Exit`` on Windows) have the platform's usual
   shortcuts: Ctrl+N, Ctrl+O, Ctrl+S and Ctrl+Q, with Cmd on macOS. Windows has no
   standard key for ``Exit``, so there it closes with Alt+F4. ``Save Project`` and
@@ -224,7 +224,7 @@ A completed relaxation's relaxed supercell can be saved as CIF or CASTEP
 
 See :doc:`/user_guide/site_generation` (Creating Relaxation Jobs),
 :ref:`continue-relaxation`, :ref:`export-relaxed-structures` and
-:doc:`/user_guide/legacy_import`.
+:doc:`/user_guide/relaxation_import`.
 :doc:`/user_guide/examples/cof2` relaxes ten starts as positive muons and as
 muonium.
 
@@ -361,23 +361,23 @@ Journal
 The ``Journal`` is a curated, day-grouped narrative of the project's
 provenance: structure import, workflow configuration, project defaults, site
 generation, job submissions, continuations and outcomes, comparison tables and
-legacy imports. It exports as plain text or Markdown.
+imported relaxations. It exports as plain text or Markdown.
 
 See :doc:`/user_guide/journal`.
 
 Across the workflows
 --------------------
 
-Legacy relaxation import
+CASTEP relaxation import
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
-``File > Import Legacy Relaxations…`` imports muon structural relaxations
-run by the legacy MuFinder application as read-only relaxation rows, so they
-can be used in relaxation analysis, Quantum Corrections and Energy Barriers.
+``File > Import CASTEP Relaxations…`` finds the finished CASTEP geometry
+optimisations in a folder and imports the ones with a muon as read-only
+relaxation rows, so they can be used in relaxation analysis, Quantum Corrections and Energy Barriers.
 ``File > Remove Imported Relaxations…`` removes an import batch that nothing
 downstream still uses.
 
-See :doc:`/user_guide/legacy_import`.
+See :doc:`/user_guide/relaxation_import`.
 
 Jobs and execution
 ~~~~~~~~~~~~~~~~~~

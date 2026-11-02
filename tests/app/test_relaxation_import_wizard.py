@@ -1,0 +1,1878 @@
+"""The relaxation-import review dialog and the action that drives it.
+
+The dialog is a review step, not a confirmation: an import writes read-only
+entities and resolves genuine ambiguities on the user's behalf, so what it
+resolved has to be visible *before* anything is committed. Most of these tests
+are therefore about what the user is shown, not just what is selected.
+
+Fixtures are hand-authored: see ``docs/relaxation_import.rst``.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from mufinder.app import workflow_table_utils
+from mufinder.app.relaxation_import_dialog import (
+    RelaxationImportDialog,
+    run_notes,
+    run_summary_lines,
+)
+from mufinder.app.main_window import MainWindow
+from mufinder.app.workflow_config_codecs import deserialize_muon_relaxation_config
+from mufinder.domain.models import Project, Structure
+from mufinder.services.relaxation_import import scan_relaxation_folder
+from mufinder.services.project_service import ProjectDocument
+
+from tests.services.test_relaxation_import_scan import HOST_LATTICE, _run_param, build_folder
+from tests.support.qt import pump_until
+
+
+@pytest.fixture()
+def window(qapp) -> MainWindow:
+    return MainWindow()
+
+
+@pytest.fixture()
+def host_structure() -> Structure:
+    return Structure(
+        label="Host",
+        origin="imported",
+        lattice_vectors=[list(row) for row in HOST_LATTICE],
+        species=["Si"],
+        fractional_positions=[[0.0, 0.0, 0.0]],
+    )
+
+
+def _document(tmp_path: Path, host: Structure) -> ProjectDocument:
+    project = Project(name="T")
+    project.host_structure_id = host.id
+    document = ProjectDocument(project_root=tmp_path / "project", project=project)
+    document.structures[host.id] = host
+    return document
+
+
+def _scan(folder: Path):
+    return scan_relaxation_folder(folder, host_lattice=HOST_LATTICE)
+
+
+class TestSelection:
+    def test_converged_runs_are_preselected(self, qapp, tmp_path: Path) -> None:
+        """The wizard offers everything and pre-ticks what is safe."""
+
+        dialog = RelaxationImportDialog(_scan(build_folder(tmp_path, sites=(1, 2))))
+
+        assert len(dialog.selected_runs()) == 2
+
+    def test_an_unconverged_run_is_offered_but_not_preselected(self, qapp, tmp_path: Path) -> None:
+        scan = _scan(build_folder(tmp_path, sites=(1,), castep_kwargs={"converged": False}))
+        dialog = RelaxationImportDialog(scan)
+
+        assert dialog._table.rowCount() == 1
+        assert dialog.selected_runs() == []
+
+    def test_a_run_that_cannot_be_imported_is_shown_but_not_selectable(
+        self, qapp, tmp_path: Path
+    ) -> None:
+        """Shown rather than hidden, so the user sees why it is absent."""
+
+        folder = build_folder(tmp_path, sites=(1, 2))
+        next(folder.glob("results/*_2-out.cell")).unlink()
+        dialog = RelaxationImportDialog(_scan(folder))
+
+        assert dialog._table.rowCount() == 2
+        assert [run.seed_name for run in dialog.selected_runs()] == ["Host_1"]
+
+    def test_select_none_clears_the_selection(self, qapp, tmp_path: Path) -> None:
+        dialog = RelaxationImportDialog(_scan(build_folder(tmp_path, sites=(1, 2))))
+
+        dialog._on_select_none()
+
+        assert dialog.selected_runs() == []
+
+    def test_select_converged_restores_the_default(self, qapp, tmp_path: Path) -> None:
+        dialog = RelaxationImportDialog(_scan(build_folder(tmp_path, sites=(1, 2))))
+        dialog._on_select_none()
+
+        dialog._on_select_converged()
+
+        assert len(dialog.selected_runs()) == 2
+
+    def test_ok_is_disabled_with_nothing_selected(self, qapp, tmp_path: Path) -> None:
+        from PySide6.QtWidgets import QDialogButtonBox
+
+        dialog = RelaxationImportDialog(_scan(build_folder(tmp_path, sites=(1,))))
+        ok = dialog._buttons.button(QDialogButtonBox.StandardButton.Ok)
+
+        assert ok.isEnabled()
+        dialog._on_select_none()
+        assert not ok.isEnabled()
+
+
+class TestWhatTheUserIsTold:
+    def test_a_stale_input_tree_is_surfaced_before_committing(self, tmp_path: Path) -> None:
+        """The headline hazard. The scan resolves it in favour of the output,
+        which is right, but it is the user's science and they should see it."""
+
+        folder = build_folder(tmp_path, sites=(1,), param_text=_run_param(xc="LDA"))
+        scan = _scan(folder)
+
+        summary = " ".join(run_summary_lines(scan))
+        notes = run_notes(scan.runs[0])
+
+        assert "disagreement" in summary
+        assert "XC_FUNCTIONAL" in notes
+        assert "PBE" in notes and "LDA" in notes
+
+    def test_an_undetermined_charge_state_is_surfaced(self, tmp_path: Path) -> None:
+        folder = build_folder(
+            tmp_path,
+            sites=(1,),
+            castep_kwargs={"charge": "  7.000"},
+            param_text=_run_param(charge_line=""),
+        )
+
+        summary = " ".join(run_summary_lines(_scan(folder)))
+
+        assert "Charge state could not be determined" in summary
+        assert "results/Host_1" in summary
+        assert "a positive muon" in summary
+
+    def test_a_blocked_run_explains_itself(self, tmp_path: Path) -> None:
+        folder = build_folder(tmp_path, sites=(1,))
+        next(folder.glob("results/*-out.cell")).unlink()
+
+        notes = run_notes(_scan(folder).runs[0])
+
+        assert "-out.cell" in notes
+
+    def test_a_clean_folder_produces_no_alarming_summary(self, tmp_path: Path) -> None:
+        scan = _scan(build_folder(tmp_path, sites=(1,)))
+
+        assert not any("disagreement" in line for line in run_summary_lines(scan))
+
+
+class TestWording:
+    def test_the_dialog_names_runs_by_path_under_the_folder(self, qapp, tmp_path: Path) -> None:
+        dialog = RelaxationImportDialog(_scan(build_folder(tmp_path, sites=(1,))))
+
+        assert dialog.windowTitle() == "Import CASTEP Relaxations"
+        assert dialog._table.horizontalHeaderItem(dialog._RUN_COLUMN).text() == "Run"
+        assert dialog._table.item(0, dialog._RUN_COLUMN).text() == "results/Host_1"
+
+    def test_the_file_menu_offers_the_import(self, window: MainWindow) -> None:
+        assert window._import_relaxations_action.text() == "Import CASTEP Relaxations…"
+
+    def test_a_folder_with_no_castep_output_says_so(
+        self,
+        window: MainWindow,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        host_structure: Structure,
+    ) -> None:
+        from mufinder.services.relaxation_import import scan_relaxation_folder
+
+        window._document = _document(tmp_path, host_structure)
+        window._relaxation_scan_host = host_structure
+        shown: list[str] = []
+        monkeypatch.setattr(
+            "mufinder.app.main_window.QMessageBox.information",
+            lambda *args, **kwargs: shown.append(args[2]),
+        )
+
+        window._on_relaxation_scan_completed(scan_relaxation_folder(tmp_path))
+
+        assert shown == ["No CASTEP outputs (.castep files) were found in or under that folder."]
+
+
+class TestTheAction:
+    def test_it_refuses_without_a_project(
+        self, window: MainWindow, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        window._document = None
+        shown: list[str] = []
+        monkeypatch.setattr(
+            "mufinder.app.main_window.QMessageBox.information",
+            lambda *args, **kwargs: shown.append(args[1]),
+        )
+
+        window._on_import_castep_relaxations()
+
+        assert shown == ["No project open"]
+
+    def test_it_refuses_without_a_host_structure(
+        self, window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Every imported structure hangs off the active host, or its downstream
+        jobs fail host resolution at submission time."""
+
+        project = Project(name="T")
+        window._document = ProjectDocument(project_root=tmp_path, project=project)
+        shown: list[str] = []
+        monkeypatch.setattr(
+            "mufinder.app.main_window.QMessageBox.information",
+            lambda *args, **kwargs: shown.append(args[1]),
+        )
+        picked: list[str] = []
+        monkeypatch.setattr(
+            "mufinder.app.main_window.QFileDialog.getExistingDirectory",
+            lambda *args, **kwargs: picked.append("called") or "",
+        )
+
+        window._on_import_castep_relaxations()
+
+        assert shown == ["No host structure"]
+        # The folder picker never opened: refusing early beats refusing after
+        # the user has chosen a folder.
+        assert picked == []
+
+    def test_committing_a_selection_imports_and_attaches_it(
+        self,
+        window: MainWindow,
+        tmp_path: Path,
+        host_structure: Structure,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The whole flow below the dialog: commit, merge, refresh, persist."""
+
+        window._document = _document(tmp_path, host_structure)
+        monkeypatch.setattr(
+            "mufinder.app.main_window.QMessageBox.information", lambda *args, **kwargs: None
+        )
+        monkeypatch.setattr(window, "_persist_document_ui_state", lambda **kwargs: None)
+        monkeypatch.setattr(window, "_refresh_muon_sites_summary", lambda **kwargs: None)
+
+        scan = _scan(build_folder(tmp_path / "runs", sites=(1, 2)))
+        window._commit_relaxation_import(scan, list(scan.importable_runs), host_structure)
+
+        definition = window._muon_relaxation_controller.active_definition()
+        assert definition is not None
+        assert len(definition.parameters["job_ids_by_label"]) == 2
+        assert len(window._document.sites) == 2
+        assert all(job.status.value == "completed" for job in window._document.jobs.values())
+
+    def test_the_completion_message_reports_skips_and_notes(
+        self,
+        window: MainWindow,
+        tmp_path: Path,
+        host_structure: Structure,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        window._document = _document(tmp_path, host_structure)
+        messages: list[str] = []
+        monkeypatch.setattr(
+            "mufinder.app.main_window.QMessageBox.information",
+            lambda *args, **kwargs: messages.append(args[2]),
+        )
+        monkeypatch.setattr(window, "_persist_document_ui_state", lambda **kwargs: None)
+        monkeypatch.setattr(window, "_refresh_muon_sites_summary", lambda **kwargs: None)
+
+        folder = build_folder(tmp_path / "runs", sites=(1, 2), muon_label="H")
+        next(folder.glob("results/*_2-out.cell")).unlink()
+        scan = _scan(folder)
+        window._commit_relaxation_import(scan, list(scan.runs), host_structure)
+
+        assert messages
+        body = messages[0]
+        assert "Imported 1 relaxation." in body
+        assert "1 run was skipped." in body
+        # The bare-H relabelling is reported rather than applied silently.
+        assert "relabelled" in body
+
+
+class TestScanWorker:
+    def test_the_worker_reports_a_scan(self, qapp, tmp_path: Path) -> None:
+        """Scanning runs off the GUI thread, so it is exercised directly here
+        rather than through a spun event loop."""
+
+        from mufinder.app.relaxation_import_dialog import RelaxationScanWorker
+
+        received: list[object] = []
+        worker = RelaxationScanWorker(build_folder(tmp_path, sites=(1,)), HOST_LATTICE)
+        worker.completed.connect(received.append)
+
+        worker.run()
+
+        assert len(received) == 1
+        assert [run.seed_name for run in received[0].runs] == ["Host_1"]
+
+    def test_the_worker_reports_failure_instead_of_raising(
+        self, qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An exception crossing a thread boundary would be lost."""
+
+        from mufinder.app import relaxation_import_dialog
+        from mufinder.app.relaxation_import_dialog import RelaxationScanWorker
+
+        def _boom(*args, **kwargs):
+            raise RuntimeError("disk on fire")
+
+        monkeypatch.setattr(relaxation_import_dialog, "scan_relaxation_folder", _boom)
+        failures: list[str] = []
+        worker = RelaxationScanWorker(tmp_path, None)
+        worker.failed.connect(failures.append)
+
+        worker.run()
+
+        assert failures == ["disk on fire"]
+
+
+class TestRemovalAction:
+    def _imported_window(self, window: MainWindow, tmp_path: Path, host: Structure):
+        from mufinder.services.relaxation_import_commit import commit_relaxation_import
+
+        window._document = _document(tmp_path, host)
+        scan = _scan(build_folder(tmp_path / "runs", sites=(1, 2)))
+        output_root = window._document.project_root / "files" / "muon_relaxation"
+        outcome = commit_relaxation_import(
+            window._document,
+            scan=scan,
+            runs=scan.importable_runs,
+            host_structure=host,
+            output_root=output_root,
+        )
+        window.merge_imported_relaxation_rows(outcome, output_directory=output_root)
+        # As _commit_relaxation_import does: the record is returned rather than
+        # appended by the service, and the batch listing reads it back.
+        assert outcome.provenance is not None
+        window._project_service.append_provenance(window._document, outcome.provenance)
+        return outcome
+
+    def test_it_reports_when_nothing_is_imported(
+        self,
+        window: MainWindow,
+        tmp_path: Path,
+        host_structure: Structure,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        window._document = _document(tmp_path, host_structure)
+        shown: list[str] = []
+        monkeypatch.setattr(
+            "mufinder.app.main_window.QMessageBox.information",
+            lambda *args, **kwargs: shown.append(args[1]),
+        )
+
+        window._on_remove_imported_relaxations()
+
+        assert shown == ["Nothing imported"]
+
+    def test_batches_are_listed_with_their_source_and_size(
+        self, window: MainWindow, tmp_path: Path, host_structure: Structure
+    ) -> None:
+        self._imported_window(window, tmp_path, host_structure)
+
+        batches = window._imported_relaxation_batches()
+
+        assert len(batches) == 1
+        label, count, _batch_id = batches[0]
+        assert count == 2
+        assert label.startswith("runs, imported ")
+
+    def test_removal_refuses_while_something_still_uses_the_sites(
+        self,
+        window: MainWindow,
+        tmp_path: Path,
+        host_structure: Structure,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from uuid import uuid4
+
+        from mufinder.domain.models import CalculationDefinition
+        from mufinder.domain.enums import WorkflowStage as Stage
+
+        outcome = self._imported_window(window, tmp_path, host_structure)
+        window._document.calculations[uuid4()] = CalculationDefinition(
+            workflow_stage=Stage.QUANTUM_CORRECTIONS,
+            calc_type="castep_quantum_phonon",
+            input_site_ids=[outcome.imported[0].site_id],
+        )
+        warned: list[str] = []
+        monkeypatch.setattr(
+            "mufinder.app.main_window.QMessageBox.warning",
+            lambda *args, **kwargs: warned.append(args[2]),
+        )
+        monkeypatch.setattr(
+            "mufinder.app.main_window.choose_import_batch",
+            lambda *args, **kwargs: 0,
+        )
+        asked: list[int] = []
+        monkeypatch.setattr(
+            workflow_table_utils,
+            "confirm_destructive",
+            lambda *args, **kwargs: asked.append(1),
+        )
+
+        window._on_remove_imported_relaxations()
+
+        assert warned and "quantum_corrections" in warned[0]
+        # Refused before the confirmation, so the user is never asked to confirm
+        # something that cannot happen.
+        assert asked == []
+        assert outcome.imported[0].site_id in window._document.sites
+
+    def test_removal_drops_the_rows_and_the_entities(
+        self,
+        window: MainWindow,
+        tmp_path: Path,
+        host_structure: Structure,
+        monkeypatch: pytest.MonkeyPatch,
+        confirmed_destructive_actions: list[dict[str, str]],
+    ) -> None:
+        self._imported_window(window, tmp_path, host_structure)
+        monkeypatch.setattr(
+            "mufinder.app.main_window.choose_import_batch",
+            lambda *args, **kwargs: 0,
+        )
+        monkeypatch.setattr(window, "_persist_document_ui_state", lambda **kwargs: None)
+        monkeypatch.setattr(window, "_refresh_muon_sites_summary", lambda **kwargs: None)
+
+        window._on_remove_imported_relaxations()
+
+        (prompt,) = confirmed_destructive_actions
+        assert prompt["accept_label"] == "Remove 2 relaxations"
+        assert window._document.sites == {}
+        assert window._document.jobs == {}
+        definition = window._muon_relaxation_controller.active_definition()
+        assert definition.parameters["configuration"]["rows"] == []
+        assert definition.parameters["job_ids_by_label"] == {}
+        # The widget no longer shows them either.
+        assert window._muon_relaxation_view.collect_state()["rows"] == []
+
+    def test_declining_the_confirmation_changes_nothing(
+        self,
+        window: MainWindow,
+        tmp_path: Path,
+        host_structure: Structure,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+
+        outcome = self._imported_window(window, tmp_path, host_structure)
+        monkeypatch.setattr(
+            "mufinder.app.main_window.choose_import_batch",
+            lambda *args, **kwargs: 0,
+        )
+        monkeypatch.setattr(
+            workflow_table_utils, "confirm_destructive", lambda *args, **kwargs: False
+        )
+
+        window._on_remove_imported_relaxations()
+
+        assert len(window._document.sites) == 2
+        assert all(item.job_directory.is_dir() for item in outcome.imported)
+
+
+class TestScanProgressReporting:
+    def test_the_worker_relays_progress(self, qapp, tmp_path: Path) -> None:
+        from mufinder.app.relaxation_import_dialog import RelaxationScanWorker
+
+        seen: list[tuple[int, int]] = []
+        worker = RelaxationScanWorker(build_folder(tmp_path, sites=(1, 2)), HOST_LATTICE)
+        worker.progressed.connect(lambda done, total: seen.append((done, total)))
+
+        worker.run()
+
+        assert seen == [(1, 2), (2, 2)]
+
+    def test_the_status_bar_names_the_folder_and_position(
+        self, window: MainWindow, tmp_path: Path
+    ) -> None:
+        window._relaxation_scan_root = tmp_path / "runs"
+
+        window._on_relaxation_scan_progress(3, 36)
+
+        assert window.statusBar().currentMessage() == "Scanning runs: relaxation 3 of 36…"
+
+
+class TestScanRunsOnAThread:
+    """The scan must survive being started and left to run.
+
+    Every other test in this file drives the worker synchronously by calling
+    ``run()``, which exercises the parsing but never the threading. That gap hid
+    a real defect: a ``QObject`` moved to a thread is parentless, so nothing but
+    a Python reference keeps it alive, and the worker was a local that died the
+    moment the starter returned. The scan never ran, and the GUI sat forever on
+    a status message that never changed.
+
+    These drive the real signal path through an event loop, so the same mistake
+    fails here instead of in the application.
+    """
+
+    def _run_to_completion(self, folder: Path, timeout_ms: int = 15000):
+        """Drive a real scan and return (events, receiver thread ids).
+
+        Receivers are bound slots on a ``QObject`` that lives on the main
+        thread, matching what ``MainWindow`` actually connects. That is not
+        incidental: Qt picks the connection type from the receiver's thread
+        affinity, so a plain function or lambda has no receiver object and is
+        invoked **directly on the worker thread**. Connecting one here would
+        make this class silently test direct delivery while claiming to test
+        queued delivery, and it would stop catching regressions in the path the
+        application really uses.
+        """
+
+        import threading
+
+        from PySide6.QtCore import QEventLoop, QObject, QTimer, Slot
+
+        from mufinder.app.relaxation_import_dialog import start_relaxation_scan
+
+        events: list[tuple] = []
+        threads: dict[str, int] = {}
+        loop = QEventLoop()
+
+        class Receiver(QObject):
+            @Slot(object)
+            def completed(self, scan) -> None:
+                threads["completed"] = threading.get_ident()
+                events.append(("completed", scan))
+                loop.quit()
+
+            @Slot(str)
+            def failed(self, message: str) -> None:
+                threads["failed"] = threading.get_ident()
+                events.append(("failed", message))
+                loop.quit()
+
+            @Slot(int, int)
+            def progressed(self, done: int, total: int) -> None:
+                threads.setdefault("progressed", threading.get_ident())
+                events.append(("progress", done, total))
+
+        receiver = Receiver()
+        start_relaxation_scan(
+            None,
+            folder,
+            HOST_LATTICE,
+            ["Si"],
+            receiver.completed,
+            receiver.failed,
+            receiver.progressed,
+        )
+        QTimer.singleShot(timeout_ms, loop.quit)
+        loop.exec()
+        return events, threads
+
+    def test_a_started_scan_completes_without_being_held_by_the_caller(
+        self, qapp, tmp_path: Path
+    ) -> None:
+        events, _threads = self._run_to_completion(build_folder(tmp_path, sites=(1, 2)))
+
+        kinds = [item[0] for item in events]
+        assert "completed" in kinds, f"scan never completed; got {events!r}"
+        scan = next(item[1] for item in events if item[0] == "completed")
+        assert len(scan.runs) == 2
+
+    def test_progress_is_delivered_across_the_thread_boundary(self, qapp, tmp_path: Path) -> None:
+        """Queued delivery onto the main thread, asserted rather than assumed.
+
+        The thread-identity check is the point of this test. Without it the
+        assertions below pass just as happily when the callbacks run directly on
+        the worker thread, which is what a plain-function receiver would do --
+        so the test would keep passing while no longer testing its own name.
+        """
+
+        import threading
+
+        main_thread = threading.get_ident()
+        events, threads = self._run_to_completion(build_folder(tmp_path, sites=(1, 2, 3)))
+
+        assert threads["progressed"] == main_thread
+        assert threads["completed"] == main_thread
+
+        progress = [item for item in events if item[0] == "progress"]
+        assert progress == [("progress", 1, 3), ("progress", 2, 3), ("progress", 3, 3)]
+        # Progress always lands before completion, so the final message is never
+        # left showing a partial count.
+        assert [item[0] for item in events][-1] == "completed"
+
+    def test_a_failing_scan_reports_across_the_thread_boundary(
+        self, qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from mufinder.app import relaxation_import_dialog
+
+        def _boom(*args, **kwargs):
+            raise RuntimeError("disk on fire")
+
+        monkeypatch.setattr(relaxation_import_dialog, "scan_relaxation_folder", _boom)
+
+        import threading
+
+        main_thread = threading.get_ident()
+        events, threads = self._run_to_completion(build_folder(tmp_path, sites=(1,)))
+
+        assert [item[0] for item in events] == ["failed"]
+        assert events[0][1] == "disk on fire"
+        assert threads["failed"] == main_thread
+
+    def test_the_registry_is_emptied_once_the_thread_exits(self, qapp, tmp_path: Path) -> None:
+        """A registry that never drains would leak a thread per import."""
+
+        from mufinder.app.relaxation_import_dialog import _LIVE_SCANS
+
+        self._run_to_completion(build_folder(tmp_path, sites=(1,)))
+
+        # Cleanup is asynchronous: the loop quits on `completed`, which fires
+        # before the thread has finished, so drain rather than sample once.
+        pump_until(lambda: not _LIVE_SCANS, timeout=5.0)
+
+        assert _LIVE_SCANS == set(), "a scan leaked its thread and worker"
+
+    def test_back_to_back_scans_never_leak_a_registry_entry(self, qapp, tmp_path: Path) -> None:
+        """Deleting the thread must not overtake dropping its registry entry.
+
+        The worker thread posts each queued ``finished`` connection to the GUI
+        thread separately. When the thread's own ``deleteLater`` was a separate
+        connection ahead of the discard, the GUI thread could delete the
+        ``QThread`` before the discard was posted; that tore down the discard
+        and left the entry registered for good. One scan hits that window about
+        one time in fifty, so the old wiring leaked within 150 scans in nearly
+        every run of this test.
+        """
+
+        from mufinder.app.relaxation_import_dialog import _LIVE_SCANS
+
+        folder = build_folder(tmp_path, sites=(1,))
+        for attempt in range(150):
+            self._run_to_completion(folder)
+            pump_until(lambda: not _LIVE_SCANS, timeout=5.0)
+            assert _LIVE_SCANS == set(), f"scan {attempt} leaked its thread and worker"
+
+
+class TestProvenanceReachesDisk:
+    """``provenance.jsonl`` is append-only.
+
+    ``save_project`` never rewrites it, so a record appended straight to
+    ``document.provenance`` lives only until the project is reloaded. Both the
+    import and the removal record must go through
+    ``ProjectService.append_provenance``, which writes as well as appends — and
+    the removal record matters most, because the batch listing and the journal
+    are all that remain once the entities are gone.
+    """
+
+    def _lines(self, document: ProjectDocument) -> list[dict]:
+        import json
+
+        path = document.project_root / "provenance.jsonl"
+        if not path.exists():
+            return []
+        return [
+            json.loads(line)
+            for line in path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+
+    def test_the_import_record_is_written(
+        self,
+        window: MainWindow,
+        tmp_path: Path,
+        host_structure: Structure,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from mufinder.services.relaxation_import_commit import IMPORT_ACTION
+
+        window._document = _document(tmp_path, host_structure)
+        monkeypatch.setattr(
+            "mufinder.app.main_window.QMessageBox.information", lambda *args, **kwargs: None
+        )
+        monkeypatch.setattr(window, "_persist_document_ui_state", lambda **kwargs: None)
+        monkeypatch.setattr(window, "_refresh_muon_sites_summary", lambda **kwargs: None)
+
+        scan = _scan(build_folder(tmp_path / "runs", sites=(1, 2)))
+        window._commit_relaxation_import(scan, list(scan.importable_runs), host_structure)
+
+        records = [
+            item for item in self._lines(window._document) if item["action"] == IMPORT_ACTION
+        ]
+        assert len(records) == 1
+        assert len(records[0]["parameters"]["imported_sites"]) == 2
+
+    def test_the_import_record_names_the_source_of_each_value(
+        self,
+        window: MainWindow,
+        tmp_path: Path,
+        host_structure: Structure,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Which file each parameter came from survives only here — the row
+        itself carries the values, not their provenance."""
+
+        from mufinder.services.relaxation_import_commit import IMPORT_ACTION
+
+        window._document = _document(tmp_path, host_structure)
+        monkeypatch.setattr(
+            "mufinder.app.main_window.QMessageBox.information", lambda *args, **kwargs: None
+        )
+        monkeypatch.setattr(window, "_persist_document_ui_state", lambda **kwargs: None)
+        monkeypatch.setattr(window, "_refresh_muon_sites_summary", lambda **kwargs: None)
+
+        scan = _scan(build_folder(tmp_path / "runs", sites=(1,)))
+        window._commit_relaxation_import(scan, list(scan.importable_runs), host_structure)
+
+        record = [
+            item for item in self._lines(window._document) if item["action"] == IMPORT_ACTION
+        ][0]
+        sources = record["parameters"]["imported_sites"][0]["parameter_sources"]
+        assert sources["cut_off_energy"] == "castep"
+
+    def test_no_record_is_written_when_the_merge_fails(
+        self,
+        window: MainWindow,
+        tmp_path: Path,
+        host_structure: Structure,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """append_provenance writes immediately, so recording an import the
+        project never completed would leave a durable false claim."""
+
+        window._document = _document(tmp_path, host_structure)
+        monkeypatch.setattr(
+            "mufinder.app.main_window.QMessageBox.information", lambda *args, **kwargs: None
+        )
+        monkeypatch.setattr(
+            "mufinder.app.main_window.QMessageBox.warning", lambda *args, **kwargs: None
+        )
+        monkeypatch.setattr(window, "_persist_document_ui_state", lambda **kwargs: None)
+        monkeypatch.setattr(window, "_refresh_muon_sites_summary", lambda **kwargs: None)
+        monkeypatch.setattr(window, "merge_imported_relaxation_rows", lambda *args, **kwargs: False)
+
+        scan = _scan(build_folder(tmp_path / "runs", sites=(1,)))
+        window._commit_relaxation_import(scan, list(scan.importable_runs), host_structure)
+
+        assert self._lines(window._document) == []
+
+    def test_the_removal_record_is_written(
+        self,
+        window: MainWindow,
+        tmp_path: Path,
+        host_structure: Structure,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from mufinder.services.relaxation_import_removal import REMOVAL_ACTION
+
+        TestRemovalAction()._imported_window(window, tmp_path, host_structure)
+        monkeypatch.setattr(
+            "mufinder.app.main_window.choose_import_batch",
+            lambda *args, **kwargs: 0,
+        )
+        monkeypatch.setattr(window, "_persist_document_ui_state", lambda **kwargs: None)
+        monkeypatch.setattr(window, "_refresh_muon_sites_summary", lambda **kwargs: None)
+
+        window._on_remove_imported_relaxations()
+
+        records = [
+            item for item in self._lines(window._document) if item["action"] == REMOVAL_ACTION
+        ]
+        assert len(records) == 1
+        assert len(records[0]["parameters"]["labels"]) == 2
+
+
+class TestRemoveThenReimport:
+    """Removing a batch and importing it again must land in the same place.
+
+    This is the supported recovery path when an import produced something
+    wrong, so residue left behind by the removal shows up as a duplicate or a
+    stale binding on the *second* import rather than the first.
+    """
+
+    def _import(self, window: MainWindow, tmp_path: Path, host: Structure, folder: Path):
+        from mufinder.services.relaxation_import_commit import commit_relaxation_import
+
+        scan = _scan(folder)
+        output_root = window._document.project_root / "files" / "muon_relaxation"
+        outcome = commit_relaxation_import(
+            window._document,
+            scan=scan,
+            runs=scan.importable_runs,
+            host_structure=host,
+            output_root=output_root,
+        )
+        window.merge_imported_relaxation_rows(outcome, output_directory=output_root)
+        assert outcome.provenance is not None
+        window._project_service.append_provenance(window._document, outcome.provenance)
+        return outcome
+
+    def _remove(self, window: MainWindow, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(
+            "mufinder.app.main_window.choose_import_batch",
+            lambda *args, **kwargs: 0,
+        )
+        monkeypatch.setattr(
+            "mufinder.app.main_window.QMessageBox.warning", lambda *args, **kwargs: None
+        )
+        monkeypatch.setattr(window, "_persist_document_ui_state", lambda **kwargs: None)
+        monkeypatch.setattr(window, "_refresh_muon_sites_summary", lambda **kwargs: None)
+        window._on_remove_imported_relaxations()
+
+    def test_the_second_import_is_indistinguishable_from_the_first(
+        self,
+        window: MainWindow,
+        tmp_path: Path,
+        host_structure: Structure,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        window._document = _document(tmp_path, host_structure)
+        folder = build_folder(tmp_path / "runs", sites=(1, 2))
+
+        self._import(window, tmp_path, host_structure, folder)
+        first_rows = window._muon_relaxation_view.collect_state()["rows"]
+        first_values = sorted((row["label"], sorted(row["parameter_values"])) for row in first_rows)
+
+        self._remove(window, monkeypatch)
+
+        assert window._document.sites == {}
+        assert window._document.jobs == {}
+        definition = window._muon_relaxation_controller.active_definition()
+        assert definition.parameters["configuration"]["rows"] == []
+        assert definition.parameters["job_ids_by_label"] == {}
+        assert definition.input_site_ids == []
+        assert window._muon_relaxation_view.collect_state()["rows"] == []
+
+        self._import(window, tmp_path, host_structure, folder)
+        second_rows = window._muon_relaxation_view.collect_state()["rows"]
+
+        assert len(second_rows) == 2
+        # Same labels, not "Imported Host_1 (2)" — the de-duplication counter must
+        # not have been left holding the removed batch's labels.
+        assert sorted(row["label"] for row in second_rows) == [
+            "Imported Host_1",
+            "Imported Host_2",
+        ]
+        assert (
+            sorted((row["label"], sorted(row["parameter_values"])) for row in second_rows)
+            == first_values
+        )
+
+    def test_the_reimported_rows_still_agree_with_the_definition(
+        self,
+        window: MainWindow,
+        tmp_path: Path,
+        host_structure: Structure,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The signature check, on the second pass rather than the first."""
+
+        window._document = _document(tmp_path, host_structure)
+        folder = build_folder(tmp_path / "runs", sites=(1, 2))
+
+        self._import(window, tmp_path, host_structure, folder)
+        self._remove(window, monkeypatch)
+        self._import(window, tmp_path, host_structure, folder)
+
+        definition_rows = deserialize_muon_relaxation_config(
+            window._muon_relaxation_controller.active_definition().parameters["configuration"]
+        ).rows
+        form_rows = window._muon_relaxation_form_config().rows
+
+        definition_signatures = {
+            window._muon_relaxation_row_key(row): window._muon_relaxation_row_signature(row)
+            for row in definition_rows
+        }
+        form_signatures = {
+            window._muon_relaxation_row_key(row): window._muon_relaxation_row_signature(row)
+            for row in form_rows
+        }
+
+        assert len(definition_signatures) == 2
+        assert form_signatures == definition_signatures
+
+
+class TestBatchImportedEarlier:
+    """A batch an earlier version imported, with the names it wrote, still works."""
+
+    def _older_batch(self, window: MainWindow, host: Structure, folder: Path):
+        """Import ``folder``, then put back what an earlier version stored."""
+
+        from mufinder.domain.models import ProvenanceRecord
+        from mufinder.services.relaxation_import_commit import (
+            SOURCE_DIRNAME,
+            commit_relaxation_import,
+        )
+
+        document = window._document
+        scan = _scan(folder)
+        output_root = document.project_root / "files" / "muon_relaxation"
+        outcome = commit_relaxation_import(
+            document,
+            scan=scan,
+            runs=scan.importable_runs,
+            host_structure=host,
+            output_root=output_root,
+            label_prefix="Legacy Site",
+        )
+        window.merge_imported_relaxation_rows(outcome, output_directory=output_root)
+        for index, item in enumerate(outcome.imported, start=1):
+            site = document.sites[item.site_id]
+            site.generation_method = "imported_legacy"
+            site.properties["legacy_site_index"] = index
+            document.jobs[item.job_id].tags.append("legacy_mufinder")
+            source = document.structures[item.structure_id].properties["import_source"]
+            source["kind"] = "legacy_mufinder"
+            source["site_index"] = index
+            (item.job_directory / SOURCE_DIRNAME).rename(item.job_directory / "legacy_source")
+        assert outcome.provenance is not None
+        parameters = dict(outcome.provenance.parameters)
+        parameters["skipped"] = [{"site_index": 3, "reason": "No output file."}]
+        window._project_service.append_provenance(
+            document,
+            ProvenanceRecord(
+                action="import_legacy_relaxations",
+                workflow_stage=outcome.provenance.workflow_stage,
+                actor="user",
+                description="Imported 2 relaxations",
+                parameters=parameters,
+            ),
+        )
+        return outcome
+
+    def test_it_lists_under_its_source_folder_and_can_be_removed(
+        self,
+        window: MainWindow,
+        tmp_path: Path,
+        host_structure: Structure,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        window._document = _document(tmp_path, host_structure)
+        outcome = self._older_batch(
+            window, host_structure, build_folder(tmp_path / "older", sites=(1, 2))
+        )
+        document = window._document
+
+        batches = window._imported_relaxation_batches()
+        assert [count for _label, count, _batch in batches] == [2]
+        assert batches[0][0].startswith("older, imported ")
+
+        monkeypatch.setattr(
+            "mufinder.app.main_window.choose_import_batch",
+            lambda *args, **kwargs: 0,
+        )
+        monkeypatch.setattr(
+            "mufinder.app.main_window.workflow_table_utils.confirm_destructive",
+            lambda *args, **kwargs: True,
+        )
+        monkeypatch.setattr(window, "_persist_document_ui_state", lambda **kwargs: None)
+        monkeypatch.setattr(window, "_refresh_muon_sites_summary", lambda **kwargs: None)
+
+        window._on_remove_imported_relaxations()
+
+        assert not any(site.properties.get("import_batch_id") for site in document.sites.values())
+        for item in outcome.imported:
+            assert item.job_id not in document.jobs
+            assert not item.job_directory.exists()
+
+    def test_the_journal_still_describes_it(
+        self, window: MainWindow, tmp_path: Path, host_structure: Structure
+    ) -> None:
+        from mufinder.services.journal import build_journal, entry_details
+
+        window._document = _document(tmp_path, host_structure)
+        self._older_batch(window, host_structure, build_folder(tmp_path / "older", sites=(1,)))
+
+        journal = build_journal("Test", window._document.provenance)
+        entries = [
+            entry
+            for day in journal.days
+            for entry in day.entries
+            if entry.title == "CASTEP relaxations imported"
+        ]
+        assert len(entries) == 1
+        assert "Skipped run 3: No output file." in entry_details(entries[0]).lines
+
+    def test_its_sites_read_as_imported(self, qapp) -> None:
+        from mufinder.app.muon_generation_widget import MuonGenerationWidget
+
+        assert MuonGenerationWidget._display_generation_method("imported_legacy") == "imported"
+
+
+class TestChoosingABatch:
+    """The batch removed is the one picked, even when two came from one folder."""
+
+    def _import_twice(self, window: MainWindow, tmp_path: Path, host: Structure):
+        from mufinder.services.relaxation_import_commit import commit_relaxation_import
+
+        window._document = _document(tmp_path, host)
+        document = window._document
+        output_root = document.project_root / "files" / "muon_relaxation"
+        folder = build_folder(tmp_path / "sites", sites=(1,))
+        outcomes = []
+        for _attempt in range(2):
+            scan = _scan(folder)
+            outcome = commit_relaxation_import(
+                document,
+                scan=scan,
+                runs=scan.importable_runs,
+                host_structure=host,
+                output_root=output_root,
+                existing_labels=[item.label for done in outcomes for item in done.imported],
+            )
+            window.merge_imported_relaxation_rows(outcome, output_directory=output_root)
+            window._project_service.append_provenance(document, outcome.provenance)
+            outcomes.append(outcome)
+        return outcomes
+
+    def test_the_second_batch_is_the_one_deleted_through_the_real_chooser(
+        self,
+        window: MainWindow,
+        tmp_path: Path,
+        host_structure: Structure,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from PySide6.QtCore import QTimer
+        from PySide6.QtWidgets import QApplication, QComboBox, QDialog, QDialogButtonBox
+
+        first, second = self._import_twice(window, tmp_path, host_structure)
+        document = window._document
+        # Same folder, same second, same count: identical text must not matter.
+        for record in document.provenance:
+            record.timestamp = document.provenance[0].timestamp
+        monkeypatch.setattr(
+            workflow_table_utils, "confirm_destructive", lambda *args, **kwargs: True
+        )
+        monkeypatch.setattr(window, "_persist_document_ui_state", lambda **kwargs: None)
+        monkeypatch.setattr(window, "_refresh_muon_sites_summary", lambda **kwargs: None)
+        seen: list[list[str]] = []
+
+        def _pick_second() -> None:
+            dialog = QApplication.activeModalWidget()
+            assert isinstance(dialog, QDialog)
+            combo = dialog.findChild(QComboBox)
+            seen.append([combo.itemText(index) for index in range(combo.count())])
+            combo.setCurrentIndex(1)
+            box = dialog.findChild(QDialogButtonBox)
+            next(
+                button
+                for button in box.buttons()
+                if box.buttonRole(button) == QDialogButtonBox.ButtonRole.AcceptRole
+            ).click()
+
+        QTimer.singleShot(0, _pick_second)
+        window._on_remove_imported_relaxations()
+
+        assert len(seen) == 1 and len(seen[0]) == 2
+        kept, removed = first.imported[0], second.imported[0]
+        assert kept.site_id in document.sites
+        assert kept.job_directory.is_dir()
+        assert removed.site_id not in document.sites
+        assert not removed.job_directory.exists()
+
+    def test_cancelling_the_chooser_removes_nothing(
+        self, window: MainWindow, tmp_path: Path, host_structure: Structure
+    ) -> None:
+        from PySide6.QtCore import QTimer
+        from PySide6.QtWidgets import QApplication
+
+        first, second = self._import_twice(window, tmp_path, host_structure)
+        QTimer.singleShot(0, lambda: QApplication.activeModalWidget().reject())
+
+        window._on_remove_imported_relaxations()
+
+        assert first.imported[0].site_id in window._document.sites
+        assert second.imported[0].site_id in window._document.sites
+
+    def test_batches_are_named_apart_by_when_they_were_imported(
+        self, window: MainWindow, tmp_path: Path, host_structure: Structure
+    ) -> None:
+        from datetime import UTC, datetime
+
+        self._import_twice(window, tmp_path, host_structure)
+        records = [
+            record
+            for record in window._document.provenance
+            if record.action == "import_castep_relaxations"
+        ]
+        records[0].timestamp = datetime(2026, 3, 4, 10, 0, 0, tzinfo=UTC)
+        records[1].timestamp = datetime(2026, 3, 5, 10, 0, 0, tzinfo=UTC)
+
+        labels = [label for label, _count, _batch in window._imported_relaxation_batches()]
+
+        assert len(set(labels)) == 2
+        assert labels[0].startswith("sites, imported 04 Mar 2026 at ")
+        assert labels[1].startswith("sites, imported 05 Mar 2026 at ")
+
+
+class TestDialogLayout:
+    LONG = "/".join(["a_rather_long_folder_name"] * 5)
+
+    def _dialog(self, qapp, tmp_path: Path) -> RelaxationImportDialog:
+        from tests.services.test_relaxation_import_scan import _input_cell, write_run
+
+        wrong = _input_cell().replace("8.0 0.0 0.0", "9.0 0.0 0.0")
+        write_run(tmp_path / self.LONG, "seed", input_text=wrong, out_text=wrong)
+        dialog = RelaxationImportDialog(_scan(tmp_path))
+        dialog.show()
+        qapp.processEvents()
+        return dialog
+
+    def test_a_long_path_leaves_status_and_notes_on_screen(self, qapp, tmp_path: Path) -> None:
+        dialog = self._dialog(qapp, tmp_path)
+        table = dialog._table
+        viewport = table.viewport().width()
+
+        assert table.columnViewportPosition(dialog._NOTES_COLUMN) < viewport / 1.5
+        assert (
+            table.columnViewportPosition(dialog._STATUS_COLUMN)
+            + table.columnWidth(dialog._STATUS_COLUMN)
+            <= viewport
+        )
+        assert table.horizontalScrollBar().maximum() == 0
+        dialog.close()
+
+    def test_the_full_path_is_in_the_tooltip_and_the_middle_is_elided(
+        self, qapp, tmp_path: Path
+    ) -> None:
+        from PySide6.QtCore import Qt
+        from PySide6.QtWidgets import QStyleOptionViewItem
+
+        dialog = self._dialog(qapp, tmp_path)
+        table = dialog._table
+        item = table.item(0, dialog._RUN_COLUMN)
+
+        assert item.text() == f"{self.LONG}/seed"
+        assert item.toolTip() == f"{self.LONG}/seed"
+        option = QStyleOptionViewItem()
+        table.itemDelegateForColumn(dialog._RUN_COLUMN).initStyleOption(
+            option, table.indexFromItem(item)
+        )
+        assert option.textElideMode == Qt.TextElideMode.ElideMiddle
+        dialog.close()
+
+    def test_a_short_path_is_not_given_extra_width(self, qapp, tmp_path: Path) -> None:
+        dialog = RelaxationImportDialog(_scan(build_folder(tmp_path, sites=(1,))))
+        table = dialog._table
+
+        assert table.columnWidth(dialog._RUN_COLUMN) < 300
+        dialog.close()
+
+    def test_the_table_and_the_summary_have_accessible_names(self, qapp, tmp_path: Path) -> None:
+        from PySide6.QtWidgets import QTextEdit
+
+        dialog = RelaxationImportDialog(_scan(build_folder(tmp_path, sites=(1,))))
+
+        assert dialog._table.accessibleName() == "CASTEP Runs Found"
+        summary = dialog.findChild(QTextEdit)
+        if summary is not None:
+            assert summary.accessibleName() == "Scan Notes"
+        dialog.close()
+
+    def test_a_summary_box_is_named_when_there_are_notes(self, qapp, tmp_path: Path) -> None:
+        from PySide6.QtWidgets import QTextEdit
+
+        folder = build_folder(tmp_path, sites=(1,), param_text=_run_param(xc="LDA"))
+        dialog = RelaxationImportDialog(_scan(folder))
+
+        assert dialog.findChild(QTextEdit).accessibleName() == "Scan Notes"
+        dialog.close()
+
+    def test_a_run_that_is_not_a_supercell_does_not_claim_the_unit_cell(
+        self, qapp, tmp_path: Path
+    ) -> None:
+        dialog = self._dialog(qapp, tmp_path)
+
+        assert dialog._table.item(0, dialog._SUPERCELL_COLUMN).text() == ""
+        dialog.close()
+
+    def test_a_host_only_row_shows_no_charge(self, qapp, tmp_path: Path) -> None:
+        from tests.services.test_relaxation_import_scan import host_only_cell, write_run
+
+        write_run(
+            tmp_path,
+            "host",
+            input_text=host_only_cell(),
+            out_text=host_only_cell(),
+            castep_kwargs={"charge": "0.000"},
+        )
+        dialog = RelaxationImportDialog(_scan(tmp_path))
+
+        assert dialog._table.item(0, dialog._CHARGE_COLUMN).text() == ""
+        dialog.close()
+
+
+class TestUnreadableFolders:
+    def test_a_folder_that_cannot_be_read_is_not_reported_as_empty(
+        self,
+        window: MainWindow,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        host_structure: Structure,
+    ) -> None:
+        from dataclasses import replace
+
+        from mufinder.services.relaxation_import import scan_relaxation_folder
+
+        window._document = _document(tmp_path, host_structure)
+        window._relaxation_scan_host = host_structure
+        shown: list[tuple[str, str]] = []
+        monkeypatch.setattr(
+            "mufinder.app.main_window.QMessageBox.information",
+            lambda *args, **kwargs: shown.append((args[1], args[2])),
+        )
+        scan = replace(scan_relaxation_folder(tmp_path), unreadable=((".", "permission denied"),))
+
+        window._on_relaxation_scan_completed(scan)
+
+        assert shown == [
+            ("Could not read folder", "Could not read this folder: permission denied.")
+        ]
+
+
+def _tree(root: Path) -> list[str]:
+    """Every path under ``root``, so a test can see exactly what a removal took."""
+
+    return sorted(str(path.relative_to(root)) for path in root.rglob("*"))
+
+
+class TestRemovalDeletesOnlyItsOwnFolder:
+    """Through the real Remove flow, on a project holding other batches and a native job."""
+
+    def _project(self, window: MainWindow, tmp_path: Path, host: Structure, monkeypatch):
+        from mufinder.services.relaxation_import_commit import commit_relaxation_import
+
+        window._document = _document(tmp_path, host)
+        document = window._document
+        output_root = document.project_root / "files" / "muon_relaxation"
+        for charge in ("positivemuon", "muonium"):
+            (output_root / charge / "native_job").mkdir(parents=True)
+            (output_root / charge / "native_job" / "native_job.castep").write_text("kept")
+        outcomes = []
+        for name, sites in (("keep", (1, 2)), ("target", (3,))):
+            scan = _scan(build_folder(tmp_path / name, sites=sites))
+            outcome = commit_relaxation_import(
+                document,
+                scan=scan,
+                runs=scan.importable_runs,
+                host_structure=host,
+                output_root=output_root,
+                existing_labels=[item.label for done in outcomes for item in done.imported],
+            )
+            window.merge_imported_relaxation_rows(outcome, output_directory=output_root)
+            window._project_service.append_provenance(document, outcome.provenance)
+            outcomes.append(outcome)
+        warned: list[str] = []
+        monkeypatch.setattr(
+            "mufinder.app.main_window.QMessageBox.warning",
+            lambda *args, **kwargs: warned.append(args[2]),
+        )
+        monkeypatch.setattr(
+            workflow_table_utils, "confirm_destructive", lambda *args, **kwargs: True
+        )
+        monkeypatch.setattr(window, "_persist_document_ui_state", lambda **kwargs: None)
+        monkeypatch.setattr(window, "_refresh_muon_sites_summary", lambda **kwargs: None)
+        batches = window._imported_relaxation_batches()
+        target_index = [
+            index for index, batch in enumerate(batches) if batch[2] == outcomes[1].batch_id
+        ][0]
+        monkeypatch.setattr(
+            "mufinder.app.main_window.choose_import_batch",
+            lambda *args, **kwargs: target_index,
+        )
+        return outcomes, output_root, warned
+
+    def _point_at(self, window: MainWindow, item, seed: str) -> None:
+        """Make a job read as a saved project with this seed would."""
+
+        document = window._document
+        definition = window._muon_relaxation_controller.active_definition()
+        key = f"positivemuon:{item.label}"
+        definition.parameters["job_seed_names_by_label"][key] = seed
+        site = document.sites[item.site_id]
+        result = document.results[document.runs[site.relaxation_run_id].result_id]
+        result.output_files = [str(Path(seed) / Path(name).name) for name in result.output_files]
+
+    @pytest.mark.parametrize(
+        "seed", [".", "..", "../..", "../positivemuon", "../muonium/native_job"]
+    )
+    def test_a_seed_that_leaves_the_charge_folder_deletes_nothing(
+        self,
+        window: MainWindow,
+        tmp_path: Path,
+        host_structure: Structure,
+        monkeypatch: pytest.MonkeyPatch,
+        seed: str,
+    ) -> None:
+        outcomes, output_root, warned = self._project(window, tmp_path, host_structure, monkeypatch)
+        item = outcomes[1].imported[0]
+        self._point_at(window, item, seed)
+        before = _tree(output_root)
+
+        window._on_remove_imported_relaxations()
+
+        assert _tree(output_root) == before
+        assert item.site_id in window._document.sites
+        assert item.job_id in window._document.jobs
+        assert warned and "nothing was removed" in warned[0]
+        assert not window.statusBar().currentMessage().startswith("Removed")
+
+    def test_a_folder_another_batch_wrote_is_not_deleted(
+        self,
+        window: MainWindow,
+        tmp_path: Path,
+        host_structure: Structure,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The folder resolves, is well placed, and is someone else's."""
+
+        outcomes, output_root, warned = self._project(window, tmp_path, host_structure, monkeypatch)
+        item = outcomes[1].imported[0]
+        other = outcomes[0].imported[0]
+        definition = window._muon_relaxation_controller.active_definition()
+        definition.parameters["job_seed_names_by_label"][f"positivemuon:{item.label}"] = (
+            other.seed_name
+        )
+        before = _tree(output_root)
+
+        window._on_remove_imported_relaxations()
+
+        assert _tree(output_root) == before
+        assert warned and "nothing was removed" in warned[0]
+        assert item.site_id in window._document.sites
+
+    def test_a_seed_with_an_end_space_removes_its_own_folder_only(
+        self,
+        window: MainWindow,
+        tmp_path: Path,
+        host_structure: Structure,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """An earlier version wrote ``Host_1 `` and read it back as ``Host_1``."""
+
+        outcomes, output_root, warned = self._project(window, tmp_path, host_structure, monkeypatch)
+        item = outcomes[1].imported[0]
+        kept = outcomes[0].imported[0]
+        spaced = f"{kept.seed_name} "
+        item.job_directory.rename(item.job_directory.with_name(spaced))
+        self._point_at(window, item, spaced)
+        document = window._document
+
+        job = document.jobs[item.job_id]
+        assert window._job_output_directory(job).name == spaced
+
+        window._on_remove_imported_relaxations()
+
+        assert not (output_root / "positivemuon" / spaced).exists()
+        assert kept.job_directory.is_dir()
+        assert (output_root / "positivemuon" / "native_job").is_dir()
+        assert (output_root / "muonium" / "native_job").is_dir()
+        assert item.site_id not in document.sites
+        assert kept.site_id in document.sites
+        assert warned == []
+        assert window.statusBar().currentMessage() == "Removed 1 imported relaxation"
+
+    def test_a_normal_removal_lists_exactly_its_own_folder_as_gone(
+        self,
+        window: MainWindow,
+        tmp_path: Path,
+        host_structure: Structure,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        outcomes, output_root, warned = self._project(window, tmp_path, host_structure, monkeypatch)
+        item = outcomes[1].imported[0]
+        before = set(_tree(output_root))
+
+        window._on_remove_imported_relaxations()
+
+        gone = before - set(_tree(output_root))
+        name = str(item.job_directory.relative_to(output_root))
+        assert gone and all(path == name or path.startswith(f"{name}/") for path in gone)
+        assert warned == []
+
+    def test_a_folder_that_could_not_be_deleted_is_not_reported_as_removed(
+        self,
+        window: MainWindow,
+        tmp_path: Path,
+        host_structure: Structure,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        outcomes, _output_root, warned = self._project(
+            window, tmp_path, host_structure, monkeypatch
+        )
+
+        def _refuse(_path) -> None:
+            raise PermissionError(13, "Permission denied", "/a/b")
+
+        monkeypatch.setattr("mufinder.services.relaxation_import_removal.shutil.rmtree", _refuse)
+
+        window._on_remove_imported_relaxations()
+
+        assert warned and "permission denied" in warned[0]
+        assert "Errno" not in warned[0]
+        assert "could not be deleted" in window.statusBar().currentMessage()
+
+    def test_a_folder_that_turns_unsafe_after_confirming_keeps_the_rows(
+        self,
+        window: MainWindow,
+        tmp_path: Path,
+        host_structure: Structure,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from mufinder.services import relaxation_import_removal
+
+        outcomes, output_root, warned = self._project(window, tmp_path, host_structure, monkeypatch)
+        item = outcomes[1].imported[0]
+        definition = window._muon_relaxation_controller.active_definition()
+        before = _tree(output_root)
+        real = relaxation_import_removal.unsafe_directories
+        calls: list[int] = []
+
+        def _unsafe_on_the_second_look(*args):
+            calls.append(1)
+            return real(*args) if len(calls) == 1 else ("Imported: its folder changed",)
+
+        monkeypatch.setattr(
+            relaxation_import_removal, "unsafe_directories", _unsafe_on_the_second_look
+        )
+
+        window._on_remove_imported_relaxations()
+
+        assert _tree(output_root) == before
+        assert item.site_id in window._document.sites
+        assert f"positivemuon:{item.label}" in definition.parameters["job_ids_by_label"]
+        rows = definition.parameters["configuration"]["rows"]
+        assert any(row["site_id"] == str(item.site_id) for row in rows)
+        assert warned and "its folder changed" in warned[0]
+        assert not window.statusBar().currentMessage().startswith("Removed")
+
+    def test_an_absolute_seed_outside_the_project_is_not_deleted(
+        self,
+        window: MainWindow,
+        tmp_path: Path,
+        host_structure: Structure,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Its parent is named like a charge folder and its name matches what was written."""
+
+        outcomes, output_root, warned = self._project(window, tmp_path, host_structure, monkeypatch)
+        item = outcomes[1].imported[0]
+        victim = tmp_path / "elsewhere" / "positivemuon" / item.seed_name
+        victim.mkdir(parents=True)
+        (victim / "thesis.txt").write_text("kept")
+        definition = window._muon_relaxation_controller.active_definition()
+        definition.parameters["job_seed_names_by_label"][f"positivemuon:{item.label}"] = str(victim)
+        before = _tree(output_root)
+
+        window._on_remove_imported_relaxations()
+
+        assert (victim / "thesis.txt").is_file()
+        assert _tree(output_root) == before
+        assert item.site_id in window._document.sites
+        assert warned and "nothing was removed" in warned[0]
+
+    @pytest.mark.parametrize("target", ["outside", "other_job", "not_a_job"])
+    def test_a_job_folder_that_is_a_link_is_refused_and_nothing_goes(
+        self,
+        window: MainWindow,
+        tmp_path: Path,
+        host_structure: Structure,
+        monkeypatch: pytest.MonkeyPatch,
+        target: str,
+    ) -> None:
+        import shutil
+
+        outcomes, output_root, warned = self._project(window, tmp_path, host_structure, monkeypatch)
+        item = outcomes[1].imported[0]
+        destination = {
+            "outside": tmp_path / "elsewhere" / "positivemuon" / "victim",
+            "other_job": outcomes[0].imported[0].job_directory,
+            "not_a_job": output_root / "positivemuon" / "native_job",
+        }[target]
+        destination.mkdir(parents=True, exist_ok=True)
+        (destination / "thesis.txt").write_text("kept")
+        shutil.rmtree(item.job_directory)
+        item.job_directory.symlink_to(destination, target_is_directory=True)
+        before = _tree(output_root)
+
+        window._on_remove_imported_relaxations()
+
+        assert _tree(output_root) == before
+        assert item.job_directory.is_symlink()
+        assert (destination / "thesis.txt").is_file()
+        assert item.site_id in window._document.sites
+        assert item.job_id in window._document.jobs
+        assert warned and "nothing was removed" in warned[0]
+        assert "link" in warned[0]
+        assert "refused it" not in warned[0]
+        assert not window.statusBar().currentMessage().startswith("Removed")
+
+    def test_a_long_refusal_stays_on_screen_with_the_detail_in_a_scroll(
+        self,
+        window: MainWindow,
+        tmp_path: Path,
+        host_structure: Structure,
+        monkeypatch: pytest.MonkeyPatch,
+        qapp,
+    ) -> None:
+        from PySide6.QtCore import QTimer
+        from PySide6.QtWidgets import QApplication, QMessageBox
+
+        from mufinder.services.relaxation_import_commit import commit_relaxation_import
+
+        _outcomes, output_root, _warned = self._project(
+            window, tmp_path, host_structure, monkeypatch
+        )
+        document = window._document
+        scan = _scan(build_folder(tmp_path / "many", sites=range(10, 40)))
+        many = commit_relaxation_import(
+            document,
+            scan=scan,
+            runs=scan.importable_runs,
+            host_structure=host_structure,
+            output_root=output_root,
+        )
+        window.merge_imported_relaxation_rows(many, output_directory=output_root)
+        window._project_service.append_provenance(document, many.provenance)
+        for item in many.imported:
+            self._point_at(window, item, "..")
+        index = [
+            position
+            for position, batch in enumerate(window._imported_relaxation_batches())
+            if batch[2] == many.batch_id
+        ][0]
+        monkeypatch.setattr(
+            "mufinder.app.main_window.choose_import_batch", lambda *args, **kwargs: index
+        )
+        seen: dict[str, object] = {}
+
+        def _read_box() -> None:
+            box = QApplication.activeModalWidget()
+            assert isinstance(box, QMessageBox)
+            seen.update(text=box.text(), detail=box.detailedText(), height=box.sizeHint().height())
+            box.accept()
+
+        QTimer.singleShot(0, _read_box)
+        before = _tree(output_root)
+
+        window._on_remove_imported_relaxations()
+
+        assert _tree(output_root) == before
+        assert "30 relaxations" in seen["text"]
+        assert "nothing was removed" in seen["text"]
+        assert seen["detail"].count("\n") >= 29
+        assert seen["height"] < 500
+
+    def test_a_native_job_whose_seed_leaves_its_folder_is_refused_on_every_route(
+        self,
+        window: MainWindow,
+        tmp_path: Path,
+        host_structure: Structure,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The row-removal and dashboard route goes through ``JobFileCleanup``."""
+
+        from mufinder.domain.enums import JobStatus, WorkflowStage
+        from mufinder.domain.models import Job
+
+        outcomes, output_root, _warned = self._project(
+            window, tmp_path, host_structure, monkeypatch
+        )
+        document = window._document
+        definition = window._muon_relaxation_controller.active_definition()
+        job = Job(
+            label="native",
+            workflow_stage=WorkflowStage.MUON_RELAXATION,
+            calc_type="castep_positivemuon_relaxation",
+            status=JobStatus.COMPLETED,
+            execution_target="local",
+        )
+        document.jobs[job.id] = job
+        definition.parameters["job_ids_by_label"]["positivemuon:native"] = str(job.id)
+        before = _tree(output_root)
+
+        for seed in (".", "..", "../.."):
+            definition.parameters["job_seed_names_by_label"]["positivemuon:native"] = seed
+            plan = [window._job_file_cleanup.plan_item([job])]
+            outcome = window._job_file_cleanup.execute(
+                plan, choose_disposition=lambda _item: "delete", stop_on_error=False
+            )
+            assert outcome.failures and outcome.failures[0].refusal
+            assert _tree(output_root) == before
+            assert job.id in document.jobs
+            assert window._job_file_cleanup.directory_ownership_refusals([job], check_remote=False)
+
+    def test_a_native_job_in_its_own_folder_is_still_cleaned(
+        self,
+        window: MainWindow,
+        tmp_path: Path,
+        host_structure: Structure,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from mufinder.domain.enums import JobStatus, WorkflowStage
+        from mufinder.domain.models import Job
+
+        _outcomes, output_root, _warned = self._project(
+            window, tmp_path, host_structure, monkeypatch
+        )
+        definition = window._muon_relaxation_controller.active_definition()
+        job = Job(
+            label="native",
+            workflow_stage=WorkflowStage.MUON_RELAXATION,
+            calc_type="castep_positivemuon_relaxation",
+            status=JobStatus.COMPLETED,
+            execution_target="local",
+        )
+        window._document.jobs[job.id] = job
+        definition.parameters["job_ids_by_label"]["positivemuon:native"] = str(job.id)
+        definition.parameters["job_seed_names_by_label"]["positivemuon:native"] = "native_job"
+
+        outcome = window._job_file_cleanup.execute(
+            [window._job_file_cleanup.plan_item([job])],
+            choose_disposition=lambda _item: "delete",
+            stop_on_error=False,
+        )
+
+        assert outcome.completed
+        assert not (output_root / "positivemuon" / "native_job").exists()
+        assert (output_root / "muonium" / "native_job").is_dir()
+
+
+class TestNativeRemovalRefusals:
+    """Row removal goes through ``JobFileCleanup``, with no ownership check asked for."""
+
+    def _native(self, window: MainWindow, tmp_path: Path, host: Structure, seed: str):
+        from mufinder.domain.enums import JobStatus, WorkflowStage
+        from mufinder.domain.models import Job
+
+        window._document = _document(tmp_path, host)
+        output_root = window._document.project_root / "files" / "muon_relaxation"
+        output_root.mkdir(parents=True)
+        definition = window._project_service.register_muon_relaxation_definition(
+            window._document,
+            input_structure_id=host.id,
+            parameters={"rows": []},
+            output_directory=output_root,
+        )
+        job = Job(
+            label="native",
+            workflow_stage=WorkflowStage.MUON_RELAXATION,
+            calc_type="castep_positivemuon_relaxation",
+            status=JobStatus.COMPLETED,
+            execution_target="local",
+        )
+        window._document.jobs[job.id] = job
+        definition.parameters["job_ids_by_label"]["positivemuon:native"] = str(job.id)
+        definition.parameters["job_seed_names_by_label"] = {"positivemuon:native": seed}
+        return job
+
+    def test_an_absolute_seed_outside_the_project_is_refused_in_words(
+        self,
+        window: MainWindow,
+        tmp_path: Path,
+        host_structure: Structure,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from mufinder.app import main_window as main_window_module
+
+        victim = tmp_path / "elsewhere" / "positivemuon" / "native"
+        victim.mkdir(parents=True)
+        (victim / "thesis.txt").write_text("kept")
+        job = self._native(window, tmp_path, host_structure, str(victim))
+        warnings: list[str] = []
+        monkeypatch.setattr(
+            main_window_module.QMessageBox,
+            "warning",
+            lambda _parent, title, message: warnings.append(f"{title}: {message}"),
+        )
+        monkeypatch.setattr(
+            window, "_prompt_relaxation_file_disposition", lambda *a, **k: "delete", raising=False
+        )
+
+        assert window._cleanup_relaxation_rows([job]) is False
+
+        assert (victim / "thesis.txt").is_file()
+        assert job.id in window._document.jobs
+        assert len(warnings) == 1
+        assert "None" not in warnings[0]
+        assert "outside" in warnings[0]
+
+    def test_a_native_job_folder_that_is_a_link_is_refused(
+        self, window: MainWindow, tmp_path: Path, host_structure: Structure
+    ) -> None:
+        job = self._native(window, tmp_path, host_structure, "linked")
+        charge = window._document.project_root / "files" / "muon_relaxation" / "positivemuon"
+        charge.mkdir()
+        destination = charge / "real"
+        destination.mkdir()
+        (charge / "linked").symlink_to(destination, target_is_directory=True)
+
+        outcome = window._job_file_cleanup.execute(
+            [window._job_file_cleanup.plan_item([job])],
+            choose_disposition=lambda _item: "delete",
+            stop_on_error=False,
+        )
+
+        assert outcome.failures and "link" in outcome.failures[0].refusal
+        assert (charge / "linked").is_symlink()
+        assert destination.is_dir()
+        assert job.id in window._document.jobs
+
+
+class TestABatchSharingItsFolder:
+    """An earlier version imported one folder twice into one job folder."""
+
+    def _shared(self, window: MainWindow, tmp_path: Path, host: Structure, monkeypatch):
+        from mufinder.services.relaxation_import_commit import commit_relaxation_import
+
+        window._document = _document(tmp_path, host)
+        document = window._document
+        output_root = document.project_root / "files" / "muon_relaxation"
+        folder = build_folder(tmp_path / "sites", sites=(1,))
+        outcomes = []
+        for _attempt in range(2):
+            scan = _scan(folder)
+            outcome = commit_relaxation_import(
+                document,
+                scan=scan,
+                runs=scan.importable_runs,
+                host_structure=host,
+                output_root=output_root,
+                existing_labels=[item.label for done in outcomes for item in done.imported],
+            )
+            window.merge_imported_relaxation_rows(outcome, output_directory=output_root)
+            window._project_service.append_provenance(document, outcome.provenance)
+            outcomes.append(outcome)
+        first, second = outcomes[0].imported[0], outcomes[1].imported[0]
+        # As that version left it: both jobs read and record the first's folder.
+        import shutil
+
+        shutil.rmtree(second.job_directory)
+        definition = window._muon_relaxation_controller.active_definition()
+        definition.parameters["job_seed_names_by_label"][f"positivemuon:{second.label}"] = (
+            first.seed_name
+        )
+        site = document.sites[second.site_id]
+        result = document.results[document.runs[site.relaxation_run_id].result_id]
+        result.output_files = [
+            str(Path(first.seed_name) / Path(name).name) for name in result.output_files
+        ]
+        monkeypatch.setattr(window, "_persist_document_ui_state", lambda **kwargs: None)
+        monkeypatch.setattr(window, "_refresh_muon_sites_summary", lambda **kwargs: None)
+        return outcomes, first, second
+
+    def _remove(self, window: MainWindow, monkeypatch, batch_id) -> list[tuple]:
+        index = [
+            position
+            for position, batch in enumerate(window._imported_relaxation_batches())
+            if batch[2] == batch_id
+        ][0]
+        monkeypatch.setattr(
+            "mufinder.app.main_window.choose_import_batch", lambda *args, **kwargs: index
+        )
+        asked: list[tuple] = []
+
+        def _confirm(*args, **kwargs) -> bool:
+            asked.append(args)
+            return True
+
+        monkeypatch.setattr(workflow_table_utils, "confirm_destructive", _confirm)
+        window._on_remove_imported_relaxations()
+        return asked
+
+    def test_each_goes_and_the_folder_goes_with_the_last(
+        self,
+        window: MainWindow,
+        tmp_path: Path,
+        host_structure: Structure,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        warned: list[str] = []
+        monkeypatch.setattr(
+            "mufinder.app.main_window.QMessageBox.warning",
+            lambda *args, **kwargs: warned.append(args[2]),
+        )
+        outcomes, first, second = self._shared(window, tmp_path, host_structure, monkeypatch)
+        document = window._document
+        folder = first.job_directory
+        before = _tree(folder)
+
+        asked = self._remove(window, monkeypatch, outcomes[1].batch_id)
+
+        # The first removal: records go, every file stays, and it says so.
+        assert "files stay" in " ".join(str(part) for part in asked[0])
+        assert "another import" in " ".join(str(part) for part in asked[0])
+        assert _tree(folder) == before
+        assert second.site_id not in document.sites
+        assert second.job_id not in document.jobs
+        assert first.site_id in document.sites
+        job = document.jobs[first.job_id]
+        assert window._job_output_directory(job) == folder
+        definition = window._muon_relaxation_controller.active_definition()
+        assert f"positivemuon:{first.label}" in definition.parameters["job_ids_by_label"]
+        assert "files stay" in window.statusBar().currentMessage()
+        assert warned == []
+        from mufinder.services.journal import build_journal
+
+        journal = build_journal("Test", document.provenance)
+        bodies = [entry.body for day in journal.days for entry in day.entries]
+        assert any("Their files stay" in body for body in bodies)
+        assert not any("were deleted" in body for body in bodies)
+
+        asked = self._remove(window, monkeypatch, outcomes[0].batch_id)
+
+        # The last one using it: the folder goes.
+        assert "delete" in " ".join(str(part) for part in asked[0])
+        assert not folder.exists()
+        assert first.site_id not in document.sites
+        assert window.statusBar().currentMessage() == "Removed 1 imported relaxation"
+        assert warned == []
+
+    def test_a_native_job_in_the_folder_still_refuses(
+        self,
+        window: MainWindow,
+        tmp_path: Path,
+        host_structure: Structure,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Only another import's own record of writing there makes it a shared folder."""
+
+        from mufinder.domain.enums import JobStatus, WorkflowStage
+        from mufinder.domain.models import Job
+
+        warned: list[str] = []
+        monkeypatch.setattr(
+            "mufinder.app.main_window.QMessageBox.warning",
+            lambda *args, **kwargs: warned.append(args[2]),
+        )
+        outcomes, first, second = self._shared(window, tmp_path, host_structure, monkeypatch)
+        document = window._document
+        native = Job(
+            label="native",
+            workflow_stage=WorkflowStage.MUON_RELAXATION,
+            calc_type="castep_positivemuon_relaxation",
+            status=JobStatus.COMPLETED,
+            execution_target="local",
+        )
+        document.jobs[native.id] = native
+        definition = window._muon_relaxation_controller.active_definition()
+        definition.parameters["job_ids_by_label"]["positivemuon:native"] = str(native.id)
+        definition.parameters["job_seed_names_by_label"]["positivemuon:native"] = first.seed_name
+        before = _tree(first.job_directory)
+
+        self._remove(window, monkeypatch, outcomes[1].batch_id)
+
+        assert _tree(first.job_directory) == before
+        assert second.site_id in document.sites
+        assert warned and "nothing was removed" in warned[0]
+
+
+class TestJournalAfterAnImport:
+    def test_creating_the_definition_records_no_empty_preparation(
+        self, window: MainWindow, tmp_path: Path, host_structure: Structure, monkeypatch
+    ) -> None:
+        from mufinder.app import main_window as main_window_module
+        from mufinder.services.journal import build_journal
+
+        monkeypatch.setattr(
+            main_window_module.QMessageBox, "information", lambda *args, **kwargs: None
+        )
+        monkeypatch.setattr(window, "_persist_document_ui_state", lambda **kwargs: None)
+        monkeypatch.setattr(window, "_refresh_muon_sites_summary", lambda **kwargs: None)
+        window._document = _document(tmp_path, host_structure)
+        scan = _scan(build_folder(tmp_path / "runs", sites=(1,)))
+
+        window._commit_relaxation_import(scan, list(scan.importable_runs), host_structure)
+
+        journal = build_journal("Test", window._document.provenance)
+        bodies = [entry.body for day in journal.days for entry in day.entries]
+        assert not any("Prepared 0" in body for body in bodies)
+        assert not any(
+            record.action == "configure_muon_relaxation" for record in window._document.provenance
+        )

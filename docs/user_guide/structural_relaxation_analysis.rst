@@ -359,7 +359,7 @@ Exporting relaxed structures
 
 A completed pristine or muon relaxation can be saved as the full relaxed
 supercell that CASTEP wrote to ``{seed}-out.cell``: every relaxed host atom
-plus, for a muon relaxation, the muon. Imported legacy relaxations export the
+plus, for a muon relaxation, the muon. Imported CASTEP relaxations export the
 same way.
 
 Both entry points offer the two formats as separate menu entries, ``CIF
@@ -388,8 +388,8 @@ typed without that extension gets it added.
    ``LATTICE_CART`` in Å and ``POSITIONS_FRAC``. The muon keeps its ``H:mu``
    species label, so the file reopens in MuFinder. A spin-polarised
    relaxation run in MuFinder writes the run's ``SPIN=`` values, so the file
-   can seed a spin-polarised CASTEP run as it is. A relaxation imported from a
-   legacy project gets ``SPIN=`` values from its converged Mulliken spins.
+   can seed a spin-polarised CASTEP run as it is. An imported relaxation
+   gets ``SPIN=`` values from its converged Mulliken spins.
 
 Both formats start with comment lines that record the project, the structure,
 the source job and its workflow, the charge state, the final energy in eV and

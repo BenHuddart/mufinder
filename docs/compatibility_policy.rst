@@ -29,13 +29,66 @@ Compatibility ledger
      - ``MuonRelaxationRow`` / muon-relaxation definition ``configuration``
      - Mark a relaxation row ingested from a calculation performed outside
        MuFinder, and group the rows one import produced. Both are additive with
-       defaults, so a project saved before the legacy import existed loads with
+       defaults, so a project saved before relaxation import existed loads with
        every row treated as natively staged, which is correct.
      - Current project data, not deprecated. These fields are load-bearing for
        read-only enforcement: a row whose ``imported`` flag is lost becomes
        editable and resubmittable while its imported entities and files remain,
        so neither field may be dropped without a schema migration that first
        relocates the marker.
+   * - ``mufinder.services.legacy_import``, ``legacy_import_commit``,
+       ``legacy_import_removal``
+     - Those modules
+     - Import aliases for ``mufinder.services.relaxation_import``,
+       ``relaxation_import_commit`` and ``relaxation_import_removal``, with
+       ``LegacyFolderScan``, ``scan_legacy_folder``, ``LegacyImportOutcome`` and
+       ``commit_legacy_import`` naming ``RelaxationFolderScan``,
+       ``scan_relaxation_folder``, ``RelaxationImportOutcome`` and
+       ``commit_relaxation_import``. No in-repo code imports them; one test checks
+       that they resolve. Not persisted.
+     - Public import alias. Keep for one minor release; then drop the three modules.
+   * - ``job_seed_names_by_label`` values read exactly
+     - ``mufinder.services.job_paths``
+     - A muon-relaxation seed names the folder with exactly that name when one
+       exists, and is trimmed otherwise, as it always was. No saved value changes and
+       no existing job's path moves, except an imported seed with a space at either
+       end, which now resolves to the folder that was written, where it used to
+       resolve to another job's.
+     - Current behaviour, not a shim.
+   * - ``configure_muon_relaxation`` records with no rows
+     - ``provenance.jsonl``, read by ``mufinder.services.journal``
+     - An empty definition no longer records one. The Journal shows no entry for one
+       an older project holds, and the record stays in the append-only file.
+     - Read-side filter. Keep while such projects may be opened.
+   * - ``import_legacy_relaxations`` provenance action
+     - ``provenance.jsonl``, read through ``IMPORT_ACTIONS`` in
+       ``mufinder.services.relaxation_import_commit`` and the action tables in
+       ``mufinder.services.journal``
+     - The action an import batch recorded before it was named
+       ``import_castep_relaxations``. Its batch keeps its source-folder name in
+       ``Remove Imported Relaxations`` and its Journal entry. ``site_index`` in
+       such a record's ``skipped`` entries is read where a newer record has
+       ``run``. ``provenance.jsonl`` is append-only, so nothing rewrites them.
+     - Project-file shim. Keep while projects holding such records may be opened;
+       removing it needs a schema version bump that rewrites the action.
+   * - ``imported_legacy`` site ``generation_method``
+     - ``MuonSite.generation_method``, read by
+       ``mufinder.services.project_survey`` and
+       ``mufinder.app.muon_generation_widget``
+     - The value an imported site stored before ``imported``. Both readers show
+       either as ``imported``.
+     - Project-file shim. Keep until a schema version bump migrates the value.
+   * - ``legacy_mufinder`` job tag and ``import_source`` kind,
+       ``legacy_site_index`` site property, ``import_source["site_index"]``,
+       ``legacy_source/`` job folder
+     - ``Job.tags``, ``Structure.properties``, ``MuonSite.properties``, the
+       imported job's directory
+     - What an import batch stored before it was named from the seed. Current
+       batches write ``castep_folder`` as the kind, no tag or index, and
+       ``original_inputs/source_manifest.json``. Read-only rows, the reset guards
+       and removal key on the ``imported`` tag and ``import_batch_id``, so these
+       stored values load, stay where they are and are removed with their batch.
+     - Inert stored data, with no reader to retire. Needs no migration.
    * - Task-only ``cutoff_parameter_rows`` entries
      - ``convergence_form`` UI state, read by
        ``CutoffConvergenceWidget._is_default_parameter_set``
@@ -1138,6 +1191,20 @@ named.
 - ``REMOTE_STALE_OUTPUT_SLACK_SECONDS``
   (``mufinder.services.cluster_runner``): import it from
   ``mufinder.services.cluster_retrieval``.
+
+The names below belong to the relaxation import and keep no alias. No project
+data depends on them, and only MuFinder's own code and tests used them.
+
+- ``mufinder.app.legacy_import_dialog``, with ``LegacyImportDialog``,
+  ``LegacyScanWorker`` and ``start_legacy_scan``: use
+  ``mufinder.app.relaxation_import_dialog``, with ``RelaxationImportDialog``,
+  ``RelaxationScanWorker`` and ``start_relaxation_scan``.
+- ``site_index_from_stem`` and ``LEGACY_MUON_LABELS``
+  (``mufinder.services.legacy_import``), ``LEGACY_SOURCE_DIRNAME`` and
+  ``LEGACY_MANIFEST_NAME`` (``mufinder.services.legacy_import_commit``): runs are
+  named from their seed, and ``SOURCE_DIRNAME`` and ``SOURCE_MANIFEST_NAME`` name
+  the current archive. ``DetectedRun.site_index`` and
+  ``RelaxationFolderScan.host_cif`` are gone with them.
 
 The Magnetic Fields names below live in the module named and keep no import
 alias in ``mufinder.app.magnetic_field_widget``, which holds the page and its

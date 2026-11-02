@@ -125,11 +125,15 @@ from mufinder.app.energy_barriers_widget import (
 from mufinder.app.export_dialogs import open_containing_folder
 from mufinder.app.failed_job_dialog import FailedJobAction, FailedJobDialog
 from mufinder.app.kpoint_convergence_widget import KPointConvergenceWidget
-from mufinder.app.legacy_import_dialog import LegacyImportDialog, start_legacy_scan
-from mufinder.domain.text import plural
-from mufinder.services.legacy_import import LegacyFolderScan
-from mufinder.services.legacy_import_commit import IMPORT_ACTION, commit_legacy_import
-from mufinder.services.legacy_import_removal import (
+from mufinder.app.relaxation_import_dialog import (
+    RelaxationImportDialog,
+    choose_import_batch,
+    start_relaxation_scan,
+)
+from mufinder.domain.text import plain_error, plural
+from mufinder.services.relaxation_import import RelaxationFolderScan
+from mufinder.services.relaxation_import_commit import IMPORT_ACTIONS, commit_relaxation_import
+from mufinder.services.relaxation_import_removal import (
     detach_rows_from_definition,
     imported_relaxations_in_batch,
     plan_removal,
@@ -907,10 +911,10 @@ class MainWindow(QMainWindow):
             self._on_create_muon_relaxation_jobs_requested
         )
         self._muon_generation_view.form_state_changed.connect(self._on_muon_form_state_changed)
-        self._import_legacy_action = None
+        self._import_relaxations_action = None
         self._remove_imported_action = None
-        self._legacy_scan_host: Structure | None = None
-        self._legacy_scan_root: Path | None = None
+        self._relaxation_scan_host: Structure | None = None
+        self._relaxation_scan_root: Path | None = None
         self._muon_relaxation_view = MuonRelaxationWidget()
         self._muon_relaxation_view.configure_requested.connect(self._on_muon_relaxation_configured)
         self._muon_relaxation_view.form_state_changed.connect(
@@ -1310,7 +1314,9 @@ class MainWindow(QMainWindow):
         self._jobs_dock.setVisible(has_project and self._jobs_dock_wanted)
         self._jobs_dock.toggleViewAction().setEnabled(has_project)
         self._save_project_action.setEnabled(has_project)
-        self._import_legacy_action.setEnabled(has_project and self._legacy_scan_root is None)
+        self._import_relaxations_action.setEnabled(
+            has_project and self._relaxation_scan_root is None
+        )
         self._remove_imported_action.setEnabled(has_project)
         self.setWindowTitle(
             f"{self._document.project.name} \u2014 {PRODUCT_NAME}" if has_project else PRODUCT_NAME
@@ -1758,8 +1764,8 @@ class MainWindow(QMainWindow):
 
         file_menu.addSeparator()
 
-        self._import_legacy_action = file_menu.addAction("Import Legacy Relaxations…")
-        self._import_legacy_action.triggered.connect(self._on_import_legacy_relaxations)
+        self._import_relaxations_action = file_menu.addAction("Import CASTEP Relaxations…")
+        self._import_relaxations_action.triggered.connect(self._on_import_castep_relaxations)
 
         self._remove_imported_action = file_menu.addAction("Remove Imported Relaxations…")
         self._remove_imported_action.triggered.connect(self._on_remove_imported_relaxations)
@@ -4425,7 +4431,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(
                 self,
                 "File cleanup failed",
-                f"Could not update files for cutoff {failure.item.key[0]:.8g} eV:\n{failure.error}",
+                f"Could not update files for cutoff {failure.item.key[0]:.8g} eV:\n{failure.reason}",
             )
 
         removed_cutoffs: list[float] = []
@@ -8674,7 +8680,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(
                 self,
                 "File cleanup failed",
-                f"Could not update files for job '{failure.item.label}':\n{failure.error}",
+                f"Could not update files for job '{failure.item.label}':\n{failure.reason}",
             )
         return outcome.completed
 
@@ -8746,15 +8752,15 @@ class MainWindow(QMainWindow):
         self._uep_controller.remove_rows(labels)
         self._refresh_uep_rows()
 
-    def _on_import_legacy_relaxations(self) -> None:
-        """Scan a legacy MuFinder folder and import the relaxations chosen from it."""
+    def _on_import_castep_relaxations(self) -> None:
+        """Scan a folder for CASTEP relaxations and import the ones chosen from it."""
 
         document = self._document
         if document is None:
             QMessageBox.information(
                 self,
                 "No project open",
-                "Open or create a project before importing legacy relaxations.",
+                "Open or create a project before importing CASTEP relaxations.",
             )
             return
 
@@ -8773,74 +8779,79 @@ class MainWindow(QMainWindow):
             return
 
         directory = QFileDialog.getExistingDirectory(
-            self, "Select a legacy MuFinder working folder"
+            self, "Select a folder containing CASTEP relaxations"
         )
         if not directory:
             return
 
-        self._begin_legacy_scan(Path(directory), host)
+        self._begin_relaxation_scan(Path(directory), host)
 
-    def _begin_legacy_scan(self, root: Path, host: Structure) -> None:
+    def _begin_relaxation_scan(self, root: Path, host: Structure) -> None:
         """Scan ``root`` on a worker thread, then review and commit."""
 
-        self.statusBar().showMessage(f"Scanning {root.name} for legacy relaxations…")
-        if self._import_legacy_action is not None:
-            self._import_legacy_action.setEnabled(False)
-        self._legacy_scan_host = host
-        self._legacy_scan_root = root
-        start_legacy_scan(
+        self.statusBar().showMessage(f"Scanning {root.name} for CASTEP relaxations…")
+        if self._import_relaxations_action is not None:
+            self._import_relaxations_action.setEnabled(False)
+        self._relaxation_scan_host = host
+        self._relaxation_scan_root = root
+        start_relaxation_scan(
             self,
             root,
             [list(vector) for vector in host.lattice_vectors],
             list(host.species),
-            self._on_legacy_scan_completed,
-            self._on_legacy_scan_failed,
-            self._on_legacy_scan_progress,
+            self._on_relaxation_scan_completed,
+            self._on_relaxation_scan_failed,
+            self._on_relaxation_scan_progress,
         )
 
     @Slot(int, int)
-    def _on_legacy_scan_progress(self, done: int, total: int) -> None:
-        root = self._legacy_scan_root
+    def _on_relaxation_scan_progress(self, done: int, total: int) -> None:
+        root = self._relaxation_scan_root
         name = root.name if root is not None else "folder"
         self.statusBar().showMessage(f"Scanning {name}: relaxation {done} of {total}…")
 
     @Slot(str)
-    def _on_legacy_scan_failed(self, message: str) -> None:
-        self._finish_legacy_scan()
+    def _on_relaxation_scan_failed(self, message: str) -> None:
+        self._finish_relaxation_scan()
         QMessageBox.warning(self, "Import failed", f"Could not scan the folder:\n{message}")
 
     @Slot(object)
-    def _on_legacy_scan_completed(self, scan: object) -> None:
-        self._finish_legacy_scan()
+    def _on_relaxation_scan_completed(self, scan: object) -> None:
+        self._finish_relaxation_scan()
         document = self._document
-        host = self._legacy_scan_host
-        if document is None or host is None or not isinstance(scan, LegacyFolderScan):
+        host = self._relaxation_scan_host
+        if document is None or host is None or not isinstance(scan, RelaxationFolderScan):
             return
 
         if not scan.runs:
+            if scan.unreadable:
+                QMessageBox.information(self, "Could not read folder", scan.unreadable_note)
+                return
             QMessageBox.information(
                 self,
                 "Nothing to import",
-                "No muon relaxations were found in that folder.\n\n" + "\n".join(scan.warnings),
+                "No CASTEP outputs (.castep files) were found in or under that folder.",
             )
             return
 
-        dialog = LegacyImportDialog(scan, parent=self)
+        dialog = RelaxationImportDialog(scan, parent=self)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         selected = dialog.selected_runs()
         if not selected:
             return
 
-        self._commit_legacy_import(scan, selected, host)
+        self._commit_relaxation_import(scan, selected, host)
 
-    def _finish_legacy_scan(self) -> None:
-        self._legacy_scan_root = None
-        if self._import_legacy_action is not None:
-            self._import_legacy_action.setEnabled(True)
+    def _finish_relaxation_scan(self) -> None:
+        self._relaxation_scan_root = None
+        if self._import_relaxations_action is not None:
+            self._import_relaxations_action.setEnabled(True)
         self.statusBar().clearMessage()
 
-    def _commit_legacy_import(self, scan: LegacyFolderScan, runs: list, host: Structure) -> None:
+    def _commit_relaxation_import(
+        self, scan: RelaxationFolderScan, runs: list, host: Structure
+    ) -> None:
         """Build entities and files, attach the rows, and save."""
 
         document = self._document
@@ -8858,7 +8869,7 @@ class MainWindow(QMainWindow):
                 existing_labels = [row.label for row in config.rows]
 
         try:
-            outcome = commit_legacy_import(
+            outcome = commit_relaxation_import(
                 document,
                 scan=scan,
                 runs=runs,
@@ -8868,7 +8879,7 @@ class MainWindow(QMainWindow):
             )
         except OSError as exc:
             QMessageBox.warning(
-                self, "Import failed", f"Could not write the imported files:\n{exc}"
+                self, "Import failed", f"Could not write the imported files: {plain_error(exc)}."
             )
             return
 
@@ -8890,7 +8901,7 @@ class MainWindow(QMainWindow):
         self._refresh_jobs_table()
         self._refresh_muon_sites_summary()
         self._persist_document_ui_state(
-            failure_message="Legacy relaxations were imported, but autosave failed.",
+            failure_message="CASTEP relaxations were imported, but autosave failed.",
         )
 
         messages = [f"Imported {plural(len(outcome.imported), 'relaxation')}."]
@@ -8902,7 +8913,7 @@ class MainWindow(QMainWindow):
             messages.extend(f"- {note}" for note in dict.fromkeys(row_warnings))
         QMessageBox.information(self, "Import complete", "\n".join(messages))
         self.statusBar().showMessage(
-            f"Imported {plural(len(outcome.imported), 'legacy relaxation')}"
+            f"Imported {plural(len(outcome.imported), 'CASTEP relaxation')}"
         )
 
     def _on_remove_imported_relaxations(self) -> None:
@@ -8929,12 +8940,10 @@ class MainWindow(QMainWindow):
             return
 
         labels = [f"{label} ({plural(count, 'relaxation')})" for label, count, _batch_id in batches]
-        choice, accepted = QInputDialog.getItem(
-            self, "Remove Imported Relaxations", "Import batch", labels, 0, False
-        )
-        if not accepted:
+        chosen = choose_import_batch(self, labels)
+        if chosen is None:
             return
-        batch_id = batches[labels.index(choice)][2]
+        batch_id = batches[chosen][2]
 
         refs = imported_relaxations_in_batch(document, batch_id)
         directories = {
@@ -8942,24 +8951,37 @@ class MainWindow(QMainWindow):
             for ref in refs
             if (path := self._job_output_directory(document.jobs[ref.job_id])) is not None
         }
-        plan = plan_removal(document, refs, job_directories=directories)
+        others = {
+            job.id: path
+            for job in document.jobs.values()
+            if job.id not in directories and (path := self._job_output_directory(job)) is not None
+        }
+        plan = plan_removal(
+            document, refs, job_directories=directories, other_job_directories=others
+        )
+
+        if plan.unsafe:
+            self._warn_with_lines(
+                "Cannot remove safely",
+                f"MuFinder will not delete the folders of {plural(len(plan.unsafe), 'relaxation')}, "
+                "so nothing was removed.",
+                plan.unsafe,
+            )
+            return
 
         if plan.blockers:
-            QMessageBox.warning(
-                self,
+            self._warn_with_lines(
                 "Still in use",
-                "These imported relaxations cannot be removed because they are still "
-                "used by:\n\n"
-                + "\n".join(f"- {item}" for item in plan.blockers)
-                + "\n\nRemove those first.",
+                "These imported relaxations cannot be removed because other work uses them. "
+                "Remove that first.",
+                plan.blockers,
             )
             return
 
         if not workflow_table_utils.confirm_destructive(
             self,
             "Remove imported relaxations?",
-            f"Permanently remove {plural(len(plan.targets), 'imported relaxation')} and delete "
-            "their job directories, including the archived original input files?",
+            self._removal_question(plan),
             "MuFinder did not run these calculations and cannot recreate them.",
             accept_label=(f"Remove {plural(len(plan.targets), 'relaxation', 'relaxations')}"),
         ):
@@ -8967,11 +8989,16 @@ class MainWindow(QMainWindow):
 
         outcome = remove_imported_relaxations(document, plan, batch_id=batch_id)
         removed, errors = outcome.removed, outcome.errors
+        if not removed:
+            self._warn_with_lines("Cannot remove safely", "Nothing was removed.", errors)
+            return
+        # Only what actually went: a row whose job stayed keeps its binding.
+        gone = [ref for ref in plan.targets if ref.job_id not in document.jobs]
         definition = self._muon_relaxation_controller.active_definition()
         if definition is not None:
-            detach_rows_from_definition(definition, plan.targets)
+            detach_rows_from_definition(definition, gone)
             self._muon_relaxation_view.set_form_state(
-                self._muon_relaxation_form_state_without(plan.targets)
+                self._muon_relaxation_form_state_without(gone)
             )
             document.ui_state["muon_relaxation_form"] = self._muon_relaxation_view.collect_state()
 
@@ -8990,8 +9017,52 @@ class MainWindow(QMainWindow):
         )
 
         if errors:
-            QMessageBox.warning(self, "Removal issues", "\n".join(errors))
+            self._warn_with_lines("Removal issues", "Some files could not be deleted.", errors)
+            self.statusBar().showMessage(
+                f"Removed {plural(removed, 'imported relaxation')}; "
+                "some of its files could not be deleted"
+            )
+            return
+        if plan.kept_job_ids:
+            self.statusBar().showMessage(
+                f"Removed {plural(removed, 'imported relaxation')}; "
+                "the files stay because another import uses them"
+            )
+            return
         self.statusBar().showMessage(f"Removed {plural(removed, 'imported relaxation')}")
+
+    def _warn_with_lines(self, title: str, summary: str, lines: Sequence[str]) -> None:
+        """Warn with ``summary`` and one line per item, kept on screen however many there are."""
+
+        if len(lines) == 1:
+            QMessageBox.warning(self, title, f"{summary}\n\n- {lines[0]}")
+            return
+        show_detailed_warning(
+            self,
+            title,
+            summary + "\n" + "\n".join(f"- {line}" for line in lines),
+            informative_text="Open Details to see each one.",
+        )
+
+    @staticmethod
+    def _removal_question(plan) -> str:
+        """Return what removing a batch will do with its folders, in plain words."""
+
+        count = plural(len(plan.targets), "imported relaxation")
+        stays = (
+            "another import uses the same folder. The folder is deleted when the last import "
+            "using it is removed."
+        )
+        if not plan.directories and plan.kept_job_ids:
+            return f"Remove {count} from the project? Their files stay, because {stays}"
+        question = (
+            f"Permanently remove {count} and delete their job directories, including the "
+            "archived original input files?"
+        )
+        if plan.kept_job_ids:
+            kept = plural(len(plan.kept_job_ids), "relaxation")
+            question += f"\n\nThe files of {kept} stay, because {stays}"
+        return question
 
     def _muon_relaxation_form_state_without(self, targets) -> dict[str, object]:
         """Return the widget's form state with ``targets``' rows dropped."""
@@ -9002,7 +9073,11 @@ class MainWindow(QMainWindow):
         return {"rows": [row for row in rows if str(row.get("site_id", "")) not in removed]}
 
     def _imported_relaxation_batches(self) -> list[tuple[str, int, UUID]]:
-        """Return ``(label, count, batch_id)`` for every import batch present."""
+        """Return ``(label, count, batch_id)`` for every import batch, oldest first.
+
+        A label names the source folder and when it was imported, since one folder
+        can be imported more than once. A batch whose record is missing comes last.
+        """
 
         document = self._document
         if document is None:
@@ -9014,22 +9089,34 @@ class MainWindow(QMainWindow):
                 counts[str(raw)] = counts.get(str(raw), 0) + 1
 
         labels: dict[str, str] = {}
+        order: dict[str, float] = {}
         for record in document.provenance:
-            if record.action != IMPORT_ACTION:
+            if record.action not in IMPORT_ACTIONS:
                 continue
             raw_batch = record.parameters.get("batch_id")
             source = record.parameters.get("source_folder")
             if raw_batch:
-                labels[str(raw_batch)] = Path(str(source)).name if source else "imported batch"
+                folder = Path(str(source)).name if source else "imported batch"
+                when = record.timestamp.astimezone()
+                labels[str(raw_batch)] = f"{folder}, imported {when:%d %b %Y at %H:%M:%S}"
+                order[str(raw_batch)] = when.timestamp()
 
-        batches: list[tuple[str, int, UUID]] = []
+        batches: list[tuple[float, str, int, UUID]] = []
         for raw_batch, count in counts.items():
             try:
                 batch_id = UUID(raw_batch)
             except ValueError:
                 continue
-            batches.append((labels.get(raw_batch, "imported batch"), count, batch_id))
-        return sorted(batches, key=lambda item: item[0])
+            batches.append(
+                (
+                    order.get(raw_batch, float("inf")),
+                    labels.get(raw_batch, "imported batch"),
+                    count,
+                    batch_id,
+                )
+            )
+        batches.sort(key=lambda item: item[:2])
+        return [(label, count, batch_id) for _when, label, count, batch_id in batches]
 
     def merge_imported_relaxation_rows(
         self,

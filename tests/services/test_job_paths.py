@@ -8,7 +8,7 @@ import pytest
 
 from mufinder.domain.charge_states import MUON_RELAXATION_CALC_TYPES
 from mufinder.domain.enums import WorkflowStage
-from mufinder.domain.models import CalculationDefinition, Project
+from mufinder.domain.models import CalculationDefinition, Job, Project
 from mufinder.services.job_paths import (
     definition_output_directory,
     job_output_directory,
@@ -250,3 +250,89 @@ def test_job_output_files_lists_present_files_in_order(tmp_path: Path) -> None:
     ]
     assert job_output_files(root, outside, "seed") == [str(outside / "seed.param")]
     assert job_output_files(root, None, "seed") == []
+
+
+def test_a_seed_with_stray_spaces_names_the_folder_written_with_them(tmp_path: Path) -> None:
+    """Only when that folder exists; otherwise it is trimmed as it always was."""
+
+    job = Job(
+        label="site",
+        workflow_stage=WorkflowStage.MUON_RELAXATION,
+        calc_type="castep_positivemuon_relaxation",
+    )
+    project = Project(name="T")
+    document = ProjectDocument(project_root=tmp_path, project=project)
+    document.jobs[job.id] = job
+    definition = CalculationDefinition(
+        workflow_stage=WorkflowStage.MUON_RELAXATION,
+        calc_type="muon_relaxation",
+        parameters={
+            "output_directory": "files/muon",
+            "job_ids_by_label": {"positivemuon:site": str(job.id)},
+            "job_seed_names_by_label": {"positivemuon:site": "seed "},
+        },
+    )
+    document.calculations[definition.id] = definition
+    charge = tmp_path / "files" / "muon" / "positivemuon"
+
+    resolve = lambda: job_output_directory(document, job, quantum_seed_name=_no_quantum_seed)  # noqa: E731
+    assert resolve() == charge / "seed"
+
+    (charge / "seed ").mkdir(parents=True)
+    (charge / "seed").mkdir()
+
+    assert resolve() == charge / "seed "
+
+
+def test_a_seed_named_like_a_charge_folder_is_still_its_own_folder(tmp_path: Path) -> None:
+    from mufinder.services.job_paths import job_directory_refusal
+
+    job = Job(
+        label="site",
+        workflow_stage=WorkflowStage.MUON_RELAXATION,
+        calc_type="castep_positivemuon_relaxation",
+    )
+    charge = tmp_path / "files" / "muon_relaxation" / "positivemuon"
+    (charge / "muonium").mkdir(parents=True)
+
+    assert job_directory_refusal(tmp_path, job, charge / "muonium") is None
+    assert job_directory_refusal(tmp_path, job, charge) is not None
+    assert job_directory_refusal(tmp_path, job, charge.parent) is not None
+    assert job_directory_refusal(tmp_path, job, charge / "..") is not None
+
+
+def test_a_folder_outside_the_projects_job_tree_is_refused(tmp_path: Path) -> None:
+    from mufinder.services.job_paths import job_directory_refusal
+
+    job = Job(
+        label="site",
+        workflow_stage=WorkflowStage.MUON_RELAXATION,
+        calc_type="castep_positivemuon_relaxation",
+    )
+    project = tmp_path / "project"
+    (project / "files" / "muon_relaxation" / "positivemuon" / "site").mkdir(parents=True)
+    outside = tmp_path / "elsewhere" / "positivemuon" / "site"
+    outside.mkdir(parents=True)
+    sibling = project / "notes" / "positivemuon" / "site"
+    sibling.mkdir(parents=True)
+
+    charge = project / "files" / "muon_relaxation" / "positivemuon"
+    assert job_directory_refusal(project, job, charge / "site") is None
+    assert "outside" in job_directory_refusal(project, job, outside)
+    assert "outside" in job_directory_refusal(project, job, sibling)
+    assert job_directory_refusal(project, None, outside) is not None
+
+
+def test_a_link_is_refused_wherever_it_points(tmp_path: Path) -> None:
+    from mufinder.services.job_paths import job_directory_refusal
+
+    job = Job(
+        label="site",
+        workflow_stage=WorkflowStage.MUON_RELAXATION,
+        calc_type="castep_positivemuon_relaxation",
+    )
+    charge = tmp_path / "files" / "muon_relaxation" / "positivemuon"
+    (charge / "real").mkdir(parents=True)
+    (charge / "link").symlink_to(charge / "real", target_is_directory=True)
+
+    assert "link" in job_directory_refusal(tmp_path, job, charge / "link")

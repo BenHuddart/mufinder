@@ -16,7 +16,7 @@ MuFinder is a PySide6 desktop application for muon stopping-site workflows, CAST
 - Unperturbed electrostatic potential (UEP) screening with minima grouped into sites by symmetry
 - Muon candidate-site generation
 - Structural muon relaxation workflows with project-integrated result tracking,
-	clustering-based relaxation analysis, and import of relaxations from the legacy MuFinder
+	clustering-based relaxation analysis, and import of CASTEP relaxations run outside MuFinder
 - Magnetic Fields: magnetic-structure building, dipolar local fields and field
 	distributions, dipolar tensors, and nuclear dipolar linewidths
 - Quantum Corrections for Gamma-point phonon calculations on relaxed muon sites,

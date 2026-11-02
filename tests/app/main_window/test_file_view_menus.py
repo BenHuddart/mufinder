@@ -119,7 +119,7 @@ def test_quit_is_exit_on_windows(qapp: QApplication, monkeypatch: pytest.MonkeyP
     ("menu", "text"),
     [
         ("File", "Save Project"),
-        ("File", "Import Legacy Relaxations…"),
+        ("File", "Import CASTEP Relaxations…"),
         ("File", "Remove Imported Relaxations…"),
         ("View", "Job Dashboard"),
     ],
@@ -139,14 +139,14 @@ def test_a_project_change_leaves_import_disabled_during_a_scan(
     open_window: MainWindow, tmp_path: Path
 ) -> None:
     window = open_window
-    window._legacy_scan_root = tmp_path
-    window._import_legacy_action.setEnabled(False)
+    window._relaxation_scan_root = tmp_path
+    window._import_relaxations_action.setEnabled(False)
 
     assert window.open_project(_project(tmp_path, "Beta"))
-    assert not window._import_legacy_action.isEnabled()
+    assert not window._import_relaxations_action.isEnabled()
 
-    window._finish_legacy_scan()
-    assert window._import_legacy_action.isEnabled()
+    window._finish_relaxation_scan()
+    assert window._import_relaxations_action.isEnabled()
 
 
 def test_the_title_follows_the_project(window: MainWindow, tmp_path: Path) -> None:
