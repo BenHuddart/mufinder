@@ -123,6 +123,8 @@ PLATE_METHOD_VERSION = 2
 #: Where a stored field result keeps the :data:`PLATE_METHOD_VERSION` it was calculated with.
 PLATE_METHOD_VERSION_KEY = "plate_method_version"
 _UNRECORDED_PLATE_METHOD_VERSION = 1
+#: What a simulation keeps for a source whose fields used no plate, so it never reads as older.
+PLATE_METHOD_NOT_USED = 0
 #: Where a stored result keeps the :data:`CALCULATION_METHOD_VERSION` it was calculated with.
 CALCULATION_VERSION_KEY = "calculation_version"
 
@@ -195,6 +197,8 @@ def field_result_uses_older_method(result: object, form_state: object = None) ->
     version = result.get(PLATE_METHOD_VERSION_KEY)
     if version is None:
         return sample_predates_plate_method(form_state)
+    if version == PLATE_METHOD_NOT_USED and not isinstance(version, bool):
+        return False
     return (
         not isinstance(version, int) or isinstance(version, bool) or version < PLATE_METHOD_VERSION
     )
@@ -218,9 +222,11 @@ def recorded_plate_method_version(data: Mapping[str, Any], form_state: object) -
     """Return the plate method version of a field record, as a simulation of it should keep it."""
 
     version = data.get(PLATE_METHOD_VERSION_KEY)
-    if version is None and sample_predates_plate_method(form_state):
+    if version is not None:
+        return version
+    if sample_predates_plate_method(form_state):
         return _UNRECORDED_PLATE_METHOD_VERSION
-    return version
+    return PLATE_METHOD_NOT_USED
 
 
 def field_result_site_source(

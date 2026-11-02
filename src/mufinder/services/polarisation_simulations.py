@@ -538,7 +538,7 @@ def removed_sources(
 
 def older_method_sources(
     record: PolarisationSimulationRecord | SimulationSummary,
-    document: ProjectDocument | None = None,
+    document: ProjectDocument | None,
 ) -> list[SimulationSource]:
     """Return the sources whose fields, when ``record`` ran, came from an older method.
 

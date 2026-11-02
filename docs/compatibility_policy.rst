@@ -174,8 +174,10 @@ Compatibility ledger
      - A sample stored its Fourier resolution and Gaussian filter before they
        were fixed. The keys are read and ignored, so a saved plate or voxel grid
        loads and takes the fixed resolution and no filter when it is next
-       calculated, or is refused if its proportions are too extreme; new saves
-       write none of them. A result already stored keeps its numbers. An
+       calculated, or is refused if its proportions are too extreme. Saves write
+       none of them, except a voxel grid's ``padding`` and ``smoothing`` while
+       results calculated with them are still stored, since those keys are what
+       mark such results as older. A result already stored keeps its numbers. An
        incommensurate distribution also records the sample's summary, with these
        keys if it had them; a commensurate result records no sample.
      - Read-side repair. Ignoring an unknown key needs no code; keep this entry
@@ -185,11 +187,12 @@ Compatibility ledger
      - ``data`` of a ``magnetic_field`` result, ``magnetic_field_results`` in a
        form, and each source of a polarisation simulation
        (``mufinder.services.magnetic_field_results``, ``PLATE_METHOD_VERSION``)
-     - Written only for a field result calculated with a ``Plate from photo``,
-       and by a simulation of such fields. A record without it was calculated
-       without a plate or before the key existed, and reads the sample in its
-       owner's saved form: a plate from a photo, or a voxel grid saved with
-       another padding or with smoothing, is older. Additive, so no migration.
+     - Written for a field result calculated with a ``Plate from photo``, and for
+       every source of a simulation, where 0 means its fields used no plate. A
+       field record or source without it was written before the key existed, or
+       is a field record with no plate, and reads the sample in its owner's saved
+       form: a plate from a photo, or a voxel grid saved with another padding or
+       with smoothing, is older. Additive, so no migration.
      - Current project data, not deprecated. It may not be dropped without a
        schema migration that first records which results used a plate.
    * - ``generate_random_sites_by_distance``

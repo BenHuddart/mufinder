@@ -56,6 +56,7 @@ from mufinder.services.magnetic_field_results import (
     OLDER_METHOD_RESULTS_NOTE,
     PLATE_METHOD_VERSION,
     PLATE_METHOD_VERSION_KEY,
+    field_result_uses_older_method,
     attach_magnetic_field_results,
     magnetic_field_result,
     magnetic_field_results,
@@ -1445,6 +1446,38 @@ def test_a_stored_result_with_no_plate_stays_current_and_a_fresh_one_records_no_
 
     assert page._older_method_note.isHidden()
     assert PLATE_METHOD_VERSION_KEY not in page.collect_state()["magnetic_field_results"]
+    page.close()
+
+
+def test_a_voxel_grid_result_stays_older_through_a_save_until_it_is_calculated(
+    qapp, tmp_path, monkeypatch
+) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "voxel.mufinder", "Voxel")
+    service.add_structure(document, feo_host_structure())
+    page = _calculating_widget(document, monkeypatch)
+    grid = DemagnetizingSample.voxel_grid(np.ones((3, 3, 3), dtype=bool), 1.0)
+    page.set_form_state(
+        {
+            "demag_shape": "voxel_grid",
+            "demag_sample": {**grid.to_json(), "padding": 3.0, "smoothing": 0.5},
+            "magnetic_field_results": _stored_field_state(),
+        }
+    )
+    assert not page._older_method_note.isHidden()
+
+    # Saved and read back, as closing a dialog or pinning a workspace does.
+    saved = page.collect_state()
+    assert saved["demag_sample"]["padding"] == 3.0
+    assert field_result_uses_older_method(saved["magnetic_field_results"], saved)
+    page.set_form_state(saved)
+    assert not page._older_method_note.isHidden()
+
+    page._selected_muon_site = custom_muon_site((0.25, 0.5, 0.75))
+    page.calculate_fields()
+
+    assert page._older_method_note.isHidden()
+    assert "padding" not in page.collect_state()["demag_sample"]
     page.close()
 
 

@@ -990,8 +990,10 @@ def _fourier_box(
 def _rounded_up(value: float) -> float:
     """Return ``value`` rounded up to one significant figure, so that "within" it holds."""
 
-    scale = 10.0 ** math.floor(math.log10(max(value, 1e-300)))
-    return math.ceil(max(value, 1e-300) / scale) * scale
+    # Below this the closed form's own rounding decides, so it is as far as "within" can say.
+    value = max(value, 1e-12)
+    scale = 10.0 ** math.floor(math.log10(value))
+    return math.ceil(value / scale) * scale
 
 
 def _checked_box(

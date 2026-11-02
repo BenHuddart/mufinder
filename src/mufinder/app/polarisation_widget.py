@@ -1183,7 +1183,7 @@ def export_text(
     *,
     stale: Sequence[SimulationSource] = (),
     removed: Sequence[SimulationSource] = (),
-    older: Sequence[SimulationSource] | None = None,
+    older: Sequence[SimulationSource] = (),
 ) -> str:
     """The simulation as text: a header, the time block, a blank line, the spectrum block.
 
@@ -1199,8 +1199,6 @@ def export_text(
     ]
     if record.estimate:
         lines.append(f"# Estimate: {UNRELAXED_RESULTS_NOTE}")
-    if older is None:
-        older = older_method_sources(record)
     if older:
         lines.append(f"# Older method: {_older_fields_note(older, stale, removed)}")
     for key, value in record.settings.to_json().items():

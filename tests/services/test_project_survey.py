@@ -385,26 +385,6 @@ def test_magnetic_layer_marks_fields_at_uep_sites_as_estimates(tmp_path: Path) -
 
 
 @pytest.mark.parametrize(
-    ("version", "site_source", "label", "older"),
-    [
-        ({}, "custom", "0.213 T (older)", True),
-        (
-            {CALCULATION_VERSION_KEY: CALCULATION_METHOD_VERSION - 1},
-            "custom",
-            "0.213 T (older)",
-            True,
-        ),
-        ({}, "uep_clustering", "≈0.213 T (older)", True),
-        ({CALCULATION_VERSION_KEY: CALCULATION_METHOD_VERSION}, "custom", "0.213 T", False),
-        (
-            {CALCULATION_VERSION_KEY: CALCULATION_METHOD_VERSION},
-            "uep_clustering",
-            "≈0.213 T",
-            False,
-        ),
-    ],
-)
-@pytest.mark.parametrize(
     ("form", "stored", "label"),
     [
         ({"demag_shape": "image_plate"}, {}, "0.213 T (older)"),
@@ -445,6 +425,26 @@ def test_magnetic_layer_marks_only_a_field_that_used_an_older_plate(
     assert layer.markers[0].label == label
 
 
+@pytest.mark.parametrize(
+    ("version", "site_source", "label", "older"),
+    [
+        ({}, "custom", "0.213 T (older)", True),
+        (
+            {CALCULATION_VERSION_KEY: CALCULATION_METHOD_VERSION - 1},
+            "custom",
+            "0.213 T (older)",
+            True,
+        ),
+        ({}, "uep_clustering", "≈0.213 T (older)", True),
+        ({CALCULATION_VERSION_KEY: CALCULATION_METHOD_VERSION}, "custom", "0.213 T", False),
+        (
+            {CALCULATION_VERSION_KEY: CALCULATION_METHOD_VERSION},
+            "uep_clustering",
+            "≈0.213 T",
+            False,
+        ),
+    ],
+)
 def test_magnetic_layer_marks_a_field_from_an_older_method(
     tmp_path: Path, version, site_source, label, older
 ) -> None:

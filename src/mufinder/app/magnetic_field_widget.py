@@ -106,6 +106,7 @@ from mufinder.services.magnetic_field_results import (
     PLATE_METHOD_VERSION,
     PLATE_METHOD_VERSION_KEY,
     field_result_uses_older_method,
+    sample_predates_plate_method,
     UNRELAXED_ESTIMATE_SUFFIX,
     UNRELAXED_SITE_NOTE,
     is_unrelaxed_site_source,
@@ -751,7 +752,7 @@ class MagneticFieldWidget(QWidget):
         """Collect magnetic-field tab settings for project persistence."""
         return {
             "demag_shape": self._demag_shape(),
-            "demag_sample": self._demag_sample.to_json(),
+            "demag_sample": self._demag_sample_state(),
             "use_measured_magnetization": self._measured_magnetization_check.isChecked(),
             "measured_magnetization": list(self._measured_magnetization_input.value_or_zero()),
             "applied_field_T": list(self._applied_field_input.value_or_zero()),
@@ -772,6 +773,23 @@ class MagneticFieldWidget(QWidget):
             "nuclear_relaxation_options": dict(self._nuclear_relaxation_options_state),
             "nuclear_relaxation_results": dict(self._nuclear_relaxation_results_state),
         }
+
+    def _demag_sample_state(self) -> dict[str, object]:
+        """Return the sample to save, with the retired settings its stored results need.
+
+        Results loaded under a voxel grid with another padding or with smoothing read as older
+        from those saved settings, so they stay until the results are cleared or calculated.
+        """
+
+        state = self._demag_sample.to_json()
+        loaded = self._loaded_demag_form
+        if self._field_results_state is not None and sample_predates_plate_method(loaded):
+            sample = loaded.get("demag_sample")
+            if state.get("shape") == "voxel_grid" and isinstance(sample, Mapping):
+                state.update(
+                    {key: sample[key] for key in ("padding", "smoothing") if key in sample}
+                )
+        return state
 
     def collect_workspace_state(self) -> dict[str, Any]:
         """Collect the complete workspace snapshot, including magnetic model."""
