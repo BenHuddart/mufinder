@@ -10,6 +10,8 @@ import pytest
 from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationDefinition, CalculationRun, Job, MuonSite, Result
 from mufinder.services.magnetic_field_results import (
+    CALCULATION_METHOD_VERSION,
+    CALCULATION_VERSION_KEY,
     MAGNETIC_FIELD_PAGE_OWNER,
     store_magnetic_field_results,
 )
@@ -302,6 +304,7 @@ def test_magnetic_layer_shows_commensurate_field_magnitudes(tmp_path: Path) -> N
                 "results": [
                     {"site_label": "3c", "muon_position": [0.5, 0.25, 0.25], "magnitude_T": 0.2134}
                 ],
+                CALCULATION_VERSION_KEY: CALCULATION_METHOD_VERSION,
             }
         },
     )
@@ -356,13 +359,20 @@ def test_magnetic_layer_marks_fields_at_uep_sites_as_estimates(tmp_path: Path) -
                 "kind": "commensurate",
                 "results": [entry],
                 "site_source": "uep_clustering",
+                CALCULATION_VERSION_KEY: CALCULATION_METHOD_VERSION,
             }
         },
     )
     store_magnetic_field_results(
         project.document,
         "legacy",
-        {"magnetic_field_results": {"kind": "commensurate", "results": [entry]}},
+        {
+            "magnetic_field_results": {
+                "kind": "commensurate",
+                "results": [entry],
+                CALCULATION_VERSION_KEY: CALCULATION_METHOD_VERSION,
+            }
+        },
     )
 
     layers = survey_layers(project.document, "magnetic_fields")
@@ -370,6 +380,54 @@ def test_magnetic_layer_marks_fields_at_uep_sites_as_estimates(tmp_path: Path) -
     for layer in layers:
         assert layer.markers[0].label == "≈0.213 T"
         assert layer.markers[0].detail.endswith("unrelaxed UEP site estimate")
+
+
+@pytest.mark.parametrize(
+    ("version", "site_source", "label", "older"),
+    [
+        ({}, "custom", "0.213 T (older)", True),
+        (
+            {CALCULATION_VERSION_KEY: CALCULATION_METHOD_VERSION - 1},
+            "custom",
+            "0.213 T (older)",
+            True,
+        ),
+        ({}, "uep_clustering", "≈0.213 T (older)", True),
+        ({CALCULATION_VERSION_KEY: CALCULATION_METHOD_VERSION}, "custom", "0.213 T", False),
+        (
+            {CALCULATION_VERSION_KEY: CALCULATION_METHOD_VERSION},
+            "uep_clustering",
+            "≈0.213 T",
+            False,
+        ),
+    ],
+)
+def test_magnetic_layer_marks_a_field_from_an_older_method(
+    tmp_path: Path, version, site_source, label, older
+) -> None:
+    project = muon_project(tmp_path)
+    project.document.ui_state["magnetic_field_workspaces"] = [
+        {"id": "ws", "title": "AFM", "form": {}}
+    ]
+    store_magnetic_field_results(
+        project.document,
+        "ws",
+        {
+            "magnetic_field_results": {
+                "kind": "commensurate",
+                "results": [
+                    {"site_label": "3c", "muon_position": [0.5, 0.25, 0.25], "magnitude_T": 0.2134}
+                ],
+                "site_source": site_source,
+                **version,
+            }
+        },
+    )
+
+    (layer,) = survey_layers(project.document, "magnetic_fields")
+
+    assert layer.markers[0].label == label
+    assert ("calculated with an older method" in layer.markers[0].detail) is older
 
 
 def test_a_generated_uep_candidate_reads_as_a_uep_site(tmp_path) -> None:

@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from mufinder.science.magnetic_fields import (
     FieldTermStatistics,
@@ -14,6 +15,8 @@ from mufinder.science.magnetic_fields import (
 )
 from mufinder.science.polarisation import calculate_polarisation
 from mufinder.services.magnetic_field_results import (
+    CALCULATION_METHOD_VERSION,
+    CALCULATION_VERSION_KEY,
     MAGNETIC_DIPOLAR_TENSOR_RESULT_TYPE,
     MAGNETIC_FIELD_PAGE_OWNER,
     MAGNETIC_FIELD_RESULT_TYPE,
@@ -29,6 +32,7 @@ from mufinder.services.magnetic_field_results import (
     remove_magnetic_field_results,
     store_magnetic_field_results,
     store_polarisation_result,
+    uses_older_method,
 )
 from mufinder.services.project_service import ProjectService
 
@@ -92,6 +96,81 @@ def test_attach_restores_the_form_the_page_stored(tmp_path: Path) -> None:
 
     assert attach_magnetic_field_results(document, MAGNETIC_FIELD_PAGE_OWNER, stored) == _form()
     assert attach_magnetic_field_results(document, "other-workspace", None) == {}
+
+
+@pytest.mark.parametrize(
+    ("result", "older"),
+    [
+        ({"sigma": 0.2}, True),
+        ({"sigma": 0.2, CALCULATION_VERSION_KEY: None}, True),
+        ({"sigma": 0.2, CALCULATION_VERSION_KEY: "1"}, True),
+        ({"sigma": 0.2, CALCULATION_VERSION_KEY: True}, True),
+        ({"sigma": 0.2, CALCULATION_VERSION_KEY: CALCULATION_METHOD_VERSION - 1}, True),
+        ({"sigma": 0.2, CALCULATION_VERSION_KEY: CALCULATION_METHOD_VERSION}, False),
+        ({"sigma": 0.2, CALCULATION_VERSION_KEY: CALCULATION_METHOD_VERSION + 1}, False),
+        ({}, False),
+        (["not", "a", "result"], False),
+    ],
+)
+def test_a_result_is_older_by_its_stored_version(result, older) -> None:
+    assert uses_older_method(result) is older
+
+
+def test_each_record_keeps_the_version_its_result_was_calculated_with(tmp_path: Path) -> None:
+    document = _document(tmp_path)
+    version = {CALCULATION_VERSION_KEY: CALCULATION_METHOD_VERSION}
+    form = _form(
+        magnetic_field_results={**_FIELD, **version},
+        dipolar_tensor_results=[{**_TENSORS[0], **version}],
+        nuclear_relaxation_results={**_NUCLEAR, **version},
+    )
+
+    stored = store_magnetic_field_results(document, MAGNETIC_FIELD_PAGE_OWNER, form)
+
+    for record in magnetic_field_results(document):
+        assert record.data[CALCULATION_VERSION_KEY] == CALCULATION_METHOD_VERSION
+    assert attach_magnetic_field_results(document, MAGNETIC_FIELD_PAGE_OWNER, stored) == form
+    tensors = magnetic_field_result(
+        document, MAGNETIC_FIELD_PAGE_OWNER, MAGNETIC_DIPOLAR_TENSOR_RESULT_TYPE
+    )
+    assert tensors.data["results"] == _TENSORS
+    nuclear = magnetic_field_result(
+        document, MAGNETIC_FIELD_PAGE_OWNER, NUCLEAR_RELAXATION_RESULT_TYPE
+    )
+    assert nuclear.data["result"] == _NUCLEAR
+
+
+def test_storing_an_older_result_again_never_marks_it_current(tmp_path: Path) -> None:
+    document = _document(tmp_path)
+    stored = store_magnetic_field_results(document, MAGNETIC_FIELD_PAGE_OWNER, _form())
+    before = {record.id: dict(record.data) for record in magnetic_field_results(document)}
+
+    attached = attach_magnetic_field_results(document, MAGNETIC_FIELD_PAGE_OWNER, stored)
+    store_magnetic_field_results(document, MAGNETIC_FIELD_PAGE_OWNER, attached)
+
+    assert {record.id: dict(record.data) for record in magnetic_field_results(document)} == before
+    assert all(uses_older_method(record.data) for record in magnetic_field_results(document))
+    # A copy of older results, as a pinned workspace takes, stays older too.
+    store_magnetic_field_results(document, "workspace", attached)
+    assert all(
+        uses_older_method(record.data) for record in magnetic_field_results(document, "workspace")
+    )
+
+
+def test_tensor_rows_of_mixed_versions_keep_their_own_and_read_as_older(tmp_path: Path) -> None:
+    document = _document(tmp_path)
+    rows = [
+        {**_TENSORS[0], CALCULATION_VERSION_KEY: CALCULATION_METHOD_VERSION},
+        dict(_TENSORS[0]),
+    ]
+
+    store_magnetic_field_results(
+        document, MAGNETIC_FIELD_PAGE_OWNER, {"dipolar_tensor_results": rows}
+    )
+
+    attached = attach_magnetic_field_results(document, MAGNETIC_FIELD_PAGE_OWNER, {})
+    assert attached["dipolar_tensor_results"] == rows
+    assert any(uses_older_method(row) for row in attached["dipolar_tensor_results"])
 
 
 def test_attach_gives_every_missing_result_an_explicit_empty_value(tmp_path: Path) -> None:

@@ -343,7 +343,8 @@ defined by two of these modules, and a pinned count may only fall.
    * - ``mufinder.app.result_notes``
      - Notes shown beside magnetic results on more than one page: the hidden
        note on results calculated at an unrelaxed UEP site
-       (``unrelaxed_results_note``).
+       (``unrelaxed_results_note``) and the hidden note on stored results
+       calculated with an older method (``older_method_results_note``).
    * - ``mufinder.app.magnetic_field_widget``
      - The Magnetic Fields page (``MagneticFieldWidget``) and its Calculation
        Settings dialog. The page opens its dialogs from their own modules:
@@ -742,6 +743,11 @@ defined by two of these modules, and a pinned count may only fall.
        computed at an unrelaxed UEP site (``UNRELAXED_RESULTS_NOTE``), the
        note beside a list of UEP sites (``UNRELAXED_SITE_NOTE``) and the
        status-line suffix for results there (``UNRELAXED_ESTIMATE_SUFFIX``).
+       It also holds the calculation-method version of field, dipolar-tensor
+       and nuclear-relaxation numbers (``CALCULATION_METHOD_VERSION``, with the
+       rule for when to raise it), the test for a stored result that predates
+       it (``uses_older_method``) and the note shown then
+       (``OLDER_METHOD_RESULTS_NOTE``).
    * - ``mufinder.services.magnetic_field_settings``
      - The Magnetic Fields page's calculation settings as one value
        (``MagneticFieldCalculationSettings``), which the Calculation Settings

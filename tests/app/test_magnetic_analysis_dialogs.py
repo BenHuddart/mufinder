@@ -21,7 +21,10 @@ from mufinder.science.magnetic_fields import (
 from mufinder.science.magnetic_structure import AtomSelector, MagneticStructureModel
 from mufinder.science.nuclear_relaxation import NuclearRelaxationError
 from mufinder.services.magnetic_field_results import (
+    CALCULATION_METHOD_VERSION,
+    CALCULATION_VERSION_KEY,
     MAGNETIC_FIELD_PAGE_OWNER,
+    OLDER_METHOD_RESULTS_NOTE,
     attach_magnetic_field_results,
     store_magnetic_field_results,
 )
@@ -223,6 +226,115 @@ def test_tensor_and_nuclear_estimates_survive_a_reload_whatever_site_is_selected
     assert not restored_nuclear._estimate_note.isHidden()
     for closed in (restored_tensor, restored_nuclear, restored):
         closed.close()
+
+
+_OLD_TENSOR = {
+    "site_label": "site 1",
+    "dipolar_tensor_T_per_muB": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, -2.0]],
+}
+_OLD_NUCLEAR = {"mode": "zf_polycrystal", "sigma": 0.2}
+
+
+@pytest.mark.parametrize(
+    "version",
+    [{}, {CALCULATION_VERSION_KEY: 0}, {CALCULATION_VERSION_KEY: "1"}],
+    ids=["none", "lower", "unreadable"],
+)
+def test_older_tensor_and_nuclear_results_say_so_and_calculate_clears_it(qapp, version) -> None:
+    site = _site_from("custom")
+    tensor_dialog = _tensor_dialog(site, [{**_OLD_TENSOR, **version}])
+    nuclear_dialog = _nuclear_dialog(site, {**_OLD_NUCLEAR, **version})
+
+    for dialog in (tensor_dialog, nuclear_dialog):
+        assert not dialog._older_method_note.isHidden()
+        assert dialog._older_method_note.text() == OLDER_METHOD_RESULTS_NOTE
+        dialog._calculate()
+        assert dialog._older_method_note.isHidden()
+        dialog.close()
+    assert tensor_dialog.results_state()[0][CALCULATION_VERSION_KEY] == CALCULATION_METHOD_VERSION
+    assert nuclear_dialog.results_state()[CALCULATION_VERSION_KEY] == CALCULATION_METHOD_VERSION
+
+
+def test_tensor_and_nuclear_dialogs_with_no_result_or_a_current_one_show_no_older_note(
+    qapp,
+) -> None:
+    site = _site_from("custom")
+    current = {CALCULATION_VERSION_KEY: CALCULATION_METHOD_VERSION}
+    for dialog in (
+        _tensor_dialog(site),
+        _nuclear_dialog(site),
+        _tensor_dialog(site, [{**_OLD_TENSOR, **current}]),
+        _nuclear_dialog(site, {**_OLD_NUCLEAR, **current}),
+    ):
+        assert dialog._older_method_note.isHidden()
+        dialog.close()
+
+
+def test_a_failed_or_cancelled_calculation_keeps_the_older_note(qapp) -> None:
+    def cancelled(_dialog):
+        raise BlockingCallCancelled
+
+    dialog = _nuclear_dialog(_site_from("custom"), dict(_OLD_NUCLEAR))
+    dialog._calculate_callback = cancelled
+    dialog._calculate()
+
+    assert not dialog._older_method_note.isHidden()
+    assert dialog.results_state() == _OLD_NUCLEAR
+    dialog.close()
+
+
+def test_older_tensor_and_nuclear_results_keep_their_note_and_numbers_through_save_and_reopen(
+    qapp, tmp_path
+) -> None:
+    service = ProjectService()
+    document = uep_cluster_document(tmp_path)
+    store_magnetic_field_results(
+        document,
+        MAGNETIC_FIELD_PAGE_OWNER,
+        {"dipolar_tensor_results": [_OLD_TENSOR], "nuclear_relaxation_results": _OLD_NUCLEAR},
+    )
+    service.save_project(document)
+
+    site = _site_from("custom")
+    for _reopen in range(2):
+        document = service.load_project(document.project_root)
+        form = attach_magnetic_field_results(document, MAGNETIC_FIELD_PAGE_OWNER, {})
+        assert form["dipolar_tensor_results"] == [_OLD_TENSOR]
+        assert form["nuclear_relaxation_results"] == _OLD_NUCLEAR
+        tensor_dialog = _tensor_dialog(site, form["dipolar_tensor_results"])
+        nuclear_dialog = _nuclear_dialog(site, form["nuclear_relaxation_results"])
+        assert not tensor_dialog._older_method_note.isHidden()
+        assert not nuclear_dialog._older_method_note.isHidden()
+        tensor_dialog.close()
+        nuclear_dialog.close()
+        store_magnetic_field_results(document, MAGNETIC_FIELD_PAGE_OWNER, form)
+        service.save_project(document)
+
+    # Calculate, save and reopen: the new results carry the current version and no note.
+    tensor_dialog = _tensor_dialog(site, form["dipolar_tensor_results"])
+    nuclear_dialog = _nuclear_dialog(site, form["nuclear_relaxation_results"])
+    tensor_dialog._calculate()
+    nuclear_dialog._calculate()
+    store_magnetic_field_results(
+        document,
+        MAGNETIC_FIELD_PAGE_OWNER,
+        {
+            "dipolar_tensor_results": tensor_dialog.results_state(),
+            "nuclear_relaxation_results": nuclear_dialog.results_state(),
+        },
+    )
+    service.save_project(document)
+    tensor_dialog.close()
+    nuclear_dialog.close()
+
+    reloaded = service.load_project(document.project_root)
+    form = attach_magnetic_field_results(reloaded, MAGNETIC_FIELD_PAGE_OWNER, {})
+    tensor_dialog = _tensor_dialog(site, form["dipolar_tensor_results"])
+    nuclear_dialog = _nuclear_dialog(site, form["nuclear_relaxation_results"])
+    assert tensor_dialog._older_method_note.isHidden()
+    assert nuclear_dialog._older_method_note.isHidden()
+    tensor_dialog.close()
+    nuclear_dialog.close()
 
 
 def test_tensor_and_nuclear_results_without_a_source_show_no_estimate(qapp) -> None:

@@ -7,7 +7,7 @@ import sys
 
 from PySide6.QtWidgets import QWidget
 
-from mufinder.app.result_notes import unrelaxed_results_note
+from mufinder.app.result_notes import older_method_results_note, unrelaxed_results_note
 from mufinder.services.magnetic_field_results import UNRELAXED_RESULTS_NOTE
 
 
@@ -21,6 +21,18 @@ def test_the_note_starts_hidden_and_wraps(qapp) -> None:
     assert note.wordWrap()
     assert note.isHidden()
     assert note.objectName() == "hintText"
+    parent.close()
+
+
+def test_the_older_method_note_starts_hidden_and_says_how_to_update(qapp) -> None:
+    parent = QWidget()
+
+    note = older_method_results_note(parent)
+
+    assert note.text() == "Calculated with an older method. Calculate to update."
+    assert note.wordWrap()
+    assert note.isHidden()
+    assert note.objectName() == "warningText"
     parent.close()
 
 
