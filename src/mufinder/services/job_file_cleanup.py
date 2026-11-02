@@ -11,8 +11,9 @@ job records.
   when asked, why the directory may not be deleted.
 - :meth:`JobFileCleanup.execute` runs a plan. A ``choose_disposition`` callable
   says, per item with files, whether to delete or archive them; an
-  ``*_all`` answer applies to every later item. The outcome lists the items
-  cleaned and the failures as data.
+  ``*_all`` answer applies to every later item. A folder that is not the item's
+  alone is not offered: its records go and the folder stays. The outcome lists the
+  items cleaned, what happened to each folder and the failures as data.
 - :meth:`JobFileCleanup.directory_ownership_refusals` says why deleting a job's
   directories would be unsafe; the failed-job reset and the fresh-start path use
   it with :meth:`JobFileCleanup.clear_directory_contents`.
@@ -26,11 +27,19 @@ them off the GUI thread.
 Layering: this lives in ``mufinder.services`` and imports ``domain`` and
 ``job_paths``, whose ``job_directory_refusal`` is the last check before any
 folder goes.
+
+Two answers to "this folder may not go", because they leave the user in different
+places. A link is *refused*: the item stays, since the user can remove the link and
+try again. Any other folder that is not the item's alone or not its own (another
+job's, or one a saved name leads out to) is *kept*: the item's records go and the
+folder stays, because nothing in the app can correct a saved name, and waiting for the
+other job to go first could wait for ever (an imported batch waits for any native job
+in its folder).
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable, Collection, MutableMapping, Sequence
+from collections.abc import Callable, Collection, Mapping, MutableMapping, Sequence
 from dataclasses import dataclass
 import os
 from pathlib import Path
@@ -41,9 +50,18 @@ import time
 from typing import TYPE_CHECKING, Literal
 from uuid import UUID
 
+from mufinder.domain.constants import IMPORTED_JOB_TAG
+from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.domain.models import Job
-from mufinder.domain.text import plain_error
-from mufinder.services.job_paths import job_directory_refusal
+from mufinder.domain.text import KeptFolder, plain_error
+from mufinder.services.job_paths import (
+    job_directory_foreign,
+    job_directory_label,
+    job_directory_link_refusal,
+    job_directory_on_disk,
+    job_directory_refusal,
+    resolved_path,
+)
 
 if TYPE_CHECKING:
     from mufinder.services.project_service import ProjectDocument
@@ -68,8 +86,59 @@ _JOB_MAPPING_NAMES = (
     "phonon_job_ids_by_label",
 )
 
+#: Why a folder stays, for one folder and for several.
+KEPT_FOR_ANOTHER_JOB = ("another job uses it", "other jobs use them")
+KEPT_AS_NOT_ITS_OWN = (
+    "its saved location is not this job's own folder",
+    "their saved locations are not these jobs' own folders",
+)
+KEPT_FOR_AN_ARCHIVE = (
+    "it holds a folder you chose to move",
+    "they hold folders you chose to move",
+)
+KEPT_IN_ANOTHER_PLACE = (
+    "it belongs to another workflow or charge state",
+    "they belong to other workflows or charge states",
+)
+
+#: The words for several folders, by what :func:`refusal_because` gets for one.
+_REFUSALS_FOR_SEVERAL = {
+    "another job uses the same output folder": KEPT_FOR_ANOTHER_JOB[1],
+    "its folder is a link to somewhere else": "their folders are links to somewhere else",
+    "its folder is reached through a link": "their folders are reached through links",
+    "its folder name leads out of its own folder": (
+        "their folder names lead out of their own folders"
+    ),
+    "its folder is outside this project's job folders": (
+        "their folders are outside this project's job folders"
+    ),
+    "its output folder is outside the project's job folders": (
+        "their output folders are outside the project's job folders"
+    ),
+    "its folder is in another workflow's job folders": (
+        "their folders are in other workflows' job folders"
+    ),
+    "its folder is not inside its charge folder": (
+        "their folders are not inside their charge folders"
+    ),
+    "its output folder is not named after the job": (
+        "their output folders are not named after their jobs"
+    ),
+}
+
 _DELETE_DISPOSITIONS = frozenset({"delete", "delete_all"})
 _APPLY_TO_ALL_DISPOSITIONS = frozenset({"delete_all", "archive_all"})
+
+
+def refusal_because(refusal: str) -> tuple[str, str]:
+    """Return an ownership refusal's reason, for one folder and for several.
+
+    Without the path that closes it: the folder's name goes with the reason. A reason with
+    no words for several comes back with none, so that a message falls back to Details.
+    """
+
+    reason = refusal.split(" (")[0]
+    return reason, _REFUSALS_FOR_SEVERAL.get(reason, "")
 
 
 def _run_directly(op: Callable[[], object], _description: str) -> object:
@@ -85,6 +154,8 @@ class JobCleanupItem:
     ``directory`` when ``archive_root`` is ``None``. An item with a ``refusal``
     is never cleaned: its files and records are kept. ``label`` names the item
     in messages and ``key`` is the caller's handle on it (a row key or a cutoff).
+    ``releases`` names jobs that stay in the project but stop using the folder when
+    the item goes, so they do not keep it.
     """
 
     label: str
@@ -93,6 +164,7 @@ class JobCleanupItem:
     archive_root: Path | None = None
     refusal: str | None = None
     key: object = None
+    releases: frozenset[UUID] = frozenset()
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,16 +185,37 @@ class JobCleanupFailure:
 
 
 @dataclass(frozen=True, slots=True)
-class JobCleanupOutcome:
-    """What :meth:`JobFileCleanup.execute` did, in plan order.
+class JobCleanupKept:
+    """A folder left in place while its item's records went, and why, for one and for several."""
 
-    ``cancelled`` means ``choose_disposition`` returned ``None``: that item and
-    every later one were left alone.
+    item: JobCleanupItem
+    directory: Path
+    because: tuple[str, str]
+    label: str
+
+
+@dataclass(frozen=True, slots=True)
+class JobCleanupOutcome:
+    """What :meth:`JobFileCleanup.execute` did, in the order it did it.
+
+    ``cleaned`` holds every item whose records went, ``kept`` those of them whose
+    folder stayed. ``cancelled`` means ``choose_disposition`` returned ``None``:
+    that item and every later one were left alone.
     """
 
     cleaned: tuple[JobCleanupItem, ...] = ()
     failures: tuple[JobCleanupFailure, ...] = ()
     cancelled: bool = False
+    deleted: tuple[Path, ...] = ()
+    archived: tuple[Path, ...] = ()
+    kept: tuple[JobCleanupKept, ...] = ()
+
+    @property
+    def kept_folders(self) -> tuple[KeptFolder, ...]:
+        """Return each folder that stayed, with why."""
+
+        folders = {entry.directory: entry for entry in self.kept}
+        return tuple(KeptFolder(entry.label, entry.because) for entry in folders.values())
 
     @property
     def completed(self) -> bool:
@@ -184,11 +277,23 @@ class JobFileCleanup:
         return JobCleanupItem(
             label=label if label is not None else (owner.label if owner is not None else ""),
             jobs=jobs,
-            directory=directory if directory is not None and directory.exists() else None,
+            directory=directory if self.directory_on_disk(directory) else None,
             archive_root=archive_root,
             refusal=refusal,
             key=key,
         )
+
+    def directory_on_disk(self, directory: Path | None) -> bool:
+        """Return whether a clean-up has anything to deal with at ``directory``.
+
+        True for a folder that exists, and for a dangling link or a missing folder
+        behind a link, which have to reach the refusal instead of reading as absent.
+        """
+
+        document = self._document_getter()
+        if directory is None or document is None:
+            return directory is not None and directory.exists()
+        return job_directory_on_disk(document.project_root, directory)
 
     def directory_ownership_refusals(
         self,
@@ -200,7 +305,8 @@ class JobFileCleanup:
         """Return, per job id, why deleting that job's directories would be unsafe.
 
         A job is refused when its local directory is not strictly inside
-        ``<project>/files/<stage>/``, is not named after the job's seed, or is
+        ``<project>/files/<stage>/``, is reached through a link, is not where a
+        job of its workflow belongs, is not named after the job's seed, or is
         used by another job (the same directory, or one inside it); and, with
         ``check_remote``, when its remote directory is not named after the seed
         or another job on the same cluster uses it or a directory inside it.
@@ -217,7 +323,7 @@ class JobFileCleanup:
 
         def local_directory(job: Job) -> Path | None:
             directory = self._job_output_directory(job)
-            return directory.resolve() if directory is not None else None
+            return resolved_path(directory) if directory is not None else None
 
         def remote_directory(job: Job) -> tuple[str, str] | None:
             target = (job.execution_target or "").strip().casefold()
@@ -246,6 +352,10 @@ class JobFileCleanup:
                     document.project_root, job, self._job_output_directory(job)
                 ):
                     reason = unsafe
+                elif foreign := job_directory_foreign(
+                    document.project_root, job, self._job_output_directory(job)
+                ):
+                    reason = foreign
                 elif local.name != seed:
                     reason = f"its output folder is not named after the job ({local})"
                 elif any(
@@ -285,7 +395,11 @@ class JobFileCleanup:
         choose_disposition: Callable[[JobCleanupItem], FileDisposition | None],
         stop_on_error: bool,
     ) -> JobCleanupOutcome:
-        """Clean each item of ``plan`` in order and return what happened.
+        """Clean each item of ``plan`` and return what happened.
+
+        In order, except that items whose folders overlap are taken one after another,
+        so no prompt can stop the plan between a shared folder going and the last item
+        that used it.
 
         For an item whose files are still on disk when its turn comes,
         ``choose_disposition`` says whether to delete or
@@ -293,13 +407,39 @@ class JobFileCleanup:
         applies to every later item. ``None`` cancels: that item and the rest
         are left alone. A refused item, or one whose files cannot be updated,
         keeps its files and records and is reported; with ``stop_on_error`` the
-        plan stops there. Every other item's job records are deleted.
+        plan stops there. An item whose folder is not its alone is not offered
+        to ``choose_disposition``: the folder stays and is reported as kept, and
+        jobs of other items in ``plan`` do not count unless they are refused, since
+        the rest go together. Every other item's job records are deleted.
         """
 
         cleaned: list[JobCleanupItem] = []
         failures: list[JobCleanupFailure] = []
+        deleted: list[Path] = []
+        archived: list[Path] = []
+        archive_destinations: list[Path] = []
+        kept: list[JobCleanupKept] = []
+        together = {
+            job_id
+            for item in plan
+            if item.refusal is None and self._folder_refusal(item) is None
+            for job_id in ({job.id for job in item.jobs} | item.releases)
+        }
+        bound = self._bound_job_ids()
         shared_disposition: FileDisposition | None = None
-        for item in plan:
+
+        def outcome(*, cancelled: bool = False) -> JobCleanupOutcome:
+            return JobCleanupOutcome(
+                tuple(cleaned),
+                tuple(failures),
+                cancelled,
+                tuple(deleted),
+                tuple(archived),
+                # A later item of the plan may have taken a folder an earlier one left.
+                tuple(entry for entry in kept if entry.directory.exists()),
+            )
+
+        for item in _overlapping_folders_together(plan):
             if item.refusal is not None:
                 failures.append(JobCleanupFailure(item, refusal=item.refusal))
                 if stop_on_error:
@@ -308,59 +448,122 @@ class JobFileCleanup:
             # Checked again here: an earlier item may already have deleted or
             # archived a directory this one shares (a reconfigured relaxation
             # row's old and replacement jobs use one folder).
-            if item.directory is not None and item.directory.exists():
+            if item.directory is not None and self.directory_on_disk(item.directory):
                 refusal = self._folder_refusal(item)
                 if refusal is not None:
                     failures.append(JobCleanupFailure(item, refusal=refusal))
+                    together -= {job.id for job in item.jobs} | item.releases
                     if stop_on_error:
                         break
                     continue
-                disposition = shared_disposition or choose_disposition(item)
-                if disposition is None:
-                    return JobCleanupOutcome(tuple(cleaned), tuple(failures), cancelled=True)
-                try:
-                    if disposition in _DELETE_DISPOSITIONS:
-                        self.delete_path(item.directory)
-                    else:
-                        self.archive_directory(item.directory, item.archive_root)
-                except OSError as exc:
-                    failures.append(JobCleanupFailure(item, error=exc))
-                    if stop_on_error:
-                        break
-                    continue
-                if disposition in _APPLY_TO_ALL_DISPOSITIONS:
-                    shared_disposition = disposition
+                because = self._folder_kept_because(item, together, bound)
+                if because is None and any(
+                    destination.is_relative_to(resolved_path(item.directory))
+                    for destination in archive_destinations
+                ):
+                    because = KEPT_FOR_AN_ARCHIVE
+                if because is not None:
+                    document = self._document_getter()
+                    label = (
+                        job_directory_label(document.project_root, item.directory)
+                        if document is not None
+                        else item.directory.name
+                    )
+                    kept.append(JobCleanupKept(item, item.directory, because, label))
+                else:
+                    disposition = shared_disposition or choose_disposition(item)
+                    if disposition is None:
+                        return outcome(cancelled=True)
+                    try:
+                        if disposition in _DELETE_DISPOSITIONS:
+                            self.delete_path(item.directory)
+                            deleted.append(item.directory)
+                        else:
+                            destination = self.archive_directory(item.directory, item.archive_root)
+                            archive_destinations.append(resolved_path(destination))
+                            archived.append(item.directory)
+                    except OSError as exc:
+                        failures.append(JobCleanupFailure(item, error=exc))
+                        # Staying now, so a later item must not delete what holds it.
+                        together -= {job.id for job in item.jobs} | item.releases
+                        if stop_on_error:
+                            break
+                        continue
+                    if disposition in _APPLY_TO_ALL_DISPOSITIONS:
+                        shared_disposition = disposition
             for job in item.jobs:
                 self.delete_job_records(job.id)
             cleaned.append(item)
-        return JobCleanupOutcome(tuple(cleaned), tuple(failures))
+        return outcome()
 
     def _folder_refusal(self, item: JobCleanupItem) -> str | None:
-        """Return why ``item``'s folder may not go, whichever route planned it.
+        """Return why ``item``'s folder has to stay with the item, whichever route planned it."""
 
-        Run on every item, since not every route asks for the ownership check: a
-        folder holding a job other than the item's own is never the item's alone.
+        document = self._document_getter()
+        if document is None or item.directory is None:
+            return None
+        reason = job_directory_link_refusal(document.project_root, item.directory)
+        return f"- {item.label}: {reason}" if reason is not None else None
+
+    def _folder_kept_because(
+        self, item: JobCleanupItem, together: Collection[UUID], bound: Collection[UUID]
+    ) -> tuple[str, str] | None:
+        """Return why ``item``'s sound folder is not its to delete, or ``None``.
+
+        Checked on every item, since not every route asks for the ownership check.
+        Another job shares it when their folders are the same or one holds the other.
+        The one job that does not count is a detached cutoff job in this very folder: a
+        reset leaves it in the project, unbound and ``defined``, finding by its name the
+        folder of whichever job later ran that cutoff, with nothing there of its own.
         """
 
         document = self._document_getter()
         if document is None or item.directory is None:
             return None
         owner = item.jobs[0] if item.jobs else None
-        reason = job_directory_refusal(document.project_root, owner, item.directory)
-        if reason is None:
-            folder = item.directory.resolve()
-            own = {job.id for job in item.jobs}
-            for other in document.jobs.values():
-                if other.id in own:
-                    continue
-                directory = self._job_output_directory(other)
-                if directory is None:
-                    continue
-                resolved = directory.resolve()
-                if resolved != folder and resolved.is_relative_to(folder):
-                    reason = f"its folder holds another job's folder ({other.label})"
-                    break
-        return f"- {item.label}: {reason}" if reason is not None else None
+        if job_directory_refusal(document.project_root, owner, item.directory):
+            return KEPT_AS_NOT_ITS_OWN
+        folder = resolved_path(item.directory)
+        for other in document.jobs.values():
+            if other.id in together:
+                continue
+            directory = self._job_output_directory(other)
+            if directory is None:
+                continue
+            # A saved name leading out of its place (``..`` reads as a whole workflow's
+            # folder) says nothing about who uses what. A link really does point here.
+            if job_directory_refusal(
+                document.project_root, other, directory
+            ) and not job_directory_link_refusal(document.project_root, directory):
+                continue
+            resolved = resolved_path(directory)
+            if resolved == folder and (
+                other.workflow_stage == WorkflowStage.CONVERGENCE_CUTOFF
+                and other.status == JobStatus.DEFINED
+                and other.id not in bound
+                and IMPORTED_JOB_TAG not in (other.tags or ())
+            ):
+                continue
+            if resolved.is_relative_to(folder) or folder.is_relative_to(resolved):
+                return KEPT_FOR_ANOTHER_JOB
+        if job_directory_foreign(document.project_root, owner, item.directory):
+            return KEPT_IN_ANOTHER_PLACE
+        return None
+
+    def _bound_job_ids(self) -> set[UUID]:
+        """Return the jobs some definition's mappings bind."""
+
+        document = self._document_getter()
+        if document is None:
+            return set()
+        return {
+            document_job.id
+            for definition in document.calculations.values()
+            for mapping_name in _JOB_MAPPING_NAMES
+            if isinstance(mapping := definition.parameters.get(mapping_name, {}), dict)
+            for value in mapping.values()
+            if (document_job := _job_by_text_id(document.jobs, value)) is not None
+        }
 
     def delete_job_records(self, job_id: UUID) -> None:
         """Delete a job with its runs and results, and unbind it from every definition.
@@ -489,6 +692,44 @@ class JobFileCleanup:
                 shutil.rmtree(child)
             else:
                 child.unlink()
+
+
+def _job_by_text_id(jobs: Mapping[UUID, Job], value: object) -> Job | None:
+    try:
+        return jobs.get(UUID(str(value)))
+    except ValueError:
+        return None
+
+
+def _overlapping_folders_together(plan: Sequence[JobCleanupItem]) -> list[JobCleanupItem]:
+    """Return ``plan`` with each item followed by all those linked to it by overlapping folders.
+
+    Followed through: ``outer/a`` brings ``outer``, and ``outer`` brings ``outer/b``.
+    """
+
+    folders = [
+        resolved_path(item.directory) if item.directory is not None else None for item in plan
+    ]
+    ordered: list[JobCleanupItem] = []
+    placed: set[int] = set()
+    for first in range(len(plan)):
+        waiting = [first] if first not in placed else []
+        placed.update(waiting)
+        while waiting:
+            index = waiting.pop(0)
+            ordered.append(plan[index])
+            folder = folders[index]
+            if folder is None:
+                continue
+            for other_index, other in enumerate(folders):
+                if (
+                    other_index not in placed
+                    and other is not None
+                    and (other.is_relative_to(folder) or folder.is_relative_to(other))
+                ):
+                    placed.add(other_index)
+                    waiting.append(other_index)
+    return ordered
 
 
 def _force_writable_and_retry(func, path, exc_info) -> None:

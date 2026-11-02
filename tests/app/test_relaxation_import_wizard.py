@@ -1279,30 +1279,6 @@ class TestRemovalDeletesOnlyItsOwnFolder:
         result = document.results[document.runs[site.relaxation_run_id].result_id]
         result.output_files = [str(Path(seed) / Path(name).name) for name in result.output_files]
 
-    @pytest.mark.parametrize(
-        "seed", [".", "..", "../..", "../positivemuon", "../muonium/native_job"]
-    )
-    def test_a_seed_that_leaves_the_charge_folder_deletes_nothing(
-        self,
-        window: MainWindow,
-        tmp_path: Path,
-        host_structure: Structure,
-        monkeypatch: pytest.MonkeyPatch,
-        seed: str,
-    ) -> None:
-        outcomes, output_root, warned = self._project(window, tmp_path, host_structure, monkeypatch)
-        item = outcomes[1].imported[0]
-        self._point_at(window, item, seed)
-        before = _tree(output_root)
-
-        window._on_remove_imported_relaxations()
-
-        assert _tree(output_root) == before
-        assert item.site_id in window._document.sites
-        assert item.job_id in window._document.jobs
-        assert warned and "nothing was removed" in warned[0]
-        assert not window.statusBar().currentMessage().startswith("Removed")
-
     def test_a_folder_another_batch_wrote_is_not_deleted(
         self,
         window: MainWindow,
@@ -1356,7 +1332,9 @@ class TestRemovalDeletesOnlyItsOwnFolder:
         assert item.site_id not in document.sites
         assert kept.site_id in document.sites
         assert warned == []
-        assert window.statusBar().currentMessage() == "Removed 1 imported relaxation"
+        assert window.statusBar().currentMessage() == (
+            "Removed 1 imported relaxation; deleted 1 folder"
+        )
 
     def test_a_normal_removal_lists_exactly_its_own_folder_as_gone(
         self,
@@ -1432,31 +1410,6 @@ class TestRemovalDeletesOnlyItsOwnFolder:
         assert warned and "its folder changed" in warned[0]
         assert not window.statusBar().currentMessage().startswith("Removed")
 
-    def test_an_absolute_seed_outside_the_project_is_not_deleted(
-        self,
-        window: MainWindow,
-        tmp_path: Path,
-        host_structure: Structure,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """Its parent is named like a charge folder and its name matches what was written."""
-
-        outcomes, output_root, warned = self._project(window, tmp_path, host_structure, monkeypatch)
-        item = outcomes[1].imported[0]
-        victim = tmp_path / "elsewhere" / "positivemuon" / item.seed_name
-        victim.mkdir(parents=True)
-        (victim / "thesis.txt").write_text("kept")
-        definition = window._muon_relaxation_controller.active_definition()
-        definition.parameters["job_seed_names_by_label"][f"positivemuon:{item.label}"] = str(victim)
-        before = _tree(output_root)
-
-        window._on_remove_imported_relaxations()
-
-        assert (victim / "thesis.txt").is_file()
-        assert _tree(output_root) == before
-        assert item.site_id in window._document.sites
-        assert warned and "nothing was removed" in warned[0]
-
     @pytest.mark.parametrize("target", ["outside", "other_job", "not_a_job"])
     def test_a_job_folder_that_is_a_link_is_refused_and_nothing_goes(
         self,
@@ -1520,8 +1473,10 @@ class TestRemovalDeletesOnlyItsOwnFolder:
         )
         window.merge_imported_relaxation_rows(many, output_directory=output_root)
         window._project_service.append_provenance(document, many.provenance)
+        charge = output_root / "positivemuon"
+        (charge / "alias").symlink_to(charge, target_is_directory=True)
         for item in many.imported:
-            self._point_at(window, item, "..")
+            self._point_at(window, item, f"alias/{item.seed_name}")
         index = [
             position
             for position, batch in enumerate(window._imported_relaxation_batches())
@@ -1549,19 +1504,21 @@ class TestRemovalDeletesOnlyItsOwnFolder:
         assert seen["detail"].count("\n") >= 29
         assert seen["height"] < 500
 
-    def test_a_native_job_whose_seed_leaves_its_folder_is_refused_on_every_route(
+    @pytest.mark.parametrize("seed", [".", "..", "../.."])
+    def test_a_native_job_whose_seed_leaves_its_folder_goes_and_touches_nothing(
         self,
         window: MainWindow,
         tmp_path: Path,
         host_structure: Structure,
         monkeypatch: pytest.MonkeyPatch,
+        seed: str,
     ) -> None:
-        """The row-removal and dashboard route goes through ``JobFileCleanup``."""
+        """The row can go, since no saved name can be corrected from the app. Reset still refuses."""
 
         from mufinder.domain.enums import JobStatus, WorkflowStage
         from mufinder.domain.models import Job
 
-        outcomes, output_root, _warned = self._project(
+        _outcomes, output_root, _warned = self._project(
             window, tmp_path, host_structure, monkeypatch
         )
         document = window._document
@@ -1575,18 +1532,22 @@ class TestRemovalDeletesOnlyItsOwnFolder:
         )
         document.jobs[job.id] = job
         definition.parameters["job_ids_by_label"]["positivemuon:native"] = str(job.id)
+        definition.parameters["job_seed_names_by_label"]["positivemuon:native"] = seed
         before = _tree(output_root)
+        assert window._job_file_cleanup.directory_ownership_refusals([job], check_remote=False)
 
-        for seed in (".", "..", "../.."):
-            definition.parameters["job_seed_names_by_label"]["positivemuon:native"] = seed
-            plan = [window._job_file_cleanup.plan_item([job])]
-            outcome = window._job_file_cleanup.execute(
-                plan, choose_disposition=lambda _item: "delete", stop_on_error=False
-            )
-            assert outcome.failures and outcome.failures[0].refusal
-            assert _tree(output_root) == before
-            assert job.id in document.jobs
-            assert window._job_file_cleanup.directory_ownership_refusals([job], check_remote=False)
+        asked: list = []
+        outcome = window._job_file_cleanup.execute(
+            [window._job_file_cleanup.plan_item([job])],
+            choose_disposition=lambda item: asked.append(item) or "delete",
+            stop_on_error=False,
+        )
+
+        assert asked == []
+        assert outcome.completed
+        assert len(outcome.kept) == 1
+        assert _tree(output_root) == before
+        assert job.id not in document.jobs
 
     def test_a_native_job_in_its_own_folder_is_still_cleaned(
         self,
@@ -1652,7 +1613,7 @@ class TestNativeRemovalRefusals:
         definition.parameters["job_seed_names_by_label"] = {"positivemuon:native": seed}
         return job
 
-    def test_an_absolute_seed_outside_the_project_is_refused_in_words(
+    def test_an_absolute_seed_outside_the_project_goes_and_says_why_it_kept_the_folder(
         self,
         window: MainWindow,
         tmp_path: Path,
@@ -1665,23 +1626,26 @@ class TestNativeRemovalRefusals:
         victim.mkdir(parents=True)
         (victim / "thesis.txt").write_text("kept")
         job = self._native(window, tmp_path, host_structure, str(victim))
-        warnings: list[str] = []
+        boxes: list[str] = []
         monkeypatch.setattr(
-            main_window_module.QMessageBox,
-            "warning",
-            lambda _parent, title, message: warnings.append(f"{title}: {message}"),
+            main_window_module,
+            "show_detailed_warning",
+            lambda _parent, _title, message, **kwargs: boxes.append(
+                f"{message}\n{kwargs.get('details', '')}"
+            ),
         )
         monkeypatch.setattr(
-            window, "_prompt_relaxation_file_disposition", lambda *a, **k: "delete", raising=False
+            window, "_prompt_job_file_disposition", lambda **_kwargs: pytest.fail("not offered")
         )
 
-        assert window._cleanup_relaxation_rows([job]) is False
+        assert window._cleanup_relaxation_rows([job]) is True
 
         assert (victim / "thesis.txt").is_file()
-        assert job.id in window._document.jobs
-        assert len(warnings) == 1
-        assert "None" not in warnings[0]
-        assert "outside" in warnings[0]
+        assert job.id not in window._document.jobs
+        assert len(boxes) == 1
+        assert "elsewhere/positivemuon/native'" in boxes[0]
+        assert "saved location" in boxes[0]
+        assert window.statusBar().currentMessage() == "Removed 1 job; kept 1 folder"
 
     def test_a_native_job_folder_that_is_a_link_is_refused(
         self, window: MainWindow, tmp_path: Path, host_structure: Structure
@@ -1778,6 +1742,13 @@ class TestABatchSharingItsFolder:
             "mufinder.app.main_window.QMessageBox.warning",
             lambda *args, **kwargs: warned.append(args[2]),
         )
+        boxes: list[str] = []
+        monkeypatch.setattr(
+            "mufinder.app.main_window.show_detailed_warning",
+            lambda _parent, _title, message, **kwargs: boxes.append(
+                f"{message}\n{kwargs.get('details', '')}"
+            ),
+        )
         outcomes, first, second = self._shared(window, tmp_path, host_structure, monkeypatch)
         document = window._document
         folder = first.job_directory
@@ -1796,13 +1767,16 @@ class TestABatchSharingItsFolder:
         assert window._job_output_directory(job) == folder
         definition = window._muon_relaxation_controller.active_definition()
         assert f"positivemuon:{first.label}" in definition.parameters["job_ids_by_label"]
-        assert "files stay" in window.statusBar().currentMessage()
+        assert window.statusBar().currentMessage() == (
+            "Removed 1 imported relaxation; kept 1 folder"
+        )
+        assert boxes and "another import uses it" in boxes[0]
         assert warned == []
         from mufinder.services.journal import build_journal
 
         journal = build_journal("Test", document.provenance)
         bodies = [entry.body for day in journal.days for entry in day.entries]
-        assert any("Their files stay" in body for body in bodies)
+        assert any("Its files stay" in body for body in bodies)
         assert not any("were deleted" in body for body in bodies)
 
         asked = self._remove(window, monkeypatch, outcomes[0].batch_id)
@@ -1811,8 +1785,11 @@ class TestABatchSharingItsFolder:
         assert "delete" in " ".join(str(part) for part in asked[0])
         assert not folder.exists()
         assert first.site_id not in document.sites
-        assert window.statusBar().currentMessage() == "Removed 1 imported relaxation"
+        assert window.statusBar().currentMessage() == (
+            "Removed 1 imported relaxation; deleted 1 folder"
+        )
         assert warned == []
+        assert len(boxes) == 1
 
     def test_a_native_job_in_the_folder_still_refuses(
         self,

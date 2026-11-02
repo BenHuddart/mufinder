@@ -467,11 +467,14 @@ except its ``.cell``/``.param`` inputs, and applies the same ownership check as
 :ref:`starting a relaxation again <resubmit-continue-or-start-again>`, limited
 to the local folder (Reset never touches the cluster). The folder is kept, and
 the job reset without cleaning, when it is outside ``<project>/files/<stage>/``,
-is not named after the job, or is used by another job that is not being reset
-in the same action. A Quantum Corrections phonon job is the one exception: the
+is a link or is reached through one, is not in its own workflow and charge folder
+(a muon relaxation), is not named after the job, or is used by another job that is
+not being reset in the same action. A Quantum Corrections phonon job is the one exception: the
 singlepoint an older project ran in the same seed directory does not keep the
 folder, so cleaning it lets the row rerun as a fresh phonon job. The kept
-folders are listed in the "Directory cleanup issues" message.
+folders are listed under ``Details`` in the "Directory cleanup issues" message, and
+the status bar counts the folders cleaned and kept
+(``Reset 3 failed jobs; cleaned 2 folders; kept 1``).
 
 The pristine- and muon-relaxation tables additionally offer a per-row
 ``Continue relaxation…`` action for ``completed``, ``failed``, ``stopped``, or
