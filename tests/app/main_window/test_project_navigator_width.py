@@ -13,9 +13,23 @@ from PySide6.QtWidgets import QApplication, QFrame, QTreeWidgetItem
 from mufinder.app.main_window import MainWindow
 from mufinder.app.relaxation_analysis_widget import default_workspace_state
 from mufinder.domain.charge_states import POSITIVE_MUON_CHARGE_STATE
+from mufinder.services.project_service import ProjectService
 from tests.support.main_window import window_with_host
 
 _WINDOW_SIZE = (1280, 840)
+
+
+@pytest.fixture
+def project(tmp_path: Path) -> Path:
+    return ProjectService().create_project(tmp_path / "project.mufinder", "Project").project_root
+
+
+def _in_project(project: Path) -> MainWindow:
+    """A window with ``project`` open: the navigator is hidden until one is."""
+
+    window = MainWindow()
+    assert window.open_project(project)
+    return window
 
 
 def _shown(window: MainWindow, size: tuple[int, int] = _WINDOW_SIZE) -> MainWindow:
@@ -59,8 +73,8 @@ def _all_items(item: QTreeWidgetItem) -> list[QTreeWidgetItem]:
     return items
 
 
-def test_default_width_gives_the_pages_the_rest_of_the_window(qapp) -> None:
-    window = _shown(MainWindow())
+def test_default_width_gives_the_pages_the_rest_of_the_window(qapp, project: Path) -> None:
+    window = _shown(_in_project(project))
     try:
         assert window.findChild(QFrame, "projectTreePanel").width() == 220
         assert window._navigator_splitter.sizes() == [220, window._main_stack.width()]
@@ -105,18 +119,18 @@ def test_default_width_fits_the_deepest_label_without_eliding(qapp, tmp_path: Pa
         window.close()
 
 
-def test_splitter_restores_a_saved_width(qapp) -> None:
+def test_splitter_restores_a_saved_width(qapp, project: Path) -> None:
     _save_navigator_width(260)
 
-    window = _shown(MainWindow())
+    window = _shown(_in_project(project))
     try:
         assert window._project_tree_panel.width() == 260
     finally:
         window.close()
 
 
-def test_dragging_saves_the_width_for_the_next_window(qapp) -> None:
-    window = _shown(MainWindow())
+def test_dragging_saves_the_width_for_the_next_window(qapp, project: Path) -> None:
+    window = _shown(_in_project(project))
     try:
         _drag_navigator_edge(window, 45)
         assert window._project_tree_panel.width() == 265
@@ -124,15 +138,17 @@ def test_dragging_saves_the_width_for_the_next_window(qapp) -> None:
         window.close()
 
     assert int(_saved_navigator_width()) == 265
-    reopened = _shown(MainWindow())
+    reopened = _shown(_in_project(project))
     try:
         assert reopened._project_tree_panel.width() == 265
     finally:
         reopened.close()
 
 
-def test_navigator_cannot_be_dragged_past_its_minimum_or_over_the_page_minimum(qapp) -> None:
-    window = _shown(MainWindow())
+def test_navigator_cannot_be_dragged_past_its_minimum_or_over_the_page_minimum(
+    qapp, project: Path
+) -> None:
+    window = _shown(_in_project(project))
     try:
         _drag_navigator_edge(window, -1000)
         assert window._project_tree_panel.width() == 220
@@ -144,8 +160,10 @@ def test_navigator_cannot_be_dragged_past_its_minimum_or_over_the_page_minimum(q
         window.close()
 
 
-def test_resizing_the_window_changes_the_pages_and_keeps_the_navigator_width(qapp) -> None:
-    window = _shown(MainWindow())
+def test_resizing_the_window_changes_the_pages_and_keeps_the_navigator_width(
+    qapp, project: Path
+) -> None:
+    window = _shown(_in_project(project))
     try:
         stack_width = window._main_stack.width()
 
@@ -158,10 +176,10 @@ def test_resizing_the_window_changes_the_pages_and_keeps_the_navigator_width(qap
         window.close()
 
 
-def test_a_window_too_narrow_for_the_width_keeps_the_saved_choice(qapp) -> None:
+def test_a_window_too_narrow_for_the_width_keeps_the_saved_choice(qapp, project: Path) -> None:
     _save_navigator_width(3000)
 
-    window = _shown(MainWindow())
+    window = _shown(_in_project(project))
     try:
         assert window._project_tree_panel.width() < 3000
         assert window._main_stack.width() == window._main_stack.minimumSizeHint().width()
@@ -175,18 +193,18 @@ def test_a_window_too_narrow_for_the_width_keeps_the_saved_choice(qapp) -> None:
     "saved",
     ["not a width", "", "0", "-40", "219", "99999999999"],
 )
-def test_an_unusable_saved_width_falls_back_to_the_default(qapp, saved: str) -> None:
+def test_an_unusable_saved_width_falls_back_to_the_default(qapp, project: Path, saved: str) -> None:
     _save_navigator_width(saved)
 
-    window = _shown(MainWindow())
+    window = _shown(_in_project(project))
     try:
         assert window._project_tree_panel.width() == 220
     finally:
         window.close()
 
 
-def test_window_minimum_is_the_navigator_minimum_plus_the_page_minimum(qapp) -> None:
-    window = _shown(MainWindow())
+def test_window_minimum_is_the_navigator_minimum_plus_the_page_minimum(qapp, project: Path) -> None:
+    window = _shown(_in_project(project))
     try:
         page_minimum = window._main_stack.minimumSizeHint().width()
         assert window.minimumSizeHint().width() == 220 + page_minimum + 24
@@ -194,10 +212,10 @@ def test_window_minimum_is_the_navigator_minimum_plus_the_page_minimum(qapp) -> 
         window.close()
 
 
-def test_a_blocked_drag_leaves_the_saved_width_alone(qapp) -> None:
+def test_a_blocked_drag_leaves_the_saved_width_alone(qapp, project: Path) -> None:
     _save_navigator_width(300)
 
-    window = MainWindow()
+    window = _in_project(project)
     window.show()
     window.resize(window.minimumSizeHint().width(), _WINDOW_SIZE[1])
     QApplication.processEvents()
@@ -214,10 +232,10 @@ def test_a_blocked_drag_leaves_the_saved_width_alone(qapp) -> None:
     assert int(_saved_navigator_width()) == 300
 
 
-def test_a_drag_out_and_back_saves_the_width_it_ended_on(qapp) -> None:
+def test_a_drag_out_and_back_saves_the_width_it_ended_on(qapp, project: Path) -> None:
     _save_navigator_width(260)
 
-    window = _shown(MainWindow())
+    window = _shown(_in_project(project))
     try:
         handle = window._navigator_splitter.handle(1)
         start = handle.rect().center()

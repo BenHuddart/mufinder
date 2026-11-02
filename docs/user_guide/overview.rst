@@ -33,6 +33,11 @@ short tutorial on the first of them.
 Application shell
 -----------------
 
+- With no project open, the welcome page fills the window: create a project
+  (``New Project``), open one (``Open Project``) or reopen one of the last five
+  (``Recent Projects``, each shown by name and parent folder, with the full path
+  in its tooltip). The project navigator and the ``Job Dashboard`` appear once a
+  project is open, and keyboard focus starts in the navigator.
 - The ``File`` menu creates (``New Project``), opens (``Open Project``),
   reopens (``Open Recent``) and saves (``Save Project``) projects, and holds
   ``Import Legacy Relaxations…`` and ``Remove Imported Relaxations…`` (see
@@ -57,7 +62,7 @@ Application shell
   magnetic-field-workspace nodes have a right-click delete action; workflow
   stage nodes have no context menu.
 - The ``Job Dashboard`` dock lists the jobs that need attention (see `Jobs and
-  execution`_).
+  execution`_). Opening a project brings it back if it was closed.
 - The project home charts the workflow stages with their dependencies and
   progress, opens at the stage last worked on, and surveys the host cell with
   that stage's muon positions (see :doc:`/user_guide/project_home`).
