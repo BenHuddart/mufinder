@@ -843,8 +843,6 @@ The shared implementation lives in ``mufinder.app.workflow_table_utils``:
   ``bind_reset_failed_context_menu`` on a table that has no tooltip of its own.
   The workflow tables set their own tooltip naming the whole menu. Per-item
   tooltips are unaffected and still take precedence where a widget sets them.
-  The energy-barriers diffusion-path table additionally carries the hint in its
-  visible hint label.
 
 ``MainWindow`` connects each widget's ``reset_failed_requested`` signal to a
 thin handler that resolves the keys through the workflow's

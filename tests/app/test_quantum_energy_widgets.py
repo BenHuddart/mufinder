@@ -502,6 +502,44 @@ def test_energy_barriers_page_fits_the_default_window(
     widget.close()
 
 
+def test_energy_barriers_placeholder_defers_to_the_title_that_says_why(qapp) -> None:
+    """A first selection that cannot be shown, before any viewer exists."""
+
+    widget = EnergyBarriersWidget()
+    hint = widget._preview_viewer_placeholder.text()
+    assert hint.startswith("Select a path")
+
+    widget.clear_neb_preview(title="A → B: the band file was not found")
+
+    assert widget._preview_viewer is None
+    assert widget._preview_title.text() == "A → B: the band file was not found"
+    assert widget._preview_viewer_placeholder.text() == ""
+
+    # Deselecting asks for a selection again.
+    widget.clear_neb_preview()
+    assert widget._preview_viewer_placeholder.text() == hint
+    widget.close()
+
+
+def test_energy_barriers_clearing_after_the_viewer_replaced_the_placeholder(qapp) -> None:
+    widget = EnergyBarriersWidget()
+    widget.set_path_preview(
+        title="A → B",
+        summary="1.2 Å",
+        structure=_sample_structure(),
+        start_cartesian=(0.0, 0.0, 0.0),
+        end_cartesian=(1.0, 0.0, 0.0),
+    )
+    qapp.processEvents()
+    qapp.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
+
+    widget.clear_neb_preview(title="A → B: the band file was not found")
+    widget.clear_neb_preview()
+
+    assert widget._preview_title.text() == "No path selected"
+    widget.close()
+
+
 def test_energy_barriers_empty_viewer_says_something_true(qapp) -> None:
     """Deselecting never tells a project with a host to load one."""
 

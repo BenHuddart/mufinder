@@ -118,7 +118,7 @@ The paths between them
 On the Energy Barriers page, ``Generate Paths`` with site 1 as both endpoints
 lists the symmetry-distinct hops between copies of site 1. The automatic
 length cutoff keeps only the 1.375 Å hop along c, across the Gd plane to the
-mirror image of site 1 below it; with ``Max path length (Å)`` set to 3 it also
+mirror image of site 1 below it; with ``Max length`` set to 3 Å it also
 lists the 2.944 Å hop in the plane, from (½, 0, z) to (0, ½, z). That second
 hop is the paper's 1 → 1′ path, and its minimum-energy path passes through
 site 2, on the diagonal mirror half way between the two copies of site 1. With

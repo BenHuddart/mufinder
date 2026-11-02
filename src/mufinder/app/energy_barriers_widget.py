@@ -978,9 +978,12 @@ class EnergyBarriersWidget(SourceTableWidget):
         self._preview_title.setText(title or _NO_PATH_SELECTED_TITLE)
         self._preview_summary.setText("")
         self._popout_viewer_button.setEnabled(self._viewer_popout_window is not None)
-        if self._preview_viewer is not None:
-            # A title says why a selected path shows nothing, so the viewer adds no text.
-            self._preview_viewer.set_empty_message("" if title else _SELECT_A_PATH_HINT)
+        # A title says why a selected path shows nothing, so the empty area adds no text.
+        empty_message = "" if title else _SELECT_A_PATH_HINT
+        if self._preview_viewer is None:
+            self._preview_viewer_placeholder.setText(empty_message)
+        else:
+            self._preview_viewer.set_empty_message(empty_message)
             with self._preview_viewer.batch_update():
                 self._preview_viewer.set_point_overlays(None)
                 self._preview_viewer.set_line_overlays(None)
