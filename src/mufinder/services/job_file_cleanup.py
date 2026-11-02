@@ -50,7 +50,7 @@ from typing import TYPE_CHECKING, Literal
 from uuid import UUID
 
 from mufinder.domain.constants import IMPORTED_JOB_TAG
-from mufinder.domain.enums import JobStatus
+from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.domain.models import Job
 from mufinder.domain.text import folder_phrase, plain_error
 from mufinder.services.job_paths import (
@@ -438,6 +438,8 @@ class JobFileCleanup:
                             archived.append(item.directory)
                     except OSError as exc:
                         failures.append(JobCleanupFailure(item, error=exc))
+                        # Staying now, so a later item must not delete what holds it.
+                        together -= {job.id for job in item.jobs} | item.releases
                         if stop_on_error:
                             break
                         continue
@@ -465,9 +467,9 @@ class JobFileCleanup:
 
         Checked on every item, since not every route asks for the ownership check.
         Another job shares it when their folders are the same or one holds the other.
-        A job left unbound and ``defined`` does not count: a reset cutoff job is detached
-        from its sweep and stays in the project, finding by its name the folder of
-        whichever job later ran that cutoff, with nothing there of its own.
+        The one job that does not count is a detached cutoff job in this very folder: a
+        reset leaves it in the project, unbound and ``defined``, finding by its name the
+        folder of whichever job later ran that cutoff, with nothing there of its own.
         """
 
         document = self._document_getter()
@@ -478,16 +480,17 @@ class JobFileCleanup:
         for other in document.jobs.values():
             if other.id in together:
                 continue
-            if (
-                other.status == JobStatus.DEFINED
-                and other.id not in bound
-                and IMPORTED_JOB_TAG not in (other.tags or ())
-            ):
-                continue
             directory = self._job_output_directory(other)
             if directory is None:
                 continue
             resolved = directory.resolve()
+            if resolved == folder and (
+                other.workflow_stage == WorkflowStage.CONVERGENCE_CUTOFF
+                and other.status == JobStatus.DEFINED
+                and other.id not in bound
+                and IMPORTED_JOB_TAG not in (other.tags or ())
+            ):
+                continue
             if resolved.is_relative_to(folder) or folder.is_relative_to(resolved):
                 return KEPT_FOR_ANOTHER_JOB
         if job_directory_foreign(document.project_root, owner, item.directory):
@@ -646,28 +649,31 @@ def _job_by_text_id(jobs: Mapping[UUID, Job], value: object) -> Job | None:
 
 
 def _overlapping_folders_together(plan: Sequence[JobCleanupItem]) -> list[JobCleanupItem]:
-    """Return ``plan`` with each item followed by the later items whose folders overlap its own."""
+    """Return ``plan`` with each item followed by all those linked to it by overlapping folders.
+
+    Followed through: ``outer/a`` brings ``outer``, and ``outer`` brings ``outer/b``.
+    """
 
     folders = [item.directory.resolve() if item.directory is not None else None for item in plan]
     ordered: list[JobCleanupItem] = []
     placed: set[int] = set()
-    for index, item in enumerate(plan):
-        if index in placed:
-            continue
-        placed.add(index)
-        ordered.append(item)
-        folder = folders[index]
-        if folder is None:
-            continue
-        for later in range(index + 1, len(plan)):
-            other = folders[later]
-            if (
-                later not in placed
-                and other is not None
-                and (other.is_relative_to(folder) or folder.is_relative_to(other))
-            ):
-                placed.add(later)
-                ordered.append(plan[later])
+    for first in range(len(plan)):
+        waiting = [first] if first not in placed else []
+        placed.update(waiting)
+        while waiting:
+            index = waiting.pop(0)
+            ordered.append(plan[index])
+            folder = folders[index]
+            if folder is None:
+                continue
+            for other_index, other in enumerate(folders):
+                if (
+                    other_index not in placed
+                    and other is not None
+                    and (other.is_relative_to(folder) or folder.is_relative_to(other))
+                ):
+                    placed.add(other_index)
+                    waiting.append(other_index)
     return ordered
 
 

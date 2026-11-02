@@ -424,12 +424,21 @@ def test_a_summary_with_nothing_kept_is_empty(tmp_path: Path) -> None:
     assert outcome.folder_summary() == ""
 
 
-def test_a_job_left_unbound_and_defined_does_not_hold_a_folder(tmp_path: Path) -> None:
+def _cutoff_job(service: ProjectService, document: ProjectDocument, label: str) -> Job:
+    return service.add_job(
+        document,
+        label=label,
+        workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF,
+        calc_type="castep_convergence_cutoff",
+    )
+
+
+def test_a_detached_cutoff_job_in_the_same_folder_does_not_hold_it(tmp_path: Path) -> None:
     """A reset cutoff job stays in the project with nothing of its own in the folder."""
 
     service, document = _project(tmp_path)
     job = _job(service, document, "relax_a")
-    detached = _job(service, document, "relax_b")
+    detached = _cutoff_job(service, document, "relax_b")
     directory = _job_directory(document, job.label)
     cleanup = _cleanup(document, {job.label: directory, detached.label: directory})
 
@@ -439,6 +448,40 @@ def test_a_job_left_unbound_and_defined_does_not_hold_a_folder(tmp_path: Path) -
 
     assert outcome.kept == ()
     assert not directory.exists()
+
+
+def test_an_unbound_defined_job_of_another_workflow_holds_its_folder(tmp_path: Path) -> None:
+    """An older definition can bind a job by label, so only a detached cutoff is let off."""
+
+    service, document = _project(tmp_path)
+    job = _job(service, document, "relax_a")
+    legacy = _job(service, document, "relax_b")
+    directory = _job_directory(document, job.label)
+    cleanup = _cleanup(document, {job.label: directory, legacy.label: directory})
+
+    outcome = cleanup.execute(
+        [cleanup.plan_item([job])], choose_disposition=lambda _item: "delete", stop_on_error=True
+    )
+
+    assert len(outcome.kept) == 1
+    assert directory.is_dir()
+
+
+def test_an_unbound_defined_cutoff_job_inside_the_folder_holds_it(tmp_path: Path) -> None:
+    service, document = _project(tmp_path)
+    job = _job(service, document, "relax_a")
+    legacy = _cutoff_job(service, document, "relax_b")
+    directory = _job_directory(document, job.label)
+    inner = directory / legacy.label
+    inner.mkdir()
+    cleanup = _cleanup(document, {job.label: directory, legacy.label: inner})
+
+    outcome = cleanup.execute(
+        [cleanup.plan_item([job])], choose_disposition=lambda _item: "delete", stop_on_error=True
+    )
+
+    assert len(outcome.kept) == 1
+    assert inner.is_dir()
 
 
 def test_a_defined_job_bound_to_a_definition_does_hold_its_folder(tmp_path: Path) -> None:
@@ -532,3 +575,73 @@ def test_a_job_an_item_releases_does_not_keep_its_folder_and_keeps_its_record(
     assert outcome.kept == ()
     assert not directory.exists()
     assert released.id in document.jobs
+
+
+def test_a_folder_holding_one_that_failed_to_clean_is_kept(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service, document = _project(tmp_path)
+    inner_job = _job(service, document, "relax_a")
+    outer_job = _job(service, document, "relax_b")
+    outer = _job_directory(document, outer_job.label)
+    inner = outer / inner_job.label
+    inner.mkdir()
+    (inner / "kept.castep").write_text("kept", encoding="utf-8")
+    cleanup = _cleanup(document, {inner_job.label: inner, outer_job.label: outer})
+
+    def _refuse_inner(path: Path) -> None:
+        raise PermissionError(13, "denied")
+
+    monkeypatch.setattr(cleanup, "delete_path", _refuse_inner)
+
+    outcome = cleanup.execute(
+        [cleanup.plan_item([inner_job]), cleanup.plan_item([outer_job])],
+        choose_disposition=lambda _item: "delete",
+        stop_on_error=False,
+    )
+
+    assert (inner / "kept.castep").is_file()
+    assert inner_job.id in document.jobs
+    assert [failure.item.label for failure in outcome.failures] == [inner_job.label]
+    assert [entry.directory for entry in outcome.kept] == [outer]
+
+
+def test_a_prompt_cannot_come_between_folders_linked_through_a_third(tmp_path: Path) -> None:
+    """``outer/a`` brings ``outer``, which brings ``outer/b``, before anything unrelated."""
+
+    service, document = _project(tmp_path)
+    a_job = _job(service, document, "a")
+    unrelated_job = _job(service, document, "unrelated")
+    outer_job = _job(service, document, "outer")
+    b_job = _job(service, document, "b")
+    outer = _job_directory(document, outer_job.label)
+    (outer / "a").mkdir()
+    (outer / "b").mkdir()
+    unrelated = _job_directory(document, unrelated_job.label)
+    cleanup = _cleanup(
+        document,
+        {
+            a_job.label: outer / "a",
+            unrelated_job.label: unrelated,
+            outer_job.label: outer,
+            b_job.label: outer / "b",
+        },
+    )
+    asked: list[str] = []
+
+    def _answer(item: JobCleanupItem):
+        asked.append(item.label)
+        return None if item.label == unrelated_job.label else "delete"
+
+    outcome = cleanup.execute(
+        [cleanup.plan_item([job]) for job in (a_job, unrelated_job, outer_job, b_job)],
+        choose_disposition=_answer,
+        stop_on_error=True,
+    )
+
+    assert outcome.cancelled
+    assert asked[-1] == unrelated_job.label
+    assert not outer.exists()
+    assert b_job.id not in document.jobs
+    assert unrelated.is_dir()
+    assert unrelated_job.id in document.jobs
