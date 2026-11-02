@@ -61,6 +61,7 @@ from mufinder.domain.charge_states import (
     muon_relaxation_calc_type,
 )
 from mufinder.domain.constants import IMPORTED_JOB_TAG, MUON_GAMMA_RAD_S_T, MUON_MASS_AMU
+from mufinder.services.job_paths import free_job_seed
 from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.domain.models import (
     CalculationRun,
@@ -553,22 +554,6 @@ def _unique_label(base: str, taken: set[str]) -> str:
     return label
 
 
-def _unique_seed(seed: str, charge_directory: Path) -> str:
-    """Return ``seed``, suffixed until its job directory is free.
-
-    A job's directory is named for its seed, and runs in different folders often
-    share one. Writing into an occupied directory would overwrite the other
-    run's outputs, and removing either batch would delete both.
-    """
-
-    if not (charge_directory / seed).exists():
-        return seed
-    index = 2
-    while (charge_directory / f"{seed}_{index}").exists():
-        index += 1
-    return f"{seed}_{index}"
-
-
 def commit_relaxation_import(
     document: Any,
     *,
@@ -629,7 +614,9 @@ def commit_relaxation_import(
         species = _relabelled(relaxed.species, run.muon_label)
         label = _unique_label(f"{label_prefix} {run.seed_name}", taken)
         prefix = muon_charge_state_prefix(charge_state)
-        seed_name = _unique_seed(run.seed_name, Path(output_root) / prefix)
+        # Runs in different folders often share a seed. Writing into an occupied folder
+        # would overwrite the other run's outputs, and removing either batch delete both.
+        seed_name = free_job_seed(run.seed_name, Path(output_root) / prefix)
         job_directory = Path(output_root) / prefix / seed_name
 
         job = Job(

@@ -434,6 +434,8 @@ class QuantumCorrectionsController(WorkflowJobController):
                         return definition, str(key)
         return None, None
 
+    mapping_name = _PHONON_JOB_MAPPING
+
     def directory_companions(self, job: Job) -> list[Job]:
         """Return the legacy singlepoint that shares a phonon job's directory.
 
@@ -1068,11 +1070,11 @@ class QuantumCorrectionsController(WorkflowJobController):
             existing = self.phonon_job_for_key(definition, key)
             if existing is not None:
                 if existing.status == JobStatus.DEFINED:
-                    existing.label = spec.name
-                    _write_job_directory(
-                        spec, output_root, seed_name=self.seed_name_for_key(definition, key)
-                    )
-                    source_runs[key] = spec.provenance["source_relaxation_run_id"]
+                    seed_name = self.seed_name_for_key(definition, key)
+                    if self.spec_for_defined_job(spec, output_root, existing, name=seed_name):
+                        existing.label = spec.name
+                        _write_job_directory(spec, output_root, seed_name=seed_name)
+                        source_runs[key] = spec.provenance["source_relaxation_run_id"]
                 created.append(existing)
                 continue
             seed_name = self._seed_for_new_job(definition, key, output_root=output_root)

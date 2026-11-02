@@ -29,7 +29,7 @@ See ``docs/architecture.rst`` (Workflow controllers) for the layer contract.
 from __future__ import annotations
 
 from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
@@ -37,6 +37,7 @@ from uuid import UUID
 
 from mufinder.castep_io.cell_parser import ParsedCell
 from mufinder.castep_io.output_parser import CastepResult
+from mufinder.domain.constants import IMPORTED_JOB_TAG
 from mufinder.domain.enums import ACTIVE_JOB_STATUSES, JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationDefinition, CalculationRun, Job, Structure
 from mufinder.domain.text import plural
@@ -44,6 +45,7 @@ from mufinder.services.job_artifacts import ParsedJobArtifacts
 from mufinder.services.job_execution_controller import JobExecutionController
 from mufinder.services.job_file_cleanup import JobFileCleanup
 from mufinder.services.job_file_export import JobFilesExport, job_files_export
+from mufinder.services.job_paths import free_job_seed
 from mufinder.services.job_results import find_job_derived_structure
 from mufinder.services.relaxed_structure_spins import apply_relaxed_cell_spins
 from mufinder.services.structure_export import (
@@ -57,6 +59,7 @@ from mufinder.services.project_service import (
     definitions_for_stage,
     job_for_mapping_key,
 )
+from mufinder.workflow.types import JobSpec
 
 from mufinder.app.workflow_table_utils import RESET_FAILED_ACTION_TEXT
 from mufinder.app.workflow_submission import (
@@ -165,6 +168,8 @@ class WorkflowJobController:
     #: ``ui_state`` key holding the id of the definition the user last
     #: configured. ``None`` means the newest matching definition is active.
     active_key: str | None = None
+    #: The definition mapping that binds this workflow's rows to their jobs.
+    mapping_name: str = "job_ids_by_label"
 
     def __init__(self, context: WorkflowControllerContext) -> None:
         self._context = context
@@ -216,6 +221,71 @@ class WorkflowJobController:
             document, definition, key, mapping_name=mapping_name, calc_type=calc_type
         )
 
+    def folder_sharers(self, job: Job) -> set[UUID]:
+        """Return the jobs that may use ``job``'s folder without it being another job's.
+
+        ``job`` itself, the jobs earlier definitions bind to its row (a reconfigured row runs
+        in the same folder), and its :meth:`directory_companions`.
+        """
+
+        keys = {
+            str(key)
+            for definition in self.definitions()
+            if isinstance(mapping := definition.parameters.get(self.mapping_name, {}), dict)
+            for key, value in mapping.items()
+            if str(value) == str(job.id)
+        }
+        return {
+            job.id,
+            *self._row_job_ids(keys),
+            *(companion.id for companion in self.directory_companions(job)),
+        }
+
+    def _row_job_ids(self, keys: Collection[str]) -> set[UUID]:
+        """Return the native jobs any definition binds to the rows ``keys`` name."""
+
+        return {
+            job.id
+            for job in self.jobs_for_removed_rows(keys)
+            if IMPORTED_JOB_TAG not in (job.tags or ())
+        }
+
+    def _folder_taken(self, directory: Path, together: Collection[UUID]) -> bool:
+        """Return whether writing into ``directory`` would touch another job's files.
+
+        A folder not on disk holds nothing to overwrite, and most rows have none yet.
+        """
+
+        return directory.exists() and self._context.job_file_cleanup.folder_used_by_another_job(
+            directory, together=together
+        )
+
+    def spec_for_new_job(self, spec: JobSpec, output_root: Path, key: object) -> JobSpec:
+        """Return ``spec``, under a free name when another job uses the folder of its own.
+
+        The row ``key`` names keeps a folder its earlier jobs used. A folder no job's records
+        use is taken as it stands, as it is for a row removed and added again.
+        """
+
+        if not self._folder_taken(output_root / spec.name, self._row_job_ids({str(key)})):
+            return spec
+        return replace(spec, name=free_job_seed(spec.name, output_root))
+
+    def spec_for_defined_job(
+        self, spec: JobSpec, output_root: Path, job: Job, *, name: str | None = None
+    ) -> JobSpec | None:
+        """Return ``spec`` to rewrite ``job``'s inputs from, named for ``job``'s own folder.
+
+        ``name`` defaults to the job's label, which names its folder in every workflow that
+        records no seed. ``None`` when another job uses that folder: its files stay as they
+        are, and the submit backends refuse to start the job.
+        """
+
+        name = job.label if name is None else name
+        if self._folder_taken(output_root / name, self.folder_sharers(job)):
+            return None
+        return replace(spec, name=name)
+
     def directory_companions(self, job: Job) -> list[Job]:
         """Return the jobs that share ``job``'s output directory by design.
 
@@ -246,7 +316,7 @@ class WorkflowJobController:
     def jobs_for_removed_rows(self, labels: Collection[str]) -> list[Job]:
         """Return the jobs the rows ``labels`` name are bound to, in every definition.
 
-        Walks each of :meth:`definitions`' ``job_ids_by_label`` mappings for the
+        Walks each of :meth:`definitions`' :attr:`mapping_name` mappings for the
         keys :meth:`row_key_matcher` picks, in definition and mapping order,
         once per job. These are the jobs whose files and records a row removal
         cleans up.
@@ -259,7 +329,7 @@ class WorkflowJobController:
         jobs: list[Job] = []
         seen: set[UUID] = set()
         for definition in self.definitions():
-            mapping = definition.parameters.get("job_ids_by_label", {})
+            mapping = definition.parameters.get(self.mapping_name, {})
             if not isinstance(mapping, dict):
                 continue
             for key, raw_job_id in mapping.items():

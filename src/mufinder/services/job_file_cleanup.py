@@ -19,6 +19,8 @@ job records.
   it with :meth:`JobFileCleanup.clear_directory_contents`.
 - :meth:`JobFileCleanup.delete_job_records` deletes a job with its runs and
   results and unbinds it from every definition mapping.
+- :meth:`JobFileCleanup.folder_used_by_another_job` is the check behind a kept folder,
+  which a submission makes as well before writing into one.
 
 The service never shows a dialog: the window asks the questions and reports the
 outcome. Filesystem operations run through ``run_file_op`` so the window can run
@@ -523,20 +525,53 @@ class JobFileCleanup:
         owner = item.jobs[0] if item.jobs else None
         if job_directory_refusal(document.project_root, owner, item.directory):
             return KEPT_AS_NOT_ITS_OWN
-        folder = resolved_path(item.directory)
-        for other in document.jobs.values():
-            if other.id in together:
-                continue
-            directory = self._job_output_directory(other)
+        if self._another_job_uses(
+            resolved_path(item.directory), self._folders_in_use(), together, bound
+        ):
+            return KEPT_FOR_ANOTHER_JOB
+        if job_directory_foreign(document.project_root, owner, item.directory):
+            return KEPT_IN_ANOTHER_PLACE
+        return None
+
+    def _folders_in_use(self) -> list[tuple[Job, Path]]:
+        """Return each job with the folder it uses, resolved.
+
+        A saved name leading out of its place (``..`` reads as a whole workflow's folder)
+        says nothing about who uses what, so that job is left out. A link really does point
+        where it points, so a job behind one stays in.
+        """
+
+        document = self._document_getter()
+        if document is None:
+            return []
+        folders: list[tuple[Job, Path]] = []
+        for job in document.jobs.values():
+            directory = self._job_output_directory(job)
             if directory is None:
                 continue
-            # A saved name leading out of its place (``..`` reads as a whole workflow's
-            # folder) says nothing about who uses what. A link really does point here.
             if job_directory_refusal(
-                document.project_root, other, directory
+                document.project_root, job, directory
             ) and not job_directory_link_refusal(document.project_root, directory):
                 continue
-            resolved = resolved_path(directory)
+            folders.append((job, resolved_path(directory)))
+        return folders
+
+    @staticmethod
+    def _another_job_uses(
+        folder: Path,
+        folders_in_use: Sequence[tuple[Job, Path]],
+        together: Collection[UUID],
+        bound: Collection[UUID],
+    ) -> bool:
+        """Return whether a job outside ``together`` uses ``folder``, or one holding or inside it.
+
+        The one job that does not count is a detached cutoff job in this very folder: see
+        :meth:`_folder_kept_because`.
+        """
+
+        for other, resolved in folders_in_use:
+            if other.id in together:
+                continue
             if resolved == folder and (
                 other.workflow_stage == WorkflowStage.CONVERGENCE_CUTOFF
                 and other.status == JobStatus.DEFINED
@@ -545,10 +580,37 @@ class JobFileCleanup:
             ):
                 continue
             if resolved.is_relative_to(folder) or folder.is_relative_to(resolved):
-                return KEPT_FOR_ANOTHER_JOB
-        if job_directory_foreign(document.project_root, owner, item.directory):
-            return KEPT_IN_ANOTHER_PLACE
-        return None
+                return True
+        return False
+
+    def folder_used_by_another_job(
+        self, directory: Path, *, together: Collection[UUID] = ()
+    ) -> bool:
+        """Return whether a job outside ``together`` uses ``directory``.
+
+        The check a removal makes before a folder goes and a submission makes before writing
+        into one.
+        """
+
+        return self._another_job_uses(
+            resolved_path(directory), self._folders_in_use(), together, self._bound_job_ids()
+        )
+
+    def jobs_in_another_jobs_folder(
+        self, jobs: Sequence[Job], *, together: Callable[[Job], Collection[UUID]]
+    ) -> list[Job]:
+        """Return those of ``jobs`` whose folder a job outside ``together(job)`` uses."""
+
+        folders_in_use = self._folders_in_use()
+        bound = self._bound_job_ids()
+        refused: list[Job] = []
+        for job in jobs:
+            directory = self._job_output_directory(job)
+            if directory is not None and self._another_job_uses(
+                resolved_path(directory), folders_in_use, {job.id, *together(job)}, bound
+            ):
+                refused.append(job)
+        return refused
 
     def _bound_job_ids(self) -> set[UUID]:
         """Return the jobs some definition's mappings bind."""

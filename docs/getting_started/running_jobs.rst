@@ -458,6 +458,23 @@ job's row: it goes to the same button on the next row, or on the previous row if
 that was the last, and to the table when no rows are left. Focus in a form
 field or anywhere else stays where it is, and the selection does not change.
 
+A job's own folder
+~~~~~~~~~~~~~~~~~~
+
+Every job writes in a folder of its own, under ``files/`` and named after its seed. A
+new row whose folder another job already uses, an imported run's for example, gets
+the next free name when it is submitted (``positivemuon_Site_1_2``), and its CASTEP
+files are named to match. A row that is submitted again stays in the folder it has,
+and a reconfigured row stays in its earlier job's folder. A folder that no job uses is
+written into as it stands.
+
+An older project can hold two jobs in one folder. Opening it changes nothing, and
+neither job's files or records change until you act. Finished jobs stay as they are,
+and their results still read. A job waiting to run in such a
+folder is not started: ``Jobs not started`` names it and its folder under ``Details``,
+and the other jobs of the submission go ahead. Remove its row and add it again, and
+the new job gets a folder of its own. The folder stays, because the other job uses it.
+
 Reset and its clean-up
 ~~~~~~~~~~~~~~~~~~~~~~
 

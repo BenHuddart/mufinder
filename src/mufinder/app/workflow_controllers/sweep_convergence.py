@@ -453,8 +453,11 @@ class SweepConvergenceController(WorkflowJobController):
                 existing = self.job_for_sweep_key(definition, key)
                 if existing is not None:
                     if existing.status == JobStatus.DEFINED:
-                        write_job_directory(job_spec, output_root)
+                        own_spec = self.spec_for_defined_job(job_spec, output_root, existing)
+                        if own_spec is not None:
+                            write_job_directory(own_spec, output_root)
                     continue
+                job_spec = self.spec_for_new_job(job_spec, output_root, self.mapping_key(key))
                 write_job_directory(job_spec, output_root)
                 job = self._context.project_service.add_job(
                     document,

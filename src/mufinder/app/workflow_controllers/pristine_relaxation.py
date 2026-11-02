@@ -356,13 +356,16 @@ class PristineRelaxationController(WorkflowJobController):
             existing_job = self.job_for_key(definition, label)
             if existing_job is not None:
                 if existing_job.status == JobStatus.DEFINED and spec is not None:
-                    write_job_directory(spec, output_root)
+                    own_spec = self.spec_for_defined_job(spec, output_root, existing_job)
+                    if own_spec is not None:
+                        write_job_directory(own_spec, output_root)
                 created.append(existing_job)
                 continue
 
             if spec is None:
                 continue
 
+            spec = self.spec_for_new_job(spec, output_root, label)
             write_job_directory(spec, output_root)
             job = self._context.project_service.add_job(
                 document,

@@ -487,10 +487,17 @@ class HyperfineCouplingController(WorkflowJobController):
             existing = self.row_job(definition, key)
             if existing is not None:
                 if existing.status == JobStatus.DEFINED:
-                    existing.label = spec.name
-                    write_job_directory(spec, output_root)
+                    # A source's label can change as others come and go; the job follows
+                    # it unless another job has that name, and then stays where it is.
+                    own_spec = self.spec_for_defined_job(
+                        spec, output_root, existing, name=spec.name
+                    ) or self.spec_for_defined_job(spec, output_root, existing)
+                    if own_spec is not None:
+                        existing.label = own_spec.name
+                        write_job_directory(own_spec, output_root)
                 created.append(existing)
                 continue
+            spec = self.spec_for_new_job(spec, output_root, key)
             write_job_directory(spec, output_root)
             job = self._context.project_service.add_job(
                 document,

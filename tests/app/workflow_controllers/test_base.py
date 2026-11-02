@@ -14,9 +14,11 @@ from pathlib import Path
 
 from mufinder.castep_io.output_parser import CastepResult
 from mufinder.domain.enums import JobStatus, WorkflowStage
-from mufinder.domain.models import CalculationRun, Job
+from mufinder.domain.models import CalculationDefinition, CalculationRun, Job
 from mufinder.services.job_artifacts import ParsedJobArtifacts
 from mufinder.services.project_service import ProjectService
+from mufinder.workflow.merge import resolve_job
+from mufinder.workflow.types import JobPatch, JobSpec, StructureSpec
 
 from mufinder.app.workflow_controllers.base import (
     ControllerResult,
@@ -763,3 +765,79 @@ def test_apply_row_parameters_to_form_state_updates_one_row_and_its_alias() -> N
             )
             is None
         )
+
+
+def _folder_job(document, service, label: str) -> Job:
+    return service.add_job(
+        document, label=label, workflow_stage=WorkflowStage.UEP, calc_type="castep_uep"
+    )
+
+
+def _spec(name: str) -> JobSpec:
+    structure = StructureSpec(
+        lattice_cart=((5.0, 0.0, 0.0), (0.0, 5.0, 0.0), (0.0, 0.0, 5.0)),
+        species=("Si",),
+        positions_frac=((0.0, 0.0, 0.0),),
+    )
+    return resolve_job(
+        name=name,
+        base_structure=structure,
+        workflow_stage=WorkflowStage.UEP,
+        patch=JobPatch(label_suffix=name, structure=structure),
+    )
+
+
+def _folder_controller(tmp_path: Path, *jobs: str):
+    service = ProjectService()
+    document = service.create_project(tmp_path / "p.mufinder", "P")
+    root = document.project_root / "files" / "uep"
+    made = {label: _folder_job(document, service, label) for label in jobs}
+    for label in jobs:
+        (root / label).mkdir(parents=True)
+    context = make_context(
+        document=document,
+        project_service=service,
+        job_output_directory=lambda job: root / job.label,
+    )
+    return _FakeController(context, states={}), document, root, made
+
+
+def test_a_new_job_keeps_its_name_when_nothing_is_in_its_folder(tmp_path: Path) -> None:
+    controller, _document, root, _jobs = _folder_controller(tmp_path)
+    assert controller.spec_for_new_job(_spec("x"), root, "x").name == "x"
+
+
+def test_a_new_job_keeps_its_name_when_no_job_uses_the_folder(tmp_path: Path) -> None:
+    controller, _document, root, _jobs = _folder_controller(tmp_path)
+    (root / "x").mkdir(parents=True)
+    assert controller.spec_for_new_job(_spec("x"), root, "x").name == "x"
+
+
+def test_a_new_job_takes_the_next_free_name_when_another_job_uses_the_folder(
+    tmp_path: Path,
+) -> None:
+    controller, _document, root, _jobs = _folder_controller(tmp_path, "x", "x_2")
+    assert controller.spec_for_new_job(_spec("x"), root, "x").name == "x_3"
+
+
+def test_a_defined_job_is_named_for_its_own_folder(tmp_path: Path) -> None:
+    controller, _document, root, jobs = _folder_controller(tmp_path, "x_2")
+    assert controller.spec_for_defined_job(_spec("x"), root, jobs["x_2"]).name == "x_2"
+
+
+def test_a_defined_job_in_another_jobs_folder_is_not_rewritten(tmp_path: Path) -> None:
+    controller, _document, root, jobs = _folder_controller(tmp_path, "x", "y")
+    assert controller.spec_for_defined_job(_spec("y"), root, jobs["y"], name="x") is None
+
+
+def test_a_rows_earlier_job_shares_its_folder_in_every_definition(tmp_path: Path) -> None:
+    controller, document, _root, jobs = _folder_controller(tmp_path, "x", "y", "z")
+    for label, row in (("x", "row"), ("y", "row"), ("z", "other")):
+        definition = CalculationDefinition(
+            workflow_stage=WorkflowStage.UEP,
+            calc_type="uep",
+            parameters={"job_ids_by_label": {row: str(jobs[label].id)}},
+        )
+        document.calculations[definition.id] = definition
+    controller.stage = WorkflowStage.UEP
+    assert controller.folder_sharers(jobs["x"]) == {jobs["x"].id, jobs["y"].id}
