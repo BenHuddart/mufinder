@@ -812,6 +812,15 @@ class TestAnyFolder:
         assert not by_seed["gone"].importable
         assert any("no longer there" in item for item in by_seed["gone"].blockers)
 
+    def test_a_seed_ending_in_out_keeps_its_input_cell(self, tmp_path: Path) -> None:
+        write_run(tmp_path, "relax-out")
+
+        run = scan_relaxation_folder(tmp_path, host_lattice=HOST_LATTICE).runs[0]
+
+        assert run.importable
+        assert run.input_cell_path == tmp_path / "relax-out.cell"
+        assert run.out_cell_path == tmp_path / "relax-out-out.cell"
+
     def test_task_farm_image_outputs_are_not_runs(self, tmp_path: Path) -> None:
         write_run(tmp_path)
         (tmp_path / "mu_farm001.castep").write_text(_castep(), encoding="utf-8")

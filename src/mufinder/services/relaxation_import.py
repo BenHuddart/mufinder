@@ -711,9 +711,8 @@ def _nearest(castep: Path, candidates: Sequence[Path]) -> tuple[Path | None, str
     if not candidates:
         return None, None
     distances = [_tree_distance(castep.parent, path.parent) for path in candidates]
-    closest = [
-        path for path, value in zip(candidates, distances, strict=True) if value == min(distances)
-    ]
+    nearest = min(distances)
+    closest = [path for path, value in zip(candidates, distances, strict=True) if value == nearest]
     if len(closest) > 1:
         digests = {_digest_or_none(path) for path in closest}
         if len(digests) > 1 or None in digests:
@@ -807,10 +806,12 @@ def _discover_runs(root: Path) -> tuple[list[_RunFiles], tuple[tuple[str, str], 
                     continue
                 if is_file:
                     outputs.append(path)
-            elif name.endswith(_OUT_CELL_SUFFIX):
-                found[_OUT_CELL].setdefault(name[: -len(_OUT_CELL_SUFFIX)], []).append(path)
             elif name.endswith(_CELL_SUFFIX):
+                # ``relax-out.cell`` may be the input of a seed named ``relax-out``,
+                # so it is indexed both ways; only seeds with a ``.castep`` look it up.
                 found[_CELL].setdefault(name[: -len(_CELL_SUFFIX)], []).append(path)
+                if name.endswith(_OUT_CELL_SUFFIX):
+                    found[_OUT_CELL].setdefault(name[: -len(_OUT_CELL_SUFFIX)], []).append(path)
             elif name.endswith(_PARAM_SUFFIX):
                 found[_PARAM].setdefault(name[: -len(_PARAM_SUFFIX)], []).append(path)
 
