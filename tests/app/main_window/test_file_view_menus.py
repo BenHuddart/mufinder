@@ -71,8 +71,12 @@ def test_file_actions_have_the_platform_shortcut(
     assert action.shortcuts()
 
 
-def test_quit_has_the_platform_shortcut_and_role(main_window: MainWindow) -> None:
-    action = _action(main_window, "File", "Quit")
+def test_quit_has_the_platform_shortcut_and_role(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(main_window_module.sys, "platform", "linux")
+
+    action = _action(MainWindow(), "File", "Quit")
 
     assert action.shortcuts() == QKeySequence.keyBindings(QKeySequence.StandardKey.Quit)
     assert action.menuRole() == QAction.MenuRole.QuitRole
