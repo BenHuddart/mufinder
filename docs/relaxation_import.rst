@@ -225,6 +225,11 @@ Decisions
    * - A folder two imports share
      - Each batch's removal takes its records and keeps the files; the last one using
        the folder deletes it. Any job that is not an import of those files refuses.
+   * - A row whose saved seed leads out of its place
+     - A native row with an absolute seed outside the project, or ``..``: the row goes
+       with its job's records and nothing on disk is touched. Nothing in the app can
+       correct a saved name, so refusing would leave the row for good. An import's batch
+       still refuses.
    * - A native row whose folder another job uses
      - The row goes with its job's records and the folder stays, unoffered. A native job
        with no saved seed resolves by its default name, and a normal submit records one

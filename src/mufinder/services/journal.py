@@ -564,7 +564,8 @@ def _remove_imported_relaxations_entry(record: ProvenanceRecord) -> JournalEntry
     kept = _folder_names(record.parameters.get("kept_directories"))
     undeleted = _folder_names(record.parameters.get("undeleted_directories"))
     if kept and not deleted and not undeleted:
-        body += " Their files stay, because another import uses the same folder."
+        whose = "Its" if count == 1 else "Their"
+        body += f" {whose} files stay, because another import uses the same folder."
     elif kept or undeleted:
         if deleted:
             phrase = folder_phrase("Deleted", deleted)
@@ -576,7 +577,8 @@ def _remove_imported_relaxations_entry(record: ProvenanceRecord) -> JournalEntry
             body += f" {folder_phrase('Kept', kept)}, because {reason}."
     elif deleted or (deleted_files and "directories" not in record.parameters):
         # A record from before folders were listed says only that they went.
-        body += " Their job directories were deleted, including the archived original input files."
+        went = "Its job directory was" if count == 1 else "Their job directories were"
+        body += f" {went} deleted, including the archived original input files."
     return _entry(
         record,
         stamp_kind="warning",

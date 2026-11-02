@@ -9,8 +9,10 @@ import pytest
 import mufinder.services.job_file_cleanup as cleanup_module
 from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationDefinition, CalculationRun, Job, Result
+from mufinder.domain.text import KeptFolder
 from mufinder.services.job_file_cleanup import (
     ARCHIVE_FOLDER_NAME,
+    KEPT_FOR_ANOTHER_JOB,
     JobCleanupItem,
     JobFileCleanup,
 )
@@ -330,7 +332,7 @@ def test_a_folder_another_job_uses_is_not_offered_and_only_the_records_go(tmp_pa
     assert job.id not in document.jobs
     assert other.id in document.jobs
     assert [entry.directory for entry in outcome.kept] == [directory]
-    assert outcome.folder_summary() == "kept folder 'relax_a' because another job uses it"
+    assert outcome.kept_folders == (KeptFolder("relax_a", KEPT_FOR_ANOTHER_JOB),)
 
 
 def test_a_folder_holding_or_inside_another_jobs_folder_is_kept(tmp_path: Path) -> None:
@@ -378,7 +380,7 @@ def test_jobs_cleaned_together_may_share_a_folder(tmp_path: Path) -> None:
     assert not directory.exists()
 
 
-def test_a_summary_names_the_folders_of_each_fate_only_when_one_was_kept(tmp_path: Path) -> None:
+def test_an_outcome_lists_the_folders_of_each_fate(tmp_path: Path) -> None:
     service, document = _project(tmp_path)
     mine = _job(service, document, "relax_a")
     moved = _job(service, document, "relax_b")
@@ -405,13 +407,12 @@ def test_a_summary_names_the_folders_of_each_fate_only_when_one_was_kept(tmp_pat
         stop_on_error=True,
     )
 
-    assert outcome.folder_summary() == (
-        "deleted folder 'relax_a'; archived folder 'relax_b'; "
-        "kept folder 'relax_c' because another job uses it"
-    )
+    assert outcome.deleted == (mine_directory,)
+    assert outcome.archived == (moved_directory,)
+    assert [folder.name for folder in outcome.kept_folders] == ["relax_c"]
 
 
-def test_a_summary_with_nothing_kept_is_empty(tmp_path: Path) -> None:
+def test_an_outcome_with_nothing_kept_lists_no_kept_folder(tmp_path: Path) -> None:
     service, document = _project(tmp_path)
     job = _job(service, document, "relax_a")
     directory = _job_directory(document, job.label)
@@ -421,7 +422,7 @@ def test_a_summary_with_nothing_kept_is_empty(tmp_path: Path) -> None:
         [cleanup.plan_item([job])], choose_disposition=lambda _item: "delete", stop_on_error=True
     )
 
-    assert outcome.folder_summary() == ""
+    assert outcome.kept_folders == ()
 
 
 def _cutoff_job(service: ProjectService, document: ProjectDocument, label: str) -> Job:
@@ -679,3 +680,23 @@ def test_a_folder_holding_one_refused_at_its_turn_is_kept(tmp_path: Path) -> Non
     assert (outer / "real" / "kept.castep").is_file()
     assert inner_job.id in document.jobs
     assert [entry.directory for entry in outcome.kept] == [outer]
+
+
+def test_a_job_whose_saved_name_leaves_its_place_does_not_hold_a_folder(tmp_path: Path) -> None:
+    """``..`` reads as a whole workflow's folder, which would otherwise hold every job's."""
+
+    service, document = _project(tmp_path)
+    job = _job(service, document, "relax_a")
+    stray = _job(service, document, "relax_b")
+    stray.status = JobStatus.COMPLETED
+    directory = _job_directory(document, job.label)
+    cleanup = _cleanup(
+        document, {job.label: directory, stray.label: directory.parent.parent / ".." / "files"}
+    )
+
+    outcome = cleanup.execute(
+        [cleanup.plan_item([job])], choose_disposition=lambda _item: "delete", stop_on_error=True
+    )
+
+    assert outcome.kept == ()
+    assert not directory.exists()

@@ -2250,3 +2250,28 @@ def test_a_removal_keeping_its_files_claims_none_went() -> None:
 
 def test_a_record_from_before_folders_were_listed_still_says_they_went() -> None:
     assert "Their job directories were deleted" in _imported_removal_body()
+
+
+def _one_imported_removal_body(**parameters: object) -> str:
+    record = ProvenanceRecord(
+        action="remove_imported_relaxations",
+        workflow_stage=WorkflowStage.MUON_RELAXATION,
+        actor="user",
+        description="Removed an imported relaxation",
+        parameters={"labels": ["a"], "deleted_files": True, **parameters},
+    )
+    return build_journal("Test", [record]).days[0].entries[0].body
+
+
+def test_a_removal_of_one_relaxation_is_singular() -> None:
+    went = _one_imported_removal_body(directories=["/p/a"], kept_directories=[])
+    stays = _one_imported_removal_body(directories=[], kept_directories=["/p/a"])
+
+    assert "Its job directory was deleted" in went
+    assert "Its files stay" in stays
+
+
+def test_a_removal_lists_its_folders_in_order() -> None:
+    body = _imported_removal_body(directories=["/p/b", "/p/a"], kept_directories=["/p/c"])
+
+    assert "Deleted folders 'a' and 'b'" in body

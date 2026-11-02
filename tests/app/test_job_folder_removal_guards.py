@@ -17,6 +17,7 @@ from mufinder.app import workflow_table_utils
 from mufinder.app.main_window import MainWindow
 from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.domain.models import Job, Structure
+from mufinder.domain.text import KeptFolder, folder_outcome_status
 from mufinder.services.journal import build_journal
 from mufinder.services.project_service import ProjectService
 from mufinder.services.relaxation_import_commit import commit_relaxation_import
@@ -52,13 +53,16 @@ class _Project:
         self.batches: list = []
         self.warned: list[str] = []
         self.asked: list[str] = []
+        self.boxes: list[str] = []
         monkeypatch.setattr(
             "mufinder.app.main_window.QMessageBox.warning",
             lambda *args, **kwargs: self.warned.append(args[2]),
         )
         monkeypatch.setattr(
             "mufinder.app.main_window.show_detailed_warning",
-            lambda _parent, _title, text, **kwargs: self.warned.append(text),
+            lambda _parent, title, text, **kwargs: (
+                self.boxes if title == "Folders kept" else self.warned
+            ).append(text),
         )
         monkeypatch.setattr(
             workflow_table_utils, "confirm_destructive", lambda *args, **kwargs: True
@@ -162,8 +166,10 @@ class TestNativeRowInASharedFolder:
         assert project.asked == []
         assert project.warned == []
         assert item.job_id in project.document.jobs
-        assert item.seed_name in project.status()
-        assert "kept" in project.status()
+        assert project.status() == "Removed 1 job; kept 1 folder"
+        assert len(project.boxes) == 1
+        assert "because another job uses it." in project.boxes[0]
+        assert f"'{item.seed_name}'" in project.boxes[0]
 
     def test_no_saved_seed_and_a_default_name_matching_an_import_keeps_the_folder(
         self, project: _Project
@@ -180,7 +186,7 @@ class TestNativeRowInASharedFolder:
         assert _tree(project.files) == before
         assert job.id not in project.document.jobs
         assert item.job_id in project.document.jobs
-        assert "another job uses it" in project.status()
+        assert project.status() == "Removed 1 job; kept 1 folder"
 
     def test_a_normal_submit_landing_in_an_imports_folder_keeps_the_folder(
         self, project: _Project
@@ -267,8 +273,9 @@ class TestNativeRowInASharedFolder:
 
         assert _tree(project.files) == before
         assert job.id not in project.document.jobs
-        assert "not_a_job" in project.status()
-        assert "another workflow" in project.status()
+        assert project.status() == "Removed 1 job; kept 1 folder"
+        assert "'not_a_job'" in project.boxes[0]
+        assert "another workflow" in project.boxes[0]
 
     def test_a_seed_inside_an_imports_folder_keeps_it(self, project: _Project) -> None:
         item = project.import_batch("runs", (1,)).imported[0]
@@ -355,10 +362,8 @@ class TestNativeRowInItsOwnFolder:
 
         assert not (project.charge / "own").exists()
         assert item.job_directory.is_dir()
-        status = project.status()
-        assert "Removed 2 jobs" in status
-        assert "deleted folder 'own'" in status
-        assert f"kept folder '{item.seed_name}' because another job uses it" in status
+        assert project.status() == "Removed 2 jobs; deleted 1 folder; kept 1"
+        assert f"- '{item.seed_name}': another job uses it." in project.boxes[0]
 
 
 class TestLinks:
@@ -479,7 +484,7 @@ class TestLinks:
 
         project.window._reset_failed_jobs([looped], cleanup_choice=True)
         assert (project.charge / "loop").is_symlink()
-        assert "kept folder 'loop'" in project.status()
+        assert project.status() == "Reset 1 failed job; kept 1 folder"
         project.warned.clear()
 
         project.remove_row("looped")
@@ -533,13 +538,9 @@ class TestBatchStatusAndJournal:
         assert _tree(shared.job_directory) == shared_tree
         assert all(not item.job_directory.exists() for item in gone)
         assert kept_item.job_id in project.document.jobs
-        status = project.status()
-        assert status.startswith("Removed 3 imported relaxations")
-        assert f"kept folder '{shared.seed_name}' because another import uses it" in status
-        for item in gone:
-            assert item.seed_name in status
-        assert "deleted folders" in status
-        assert "files stay" not in status
+        assert project.status() == "Removed 3 imported relaxations; deleted 2 folders; kept 1"
+        assert "MuFinder kept 1 folder because another import uses it." in project.boxes[0]
+        assert f"'{shared.seed_name}'" in project.boxes[0]
 
         body = next(
             text for text in project.journal_bodies() if text.startswith("Removed 3 imported")
@@ -691,7 +692,8 @@ class TestCutoffRoute:
         assert job.id not in project.document.jobs
         assert other.id in project.document.jobs
         assert asked == []
-        assert f"kept folder '{job.label}' because another job uses it" in project.status()
+        assert project.status() == "Removed 1 convergence cutoff entry; kept 1 folder"
+        assert f"'{job.label}'" in project.boxes[0]
 
     def test_a_link_in_a_parent_is_refused(self, project: _Project, tmp_path: Path) -> None:
         window, job, output_root, asked = self._sweep(project, tmp_path)
@@ -748,7 +750,7 @@ class TestDashboardReset:
         assert _tree(folder) == ["own.cell"]
         assert job.status == JobStatus.DEFINED
         assert project.warned == []
-        assert project.status() == "Reset 1 failed job and cleaned its folder"
+        assert project.status() == "Reset 1 failed job; cleaned 1 folder"
 
     def test_a_folder_an_import_uses_is_not_cleaned_and_the_status_says_so(
         self, project: _Project
@@ -762,8 +764,7 @@ class TestDashboardReset:
         assert _tree(project.files) == before
         assert job.status == JobStatus.DEFINED
         assert project.warned and "another job uses" in project.warned[0]
-        assert "cleaned" not in project.status().replace("not cleaned", "")
-        assert project.status() == (f"Reset 1 failed job; kept folder '{item.seed_name}'")
+        assert project.status() == "Reset 1 failed job; kept 1 folder"
 
     @pytest.mark.parametrize("seed", ["alias/target", "dangling", "dangling/inner"])
     def test_a_link_is_not_looked_through(self, project: _Project, seed: str) -> None:
@@ -781,7 +782,7 @@ class TestDashboardReset:
         assert _tree(project.files) == before
         assert job.status == JobStatus.DEFINED
         assert project.warned and "link" in project.warned[0]
-        assert "kept folder" in project.status()
+        assert project.status() == "Reset 1 failed job; kept 1 folder"
 
     def test_an_absolute_seed_into_another_workflow_is_not_cleaned(self, project: _Project) -> None:
         project.import_batch("runs", (1,))
@@ -807,9 +808,7 @@ class TestDashboardReset:
 
         assert _tree(project.charge / "own") == ["own.cell"]
         assert _tree(item.job_directory) == imported_tree
-        assert project.status() == (
-            f"Reset 2 failed jobs; cleaned folder 'own'; kept folder '{item.seed_name}'"
-        )
+        assert project.status() == "Reset 2 failed jobs; cleaned 1 folder; kept 1"
 
     def test_keeping_files_says_nothing_about_folders(self, project: _Project) -> None:
         project.import_batch("runs", (1,))
@@ -855,6 +854,119 @@ class TestEnergyBarrierRoute:
 
         assert _tree(project.files) == before
         assert job.id not in project.document.jobs
-        status = project.status()
-        assert status.startswith("Removed 1 energy-barrier path")
-        assert f"kept folder '{item.seed_name}' because another job uses it" in status
+        assert project.status() == "Removed 1 energy-barrier path; kept 1 folder"
+        assert f"'{item.seed_name}'" in project.boxes[0]
+
+
+class TestUnsafeSavedSeed:
+    """Nothing in the app can correct a saved name, so the row goes and the disk is untouched."""
+
+    @pytest.mark.parametrize("seed", [".", "..", "../..", "../../.."])
+    def test_a_name_leading_out_lets_the_row_go(self, project: _Project, seed: str) -> None:
+        project.import_batch("runs", (1,))
+        job = project.native(seed=seed)
+        before = _tree(project.files)
+
+        project.remove_row()
+
+        assert _tree(project.files) == before
+        assert job.id not in project.document.jobs
+        assert project.asked == []
+        assert project.warned == []
+        assert project.status() == "Removed 1 job; kept 1 folder"
+        assert "saved location" in project.boxes[0]
+
+    def test_an_absolute_name_outside_the_project_lets_the_row_go(
+        self, project: _Project, tmp_path: Path
+    ) -> None:
+        project.import_batch("runs", (1,))
+        victim = tmp_path / "elsewhere" / "thesis"
+        victim.mkdir(parents=True)
+        (victim / "thesis.txt").write_text("kept")
+        job = project.native(seed=str(victim))
+
+        project.remove_row()
+
+        assert (victim / "thesis.txt").is_file()
+        assert job.id not in project.document.jobs
+        assert "saved location" in project.boxes[0]
+
+    def test_it_does_not_hold_another_rows_own_folder(self, project: _Project) -> None:
+        project.import_batch("runs", (1,))
+        project.native(label="stray", seed="..")
+        mine = project.native(label="mine", seed="own")
+        (project.charge / "own").mkdir()
+        (project.charge / "own" / "own.castep").write_text("gone")
+
+        project.remove_row("mine")
+
+        assert not (project.charge / "own").exists()
+        assert mine.id not in project.document.jobs
+        assert project.boxes == []
+
+
+class TestALinkIsNoDeadlock:
+    def test_removing_the_link_frees_the_row_and_then_the_batch(self, project: _Project) -> None:
+        """A native row linked into an import's folder: each refuses until the link is gone."""
+
+        outcome = project.import_batch("runs", (1,))
+        item = outcome.imported[0]
+        (project.charge / "linked").symlink_to(item.job_directory, target_is_directory=True)
+        job = project.native(seed="linked")
+
+        project.remove_row()
+        assert job.id in project.document.jobs
+        project.remove_batch(outcome)
+        assert item.job_id in project.document.jobs
+        assert item.job_directory.is_dir()
+
+        (project.charge / "linked").unlink()
+        project.remove_row()
+        project.remove_batch(outcome)
+
+        assert job.id not in project.document.jobs
+        assert item.job_id not in project.document.jobs
+        assert not item.job_directory.exists()
+
+
+class TestTheBoxAndTheBarFit:
+    """Measured limits from a GUI check at the default window width and a 1051 px screen."""
+
+    FREE_STATUS_WIDTH = 1028
+    SCREEN_HEIGHT = 1051
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            folder_outcome_status("Removed 999 imported relaxations", deleted=999, kept=999),
+            folder_outcome_status("Removed 999 jobs", deleted=999, archived=999, kept=999),
+            folder_outcome_status(
+                "Removed 999 convergence cutoff entries", deleted=999, archived=999, kept=999
+            ),
+            folder_outcome_status("Removed 999 energy-barrier paths", deleted=999, kept=999),
+            folder_outcome_status("Reset 999 failed jobs", cleaned=999, kept=999),
+        ],
+    )
+    def test_the_longest_status_fits(self, main_window: MainWindow, text: str) -> None:
+        metrics = main_window.statusBar().fontMetrics()
+
+        assert metrics.horizontalAdvance(text) <= self.FREE_STATUS_WIDTH
+
+    @pytest.mark.parametrize("title", ["Folders kept", "Directory cleanup issues"])
+    def test_many_kept_folders_stay_on_screen_with_their_names_under_details(
+        self, main_window: MainWindow, monkeypatch, title: str
+    ) -> None:
+        from PySide6.QtWidgets import QMessageBox
+
+        shown: list[QMessageBox] = []
+        monkeypatch.setattr(QMessageBox, "exec", lambda box: shown.append(box) or 0)
+        names = [f"positivemuon_Site_{index}" for index in range(15)]
+        reason = ("another job uses it", "other jobs use them")
+
+        main_window._show_kept_folders([KeptFolder(name, reason) for name in names], title=title)
+
+        box = shown[0]
+        assert box.text() == "MuFinder kept 15 folders because other jobs use them."
+        assert box.sizeHint().height() < self.SCREEN_HEIGHT
+        assert all(name in box.detailedText() for name in names)
+        assert box.detailedText().index("Site_2") < box.detailedText().index("Site_10")

@@ -71,9 +71,9 @@ def _legacy_quantum_row(tmp_path: Path, *, singlepoint_status: JobStatus, phonon
 def _capture_warnings(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     warnings: list[str] = []
     monkeypatch.setattr(
-        main_window_module.QMessageBox,
-        "warning",
-        lambda _parent, _title, text: warnings.append(text),
+        main_window_module,
+        "show_detailed_warning",
+        lambda _parent, _title, text, **_kwargs: warnings.append(text),
     )
     return warnings
 
@@ -151,10 +151,7 @@ def test_resetting_a_phonon_keeps_a_folder_an_unrelated_job_uses(
 
     assert phonon.status == JobStatus.DEFINED
     assert sorted(path.name for path in directory.iterdir()) == QUANTUM_FILES
-    assert (
-        f"- quantum_phonon_siteA: another job uses the same output folder ({directory.resolve()}); "
-        "its folder was kept"
-    ) in warnings[0]
+    assert f"- '{QUANTUM_SEED}': another job uses the same output folder." in warnings[0]
     window.close()
 
 
@@ -174,7 +171,7 @@ def test_resetting_a_relaxation_keeps_a_folder_its_replacement_uses(
 
     assert old.status == JobStatus.DEFINED
     assert sorted(path.name for path in directory.iterdir()) == ALL_FILES
-    assert f"- {SEED}: another job uses the same output folder" in warnings[0]
+    assert f"- '{SEED}': another job uses the same output folder." in warnings[0]
     window.close()
 
 

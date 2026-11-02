@@ -198,7 +198,7 @@ confirmation. Removing a cutoff whose job directory contains files also asks
 what to do with them: ``Delete files`` deletes them, ``Move files`` (the
 default) moves them into a ``removed_from_workflow`` folder, and ``Cancel``
 keeps the cutoff. A folder another job also uses is not offered: the cutoff goes,
-the folder stays and the status bar says so. A folder that is a link, or is reached
+the folder stays and a box says why. A folder that is a link, or is reached
 through one, is refused and the cutoff stays until the link is removed.
 
 Adding cutoffs

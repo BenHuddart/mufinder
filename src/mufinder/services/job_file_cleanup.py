@@ -29,11 +29,12 @@ Layering: this lives in ``mufinder.services`` and imports ``domain`` and
 folder goes.
 
 Two answers to "this folder may not go", because they leave the user in different
-places. A folder that cannot be read safely (a link, a name that leaves its place)
-is *refused*: the item stays, since the user can correct the disk and try again. A
-folder that is sound but not the item's alone is *kept*: the item's records go and
-the folder stays, because waiting for the other job to go first could wait for ever
-(an imported batch waits for any native job in its folder).
+places. A link is *refused*: the item stays, since the user can remove the link and
+try again. Any other folder that is not the item's alone or not its own (another
+job's, or one a saved name leads out to) is *kept*: the item's records go and the
+folder stays, because nothing in the app can correct a saved name, and waiting for the
+other job to go first could wait for ever (an imported batch waits for any native job
+in its folder).
 """
 
 from __future__ import annotations
@@ -52,9 +53,10 @@ from uuid import UUID
 from mufinder.domain.constants import IMPORTED_JOB_TAG
 from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.domain.models import Job
-from mufinder.domain.text import folder_phrase, plain_error
+from mufinder.domain.text import KeptFolder, plain_error
 from mufinder.services.job_paths import (
     job_directory_foreign,
+    job_directory_link_refusal,
     job_directory_on_disk,
     job_directory_refusal,
     resolved_path,
@@ -85,6 +87,10 @@ _JOB_MAPPING_NAMES = (
 
 #: Why a folder stays, for one folder and for several.
 KEPT_FOR_ANOTHER_JOB = ("another job uses it", "other jobs use them")
+KEPT_AS_NOT_ITS_OWN = (
+    "its saved location is not this job's own folder",
+    "their saved locations are not these jobs' own folders",
+)
 KEPT_IN_ANOTHER_PLACE = (
     "it belongs to another workflow or charge state",
     "they belong to other workflows or charge states",
@@ -162,30 +168,12 @@ class JobCleanupOutcome:
     archived: tuple[Path, ...] = ()
     kept: tuple[JobCleanupKept, ...] = ()
 
-    def folder_summary(self, *, limit: int | None = 3) -> str:
-        """Return what happened to each folder, or ``""`` when no folder stayed.
+    @property
+    def kept_folders(self) -> tuple[KeptFolder, ...]:
+        """Return each folder that stayed, with why."""
 
-        Only a kept folder needs saying: otherwise a removal took what it asked to.
-        """
-
-        if not self.kept:
-            return ""
-        parts = []
-        if self.deleted:
-            names = list(dict.fromkeys(path.name for path in self.deleted))
-            parts.append(folder_phrase("deleted", names, limit=limit))
-        if self.archived:
-            names = list(dict.fromkeys(path.name for path in self.archived))
-            parts.append(folder_phrase("archived", names, limit=limit))
-        for because in dict.fromkeys(entry.because for entry in self.kept):
-            names = list(
-                dict.fromkeys(
-                    entry.directory.name for entry in self.kept if entry.because == because
-                )
-            )
-            reason = because[0] if len(names) == 1 else because[1]
-            parts.append(f"{folder_phrase('kept', names, limit=limit)} because {reason}")
-        return "; ".join(parts)
+        folders = {entry.directory: entry.because for entry in self.kept}
+        return tuple(KeptFolder(path.name, because) for path, because in folders.items())
 
     @property
     def completed(self) -> bool:
@@ -453,13 +441,12 @@ class JobFileCleanup:
         return outcome()
 
     def _folder_refusal(self, item: JobCleanupItem) -> str | None:
-        """Return why ``item``'s folder cannot be read safely, whichever route planned it."""
+        """Return why ``item``'s folder has to stay with the item, whichever route planned it."""
 
         document = self._document_getter()
         if document is None or item.directory is None:
             return None
-        owner = item.jobs[0] if item.jobs else None
-        reason = job_directory_refusal(document.project_root, owner, item.directory)
+        reason = job_directory_link_refusal(document.project_root, item.directory)
         return f"- {item.label}: {reason}" if reason is not None else None
 
     def _folder_kept_because(
@@ -478,12 +465,20 @@ class JobFileCleanup:
         if document is None or item.directory is None:
             return None
         owner = item.jobs[0] if item.jobs else None
+        if job_directory_refusal(document.project_root, owner, item.directory):
+            return KEPT_AS_NOT_ITS_OWN
         folder = resolved_path(item.directory)
         for other in document.jobs.values():
             if other.id in together:
                 continue
             directory = self._job_output_directory(other)
             if directory is None:
+                continue
+            # A saved name leading out of its place (``..`` reads as a whole workflow's
+            # folder) says nothing about who uses what. A link really does point here.
+            if job_directory_refusal(
+                document.project_root, other, directory
+            ) and not job_directory_link_refusal(document.project_root, directory):
                 continue
             resolved = resolved_path(directory)
             if resolved == folder and (

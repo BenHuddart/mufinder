@@ -13,6 +13,7 @@ from mufinder.services.job_paths import (
     definition_output_directory,
     job_directory_foreign,
     job_directory_link,
+    job_directory_link_refusal,
     job_directory_on_disk,
     job_directory_refusal,
     job_output_directory,
@@ -387,6 +388,12 @@ class TestLinksBelowFiles:
         outside.symlink_to(charge, target_is_directory=True)
 
         assert job_directory_link(root, outside / "job") == outside
+
+    def test_a_name_leading_out_is_refused_but_is_no_link_refusal(self, tmp_path: Path) -> None:
+        root, charge = self._charge(tmp_path)
+
+        assert job_directory_link_refusal(root, charge / "..") is None
+        assert job_directory_refusal(root, None, charge / "..") is not None
 
     def test_a_saved_path_by_another_spelling_of_the_project_has_no_link(
         self, tmp_path: Path

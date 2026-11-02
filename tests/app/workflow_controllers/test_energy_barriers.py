@@ -107,6 +107,7 @@ def _stub_energy_barriers_deps(**overrides) -> EnergyBarriersDeps:
         show_warning=lambda _title, _text: None,
         dialog_parent=lambda: None,
         clean_up_removed_jobs=lambda _plan, **_labels: JobCleanupOutcome(),
+        report_cleanup_outcome=lambda _done, _outcome: None,
         paths_removed=lambda: None,
     )
     base.update(overrides)
@@ -491,12 +492,16 @@ def test_energy_barriers_remove_paths_stops_when_file_cleanup_is_cancelled(tmp_p
     assert [candidate.key for candidate in controller.neb_candidates()] == ["source-key"]
     assert removed == []
 
-    controller._deps = _stub_energy_barriers_deps(paths_removed=lambda: removed.append(True))
+    reported: list[str] = []
+    controller._deps = _stub_energy_barriers_deps(
+        paths_removed=lambda: removed.append(True),
+        report_cleanup_outcome=lambda done, _outcome: reported.append(done),
+    )
     controller.remove_paths(["source-key"])
 
     assert controller.neb_candidates() == []
     assert removed == [True]
-    assert statuses == ["Removed 1 energy-barrier path"]
+    assert reported == ["Removed 1 energy-barrier path"]
 
 
 @pytest.mark.parametrize(

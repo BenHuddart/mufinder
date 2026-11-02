@@ -2,7 +2,15 @@ from __future__ import annotations
 
 import pytest
 
-from mufinder.domain.text import folder_phrase, natural_sort_key, plural, space_group_text
+from mufinder.domain.text import (
+    KeptFolder,
+    folder_outcome_status,
+    folder_phrase,
+    kept_folders_message,
+    natural_sort_key,
+    plural,
+    space_group_text,
+)
 
 
 @pytest.mark.parametrize(
@@ -62,14 +70,58 @@ def test_plain_error_drops_the_errno_and_the_path() -> None:
     assert plain_error(ValueError("Unknown block FOO.")) == "Unknown block FOO"
 
 
-def test_folder_phrase_agrees_with_the_number_of_folders() -> None:
+def test_folder_phrase_agrees_with_the_number_of_folders_and_sorts_them() -> None:
     assert folder_phrase("kept", ["a"]) == "kept folder 'a'"
-    assert folder_phrase("deleted", ["a", "b"]) == "deleted folders 'a' and 'b'"
-    assert folder_phrase("deleted", ["a", "b", "c"]) == "deleted folders 'a', 'b' and 'c'"
-
-
-def test_folder_phrase_counts_the_names_past_its_limit() -> None:
-    assert (
-        folder_phrase("kept", ["a", "b", "c", "d"], limit=2) == "kept folders 'a', 'b' and 2 more"
+    assert folder_phrase("deleted", ["b", "a"]) == "deleted folders 'a' and 'b'"
+    assert folder_phrase("deleted", ["Mu_10", "Mu_2", "Mu_1"]) == (
+        "deleted folders 'Mu_1', 'Mu_2' and 'Mu_10'"
     )
-    assert folder_phrase("kept", ["a", "b"], limit=2) == "kept folders 'a' and 'b'"
+
+
+@pytest.mark.parametrize(
+    ("counts", "expected"),
+    [
+        ({}, "Removed 1 job"),
+        ({"deleted": 1}, "Removed 1 job; deleted 1 folder"),
+        ({"kept": 1}, "Removed 1 job; kept 1 folder"),
+        ({"deleted": 1, "kept": 1}, "Removed 1 job; deleted 1 folder; kept 1"),
+        ({"deleted": 7, "kept": 3}, "Removed 1 job; deleted 7 folders; kept 3"),
+        (
+            {"deleted": 2, "archived": 1, "kept": 1},
+            "Removed 1 job; deleted 2 folders; archived 1; kept 1",
+        ),
+        ({"cleaned": 1}, "Removed 1 job; cleaned 1 folder"),
+    ],
+)
+def test_folder_outcome_status_gives_counts_with_one_noun(counts, expected) -> None:
+    assert folder_outcome_status("Removed 1 job", **counts) == expected
+
+
+def test_kept_folders_message_says_why_for_one_folder() -> None:
+    reasons = ("another job uses it", "other jobs use them")
+
+    assert kept_folders_message([KeptFolder("a", reasons)]).splitlines() == [
+        "MuFinder kept 1 folder because another job uses it.",
+        "- 'a': another job uses it.",
+    ]
+
+
+def test_kept_folders_message_sorts_and_agrees_for_several() -> None:
+    reasons = ("another job uses it", "other jobs use them")
+    kept = [KeptFolder(name, reasons) for name in ("Mu_10", "Mu_2", "Mu_2")]
+
+    assert kept_folders_message(kept).splitlines() == [
+        "MuFinder kept 2 folders because other jobs use them.",
+        "- 'Mu_2': another job uses it.",
+        "- 'Mu_10': another job uses it.",
+    ]
+
+
+def test_kept_folders_message_with_mixed_reasons_gives_each_under_details() -> None:
+    kept = [KeptFolder("a", ("one", "many")), KeptFolder("b", ("other", "others"))]
+
+    assert kept_folders_message(kept).splitlines() == [
+        "MuFinder kept 2 folders. Details gives the reason for each.",
+        "- 'a': one.",
+        "- 'b': other.",
+    ]

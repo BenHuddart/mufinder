@@ -270,6 +270,20 @@ def job_directory_on_disk(project_root: Path, directory: Path) -> bool:
     return directory.exists() or job_directory_link(project_root, directory) is not None
 
 
+def job_directory_link_refusal(project_root: Path, directory: Path) -> str | None:
+    """Return why ``directory`` is a link or reached through one, or ``None``.
+
+    Checked before resolving, which would look through it: a link is not the job's folder,
+    whatever it points at, and deleting one neither removes nor refuses.
+    """
+
+    if directory.is_symlink():
+        return f"its folder is a link to somewhere else ({directory.name!r})"
+    if (link := job_directory_link(project_root, directory)) is not None:
+        return f"its folder is reached through a link ({link.name!r})"
+    return None
+
+
 def job_directory_refusal(project_root: Path, job: Job | None, directory: Path) -> str | None:
     """Return why ``directory`` must not be deleted as a job's own folder, or ``None``.
 
@@ -282,12 +296,8 @@ def job_directory_refusal(project_root: Path, job: Job | None, directory: Path) 
 
     if ".." in directory.parts:
         return f"its folder name leads out of its own folder ({directory.name!r})"
-    # Before resolving, which would look through it: a link is not the job's folder,
-    # whatever it points at, and deleting one neither removes nor refuses.
-    if directory.is_symlink():
-        return f"its folder is a link to somewhere else ({directory.name!r})"
-    if (link := job_directory_link(project_root, directory)) is not None:
-        return f"its folder is reached through a link ({link.name!r})"
+    if (link_refusal := job_directory_link_refusal(project_root, directory)) is not None:
+        return link_refusal
     resolved = resolved_path(directory)
     files_root = project_root.resolve() / "files"
     if not resolved.is_relative_to(files_root):

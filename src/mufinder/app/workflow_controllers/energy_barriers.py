@@ -221,6 +221,7 @@ class EnergyBarriersDeps:
     show_warning: Callable[[str, str], None]
     dialog_parent: Callable[[], QWidget | None]
     clean_up_removed_jobs: Callable[..., JobCleanupOutcome]
+    report_cleanup_outcome: Callable[[str, JobCleanupOutcome], None]
     paths_removed: Callable[[], None]
 
 
@@ -788,9 +789,9 @@ class EnergyBarriersController(WorkflowJobController):
         self.remove_rows(removed)
         self.refresh_view()
         self._deps.paths_removed()
-        status = f"Removed {plural(len(removed), 'energy-barrier path')}"
-        folders = outcome.folder_summary()
-        self._context.status_message(f"{status}; {folders}" if folders else status)
+        self._deps.report_cleanup_outcome(
+            f"Removed {plural(len(removed), 'energy-barrier path')}", outcome
+        )
         self._context.persist_ui_state(
             failure_message="Energy Barriers paths were removed, but autosave failed."
         )

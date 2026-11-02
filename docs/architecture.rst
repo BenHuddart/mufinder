@@ -554,9 +554,11 @@ defined by two of these modules, and a pinned count may only fall.
        ``choose_disposition`` callable answers, applies an *Apply to All*
        answer to later items, deletes the records (``delete_job_records``)
        and returns a ``JobCleanupOutcome`` naming each folder deleted, archived
-       or kept. A folder that cannot be read safely is refused and its item
-       stays; a sound folder that is not the item's alone is not offered, so its
-       records go and the folder stays. It never shows a dialog: the
+       or kept. A link is refused and its item stays; any other folder that is not
+       the item's alone or not its own is not offered, so its records go and the
+       folder stays. ``mufinder.domain.text`` words the result for every route:
+       ``folder_outcome_status`` counts for the status bar, ``kept_folders_message``
+       says why with names for Details. It never shows a dialog: the
        window asks and reports. ``clear_directory_contents`` empties a
        directory but keeps its inputs, for the failed-job reset and fresh
        start. Every workflow controller reaches it as

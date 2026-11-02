@@ -181,11 +181,15 @@ real folder rather than a link, is the one the import recorded writing to, and i
 used by no job other than another import of the same files. Otherwise it deletes the
 rows, mapping entries, jobs, runs, results, structures, sites and copied files
 as one unit, and records the removal in the project provenance and Journal. When some
-of a batch's folders go and others stay, the status bar and the Journal name each one.
+of a batch's folders go and others stay, the status bar counts them
+(``Removed 3 imported relaxations; deleted 2 folders; kept 1``), a box says why with
+the names under ``Details``, and the Journal names each one.
 
 A row of your own whose job folder is also used by an imported relaxation or another
-job comes out without touching that folder, and the status bar says the folder was
-kept. MuFinder does not offer to delete or move it.
+job, or whose saved location is not its own folder, comes out without touching that
+folder. MuFinder does not offer to delete or move it: the status bar counts it as kept,
+and a box says why with the name under ``Details``. A folder that is a link keeps the
+row until you remove the link.
 
 The reference check covers quantum-corrections and energy-barrier definitions,
 comparison tables, relaxation-analysis workspaces, and muon-sites summary
