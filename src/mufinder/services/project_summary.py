@@ -760,7 +760,7 @@ def _candidate_facts(document: ProjectDocument) -> tuple[str, ...]:
     ]
     if not sites:
         return ("No candidate sites yet",)
-    from_uep = sum(site.generation_method.startswith("uep_cluster") for site in sites)
+    from_uep = sum((site.generation_method or "").startswith("uep_cluster") for site in sites)
     facts = [plural(len(sites), "candidate site")]
     if from_uep:
         facts.append(f"{from_uep} from UEP clusters")

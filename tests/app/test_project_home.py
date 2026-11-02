@@ -7,14 +7,18 @@ from pathlib import Path
 from PySide6.QtCore import QPoint, Qt
 from PySide6.QtGui import QPixmap
 from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QApplication
 
 from mufinder.app import theme as theme_module
 from mufinder.app.cell_survey_widget import FALLBACK_NOTE, CellSurveyWidget
+from mufinder.app.main_window import MainWindow
 from mufinder.app.project_home_trail import (
     FieldNotesPanel,
     ProjectHomeChartWidget,
     ProjectHomeWidget,
 )
+from mufinder.domain.models import MuonSite
+from mufinder.services.project_service import ProjectService
 from mufinder.services.project_summary import WORKFLOW_STAGES, summarize_project
 from mufinder.services.project_survey import (
     SurveyLayer,
@@ -123,6 +127,32 @@ def test_home_widget_follows_the_selected_stage_in_the_survey(qapp, tmp_path: Pa
     home.route_requested.connect(routes.append)
     home._journal_button.click()
     assert routes == ["provenance_log"]
+
+
+def test_project_with_a_site_without_generation_method_opens_with_its_home_filled(
+    main_window: MainWindow, tmp_path: Path
+) -> None:
+    project = muon_project(tmp_path)
+    site = MuonSite(
+        label="mu3",
+        initial_fractional_position=[0.25, 0.25, 0.25],
+        source_structure_id=project.host.id,
+    )
+    project.document.sites[site.id] = site
+    ProjectService().save_project(project.document)
+
+    main_window.show()
+    assert main_window.open_project(project.document.project_root)
+    QApplication.processEvents()
+
+    assert main_window._document.sites[site.id].generation_method is None
+    home = main_window._project_home
+    assert main_window._home_content_stack.currentWidget() is main_window._project_home_page
+    assert home._progress.text()
+    home.chart.select_stage("muon_candidates")
+    # The site counts as a candidate but not as one from UEP clusters.
+    assert home.field_notes.stage().facts == ("3 candidate sites", "1 from UEP clusters")
+    main_window.close()
 
 
 def test_home_widget_defers_work_until_shown(qapp, tmp_path: Path) -> None:

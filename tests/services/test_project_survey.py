@@ -477,3 +477,4 @@ def test_a_generated_uep_candidate_reads_as_a_uep_site(tmp_path) -> None:
     assert project_survey._method_label("uep_cluster") == "UEP site"
     assert project_survey._method_label("uep_batch_cluster") == "UEP site"
     assert project_survey._method_label("random") == "random"
+    assert project_survey._method_label(None) == "unknown method"
