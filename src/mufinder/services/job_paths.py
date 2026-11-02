@@ -239,10 +239,16 @@ def job_directory_refusal(project_root: Path, job: Job, directory: Path) -> str 
     files_root = root / "files"
     if resolved.is_relative_to(files_root) and len(resolved.relative_to(files_root).parts) < 2:
         return f"its folder is the folder of a whole workflow ({resolved.name!r})"
-    if is_muon_relaxation_calc_type(job.calc_type) and resolved.name in {
+    charge_folders = {
         muon_charge_state_prefix(POSITIVE_MUON_CHARGE_STATE),
         muon_charge_state_prefix(MUONIUM_CHARGE_STATE),
-    }:
+    }
+    # By place, not name alone: a job inside a charge folder may have a seed of that name.
+    if (
+        is_muon_relaxation_calc_type(job.calc_type)
+        and resolved.name in charge_folders
+        and resolved.parent.name not in charge_folders
+    ):
         return f"its folder is the one shared by a whole charge state ({resolved.name!r})"
     return None
 

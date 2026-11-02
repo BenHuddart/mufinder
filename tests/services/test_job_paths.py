@@ -282,3 +282,20 @@ def test_a_seed_with_stray_spaces_names_the_folder_written_with_them(tmp_path: P
     (charge / "seed").mkdir()
 
     assert resolve() == charge / "seed "
+
+
+def test_a_seed_named_like_a_charge_folder_is_still_its_own_folder(tmp_path: Path) -> None:
+    from mufinder.services.job_paths import job_directory_refusal
+
+    job = Job(
+        label="site",
+        workflow_stage=WorkflowStage.MUON_RELAXATION,
+        calc_type="castep_positivemuon_relaxation",
+    )
+    charge = tmp_path / "files" / "muon_relaxation" / "positivemuon"
+    (charge / "muonium").mkdir(parents=True)
+
+    assert job_directory_refusal(tmp_path, job, charge / "muonium") is None
+    assert job_directory_refusal(tmp_path, job, charge) is not None
+    assert job_directory_refusal(tmp_path, job, charge.parent) is not None
+    assert job_directory_refusal(tmp_path, job, charge / "..") is not None
