@@ -23,7 +23,9 @@ The service never shows a dialog: the window asks the questions and reports the
 outcome. Filesystem operations run through ``run_file_op`` so the window can run
 them off the GUI thread.
 
-Layering: this lives in ``mufinder.services`` and imports ``domain`` only.
+Layering: this lives in ``mufinder.services`` and imports ``domain`` and
+``job_paths``, whose ``job_directory_refusal`` is the last check before any
+folder goes.
 """
 
 from __future__ import annotations
@@ -40,6 +42,7 @@ from typing import TYPE_CHECKING, Literal
 from uuid import UUID
 
 from mufinder.domain.models import Job
+from mufinder.services.job_paths import job_directory_refusal
 
 if TYPE_CHECKING:
     from mufinder.services.project_service import ProjectDocument
@@ -225,7 +228,11 @@ class JobFileCleanup:
             remote = remote_directory(job)
             reason = ""
             if local is not None:
-                if (
+                directory = self._job_output_directory(job)
+                unsafe = job_directory_refusal(document.project_root, job, directory)
+                if unsafe is not None:
+                    reason = unsafe
+                elif (
                     not local.is_relative_to(files_root)
                     or len(local.relative_to(files_root).parts) < 2
                 ):
@@ -293,6 +300,12 @@ class JobFileCleanup:
             # archived a directory this one shares (a reconfigured relaxation
             # row's old and replacement jobs use one folder).
             if item.directory is not None and item.directory.exists():
+                refusal = self._folder_refusal(item)
+                if refusal is not None:
+                    failures.append(JobCleanupFailure(item, refusal=refusal))
+                    if stop_on_error:
+                        break
+                    continue
                 disposition = shared_disposition or choose_disposition(item)
                 if disposition is None:
                     return JobCleanupOutcome(tuple(cleaned), tuple(failures), cancelled=True)
@@ -312,6 +325,32 @@ class JobFileCleanup:
                 self.delete_job_records(job.id)
             cleaned.append(item)
         return JobCleanupOutcome(tuple(cleaned), tuple(failures))
+
+    def _folder_refusal(self, item: JobCleanupItem) -> str | None:
+        """Return why ``item``'s folder may not go, whichever route planned it.
+
+        Run on every item, since not every route asks for the ownership check: a
+        folder holding a job other than the item's own is never the item's alone.
+        """
+
+        document = self._document_getter()
+        if document is None or item.directory is None or not item.jobs:
+            return None
+        reason = job_directory_refusal(document.project_root, item.jobs[0], item.directory)
+        if reason is None:
+            folder = item.directory.resolve()
+            own = {job.id for job in item.jobs}
+            for other in document.jobs.values():
+                if other.id in own:
+                    continue
+                directory = self._job_output_directory(other)
+                if directory is None:
+                    continue
+                resolved = directory.resolve()
+                if resolved != folder and resolved.is_relative_to(folder):
+                    reason = f"its folder holds another job's folder ({other.label})"
+                    break
+        return f"- {item.label}: {reason}" if reason is not None else None
 
     def delete_job_records(self, job_id: UUID) -> None:
         """Delete a job with its runs and results, and unbind it from every definition.

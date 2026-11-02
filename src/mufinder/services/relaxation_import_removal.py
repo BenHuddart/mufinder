@@ -31,17 +31,20 @@ treated as a referrer: it is the thing being removed from, not a dependant.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 import shutil
 from typing import Any, Sequence
 from uuid import UUID
 
+from mufinder.domain.charge_states import muon_charge_state_prefix, muon_relaxation_charge_state
 from mufinder.domain.constants import IMPORTED_JOB_TAG
 from mufinder.domain.enums import WorkflowStage
 from mufinder.domain.models import ProvenanceRecord
 from mufinder.domain.text import plain_error, plural
 from mufinder.persistence.codec import uuid_or_none
+from mufinder.services.job_paths import job_directory_refusal
 
 #: Provenance action for one removal. ``services.journal`` renders nothing for
 #: an action it does not know, so a matching journal builder is required.
@@ -80,13 +83,25 @@ class RemovalPlan:
     #: User-facing descriptions of what still needs these entities. Non-empty
     #: means the removal must be refused.
     blockers: tuple[str, ...] = ()
-    directories: tuple[Path, ...] = ()
+    #: Each target job's folder, as the project resolves it.
+    job_directories: Mapping[UUID, Path] = field(default_factory=dict)
+    #: The folders of every other job, none of which a removal may touch.
+    other_job_directories: Mapping[UUID, Path] = field(default_factory=dict)
+    #: Why a target's folder is not one this removal may delete. Non-empty means
+    #: the removal must be refused and nothing goes.
+    unsafe: tuple[str, ...] = ()
+
+    @property
+    def directories(self) -> tuple[Path, ...]:
+        """Return the folders the removal deletes."""
+
+        return tuple(self.job_directories.values())
 
     @property
     def allowed(self) -> bool:
         """Return whether the removal may proceed."""
 
-        return bool(self.targets) and not self.blockers
+        return bool(self.targets) and not self.blockers and not self.unsafe
 
 
 @dataclass(frozen=True, slots=True)
@@ -211,21 +226,89 @@ def find_references(document: Any, targets: Sequence[ImportedRelaxationRef]) -> 
     return list(dict.fromkeys(references))
 
 
+def _folder_refusal(
+    document: Any,
+    ref: ImportedRelaxationRef,
+    directory: Path,
+    other_job_directories: Mapping[UUID, Path],
+) -> str | None:
+    """Return why ``directory`` is not this relaxation's own folder to delete, or ``None``.
+
+    It has to be strictly inside the job's charge folder, be the folder the import
+    recorded writing to, and be no other job's. An imported folder holds the only
+    copy of its results, and of any other job's it might turn out to be.
+    """
+
+    job = document.jobs.get(ref.job_id)
+    if job is None:
+        return None
+    reason = job_directory_refusal(document.project_root, job, directory)
+    if reason is not None:
+        return reason
+    resolved = directory.resolve()
+    charge_state = muon_relaxation_charge_state(job.calc_type)
+    charge_folder = muon_charge_state_prefix(charge_state) if charge_state else None
+    if resolved.parent.name != charge_folder:
+        return f"its folder is not inside its charge folder ({directory.name!r})"
+    result = document.results.get(ref.result_id) if ref.result_id is not None else None
+    written = {Path(name).parts[0] for name in (result.output_files if result else ()) if name}
+    if directory.name not in written:
+        return f"its folder is not the one its files were written to ({directory.name!r})"
+    for other_id, other in other_job_directories.items():
+        other_resolved = other.resolve()
+        if other_id != ref.job_id and (
+            other_resolved.is_relative_to(resolved) or resolved.is_relative_to(other_resolved)
+        ):
+            return f"another job uses its folder ({directory.name!r})"
+    return None
+
+
+def unsafe_directories(
+    document: Any,
+    targets: Sequence[ImportedRelaxationRef],
+    job_directories: Mapping[UUID, Path],
+    other_job_directories: Mapping[UUID, Path],
+) -> tuple[str, ...]:
+    """Return a line per target whose folder may not be deleted."""
+
+    lines: list[str] = []
+    target_directories = dict(job_directories)
+    for ref in targets:
+        directory = job_directories.get(ref.job_id)
+        if directory is None:
+            continue
+        # A batch's own jobs must not share a folder either.
+        others = {
+            **other_job_directories,
+            **{key: value for key, value in target_directories.items() if key != ref.job_id},
+        }
+        reason = _folder_refusal(document, ref, directory, others)
+        if reason is not None:
+            lines.append(f"{ref.label}: {reason}")
+    return tuple(lines)
+
+
 def plan_removal(
     document: Any,
     targets: Sequence[ImportedRelaxationRef],
     *,
-    job_directories: dict[UUID, Path] | None = None,
+    job_directories: Mapping[UUID, Path] | None = None,
+    other_job_directories: Mapping[UUID, Path] | None = None,
 ) -> RemovalPlan:
     """Describe what removing ``targets`` would do, or why it cannot happen."""
 
-    directories = tuple(
-        path for ref in targets if (path := (job_directories or {}).get(ref.job_id)) is not None
-    )
+    directories = {
+        ref.job_id: path
+        for ref in targets
+        if (path := (job_directories or {}).get(ref.job_id)) is not None
+    }
+    others = dict(other_job_directories or {})
     return RemovalPlan(
         targets=tuple(targets),
         blockers=tuple(find_references(document, targets)),
-        directories=directories,
+        job_directories=directories,
+        other_job_directories=others,
+        unsafe=unsafe_directories(document, targets, directories, others),
     )
 
 
@@ -252,6 +335,13 @@ def remove_imported_relaxations(
             removed=0,
             errors=["Removal was refused because something still references these relaxations."],
         )
+    # Checked again at the deletion, not only at planning: a confirmation dialog
+    # sits between the two, and a plan can be built by hand.
+    unsafe = unsafe_directories(
+        document, plan.targets, plan.job_directories, plan.other_job_directories
+    )
+    if unsafe:
+        return RemovalOutcome(removed=0, errors=list(unsafe))
 
     errors: list[str] = []
     removed = 0
@@ -344,6 +434,7 @@ def detach_rows_from_definition(definition: Any, targets: Sequence[ImportedRelax
 
 
 __all__ = [
+    "unsafe_directories",
     "REMOVAL_ACTION",
     "ImportedRelaxationRef",
     "RemovalOutcome",

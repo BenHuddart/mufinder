@@ -1214,3 +1214,305 @@ class TestUnreadableFolders:
         assert shown == [
             ("Could not read folder", "Could not read this folder: permission denied.")
         ]
+
+
+def _tree(root: Path) -> list[str]:
+    """Every path under ``root``, so a test can see exactly what a removal took."""
+
+    return sorted(str(path.relative_to(root)) for path in root.rglob("*"))
+
+
+class TestRemovalDeletesOnlyItsOwnFolder:
+    """Through the real Remove flow, on a project holding other batches and a native job."""
+
+    def _project(self, window: MainWindow, tmp_path: Path, host: Structure, monkeypatch):
+        from mufinder.services.relaxation_import_commit import commit_relaxation_import
+
+        window._document = _document(tmp_path, host)
+        document = window._document
+        output_root = document.project_root / "files" / "muon_relaxation"
+        for charge in ("positivemuon", "muonium"):
+            (output_root / charge / "native_job").mkdir(parents=True)
+            (output_root / charge / "native_job" / "native_job.castep").write_text("kept")
+        outcomes = []
+        for name, sites in (("keep", (1, 2)), ("target", (3,))):
+            scan = _scan(build_folder(tmp_path / name, sites=sites))
+            outcome = commit_relaxation_import(
+                document,
+                scan=scan,
+                runs=scan.importable_runs,
+                host_structure=host,
+                output_root=output_root,
+                existing_labels=[item.label for done in outcomes for item in done.imported],
+            )
+            window.merge_imported_relaxation_rows(outcome, output_directory=output_root)
+            window._project_service.append_provenance(document, outcome.provenance)
+            outcomes.append(outcome)
+        warned: list[str] = []
+        monkeypatch.setattr(
+            "mufinder.app.main_window.QMessageBox.warning",
+            lambda *args, **kwargs: warned.append(args[2]),
+        )
+        monkeypatch.setattr(
+            workflow_table_utils, "confirm_destructive", lambda *args, **kwargs: True
+        )
+        monkeypatch.setattr(window, "_persist_document_ui_state", lambda **kwargs: None)
+        monkeypatch.setattr(window, "_refresh_muon_sites_summary", lambda **kwargs: None)
+        batches = window._imported_relaxation_batches()
+        target_index = [
+            index for index, batch in enumerate(batches) if batch[2] == outcomes[1].batch_id
+        ][0]
+        monkeypatch.setattr(
+            "mufinder.app.main_window.choose_import_batch",
+            lambda *args, **kwargs: target_index,
+        )
+        return outcomes, output_root, warned
+
+    def _point_at(self, window: MainWindow, item, seed: str) -> None:
+        """Make a job read as a saved project with this seed would."""
+
+        document = window._document
+        definition = window._muon_relaxation_controller.active_definition()
+        key = f"positivemuon:{item.label}"
+        definition.parameters["job_seed_names_by_label"][key] = seed
+        site = document.sites[item.site_id]
+        result = document.results[document.runs[site.relaxation_run_id].result_id]
+        result.output_files = [str(Path(seed) / Path(name).name) for name in result.output_files]
+
+    @pytest.mark.parametrize(
+        "seed", [".", "..", "../..", "../positivemuon", "../muonium/native_job"]
+    )
+    def test_a_seed_that_leaves_the_charge_folder_deletes_nothing(
+        self,
+        window: MainWindow,
+        tmp_path: Path,
+        host_structure: Structure,
+        monkeypatch: pytest.MonkeyPatch,
+        seed: str,
+    ) -> None:
+        outcomes, output_root, warned = self._project(window, tmp_path, host_structure, monkeypatch)
+        item = outcomes[1].imported[0]
+        self._point_at(window, item, seed)
+        before = _tree(output_root)
+
+        window._on_remove_imported_relaxations()
+
+        assert _tree(output_root) == before
+        assert item.site_id in window._document.sites
+        assert item.job_id in window._document.jobs
+        assert warned and "nothing was removed" in warned[0]
+        assert not window.statusBar().currentMessage().startswith("Removed")
+
+    def test_a_folder_another_batch_wrote_is_not_deleted(
+        self,
+        window: MainWindow,
+        tmp_path: Path,
+        host_structure: Structure,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The folder resolves, is well placed, and is someone else's."""
+
+        outcomes, output_root, warned = self._project(window, tmp_path, host_structure, monkeypatch)
+        item = outcomes[1].imported[0]
+        other = outcomes[0].imported[0]
+        definition = window._muon_relaxation_controller.active_definition()
+        definition.parameters["job_seed_names_by_label"][f"positivemuon:{item.label}"] = (
+            other.seed_name
+        )
+        before = _tree(output_root)
+
+        window._on_remove_imported_relaxations()
+
+        assert _tree(output_root) == before
+        assert warned and "nothing was removed" in warned[0]
+        assert item.site_id in window._document.sites
+
+    def test_a_folder_shared_by_two_jobs_is_not_deleted(
+        self,
+        window: MainWindow,
+        tmp_path: Path,
+        host_structure: Structure,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A folder imported twice by an earlier version holds both batches' files."""
+
+        outcomes, output_root, warned = self._project(window, tmp_path, host_structure, monkeypatch)
+        item = outcomes[1].imported[0]
+        other = outcomes[0].imported[0]
+        self._point_at(window, item, other.seed_name)
+        before = _tree(output_root)
+
+        window._on_remove_imported_relaxations()
+
+        assert _tree(output_root) == before
+        assert warned and "another job" in warned[0]
+
+    def test_a_seed_with_an_end_space_removes_its_own_folder_only(
+        self,
+        window: MainWindow,
+        tmp_path: Path,
+        host_structure: Structure,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """An earlier version wrote ``Host_1 `` and read it back as ``Host_1``."""
+
+        outcomes, output_root, warned = self._project(window, tmp_path, host_structure, monkeypatch)
+        item = outcomes[1].imported[0]
+        kept = outcomes[0].imported[0]
+        spaced = f"{kept.seed_name} "
+        item.job_directory.rename(item.job_directory.with_name(spaced))
+        self._point_at(window, item, spaced)
+        document = window._document
+
+        job = document.jobs[item.job_id]
+        assert window._job_output_directory(job).name == spaced
+
+        window._on_remove_imported_relaxations()
+
+        assert not (output_root / "positivemuon" / spaced).exists()
+        assert kept.job_directory.is_dir()
+        assert (output_root / "positivemuon" / "native_job").is_dir()
+        assert (output_root / "muonium" / "native_job").is_dir()
+        assert item.site_id not in document.sites
+        assert kept.site_id in document.sites
+        assert warned == []
+        assert window.statusBar().currentMessage() == "Removed 1 imported relaxation"
+
+    def test_a_normal_removal_lists_exactly_its_own_folder_as_gone(
+        self,
+        window: MainWindow,
+        tmp_path: Path,
+        host_structure: Structure,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        outcomes, output_root, warned = self._project(window, tmp_path, host_structure, monkeypatch)
+        item = outcomes[1].imported[0]
+        before = set(_tree(output_root))
+
+        window._on_remove_imported_relaxations()
+
+        gone = before - set(_tree(output_root))
+        name = str(item.job_directory.relative_to(output_root))
+        assert gone and all(path == name or path.startswith(f"{name}/") for path in gone)
+        assert warned == []
+
+    def test_a_folder_that_could_not_be_deleted_is_not_reported_as_removed(
+        self,
+        window: MainWindow,
+        tmp_path: Path,
+        host_structure: Structure,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        outcomes, _output_root, warned = self._project(
+            window, tmp_path, host_structure, monkeypatch
+        )
+
+        def _refuse(_path) -> None:
+            raise PermissionError(13, "Permission denied", "/a/b")
+
+        monkeypatch.setattr("mufinder.services.relaxation_import_removal.shutil.rmtree", _refuse)
+
+        window._on_remove_imported_relaxations()
+
+        assert warned and "permission denied" in warned[0]
+        assert "Errno" not in warned[0]
+        assert "could not be deleted" in window.statusBar().currentMessage()
+
+    def test_a_native_job_whose_seed_leaves_its_folder_is_refused_on_every_route(
+        self,
+        window: MainWindow,
+        tmp_path: Path,
+        host_structure: Structure,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The row-removal and dashboard route goes through ``JobFileCleanup``."""
+
+        from mufinder.domain.enums import JobStatus, WorkflowStage
+        from mufinder.domain.models import Job
+
+        outcomes, output_root, _warned = self._project(
+            window, tmp_path, host_structure, monkeypatch
+        )
+        document = window._document
+        definition = window._muon_relaxation_controller.active_definition()
+        job = Job(
+            label="native",
+            workflow_stage=WorkflowStage.MUON_RELAXATION,
+            calc_type="castep_positivemuon_relaxation",
+            status=JobStatus.COMPLETED,
+            execution_target="local",
+        )
+        document.jobs[job.id] = job
+        definition.parameters["job_ids_by_label"]["positivemuon:native"] = str(job.id)
+        before = _tree(output_root)
+
+        for seed in (".", "..", "../.."):
+            definition.parameters["job_seed_names_by_label"]["positivemuon:native"] = seed
+            plan = [window._job_file_cleanup.plan_item([job])]
+            outcome = window._job_file_cleanup.execute(
+                plan, choose_disposition=lambda _item: "delete", stop_on_error=False
+            )
+            assert outcome.failures and outcome.failures[0].refusal
+            assert _tree(output_root) == before
+            assert job.id in document.jobs
+            assert window._job_file_cleanup.directory_ownership_refusals([job], check_remote=False)
+
+    def test_a_native_job_in_its_own_folder_is_still_cleaned(
+        self,
+        window: MainWindow,
+        tmp_path: Path,
+        host_structure: Structure,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from mufinder.domain.enums import JobStatus, WorkflowStage
+        from mufinder.domain.models import Job
+
+        _outcomes, output_root, _warned = self._project(
+            window, tmp_path, host_structure, monkeypatch
+        )
+        definition = window._muon_relaxation_controller.active_definition()
+        job = Job(
+            label="native",
+            workflow_stage=WorkflowStage.MUON_RELAXATION,
+            calc_type="castep_positivemuon_relaxation",
+            status=JobStatus.COMPLETED,
+            execution_target="local",
+        )
+        window._document.jobs[job.id] = job
+        definition.parameters["job_ids_by_label"]["positivemuon:native"] = str(job.id)
+        definition.parameters["job_seed_names_by_label"]["positivemuon:native"] = "native_job"
+
+        outcome = window._job_file_cleanup.execute(
+            [window._job_file_cleanup.plan_item([job])],
+            choose_disposition=lambda _item: "delete",
+            stop_on_error=False,
+        )
+
+        assert outcome.completed
+        assert not (output_root / "positivemuon" / "native_job").exists()
+        assert (output_root / "muonium" / "native_job").is_dir()
+
+
+class TestJournalAfterAnImport:
+    def test_creating_the_definition_records_no_empty_preparation(
+        self, window: MainWindow, tmp_path: Path, host_structure: Structure, monkeypatch
+    ) -> None:
+        from mufinder.app import main_window as main_window_module
+        from mufinder.services.journal import build_journal
+
+        monkeypatch.setattr(
+            main_window_module.QMessageBox, "information", lambda *args, **kwargs: None
+        )
+        monkeypatch.setattr(window, "_persist_document_ui_state", lambda **kwargs: None)
+        monkeypatch.setattr(window, "_refresh_muon_sites_summary", lambda **kwargs: None)
+        window._document = _document(tmp_path, host_structure)
+        scan = _scan(build_folder(tmp_path / "runs", sites=(1,)))
+
+        window._commit_relaxation_import(scan, list(scan.importable_runs), host_structure)
+
+        journal = build_journal("Test", window._document.provenance)
+        bodies = [entry.body for day in journal.days for entry in day.entries]
+        assert not any("Prepared 0" in body for body in bodies)
+        assert not any(
+            record.action == "configure_muon_relaxation" for record in window._document.provenance
+        )

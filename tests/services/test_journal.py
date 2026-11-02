@@ -2179,3 +2179,18 @@ def test_findings_export_as_their_summary_line() -> None:
 
     assert "Barrier 4c → T_A: 0.310 eV" in text
     assert "reverse barrier" not in text
+
+
+def test_a_saved_record_of_zero_muon_relaxations_shows_no_entry() -> None:
+    from mufinder.domain.enums import WorkflowStage
+    from mufinder.domain.models import ProvenanceRecord
+    from mufinder.services.journal import build_journal
+
+    record = ProvenanceRecord(
+        action="configure_muon_relaxation",
+        workflow_stage=WorkflowStage.MUON_RELAXATION,
+        actor="user",
+        parameters={"configuration": {"rows": []}},
+    )
+
+    assert not build_journal("Test", [record]).days

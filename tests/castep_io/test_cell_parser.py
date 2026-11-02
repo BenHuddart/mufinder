@@ -320,7 +320,7 @@ def test_lattice_blocks_scale_by_their_length_unit() -> None:
             "must contain lengths and angles rows",
         ),
         ("%BLOCK LATTICE_ABC\n1 1\n90 90 90\n%ENDBLOCK LATTICE_ABC", "must contain three values"),
-        ("", "must contain LATTICE_CART or LATTICE_ABC"),
+        ("", "no lattice block"),
     ],
 )
 def test_parse_cell_text_rejects_malformed_lattice(lattice: str, message: str) -> None:

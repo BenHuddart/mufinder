@@ -94,12 +94,16 @@ What can be imported
   one that the host does not account for.
 - A run of another CASTEP task, such as a single point or a phonon calculation,
   is listed with the task it ran and cannot be ticked.
+- A run whose file name starts or ends with a space or a dot cannot name a job
+  folder, so it is listed with that reason. Rename its files to import it.
 - A run also cannot be imported when its CASTEP calculation did not complete, its
   ``.cell`` or ``-out.cell`` is missing or cannot be parsed, the two do not hold
   the same atoms, or its lattice is not an integer supercell of the host. An input cell with a keyword outside the
   loaded keyword catalog, such as ``EXTERNAL_PRESSURE``, still imports: its
   geometry is read, ``Notes`` says so, and a k-point grid that only the cell
   states, and the ``.castep`` does not report, is not imported.
+- An unreadable ``.param`` is noted in ``Notes`` and does not stop the import: the
+  ``.castep`` records what ran, and a ``.param`` only fills in what it leaves out.
 - A completed but unconverged run can be ticked. It is imported as completed,
   with geometry convergence recorded as not achieved; nothing is imported as
   failed.
@@ -166,7 +170,9 @@ Removing an import
    ``Remove <N> relaxations`` and ``Cancel``, and ``Cancel`` is the default.
 
 MuFinder refuses while anything still references an imported site, its run or
-its structure; the message lists what still uses them. Otherwise it deletes the
+its structure; the message lists what still uses them. It also refuses, and nothing
+goes, unless each folder is strictly inside its charge folder, is the one the import
+recorded writing to, and is no other job's. Otherwise it deletes the
 rows, mapping entries, jobs, runs, results, structures, sites and copied files
 as one unit, and records the removal in the project provenance and Journal.
 
@@ -184,5 +190,7 @@ Limitations
   tenth of a percent, so a run built on a different relaxed host lattice is
   refused.
 - Re-importing a folder does not detect runs already imported.
+- A folder imported twice by an earlier version holds both batches' files in one
+  job folder, and neither batch can be removed.
 - An import cannot be removed while downstream calculations, comparison tables
   or analysis workspaces still reference it.

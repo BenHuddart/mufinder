@@ -1154,6 +1154,7 @@ class ProjectService:
             extra_parameters={"job_ids_by_label": dict(job_ids_by_label or {})},
             input_structure_ids=[structure_id],
             input_site_ids=input_site_ids,
+            record_provenance=bool(snapshot.get("rows")),
         )
 
     def register_uep_definition(
@@ -1283,6 +1284,7 @@ class ProjectService:
         input_structure_ids: Sequence[UUID],
         input_site_ids: Sequence[UUID] = (),
         definition_only_parameters: dict[str, Any] | None = None,
+        record_provenance: bool = True,
     ) -> CalculationDefinition:
         """Store one calculation definition and append its ``configure_*`` record.
 
@@ -1310,6 +1312,9 @@ class ProjectService:
             created_at=next_definition_created_at(document.calculations.values()),
         )
         document.calculations[definition.id] = definition
+
+        if not record_provenance:
+            return definition
 
         self.append_provenance(
             document,

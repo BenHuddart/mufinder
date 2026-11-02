@@ -854,13 +854,32 @@ class TestAnyFolder:
         assert len(runs) == 1
         assert runs[0].importable
 
-    @pytest.mark.parametrize("name", [".castep", "..castep", "...castep"])
-    def test_a_file_name_that_cannot_name_a_seed_is_not_a_run(
-        self, tmp_path: Path, name: str
+    @pytest.mark.parametrize(
+        "seed",
+        ["", ".", "..", ". ", ".. ", " .", " ..", "...", "mu ", " mu", "mu\t", ".hidden", "mu."],
+    )
+    def test_a_seed_that_cannot_name_a_folder_is_refused_with_a_reason(
+        self, tmp_path: Path, seed: str
     ) -> None:
-        (tmp_path / name).write_text(_castep(), encoding="utf-8")
+        write_run(tmp_path, seed)
 
-        assert scan_relaxation_folder(tmp_path).runs == ()
+        runs = [
+            run
+            for run in scan_relaxation_folder(tmp_path, host_lattice=HOST_LATTICE).runs
+            if run.seed_name == seed
+        ]
+
+        assert len(runs) == 1
+        assert not runs[0].importable
+        assert len(runs[0].blockers) == 1
+        assert "Rename" in runs[0].blockers[0]
+        assert runs[0].display_name
+
+    @pytest.mark.parametrize("seed", ["mu", "my relaxation.v2", "a b", "site.1", "mu-out", "Mu_1"])
+    def test_an_ordinary_seed_is_accepted(self, tmp_path: Path, seed: str) -> None:
+        write_run(tmp_path, seed)
+
+        assert scan_relaxation_folder(tmp_path, host_lattice=HOST_LATTICE).runs[0].importable
 
     def test_task_farm_image_outputs_are_not_runs(self, tmp_path: Path) -> None:
         write_run(tmp_path)
@@ -1040,3 +1059,49 @@ class TestChargeWording:
 
         assert any("imported as a positive muon" in item for item in run.warnings)
         assert not any("choose" in item for item in run.warnings)
+
+
+class TestPlainReasons:
+    def test_a_binary_cell_says_it_is_not_text(self, tmp_path: Path) -> None:
+        write_run(tmp_path)
+        (tmp_path / "mu.cell").write_bytes(b"\x80\x81\x82")
+
+        run = scan_relaxation_folder(tmp_path).runs[0]
+
+        assert run.blockers == ("Could not read mu.cell: it is not a text file.",)
+
+    def test_a_binary_relaxed_cell_says_it_is_not_text(self, tmp_path: Path) -> None:
+        write_run(tmp_path)
+        (tmp_path / "mu-out.cell").write_bytes(b"\x80\x81\x82")
+
+        run = scan_relaxation_folder(tmp_path).runs[0]
+
+        assert run.blockers == ("Could not read mu-out.cell: it is not a text file.",)
+
+    def test_a_binary_param_leaves_the_run_importable_and_says_so(self, tmp_path: Path) -> None:
+        """A ``.param`` only supplements the ``.castep``, which records what ran."""
+
+        write_run(tmp_path)
+        (tmp_path / "mu.param").write_bytes(b"\x80\x81\x82")
+
+        run = scan_relaxation_folder(tmp_path).runs[0]
+
+        assert run.importable
+        assert "Could not read mu.param: it is not a text file." in " ".join(run.warnings)
+        assert "codec" not in " ".join(run.warnings)
+
+    def test_an_empty_cell_says_it_is_empty(self, tmp_path: Path) -> None:
+        write_run(tmp_path, input_text="")
+
+        run = scan_relaxation_folder(tmp_path).runs[0]
+
+        assert run.blockers == ("Could not read mu.cell: the file is empty.",)
+
+    def test_a_cell_with_no_lattice_says_so(self, tmp_path: Path) -> None:
+        write_run(tmp_path, input_text="# only a comment\n")
+
+        run = scan_relaxation_folder(tmp_path).runs[0]
+
+        assert run.blockers == (
+            "Could not read mu.cell: no lattice block (LATTICE_CART or LATTICE_ABC) in the cell.",
+        )

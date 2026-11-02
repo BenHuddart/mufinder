@@ -8882,7 +8882,23 @@ class MainWindow(QMainWindow):
             for ref in refs
             if (path := self._job_output_directory(document.jobs[ref.job_id])) is not None
         }
-        plan = plan_removal(document, refs, job_directories=directories)
+        others = {
+            job.id: path
+            for job in document.jobs.values()
+            if job.id not in directories and (path := self._job_output_directory(job)) is not None
+        }
+        plan = plan_removal(
+            document, refs, job_directories=directories, other_job_directories=others
+        )
+
+        if plan.unsafe:
+            QMessageBox.warning(
+                self,
+                "Cannot remove safely",
+                "MuFinder will not delete these folders, so nothing was removed:\n\n"
+                + "\n".join(f"- {line}" for line in plan.unsafe),
+            )
+            return
 
         if plan.blockers:
             QMessageBox.warning(
@@ -8931,6 +8947,11 @@ class MainWindow(QMainWindow):
 
         if errors:
             QMessageBox.warning(self, "Removal issues", "\n".join(errors))
+            self.statusBar().showMessage(
+                f"Removed {plural(removed, 'imported relaxation')}; "
+                "some of its files could not be deleted"
+            )
+            return
         self.statusBar().showMessage(f"Removed {plural(removed, 'imported relaxation')}")
 
     def _muon_relaxation_form_state_without(self, targets) -> dict[str, object]:

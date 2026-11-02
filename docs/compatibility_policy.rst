@@ -47,6 +47,18 @@ Compatibility ledger
        ``commit_relaxation_import``. No in-repo code imports them; one test checks
        that they resolve. Not persisted.
      - Public import alias. Keep for one minor release; then drop the three modules.
+   * - ``job_seed_names_by_label`` values read exactly
+     - ``mufinder.services.job_paths``
+     - A muon-relaxation seed is read as saved, no longer with its ends trimmed. No
+       saved value changes. A native seed holds no space, so its path is the same.
+       An imported seed with a space at either end now resolves to the folder that
+       was written, where it used to resolve to another job's.
+     - Current behaviour, not a shim.
+   * - ``configure_muon_relaxation`` records with no rows
+     - ``provenance.jsonl``, read by ``mufinder.services.journal``
+     - An empty definition no longer records one. The Journal shows no entry for one
+       an older project holds, and the record stays in the append-only file.
+     - Read-side filter. Keep while such projects may be opened.
    * - ``import_legacy_relaxations`` provenance action
      - ``provenance.jsonl``, read through ``IMPORT_ACTIONS`` in
        ``mufinder.services.relaxation_import_commit`` and the action tables in

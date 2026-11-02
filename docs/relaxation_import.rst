@@ -212,6 +212,14 @@ Decisions
      - Normalise from the ``.castep`` record; archive byte-exact originals.
    * - Host structure
      - Require a matching host: the import refuses until one is loaded.
+   * - Deleting a job folder
+     - Only a folder strictly inside the job's charge folder once resolved, which the
+       import recorded writing to and no other job uses. Anything else is refused and
+       nothing goes. ``job_directory_refusal`` is the same last check on every
+       route that deletes a job's folder, native jobs included.
+   * - A seed that cannot name a folder
+     - A leading or trailing space or dot is refused at the scan. A seed is otherwise
+       read back exactly as written, so writing and reading name one folder.
    * - Choosing the batch to remove
      - By position in the list, with each batch named by its source folder and
        import time, since one folder can be imported more than once.

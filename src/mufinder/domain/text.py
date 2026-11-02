@@ -33,8 +33,10 @@ def plain_error(exc: BaseException) -> str:
     """
 
     # A parser's "Failed to read '/the/path': ..." wraps the error worth reporting.
-    if isinstance(exc.__cause__, OSError):
+    if isinstance(exc.__cause__, (OSError, UnicodeError)):
         exc = exc.__cause__
+    if isinstance(exc, UnicodeError):
+        return "it is not a text file"
     if isinstance(exc, OSError):
         if exc.errno == errno.ENAMETOOLONG:
             return "the path is too long"

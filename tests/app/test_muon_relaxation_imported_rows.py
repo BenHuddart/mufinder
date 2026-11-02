@@ -309,3 +309,60 @@ class TestImportedLabelsFit:
         )
 
         assert widget._table.columnWidth(widget._LABEL_COLUMN) == width
+
+
+class TestLabelColumnFit:
+    def _state(self, label: str) -> dict[str, object]:
+        return {
+            "rows": [
+                {
+                    "site_id": str(uuid4()),
+                    "label": label,
+                    "fractional_position": [0.1, 0.2, 0.3],
+                    "charge_state": "positive_muon",
+                    "imported": True,
+                    "import_batch_id": str(BATCH_ID),
+                }
+            ]
+        }
+
+    def test_a_long_label_leaves_the_rows_actions_on_screen(self, qapp) -> None:
+        """982 px is the table's viewport in the real default window."""
+
+        from mufinder.app.muon_relaxation_widget import MuonRelaxationWidget
+
+        widget = MuonRelaxationWidget()
+        widget.set_form_state(self._state("Imported " + "x" * 120))
+        widget.show()
+        qapp.processEvents()
+        table = widget._table
+        widget.resize(widget.width() - table.viewport().width() + 982, 600)
+        qapp.processEvents()
+
+        assert table.horizontalHeader().length() <= table.viewport().width()
+        assert table.horizontalScrollBar().maximum() == 0
+        widget.close()
+
+    def test_the_column_narrows_again_when_the_long_rows_go(self, qapp) -> None:
+        from mufinder.app.muon_relaxation_widget import MuonRelaxationWidget
+
+        widget = MuonRelaxationWidget()
+        width = widget._table.columnWidth(widget._LABEL_COLUMN)
+        widget.set_form_state(self._state("Imported " + "x" * 120))
+        assert widget._table.columnWidth(widget._LABEL_COLUMN) > width
+
+        widget.set_form_state({"rows": []})
+
+        assert widget._table.columnWidth(widget._LABEL_COLUMN) == width
+
+    def test_a_width_the_user_chose_survives_a_state_that_changes_nothing(self, qapp) -> None:
+        from mufinder.app.muon_relaxation_widget import MuonRelaxationWidget
+
+        widget = MuonRelaxationWidget()
+        state = self._state("Imported Host_1")
+        widget.set_form_state(state)
+        widget._table.setColumnWidth(widget._LABEL_COLUMN, 200)
+
+        widget.set_form_state(widget.collect_state())
+
+        assert widget._table.columnWidth(widget._LABEL_COLUMN) == 200

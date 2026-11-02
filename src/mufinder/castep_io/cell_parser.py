@@ -113,7 +113,7 @@ def parse_cell_text(text: str, *, geometry_only: bool = False) -> ParsedCell:
         raise CellParseError("CELL text may not contain both LATTICE_CART and LATTICE_ABC.")
 
     if lattice_cart is None and lattice_abc is None:
-        raise CellParseError("CELL text must contain LATTICE_CART or LATTICE_ABC.")
+        raise CellParseError("no lattice block (LATTICE_CART or LATTICE_ABC) in the cell")
 
     lattice_vectors = (
         lattice_cart.vectors if lattice_cart is not None else _lattice_from_abc(lattice_abc)

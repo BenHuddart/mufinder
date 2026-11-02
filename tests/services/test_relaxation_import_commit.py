@@ -726,7 +726,7 @@ def test_a_seed_that_is_not_a_folder_name_is_never_committed(
     outcome = commit_relaxation_import(
         document,
         scan=scan,
-        runs=[replace(scan.runs[0], seed_name="..")],
+        runs=[replace(scan.runs[0], seed_name=".. ")],
         host_structure=host_structure,
         output_root=output_root,
     )

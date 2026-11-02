@@ -426,6 +426,8 @@ def _entry_from_record(record: ProvenanceRecord) -> JournalEntry | None:
     if builder is None:
         return None
     entry = builder(record)
+    if entry is None:
+        return None
     details = _DETAIL_BUILDERS.get(record.action)
     return replace(entry, detail_lines=details(record)) if details else entry
 
@@ -611,10 +613,12 @@ def _configure_uep_entry(record: ProvenanceRecord) -> JournalEntry:
     )
 
 
-def _configure_muon_relaxation_entry(record: ProvenanceRecord) -> JournalEntry:
+def _configure_muon_relaxation_entry(record: ProvenanceRecord) -> JournalEntry | None:
     configuration = record.parameters.get("configuration")
     rows = configuration.get("rows") if isinstance(configuration, dict) else None
     rows = [row for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []
+    if not rows:  # An empty definition prepared nothing, whatever an older project recorded.
+        return None
     charge_counts: dict[str, int] = {}
     for row in rows:
         label = muon_charge_state_label(str(row.get("charge_state") or ""))

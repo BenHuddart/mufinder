@@ -53,9 +53,11 @@ MUON_SPECIES = "H:mu"
 #: Why a run with no muon is not offered: a host-only run is not a stopping site.
 NO_MUON_BLOCKER = "No muon in this structure."
 
-#: File stems that cannot name a seed: the job directory is named for its seed, and
-#: ``..`` would make that the folder above, which removing the import then deletes.
-UNUSABLE_SEEDS = frozenset({"", ".", ".."})
+#: Why a run whose file name cannot name a job folder is not offered.
+UNUSABLE_SEED_BLOCKER = (
+    "This file name cannot name a job folder, because it starts or ends with a space or a dot. "
+    "Rename the run's files to import it."
+)
 
 #: The output a task farm writes for one of its images, beside the run's own ``.castep``.
 _FARM_OUTPUT_RE = re.compile(r"_farm\d+$")
@@ -237,6 +239,34 @@ class RelaxationFolderScan:
         """Return the runs the wizard should pre-select."""
 
         return tuple(run for run in self.importable_runs if run.is_converged)
+
+
+def seed_is_usable(seed: str) -> bool:
+    """Return whether a seed can name a job folder.
+
+    A job's folder is named for its seed. ``..`` or ``. `` is another folder once
+    resolved or trimmed, and a name ending in a space or a dot is not kept by every
+    file system. A space inside a name is fine.
+    """
+
+    return (
+        bool(seed)
+        and seed == seed.strip()
+        and seed.isprintable()
+        and not seed.startswith(".")
+        and not seed.endswith(".")
+    )
+
+
+def _read_failure(path: Path, exc: Exception) -> str:
+    """Return why ``path`` could not be read, for "Could not read <file>: <this>."."""
+
+    try:
+        if path.stat().st_size == 0:
+            return "the file is empty"
+    except OSError:
+        pass
+    return plain_error(exc)
 
 
 def muon_index(parsed: ParsedCell) -> tuple[int, str] | None:
@@ -488,11 +518,12 @@ def _detect_run(
             try:
                 input_cell = parse_cell_file(input_cell_path, geometry_only=True)
             except Exception:  # noqa: BLE001
-                warnings.append(f"Could not read {input_cell_path.name}: {plain_error(exc)}.")
                 # Blocking, not merely a warning: the initial muon position and
                 # the supercell matrix are both recovered from this file, so
                 # without it there is nothing to anchor the imported site to.
-                blockers.append("The input .cell could not be parsed.")
+                blockers.append(
+                    f"Could not read {input_cell_path.name}: {_read_failure(input_cell_path, exc)}."
+                )
             else:
                 warnings.append(
                     f"Read only the geometry of {input_cell_path.name}; a k-point grid "
@@ -508,8 +539,9 @@ def _detect_run(
             # outside the loaded keyword catalog.
             out_cell = parse_cell_file(out_cell_path, geometry_only=True)
         except Exception as exc:  # noqa: BLE001 - see the input-cell note above
-            warnings.append(f"Could not read {out_cell_path.name}: {plain_error(exc)}.")
-            blockers.append("The relaxed -out.cell could not be parsed.")
+            blockers.append(
+                f"Could not read {out_cell_path.name}: {_read_failure(out_cell_path, exc)}."
+            )
     else:
         blockers.append(
             refused.get(_OUT_CELL, f"No relaxed {seed_name}-out.cell was found for this run.")
@@ -525,7 +557,12 @@ def _detect_run(
                 if item.canonical_name and item.error is None
             }
         except Exception as exc:  # noqa: BLE001 - see the input-cell note above
-            warnings.append(f"Could not read {run_param_path.name}: {plain_error(exc)}.")
+            # Not blocking: the ``.castep`` records what ran, and a ``.param`` only
+            # fills in what it does not report.
+            warnings.append(
+                f"Could not read {run_param_path.name}: {_read_failure(run_param_path, exc)}. "
+                "Its parameters are not used."
+            )
 
     cell_values: dict[str, object] = {}
     if input_cell is not None and input_cell.cell_file.kpoint_mp_grid is not None:
@@ -628,7 +665,9 @@ def _detect_run(
     # One reason, not every consequence of it: a phonon run or a run of the host
     # alone also lacks a relaxed cell or a charge state, and neither matters.
     task = str(parameters.get("task") or "").strip().upper()
-    if no_muon:
+    if not seed_is_usable(seed_name):
+        blockers, warnings, conflicts = [UNUSABLE_SEED_BLOCKER], [], ()
+    elif no_muon:
         blockers, warnings, conflicts = [NO_MUON_BLOCKER], [], ()
         # Charge says what a muon is, and here there is none to describe.
         charge_state = charge_state_source = muon_label = None
@@ -783,6 +822,13 @@ class _RunFiles:
     refused: dict[str, str]
 
 
+def _relative_name(castep: Path, root: Path, seed: str) -> str:
+    """Return the ``.castep`` under the scanned folder, without its suffix if it has a seed."""
+
+    relative = castep.relative_to(root).as_posix()
+    return relative[: -len(_CASTEP_SUFFIX)] if seed_is_usable(seed) else relative
+
+
 def _discover_runs(root: Path) -> tuple[list[_RunFiles], tuple[tuple[str, str], ...]]:
     """Find every ``.castep`` under ``root`` and pair each with its other files.
 
@@ -804,7 +850,7 @@ def _discover_runs(root: Path) -> tuple[list[_RunFiles], tuple[tuple[str, str], 
             path = Path(directory) / name
             if name.endswith(_CASTEP_SUFFIX):
                 seed = name[: -len(_CASTEP_SUFFIX)]
-                if seed in UNUSABLE_SEEDS or _FARM_OUTPUT_RE.search(seed):
+                if _FARM_OUTPUT_RE.search(seed):
                     continue
                 try:
                     is_file = stat.S_ISREG(path.stat().st_mode)
@@ -849,7 +895,8 @@ def _discover_runs(root: Path) -> tuple[list[_RunFiles], tuple[tuple[str, str], 
         runs.append(
             _RunFiles(
                 seed_name=seed,
-                relative_name=castep.relative_to(root).with_suffix("").as_posix(),
+                # In full for a name with nothing else to show, such as ``.castep``.
+                relative_name=_relative_name(castep, root, seed),
                 castep=castep,
                 files=files,
                 refused=refused,
@@ -931,7 +978,7 @@ __all__ = [
     "IMPORT_SUPERCELL_TOLERANCE",
     "MUON_SPECIES",
     "NO_MUON_BLOCKER",
-    "UNUSABLE_SEEDS",
+    "seed_is_usable",
     "DetectedRun",
     "RelaxationFolderScan",
     "file_digest",

@@ -17,7 +17,13 @@ from pathlib import Path
 import posixpath
 from typing import TYPE_CHECKING
 
-from mufinder.domain.charge_states import MUON_RELAXATION_CALC_TYPES, is_muon_relaxation_calc_type
+from mufinder.domain.charge_states import (
+    MUON_RELAXATION_CALC_TYPES,
+    MUONIUM_CHARGE_STATE,
+    POSITIVE_MUON_CHARGE_STATE,
+    is_muon_relaxation_calc_type,
+    muon_charge_state_prefix,
+)
 from mufinder.domain.enums import WorkflowStage
 from mufinder.domain.models import CalculationDefinition, Job
 from mufinder.workflow.naming import job_name
@@ -109,8 +115,10 @@ def _muon_relaxation_job_directory(base: Path, params: Mapping[str, object], job
     seed_name = job.label
     if isinstance(seed_mapping, dict):
         raw_seed = seed_mapping.get(matching_key)
+        # Exactly as recorded: this names the folder that was written, and a
+        # stripped name is a different folder, possibly another job's.
         if isinstance(raw_seed, str) and raw_seed.strip():
-            seed_name = raw_seed.strip()
+            seed_name = raw_seed
     if seed_name == job.label:
         remote_seed = remote_directory_seed_name(job)
         if remote_seed:
@@ -209,6 +217,31 @@ def job_output_directory(
     for fallback in fallback_candidates:
         if fallback.exists() and fallback.is_dir():
             return fallback
+    return None
+
+
+def job_directory_refusal(project_root: Path, job: Job, directory: Path) -> str | None:
+    """Return why ``directory`` must not be deleted as ``job``'s own folder, or ``None``.
+
+    The last check before any job folder goes. A job's folder comes from names
+    saved in the project, and a name such as ``.`` or ``..`` resolves to a folder
+    holding every other job.
+    """
+
+    if ".." in directory.parts:
+        return f"its folder name leads out of its own folder ({directory.name!r})"
+    resolved = directory.resolve()
+    root = project_root.resolve()
+    if root.is_relative_to(resolved):
+        return "its folder holds the whole project"
+    files_root = root / "files"
+    if resolved.is_relative_to(files_root) and len(resolved.relative_to(files_root).parts) < 2:
+        return f"its folder is the folder of a whole workflow ({resolved.name!r})"
+    if is_muon_relaxation_calc_type(job.calc_type) and resolved.name in {
+        muon_charge_state_prefix(POSITIVE_MUON_CHARGE_STATE),
+        muon_charge_state_prefix(MUONIUM_CHARGE_STATE),
+    }:
+        return f"its folder is the one shared by a whole charge state ({resolved.name!r})"
     return None
 
 
