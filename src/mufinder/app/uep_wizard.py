@@ -3271,27 +3271,27 @@ class UepAnalysisDialog(QDialog):
     def _restored_viewer_muons(self, state: Mapping[str, object]) -> list[_ManagedViewerMuonState]:
         """The saved muons; a window saved with two viewers shows both lists' muons in one."""
 
-        muons: list[_ManagedViewerMuonState] = []
-        seen_results: set[int] = set()
-        seen_positions: set[tuple[float, ...]] = set()
-        for name in ("viewer_muons", "isosurface_viewer_muons", "slice_viewer_muons"):
+        def parsed(name: str) -> list[_ManagedViewerMuonState]:
             raw = state.get(name)
-            if not isinstance(raw, list):
-                continue
-            for payload in raw:
-                entry = self._deserialize_managed_viewer_muon(payload)
-                if entry is None:
-                    continue
-                position = tuple(round(value, 8) for value in entry.fractional_position)
-                if entry.source_kind == "clustered" and entry.result_index is not None:
-                    if entry.result_index in seen_results:
-                        continue
-                    seen_results.add(entry.result_index)
-                elif position in seen_positions:
-                    continue
-                seen_positions.add(position)
-                muons.append(entry)
-        return muons
+            entries = raw if isinstance(raw, list) else []
+            muons = (self._deserialize_managed_viewer_muon(entry) for entry in entries)
+            return [entry for entry in muons if entry is not None]
+
+        def identity(entry: _ManagedViewerMuonState) -> object:
+            if entry.source_kind == "clustered" and entry.result_index is not None:
+                return entry.result_index
+            return tuple(round(value, 8) for value in entry.fractional_position)
+
+        if "viewer_muons" in state:
+            return parsed("viewer_muons")
+        isosurface_muons = parsed("isosurface_viewer_muons")
+        # Only across the two lists: two muons at one position in one list were both wanted.
+        in_isosurface_list = {identity(entry) for entry in isosurface_muons}
+        return isosurface_muons + [
+            entry
+            for entry in parsed("slice_viewer_muons")
+            if identity(entry) not in in_isosurface_list
+        ]
 
     def _default_isosurface_level(self) -> float | None:
         if self._potential_grid_cache is None:

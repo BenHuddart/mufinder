@@ -3480,6 +3480,32 @@ def test_a_window_saved_with_two_viewers_shows_both_lists_of_muons_once(qapp) ->
     dialog.close()
 
 
+def test_two_custom_muons_at_one_position_both_survive_a_reopen(qapp) -> None:
+    first = _si2_dialog()
+    first._add_custom_muon_to_viewer((0.1, 0.2, 0.3))
+    first._add_custom_muon_to_viewer((0.1, 0.2, 0.3))
+    snapshot = first.state_snapshot()
+    first.close()
+
+    restored = _si2_dialog(initial_state=snapshot)
+
+    assert [entry.label for entry in restored._viewer_muons] == ["Custom 1", "Custom 2"]
+    restored.close()
+
+
+def test_two_custom_muons_at_one_position_in_one_old_list_both_survive(qapp) -> None:
+    first = _si2_dialog()
+    first._add_custom_muon_to_viewer((0.1, 0.2, 0.3))
+    first._add_custom_muon_to_viewer((0.1, 0.2, 0.3))
+    saved = first.state_snapshot()["viewer_muons"]
+    first.close()
+
+    restored = _si2_dialog(initial_state={"isosurface_viewer_muons": saved})
+
+    assert len(restored._viewer_muons) == 2
+    restored.close()
+
+
 def test_the_saved_state_holds_what_the_grid_cannot_give_back(qapp) -> None:
     dialog = _si2_dialog()
     dialog._apply_potential_grid_cache(potential_grid(dialog._field))
