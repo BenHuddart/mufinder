@@ -267,8 +267,9 @@ def test_a_fresh_start_into_a_protected_directory_is_dropped(
     continuing = _pristine_job(service, doc, JobStatus.DEFINED, row_key="other")
     continuing.execution_target = "alpha"
     continuing.remote_directory = fresh.remote_directory
-    # Bypass the ownership check, which would refuse these two first.
+    # Bypass the ownership checks, which would refuse these two first.
     monkeypatch.setattr(window, "_fresh_start_refusals", lambda _jobs: {})
+    monkeypatch.setattr(window, "_without_jobs_in_another_jobs_folder", lambda jobs: jobs)
 
     patch_continuation_cluster_dialog(monkeypatch)
     recorded = patch_continuation_cluster_runner(monkeypatch, window, directory_exists=True)
