@@ -5,6 +5,10 @@ from __future__ import annotations
 from dataclasses import asdict, replace
 from functools import partial
 from pathlib import Path
+
+from mufinder.persistence.codec import to_jsonable
+from mufinder.services.project_service import ProjectService
+from mufinder.services.uep_grouping import UEP_ANALYSIS_STATES_KEY, regroup_saved_uep_searches
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -3719,3 +3723,29 @@ def test_the_log_records_the_gaussian_width_the_search_ran_with(qapp, monkeypatc
 
     assert "Gaussian width factor: 5" in dialog._batch_summary.toPlainText().splitlines()
     dialog.close()
+
+
+def test_opening_a_search_an_older_build_saved_changes_nothing_once_it_has_loaded(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _run_batch_search_inline(monkeypatch)
+    first = _si2_dialog()
+    first._batch_run.click()
+    older = first.state_snapshot()
+    first.close()
+    for entry in older["batch_results"]:
+        entry["zero_point_energy_ev"] = None
+        entry["total_energy_ev"] = None
+    older["batch_zpe_completed"] = False
+
+    document = ProjectService().create_project(tmp_path / "older.mufinder", "Older")
+    document.ui_state[UEP_ANALYSIS_STATES_KEY] = {"job": to_jsonable(older)}
+    regroup_saved_uep_searches(document)
+    loaded = document.ui_state[UEP_ANALYSIS_STATES_KEY]["job"]
+
+    restored = _si2_dialog(initial_state=loaded)
+    snapshot = to_jsonable(restored.state_snapshot())
+    restored.close()
+
+    assert "batch_zpe_completed" not in loaded
+    assert snapshot == loaded

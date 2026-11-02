@@ -9,6 +9,7 @@ from functools import partial
 import logging
 from pathlib import Path
 import posixpath
+import sys
 import time
 from html import escape
 from typing import Any, TypeVar
@@ -28,6 +29,7 @@ from PySide6.QtCore import (
     Slot,
 )
 from PySide6.QtGui import (
+    QAction,
     QIcon,
     QActionGroup,
     QBrush,
@@ -189,6 +191,7 @@ from mufinder.app.journal_widget import JournalWidget
 from mufinder.app.magnetic_field_widget import MagneticFieldWidget
 from mufinder.app.polarisation_widget import PolarisationWidget
 from mufinder.app.muon_generation_widget import MuonGenerationWidget
+from mufinder.app.new_project_dialog import NewProjectDialog
 from mufinder.app.param_dialog import ParameterDialog
 from mufinder.app.project_defaults_widget import ProjectDefaultsStrip, ProjectDefaultsSummary
 
@@ -380,6 +383,7 @@ from mufinder.services.project_service import (
     CONTINUABLE_JOB_STATUSES,
     ProjectDocument,
     ProjectService,
+    UnsavedChanges,
 )
 from mufinder.services.project_summary import (
     COMPLETION_CHECKS,
@@ -504,6 +508,7 @@ class MainWindow(QMainWindow):
     """Main shell containing project navigation and job dashboard."""
 
     _MAIN_WINDOW_GEOMETRY_KEY = "ui/main_window_geometry"
+    _MAIN_WINDOW_STATE_KEY = "ui/main_window_state"
     _LAST_DIALOG_DIR_KEY = "ui/last_dialog_dir"
     _LAST_DIALOG_DIR_BY_CONTEXT_PREFIX = "ui/last_dialog_dir_by_context"
     _RECENT_PROJECTS_KEY = "ui/recent_projects"
@@ -572,7 +577,12 @@ class MainWindow(QMainWindow):
         # also reports False on window minimize / tabbed-dock obscuring.
         # Defaults True so an as-yet-unshown window still arms the timer.
         self._jobs_dock_visible = True
-        self._jobs_dock_height_set = False
+        self._jobs_dock_placed = False
+        # View > Job Dashboard's setting: the dock shows while a project is open and
+        # this is on. The saved window state brings it back after a restart.
+        self._jobs_dock_wanted = True
+        # A save while closing failed, so the next close asks rather than retries.
+        self._close_save_failed = False
         # True while _sync_jobs_table_rows reconciles the dashboard rows.
         self._jobs_table_syncing = False
         self._settings = QSettings("MuFinder", "MuFinder")
@@ -1284,33 +1294,61 @@ class MainWindow(QMainWindow):
         self._jobs_backspace_shortcut.activated.connect(self._on_dashboard_delete_key_requested)
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, jobs_dock)
 
-    def _sync_project_panels(self) -> None:
-        """Show the navigator and the Job Dashboard only while a project is open.
+    def _on_jobs_dock_toggled(self, shown: bool) -> None:
+        # Only the user changes it with a project open: the title-bar button or the View
+        # action. Hiding it for having no project is not the user's setting, and
+        # minimising the window also unchecks the action.
+        if self._document is not None and not self.isMinimized():
+            self._jobs_dock_wanted = shown
 
-        Called on every project change, so this also brings back a dashboard
-        closed with its title-bar button.
+    def _sync_project_panels(self) -> None:
+        """Fit the window to whether a project is open.
+
+        The navigator shows only with a project, and the Job Dashboard also needs
+        ``View > Job Dashboard`` on. The project actions and the title follow.
         """
 
         has_project = self._document is not None
         self._project_tree_panel.setVisible(has_project)
-        self._jobs_dock.setVisible(has_project)
-        self._schedule_default_jobs_dock_height()
+        self._place_jobs_dock_once()
+        self._jobs_dock.setVisible(has_project and self._jobs_dock_wanted)
+        self._jobs_dock.toggleViewAction().setEnabled(has_project)
+        self._save_project_action.setEnabled(has_project)
+        self._import_relaxations_action.setEnabled(
+            has_project and self._relaxation_scan_root is None
+        )
+        self._remove_imported_action.setEnabled(has_project)
+        self.setWindowTitle(
+            f"{self._document.project.name} \u2014 {PRODUCT_NAME}" if has_project else PRODUCT_NAME
+        )
         if has_project:
             # The panels are back in the layout, which sets the minimum from here on.
             self.setMinimumSize(0, 0)
 
     def showEvent(self, event) -> None:  # noqa: N802 - Qt API naming.
         super().showEvent(event)
-        self._schedule_default_jobs_dock_height()
+        self._place_jobs_dock_once()
 
-    def _schedule_default_jobs_dock_height(self) -> None:
-        """Size the dock once, the first time it is on screen."""
+    def _place_jobs_dock_once(self) -> None:
+        """Put the dock where it was last time, closed or not, else at its default.
 
-        if self._jobs_dock_height_set or not self.isVisible() or self._jobs_dock.isHidden():
+        This waits for the first time a project is on screen: a saved state would
+        otherwise show a dock that stays hidden until a project opens.
+        """
+
+        if self._jobs_dock_placed or not self.isVisible() or self._document is None:
             return
-        self._jobs_dock_height_set = True
-        # The dock has its real geometry once this show has been laid out.
-        QTimer.singleShot(0, self._apply_default_jobs_dock_height)
+        self._jobs_dock_placed = True
+        saved_state = self._settings.value(self._MAIN_WINDOW_STATE_KEY, QByteArray())
+        if (
+            not isinstance(saved_state, QByteArray)
+            or saved_state.isEmpty()
+            or not self.restoreState(saved_state)
+        ):
+            # The dock has its real geometry once this show has been laid out.
+            QTimer.singleShot(0, self._apply_default_jobs_dock_height)
+        else:
+            self._jobs_dock_wanted = not self._jobs_dock.isHidden()
 
     def _apply_default_jobs_dock_height(self) -> None:
         """Size the dock to show about ``_JOB_DOCK_DEFAULT_ROWS`` rows."""
@@ -1357,6 +1395,10 @@ class MainWindow(QMainWindow):
             super().closeEvent(event)
             return
         self._settings.setValue(self._MAIN_WINDOW_GEOMETRY_KEY, self.saveGeometry())
+        if self._document is not None and self.isVisible():
+            # Without a project the dock is hidden whatever the user chose, which
+            # is not worth remembering.
+            self._settings.setValue(self._MAIN_WINDOW_STATE_KEY, self.saveState())
         if self._dragged_navigator_width is not None:
             self._settings.setValue(
                 self._PROJECT_NAVIGATOR_WIDTH_KEY, self._dragged_navigator_width
@@ -1371,25 +1413,20 @@ class MainWindow(QMainWindow):
         if job_watchdog_timer is not None:
             job_watchdog_timer.stop()
         if self._document is not None and self.isVisible():
-            answer = workflow_table_utils.confirm_choice(
-                self,
-                "Save project?",
-                "Save the current project before closing?",
-                [("save", "Save"), ("discard", "Don't save"), ("cancel", "Cancel")],
-                default="save",
-                escape="cancel",
-                destructive=("discard",),
-            )
+            answer = self._answer_for_saving_on_close()
             if answer == "cancel":
                 self._resume_after_abandoned_close()
                 event.ignore()
                 return
-            if answer == "save":
-                self._flush_uep_analysis_dialogs()
+            if answer in ("save", "tidy"):
                 try:
-                    self._project_service.save_project(self._document)
+                    if answer == "tidy":
+                        self._project_service.save_tidying(self._document)
+                    else:
+                        self._project_service.save_project(self._document)
                 except (OSError, ValueError) as exc:
                     event.ignore()
+                    self._close_save_failed = True
                     QMessageBox.critical(self, "Save blocked", str(exc))
                     self._resume_after_abandoned_close()
                     return
@@ -1439,6 +1476,27 @@ class MainWindow(QMainWindow):
         if cluster_runner is not None:
             cluster_runner.shutdown()
         super().closeEvent(event)
+
+    def _answer_for_saving_on_close(self) -> str:
+        """Return ``save``, ``tidy``, ``discard`` or ``cancel``, asking only if the user must choose."""
+
+        assert self._document is not None
+        self._flush_uep_analysis_dialogs()
+        changes = self._project_service.unsaved_changes(self._document)
+        if changes is UnsavedChanges.UI_STATE or self._close_save_failed:
+            return workflow_table_utils.confirm_choice(
+                self,
+                "Save project?",
+                "Save the current project before closing?",
+                [("save", "Save"), ("discard", "Don't save"), ("cancel", "Cancel")],
+                default="save",
+                escape="cancel",
+                destructive=("discard",),
+            )
+        # Nothing to decide. "discard" here has nothing to discard, and writes nothing.
+        return {UnsavedChanges.ROUTINE: "save", UnsavedChanges.TIDYING: "tidy"}.get(
+            changes, "discard"
+        )
 
     def _resume_after_abandoned_close(self) -> None:
         """Restart what ``closeEvent`` stopped, now that the window stays open."""
@@ -1689,17 +1747,20 @@ class MainWindow(QMainWindow):
     def _build_menu(self) -> None:
         file_menu = self.menuBar().addMenu("File")
 
-        new_action = file_menu.addAction(icon("new_project"), "New Project")
+        new_action = file_menu.addAction(icon("new_project"), "New Project…")
+        new_action.setShortcuts(QKeySequence.StandardKey.New)
         new_action.triggered.connect(self._new_project)
 
-        open_action = file_menu.addAction(icon("open_project"), "Open Project")
+        open_action = file_menu.addAction(icon("open_project"), "Open Project…")
+        open_action.setShortcuts(QKeySequence.StandardKey.Open)
         open_action.triggered.connect(self._open_project)
 
         self._recent_projects_menu = file_menu.addMenu("Open Recent")
         self._refresh_recent_projects_menu()
 
-        save_action = file_menu.addAction(icon("save_project"), "Save Project")
-        save_action.triggered.connect(self._save_project)
+        self._save_project_action = file_menu.addAction(icon("save_project"), "Save Project")
+        self._save_project_action.setShortcuts(QKeySequence.StandardKey.Save)
+        self._save_project_action.triggered.connect(self._save_project)
 
         file_menu.addSeparator()
 
@@ -1711,8 +1772,11 @@ class MainWindow(QMainWindow):
 
         file_menu.addSeparator()
 
-        exit_action = file_menu.addAction("Exit")
-        exit_action.triggered.connect(self.close)
+        # macOS moves a QuitRole action to the application menu and names it itself.
+        quit_action = file_menu.addAction("Exit" if sys.platform == "win32" else "Quit")
+        quit_action.setShortcuts(self._quit_key_bindings())
+        quit_action.setMenuRole(QAction.MenuRole.QuitRole)
+        quit_action.triggered.connect(self.close)
 
         setup_menu = self.menuBar().addMenu("Setup")
         castep_action = setup_menu.addAction(icon("settings"), "CASTEP…")
@@ -1721,6 +1785,8 @@ class MainWindow(QMainWindow):
         cluster_action.triggered.connect(lambda: self._open_cluster_setup_dialog())
 
         view_menu = self.menuBar().addMenu("View")
+        view_menu.addAction(self._jobs_dock.toggleViewAction())
+        self._jobs_dock.toggleViewAction().toggled.connect(self._on_jobs_dock_toggled)
         appearance_menu = view_menu.addMenu("Appearance")
         appearance_group = QActionGroup(self)
         appearance_group.setExclusive(True)
@@ -1757,6 +1823,20 @@ class MainWindow(QMainWindow):
         about_action = help_menu.addAction(f"About {PRODUCT_NAME}")
         about_action.triggered.connect(self._show_about_dialog)
 
+    @staticmethod
+    def _quit_key_bindings() -> list[QKeySequence]:
+        """Return the platform's Quit keys, with Ctrl+Q first except on Windows.
+
+        What ``StandardKey.Quit`` holds depends on the platform theme, and it can be
+        nothing or only the Exit key. Ctrl+Q is Cmd+Q on macOS.
+        """
+
+        bindings = QKeySequence.keyBindings(QKeySequence.StandardKey.Quit)
+        if sys.platform == "win32":
+            return bindings
+        ctrl_q = QKeySequence("Ctrl+Q")
+        return [ctrl_q, *(binding for binding in bindings if binding != ctrl_q)]
+
     def _open_user_guide(self) -> None:
         QDesktopServices.openUrl(QUrl(DOCUMENTATION_URL))
 
@@ -1783,37 +1863,19 @@ class MainWindow(QMainWindow):
         self._sync_project_home()
 
     def _new_project(self) -> None:
-        project_name, ok = QInputDialog.getText(self, "New Project", "Project name:")
-        if not ok or not project_name.strip():
+        dialog = NewProjectDialog(self._dialog_start_dir("new_project_parent"), parent=self)
+        accepted = dialog.exec() == QDialog.DialogCode.Accepted
+        project_name = dialog.project_name()
+        project_root = dialog.project_root()
+        dialog.deleteLater()
+        if not accepted or project_root is None:
             return
-
-        base_dir = self._get_existing_directory(
-            title="Select parent folder",
-            context="new_project_parent",
-        )
-        if not base_dir:
-            return
-
-        project_root = Path(base_dir) / f"{project_name.strip()}.mufinder"
-        try:
-            target_in_use = project_root.exists() and any(project_root.iterdir())
-        except OSError as exc:
-            QMessageBox.critical(self, "Project error", str(exc))
-            return
-        if target_in_use:
-            QMessageBox.warning(
-                self,
-                "Project exists",
-                "Target project folder already exists and is not empty.",
-            )
-            return
+        self._remember_dialog_path(project_root.parent, "new_project_parent")
 
         # Persist any coalesced flush for the outgoing project before swapping.
         self._flush_dashboard()
         try:
-            self._document = self._project_service.create_project(
-                project_root, project_name.strip()
-            )
+            self._document = self._project_service.create_project(project_root, project_name)
         except (OSError, ValueError) as exc:
             QMessageBox.critical(self, "Project error", str(exc))
             return
@@ -2009,8 +2071,8 @@ class MainWindow(QMainWindow):
         clear_action.triggered.connect(self._clear_recent_projects)
 
     def _save_project(self) -> None:
+        # The action is disabled with no project.
         if self._document is None:
-            QMessageBox.information(self, "No project", "Create or open a project first.")
             return
 
         self._flush_uep_analysis_dialogs()
@@ -2019,6 +2081,7 @@ class MainWindow(QMainWindow):
         except (OSError, ValueError) as exc:
             QMessageBox.critical(self, "Save blocked", str(exc))
             return
+        self._close_save_failed = False
         # This wrote the whole document, so any coalesced flush is subsumed.
         self._dashboard_flush_pending = False
         self._dashboard_flush_timer.stop()
@@ -2201,6 +2264,9 @@ class MainWindow(QMainWindow):
         with trace.stage("_refresh_journal_view"):
             self._refresh_journal_view()
         trace.log_summary(extra=self._document.project.name)
+        # Filling the pages tidied some saved forms; only what the user does next counts.
+        self._project_service.settle_ui_state(self._document)
+        self._close_save_failed = False
 
     def _reset_job_tracking_for_project_change(self) -> None:
         assert self._document is not None
@@ -3170,6 +3236,8 @@ class MainWindow(QMainWindow):
         except (OSError, ValueError) as exc:
             _LOG.warning("Autosave failed: %s", exc)
             self.statusBar().showMessage(failure_message)
+        else:
+            self._close_save_failed = False
 
     def _request_dashboard_flush(self, *, failure_message: str) -> None:
         """Schedule a coalesced dashboard refresh + autosave for lifecycle handlers.
@@ -8776,6 +8844,7 @@ class MainWindow(QMainWindow):
         self._commit_relaxation_import(scan, selected, host)
 
     def _finish_relaxation_scan(self) -> None:
+        self._relaxation_scan_root = None
         if self._import_relaxations_action is not None:
             self._import_relaxations_action.setEnabled(True)
         self.statusBar().clearMessage()

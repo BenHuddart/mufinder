@@ -1916,10 +1916,21 @@ Saving is split between autosave and manual save:
   tracking and results, is autosaved, so active work is not lost if MuFinder
   rebuilds the project view.
 - Analysis-session state stays in memory until the user chooses ``Save
-  Project``, or answers ``Save`` to the ``Save project?`` prompt shown whenever a
-  project window is closed. Opening a different project flushes the autosave
-  but does not prompt, so unsaved analysis-session state is discarded; save
-  first.
+  Project`` or an autosave writes the document. ``ProjectService.unsaved_changes``
+  compares it with what the last save left, or what the window left once it had
+  finished showing the opened project (``settle_ui_state``): pages tidy some saved
+  forms as they fill, which is no change of the user's, and loading brings saved UEP
+  searches to the form the analysis wizard writes. Closing a window asks
+  ``Save project?`` only if that comparison finds analysis-session state changed,
+  or the last save on closing failed. Otherwise closing writes, without asking,
+  whatever else differs from disk. If durable state waiting for its coalesced
+  autosave cannot be written, the window stays open. If the only thing to write is
+  what loading upgraded or tidied, or the project home's stage, which moves with
+  every page visited, a failed write closes anyway and the next open redoes it,
+  unless the manifest already took the new schema version: entities left in the old
+  format would be read as current, so that keeps the window open too.
+  Opening a different project flushes the autosave but does not prompt, so
+  unsaved analysis-session state is discarded; save first.
 - The manual-save bucket holds exploratory UI state: UEP wizard tab choices,
   viewer camera and orientation, bond and spin
   visibility, and slice and isosurface display settings.

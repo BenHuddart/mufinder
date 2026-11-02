@@ -75,7 +75,7 @@ Both commands take an optional project to open once the main window is shown:
    mufinder path/to/Example.mufinder --page uep
 
 The project is a ``.mufinder`` folder or the ``project.json`` inside it, and it
-opens the same way as ``File > Open Project``. A path that holds no project, or
+opens the same way as ``File > Open Project…``. A path that holds no project, or
 a project that cannot be read, shows the usual error and leaves MuFinder on the
 welcome page.
 
