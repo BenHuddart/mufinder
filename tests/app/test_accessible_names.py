@@ -34,7 +34,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from mufinder.app.energy_barriers_widget import EnergyBarrierNebResultRow, EnergyBarrierSourceRow
+from mufinder.app.energy_barriers_widget import EnergyBarrierSourceRow
 from mufinder.app.hyperfine_coupling_widget import HyperfineResultRow, HyperfineSourceRow
 from mufinder.app.magnetic_analysis_dialogs import NuclearRelaxationDialog
 from mufinder.app.quantum_corrections_widget import QuantumResultRow, QuantumSourceRow
@@ -154,23 +154,7 @@ def _show_quantum_rows(window) -> None:
 def _show_energy_barrier_rows(window) -> None:
     view = window._energy_barriers_view
     view.set_sources(
-        [EnergyBarrierSourceRow("mu1-mu2", "mu1", "mu2", "Positive muon", "1.0", "ready")]
-    )
-    view.set_neb_results(
-        [
-            EnergyBarrierNebResultRow(
-                "neb-1",
-                "mu1 to mu2",
-                "Positive muon",
-                "1.0",
-                "0.2",
-                "0.2",
-                "0.0",
-                "5",
-                "completed",
-                "",
-            )
-        ]
+        [EnergyBarrierSourceRow("mu1-mu2", "mu1 → mu2", "1.0 Å", "completed", band_key="neb-1")]
     )
 
 

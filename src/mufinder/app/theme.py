@@ -234,7 +234,6 @@ _GAPPED_TAB_WIDGETS = (
     "mufinderTabs",
     "muonRelaxationChargeTabs",
     "analysisWorkspaceTabs",
-    "energyBarriersTabs",
     "quantumAnalysisTabs",
 )
 
@@ -2111,7 +2110,6 @@ def _muon_relaxation_styles(p: MuFinderPalette) -> str:
     QTabWidget#mufinderTabs::pane,
     QTabWidget#muonRelaxationChargeTabs::pane,
     QTabWidget#analysisWorkspaceTabs::pane,
-    QTabWidget#energyBarriersTabs::pane,
     QTabWidget#quantumAnalysisTabs::pane {{
         border: 1px solid {p.border};
         border-radius: {RADIUS.control}px;
@@ -2121,7 +2119,6 @@ def _muon_relaxation_styles(p: MuFinderPalette) -> str:
     QTabWidget#mufinderTabs,
     QTabWidget#muonRelaxationChargeTabs,
     QTabWidget#analysisWorkspaceTabs,
-    QTabWidget#energyBarriersTabs,
     QTabWidget#quantumAnalysisTabs {{
         background: transparent;
     }}
@@ -2131,14 +2128,12 @@ def _muon_relaxation_styles(p: MuFinderPalette) -> str:
     QTabWidget#mufinderTabs QTabBar,
     QTabWidget#muonRelaxationChargeTabs QTabBar,
     QTabWidget#analysisWorkspaceTabs QTabBar,
-    QTabWidget#energyBarriersTabs QTabBar,
     QTabWidget#quantumAnalysisTabs QTabBar {{
         background: transparent;
     }}
     QTabWidget#mufinderTabs QTabBar::tab,
     QTabWidget#muonRelaxationChargeTabs QTabBar::tab,
     QTabWidget#analysisWorkspaceTabs QTabBar::tab,
-    QTabWidget#energyBarriersTabs QTabBar::tab,
     QTabWidget#quantumAnalysisTabs QTabBar::tab {{
         background: {p.bg_surface_alt};
         color: {p.text_muted};
@@ -2152,8 +2147,7 @@ def _muon_relaxation_styles(p: MuFinderPalette) -> str:
     }}
     QTabWidget#mufinderTabs QTabBar::tab:selected,
     QTabWidget#muonRelaxationChargeTabs QTabBar::tab:selected,
-    QTabWidget#analysisWorkspaceTabs QTabBar::tab:selected,
-    QTabWidget#energyBarriersTabs QTabBar::tab:selected {{
+    QTabWidget#analysisWorkspaceTabs QTabBar::tab:selected {{
         background: {p.bg_surface};
         color: {p.text_primary};
         border-color: {p.accent};
@@ -2166,7 +2160,6 @@ def _muon_relaxation_styles(p: MuFinderPalette) -> str:
     QTabWidget#mufinderTabs QTabBar::tab:hover:!selected,
     QTabWidget#muonRelaxationChargeTabs QTabBar::tab:hover:!selected,
     QTabWidget#analysisWorkspaceTabs QTabBar::tab:hover:!selected,
-    QTabWidget#energyBarriersTabs QTabBar::tab:hover:!selected,
     QTabWidget#quantumAnalysisTabs QTabBar::tab:hover:!selected {{
         background: {p.bg_surface};
         color: {p.text_primary};

@@ -296,7 +296,7 @@ def _configure_neb(window: MainWindow, key: str) -> None:
         dialog._accept_if_valid()
 
     when_modal("NudgedElasticBandConfigDialog", configure)
-    window._on_configure_energy_barrier_result([key])
+    window._energy_barriers_controller.configure_paths([key])
 
 
 def _configure_phonons(window: MainWindow, keys: list[str]) -> None:
@@ -419,23 +419,38 @@ def _neb_path_key(window: MainWindow) -> str:
     return path_key(window, keys[1], keys[2])
 
 
-def open_path_preview(window: MainWindow) -> None:
-    """Click ``View...`` on the site 1 to site 2 path that the NEB band follows."""
-
-    window._on_view_energy_barrier_source(_neb_path_key(window))
-
-
 def open_neb_configuration(window: MainWindow) -> None:
     """Click ``Configure...`` on the site 1 to site 2 path."""
 
-    window._on_configure_energy_barrier_result([_neb_path_key(window)])
+    window._energy_barriers_controller.configure_paths([_neb_path_key(window)])
 
 
-def show_transition_state(page: QWidget) -> None:
-    """Show the NEB Analysis tab with the highest-energy image in the inspector, viewed down a."""
+def _select_path_row(page: Any, text: str) -> None:
+    """Select the path table row whose hop or status holds ``text``."""
 
-    page._tabs.setCurrentIndex(1)
-    settle(QApplication.instance())
+    table = page._sources_table
+    for row in range(table.rowCount()):
+        cells = [table.item(row, column).text() for column in range(table.columnCount())]
+        if any(text in cell for cell in cells):
+            table.selectRow(row)
+            settle(QApplication.instance())
+            return
+    raise RuntimeError(f"No path row holds {text!r}")
+
+
+def show_hop(page: Any) -> None:
+    """Select the hop along c, not yet run: the pristine supercell with its arrow, down b."""
+
+    _select_path_row(page, "along c")
+    frame_viewers(page)
+    # Down b the arrow stands clear in front of the atom columns.
+    page._preview_viewer._set_named_view("b")
+
+
+def show_transition_state(page: Any) -> None:
+    """Select the finished path with the highest-energy image in the inspector, viewed down a."""
+
+    _select_path_row(page, "completed")
     energies = [row.energy_value for row in page._preview_rows]
     page._apply_preview_index(int(np.argmax(energies)))
     settle(QApplication.instance())
@@ -476,17 +491,9 @@ SCENES: dict[str, Scene] = {
         setup=open_workspace,
     ),
     "gdru2si2_energy_barrier_paths": Scene(
-        results_project, "energy_barriers", Page("_energy_barriers_view", (1100, 740))
-    ),
-    "gdru2si2_path_preview": Scene(
         results_project,
         "energy_barriers",
-        Dialog(
-            open_path_preview,
-            kind="EnergyBarrierPathViewerDialog",
-            size=(860, 720),
-            prepare=view_along_a,
-        ),
+        Page("_energy_barriers_view", (1100, 800), prepare=show_hop),
     ),
     "gdru2si2_neb_configuration": Scene(
         configured_project,
@@ -512,7 +519,7 @@ SCENES: dict[str, Scene] = {
     "gdru2si2_neb_analysis": Scene(
         results_project,
         "energy_barriers",
-        Page("_energy_barriers_view", (1100, 860), prepare=show_transition_state),
+        Page("_energy_barriers_view", (1100, 800), prepare=show_transition_state),
     ),
     "gdru2si2_quantum_corrections": Scene(
         results_project, "quantum_corrections", Page("_quantum_corrections_view", (1100, 680))

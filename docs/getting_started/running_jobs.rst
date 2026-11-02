@@ -190,9 +190,8 @@ affected.
   checkbox, the per-row ``Configure`` and remove buttons, and every Job Dashboard
   action button and ``⋯`` menu entry except ``Continue relaxation…`` and ``Open
   in``, which act on their own row.
-- Controls that only make sense for one row (``Open Wizard`` in the UEP table,
-  ``View…`` in the Energy Barriers table) always act on their own row and
-  never prompt.
+- Controls that only make sense for one row (``Open Wizard`` in the UEP table)
+  always act on their own row and never prompt.
 
 What a click will affect is shown before the click, without changing any text
 inside the rows, so tables stay usable on a small laptop screen:

@@ -158,7 +158,19 @@ def test_a_pinned_site_whose_relaxation_was_reset_is_unresolved(project) -> None
     assert selection.keys() == [str(low_a.id)]
     assert [site.cluster_index for site in selection.unresolved] == [2]
     scope = downstream_site_scope(doc, QUANTUM_CORRECTIONS_SCOPE)
-    assert "1 pinned site is no longer an eligible relaxed site" in scope.notice
+    assert "1 pinned site is no longer an eligible relaxed site (its relaxation was" in scope.notice
+
+
+def test_two_unresolved_pinned_sites_read_in_the_plural(project) -> None:
+    _service, doc, host = project
+    low_a, _low_b, high, workspace = _two_site_project(doc, host)
+    _pin(doc, workspace)
+    doc.jobs[relaxation_job_id(doc, high)].status = JobStatus.DEFINED
+    doc.jobs[relaxation_job_id(doc, low_a)].status = JobStatus.DEFINED
+
+    notice = downstream_site_scope(doc, QUANTUM_CORRECTIONS_SCOPE).notice
+
+    assert "are no longer eligible relaxed sites (their relaxations were reset" in notice
 
 
 def test_a_legacy_snapshot_takes_job_ids_from_the_pinned_workspace(project) -> None:

@@ -12,7 +12,6 @@ from mufinder.app.relaxation_analysis_widget import (
 )
 from mufinder.app.supercell_dialog import SupercellEditorDialog
 from mufinder.app.viewer_dialog import StructureViewerDialog
-from mufinder.app.workflow_dialogs import EnergyBarrierPathViewerDialog
 
 
 class _Viewer:
@@ -77,7 +76,6 @@ def test_nothing_is_shut_down_before_the_dialog_ends(qapp) -> None:
 @pytest.mark.parametrize(
     "dialog_class",
     [
-        EnergyBarrierPathViewerDialog,
         SupercellEditorDialog,
         RelaxationClusteringDialog,
         DisplacementAnalysisDialog,

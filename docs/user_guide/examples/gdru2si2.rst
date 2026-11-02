@@ -118,30 +118,24 @@ The paths between them
 On the Energy Barriers page, ``Generate Paths`` with site 1 as both endpoints
 lists the symmetry-distinct hops between copies of site 1. The automatic
 length cutoff keeps only the 1.375 Å hop along c, across the Gd plane to the
-mirror image of site 1 below it; with ``Max path length (Å)`` set to 3 it also
+mirror image of site 1 below it; with ``Max length`` set to 3 Å it also
 lists the 2.944 Å hop in the plane, from (½, 0, z) to (0, ½, z). That second
 hop is the paper's 1 → 1′ path, and its minimum-energy path passes through
 site 2, on the diagonal mirror half way between the two copies of site 1. With
 site 2 as the final endpoint, ``Generate Paths`` gives one hop of 1.719 Å, the
 first half of that path.
 
+Selecting a row shows its hop in the pristine supercell, here the hop along c
+viewed down b. The table names the two hops of site 1 by their directions, along c
+and along [1 -1 0].
+
 .. figure:: ../../_generated/screenshots/gdru2si2_energy_barrier_paths.webp
-   :alt: The Paths tab with site 1 as the initial endpoint and site 2 as the
-         final one, and three diffusion paths: site 1 to site 1 of 1.375 and
-         2.944 A, ready, and site 1 to site 2 of 1.719 A, run with 4 farms,
-         completed.
+   :alt: The Energy Barriers page with site 1 and site 2 as endpoints and three
+         paths: site 1 to site 1 along c, 1.375 A, and along [1 -1 0], 2.944 A,
+         ready, and site 1 to site 2, 1.719 A, run with 4 farms, completed. The
+         pristine supercell below shows the arrow of the hop along c.
 
    The 1 → 1′ hops and the 1 → 2 hop that the NEB band follows.
-
-``View…`` on the 1 → 2 row shows the hop in the pristine supercell, here
-viewed down a, where the two muon positions near the bottom of the cell stand
-clear of the atom columns.
-
-.. figure:: ../../_generated/screenshots/gdru2si2_path_preview.webp
-   :alt: The path viewer with the GdRu2Si2 pristine supercell viewed down a
-         and the arrow from site 1 to site 2 near the bottom of the cell.
-
-   The site 1 to site 2 hop in the pristine supercell.
 
 The NEB band
 ------------
@@ -163,16 +157,15 @@ sliding down), so CASTEP kept 40.
 
    The NEB settings of the 1 → 2 path.
 
-The band of a farmed run is written to ``<seed>_farm001.ts``, which is the file
-MuFinder reads (see :doc:`/user_guide/energy_barriers`, *Task farming*). The
-``NEB Analysis`` tab lists it with 42 images: the 40 of the final iteration
-between the two endpoints.
+MuFinder reads the band of a farmed run from its first farm's file. The 1 → 2 row
+then holds the barriers, and selecting it shows the band with 42 images: the 40 of
+the final iteration between the two endpoints.
 
 .. figure:: ../../_generated/screenshots/gdru2si2_neb_analysis.webp
-   :alt: The NEB Analysis tab with the site 1 to site 2 band: a forward
-         barrier of 0.495247 eV, a reverse barrier of 0.212521 eV, a Delta E
-         of 0.282726 eV and 42 images, and the energy profile with image 23
-         of 42, the transition state, in the viewer.
+   :alt: The Energy Barriers page with the site 1 to site 2 path selected: a
+         forward barrier of 495 meV, a reverse barrier of 213 meV and a Delta E
+         of +283 meV in its row, and the energy profile with image 23 of 42,
+         the transition state, in the viewer.
 
    The paper's NEB band, with its highest image, 23 of 42, in the viewer.
 

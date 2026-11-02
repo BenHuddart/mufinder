@@ -691,12 +691,7 @@ def test_main_window_routes_to_quantum_view_and_construction_placeholders(
 
     assert window._main_stack.currentWidget() is window._energy_barriers_view
     assert window._energy_barriers_view.accessibleName() == "Energy Barriers workflow"
-    tabs = window._energy_barriers_view.findChild(QTabWidget, "energyBarriersTabs")
-    assert tabs is not None
-    assert [tabs.tabText(index) for index in range(tabs.count())] == [
-        "Paths",
-        "NEB Analysis",
-    ]
+    assert window._energy_barriers_view.findChildren(QTabWidget) == []
     window.close()
 
 
@@ -1668,7 +1663,7 @@ def test_main_window_quantum_corrections_allows_editing_eligible_site_name(
     window.close()
 
 
-def test_main_window_applies_energy_barrier_row_configuration_and_opens_path_preview(
+def test_main_window_applies_energy_barrier_row_configuration_and_shows_the_hop(
     qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     window = MainWindow()
@@ -1771,9 +1766,6 @@ def test_main_window_applies_energy_barrier_row_configuration_and_opens_path_pre
 
     window._ensure_energy_barriers_view()
     window._refresh_energy_barriers_view()
-    configure_button = window._energy_barriers_view._sources_table.cellWidget(0, 6)
-    assert configure_button.text() == "Configured…"
-
     jobs = window._energy_barriers_controller.materialize([candidate.key])
 
     assert len(jobs) == 1
@@ -1784,27 +1776,15 @@ def test_main_window_applies_energy_barrier_row_configuration_and_opens_path_pre
     assert "KPOINT_MP_GRID 2 1 1" in cell_text
     assert "TSSEARCH_NEB_MAX_ITER : 18" in param_text
 
-    opened: dict[str, object] = {}
+    view = window._energy_barriers_view
+    view._sources_table.selectRow(0)
 
-    class _FakeDialog:
-        def __init__(self, *, structure, start_fractional, end_fractional, title, parent=None):
-            opened["structure"] = structure
-            opened["start_fractional"] = tuple(start_fractional)
-            opened["end_fractional"] = tuple(end_fractional)
-            opened["title"] = title
-
-        def exec(self):
-            opened["shown"] = True
-            return 0
-
-    monkeypatch.setattr(main_window_module, "EnergyBarrierPathViewerDialog", _FakeDialog)
-
-    window._on_view_energy_barrier_source(candidate.key)
-
-    assert opened["shown"] is True
-    assert opened["structure"].origin == "energy_barriers_path_preview"
-    assert opened["start_fractional"] == candidate.path.start_fractional
-    assert opened["end_fractional"] == candidate.path.end_fractional
+    assert view._preview_title.text().startswith("siteA → siteB")
+    assert view._band_controls.isHidden()
+    assert view._preview_viewer._structure.origin == "energy_barriers_path_preview"
+    assert len(view._preview_viewer._line_overlay_specs) == 1
+    window.hide()
+    window.close()
 
 
 def test_main_window_energy_barrier_paths_persist_when_endpoint_selection_changes(
@@ -2639,7 +2619,7 @@ def test_main_window_removes_energy_barrier_generated_path(qapp, tmp_path: Path)
 
     assert definition is not None
 
-    window._on_remove_energy_barrier_sources([candidate.key])
+    window._energy_barriers_controller.remove_paths([candidate.key])
 
     assert candidate.key not in {
         str(source.get("key", "")).strip()
@@ -3100,7 +3080,7 @@ def test_main_window_records_neb_result_and_loads_preview(
 
     # Completion parses the ``.ts`` once via the off-thread collector
     # (mufinder.services.job_artifacts). The later result-preview selection
-    # (``EnergyBarriersController.show_neb_preview``) is a separate on-demand
+    # (``EnergyBarriersController.show_path``) is a separate on-demand
     # parse in the controller module, so patch both.
     monkeypatch.setattr(job_artifacts_module, "parse_transition_state_file", _fake_parse)
     monkeypatch.setattr(
@@ -3118,18 +3098,18 @@ def test_main_window_records_neb_result_and_loads_preview(
 
     window._ensure_energy_barriers_view()
     window._refresh_energy_barriers_view()
-    assert window._energy_barriers_view._neb_results_table.rowCount() == 1
+    results_table = window._energy_barriers_view._sources_table
+    assert results_table.rowCount() == 1
 
-    window._energy_barriers_controller.show_neb_preview(str(stored.id))
+    window._energy_barriers_view._sources_table.selectRow(0)
 
     assert window._energy_barriers_view._profile_plot.point_count() == 3
     assert window._energy_barriers_view._preview_position_label.text() == "Image 1 / 3"
-    results_table = window._energy_barriers_view._neb_results_table
-    assert results_table.item(0, 3).text() == "0.2 eV"
-    assert results_table.item(0, 4).text() == "0.1 eV"
-    assert results_table.item(0, 5).text() == "0.1 eV"
+    assert results_table.item(0, 4).text() == "200 meV"
+    assert results_table.item(0, 5).text() == "100 meV"
+    assert results_table.item(0, 6).text() == "+100 meV"
     window._energy_barriers_view._preview_next_button.click()
-    assert "TST" in window._energy_barriers_view._preview_summary.text()
+    assert window._energy_barriers_view._preview_position_label.text() == "Image 2 / 3"
 
     window.close()
 
@@ -3949,10 +3929,10 @@ def test_main_window_quantum_sources_show_energy_relative_to_comparable_minimum(
     assert shown == {"low": "0.00000", "high": "0.25000", "mu0": "0.00000", "big": "0.00000"}
 
     endpoint_labels = {
-        row.label: row.relative_energy for row in window._energy_barriers_controller.endpoint_rows()
+        row.key: row.label for row in window._energy_barriers_controller.endpoint_rows()
     }
-    assert endpoint_labels["high"] == "dE 0.25000 eV"
-    assert endpoint_labels["low"] == "dE 0.00000 eV"
+    assert endpoint_labels[str(high.id)] == "high · positive muon (+250 meV)"
+    assert endpoint_labels[str(low.id)] == "low · positive muon"
 
     window.close()
 
@@ -4013,9 +3993,11 @@ def test_main_window_configures_neb_paths_through_the_dialog(
         def num_farms(self) -> int:
             return 4
 
-    monkeypatch.setattr(main_window_module, "NudgedElasticBandConfigDialog", _FakeNebDialog)
+    monkeypatch.setattr(
+        energy_barriers_controller_module, "NudgedElasticBandConfigDialog", _FakeNebDialog
+    )
 
-    window._on_configure_energy_barrier_result(["path-1"])
+    window._energy_barriers_controller.configure_paths(["path-1"])
 
     assert len(opened) == 1
     assert opened[0]["title"] == "Configure NEB Parameters"

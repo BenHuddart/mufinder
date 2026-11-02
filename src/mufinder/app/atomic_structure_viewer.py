@@ -2098,6 +2098,7 @@ class AtomicStructureViewer(QWidget):
 
         self._structure: Structure | None = None
         self._atoms: Atoms | None = None
+        self._empty_message = "Load a host structure to inspect it here."
         self._selected_index: int | None = None
         self._selected_indexes: list[int] = []
         self._spins: np.ndarray | None = None
@@ -2497,6 +2498,18 @@ class AtomicStructureViewer(QWidget):
 
         layout.addLayout(viewer_row, stretch=1)
         layout.addWidget(self._selection_label)
+
+    def has_structure(self) -> bool:
+        """Return whether the viewer holds a structure."""
+
+        return self._structure is not None
+
+    def set_empty_message(self, message: str) -> None:
+        """Set what the viewer says while it holds no structure; empty says nothing."""
+
+        self._empty_message = message
+        if self._atoms is None or len(self._atoms) == 0:
+            self._render()
 
     def add_control_widget(self, widget: QWidget) -> None:
         """Add a host's own control to the end of the viewer's wrapping control row."""
@@ -3517,13 +3530,14 @@ class AtomicStructureViewer(QWidget):
 
         if self._atoms is None or len(self._atoms) == 0:
             self._configure_pyvista_lighting(plotter, pv)
-            plotter.add_text(
-                "Load a host structure to inspect it here.",
-                position="upper_left",
-                font_size=12,
-                color=_viewer_style().text_primary,
-                render=False,
-            )
+            if self._empty_message:
+                plotter.add_text(
+                    self._empty_message,
+                    position="upper_left",
+                    font_size=12,
+                    color=_viewer_style().text_primary,
+                    render=False,
+                )
             self._pyvista_last_camera_signature = None
             self._canvas.draw_idle()
             return
