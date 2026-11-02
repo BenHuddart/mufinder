@@ -137,7 +137,7 @@ _GROUPING_TOLERANCE_TOOLTIP = (
 _SLICE_DEFAULT_POINTS = 161
 _SLICE_LIVE_PREVIEW_MAX_POINTS = 49
 _SLICE_SURFACE_ALPHA = 0.72
-_GW_FACTOR_MINIMUM = 1.0
+_GW_FACTOR_MINIMUM = 3.0
 _GW_FACTOR_MAXIMUM = 10.0
 _GW_FACTOR_TOOLTIP = (
     "Sets the width of the ionic Gaussians: width = pseudopotential core radius / this factor. "
@@ -4375,6 +4375,11 @@ class UepAnalysisDialog(QDialog):
             messages.append(
                 f"This job was saved with a width factor of {active:g}, outside "
                 f"{_GW_FACTOR_MINIMUM:g} to {_GW_FACTOR_MAXIMUM:g}. It stays in use until you change it."
+            )
+        if active < _GW_FACTOR_MINIMUM:
+            messages.append(
+                "With Gaussians this wide, the potential's minimum can lie far below any "
+                "relaxed site."
             )
         resolution = ionic_gaussian_resolution(self._field)
         if resolution < IONIC_GAUSSIAN_MIN_RESOLUTION:

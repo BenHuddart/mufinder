@@ -3334,7 +3334,50 @@ def test_a_saved_width_factor_outside_the_range_stays_in_use_and_says_so(qapp) -
     dialog.close()
 
 
-@pytest.mark.parametrize("typed", ["0.5", "20"])
+@pytest.mark.parametrize("saved", [1.0, 2.0])
+def test_a_saved_low_width_factor_stays_in_use_and_warns_about_the_low_end(
+    qapp, saved: float
+) -> None:
+    # The search a project holds ran on this factor: the window must not change it unasked.
+    dialog = _si2_dialog(initial_state={"gw_factor": saved})
+
+    assert dialog._source.gw_factor == pytest.approx(saved)
+    assert dialog._gw_factor_input.value() == pytest.approx(saved)
+    assert dialog.state_snapshot()["gw_factor"] == pytest.approx(saved)
+    text = dialog._gw_factor_warning.text()
+    assert f"saved with a width factor of {saved:g}, outside 3 to 10" in text
+    assert "far below any relaxed site" in text
+
+    dialog._on_gw_factor_editing_finished()
+    assert dialog._source.gw_factor == pytest.approx(saved)
+    dialog.close()
+
+
+@pytest.mark.parametrize("factor", [3.0, 10.0])
+def test_the_ends_of_the_width_factor_range_can_be_applied(qapp, factor: float) -> None:
+    dialog = _si2_dialog()
+
+    dialog._gw_factor_input.setValue(factor)
+    dialog._gw_factor_input.returnPressed.emit()
+
+    assert dialog._source.gw_factor == pytest.approx(factor)
+    assert "outside" not in dialog._gw_factor_warning.text()
+    dialog.close()
+
+
+def test_a_saved_low_width_factor_once_changed_cannot_be_typed_again(qapp) -> None:
+    dialog = _si2_dialog(initial_state={"gw_factor": 2.0})
+
+    dialog._gw_factor_input.setValue(5.0)
+    dialog._gw_factor_input.returnPressed.emit()
+
+    assert dialog._source.gw_factor == pytest.approx(5.0)
+    assert dialog._gw_factor_input.minimum() == pytest.approx(3.0)
+    assert not dialog._gw_factor_warning.isVisibleTo(dialog)
+    dialog.close()
+
+
+@pytest.mark.parametrize("typed", ["1", "2", "20"])
 def test_a_width_factor_outside_the_range_is_not_applied_and_says_why(qapp, typed: str) -> None:
     dialog = _si2_dialog()
     dialog.show()
@@ -3348,7 +3391,7 @@ def test_a_width_factor_outside_the_range_is_not_applied_and_says_why(qapp, type
     qapp.processEvents()
 
     assert dialog._source.gw_factor == pytest.approx(5.0)
-    assert "Enter a width factor from 1 to 10." in dialog._gw_factor_warning.text()
+    assert "Enter a width factor from 3 to 10." in dialog._gw_factor_warning.text()
     dialog.close()
 
 

@@ -114,12 +114,14 @@ Completed UEP source jobs open ``UEP Analysis - <job label>`` with two tabs,
 
 The ``Gaussian width factor`` above the tabs sets the width of the ionic Gaussians,
 the pseudopotential core radius divided by this factor (default 5). It takes values
-from 1 to 10 and applies on ``Enter``. Changing it discards a search's results, after a
+from 3 to 10 and applies on ``Enter``. Changing it discards a search's results, after a
 confirmation whose default is ``Cancel`` if the search listed sites. A warning shows
 beside it when the density grid cannot resolve the Gaussians, when σ·G\ :sub:`max` falls
 below 2 for the narrowest one (G\ :sub:`max` is the radius of the sphere inscribed in the
 grid's G box), since the potential then rings around the ions. A job saved with a factor
-outside the range keeps it, and says so, until you change it.
+outside the range keeps it, and says so, until you change it, so its stored results stay
+as they are. Below 3 the Gaussians are so wide that the potential's minimum can lie far
+below any relaxed site, which the warning also says.
 
 The window offers:
 
