@@ -24,6 +24,7 @@ class RecentProjectButton(QPushButton):
 
     def __init__(self, project_path: str, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        self.project_path = project_path
         path = Path(project_path)
         # A folder called only ".mufinder" keeps its whole name.
         name = path.name.removesuffix(_PROJECT_FOLDER_SUFFIX) or path.name or project_path

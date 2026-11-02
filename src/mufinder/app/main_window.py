@@ -38,7 +38,6 @@ from PySide6.QtGui import (
     QShortcut,
 )
 from PySide6.QtWidgets import (
-    QSizePolicy,
     QAbstractItemView,
     QApplication,
     QDialog,
@@ -1280,7 +1279,6 @@ class MainWindow(QMainWindow):
         self._jobs_backspace_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
         self._jobs_backspace_shortcut.activated.connect(self._on_dashboard_delete_key_requested)
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, jobs_dock)
-        self._jobs_dock = jobs_dock
 
     def _sync_project_panels(self) -> None:
         """Show the navigator and the Job Dashboard only while a project is open.
@@ -1292,16 +1290,23 @@ class MainWindow(QMainWindow):
         has_project = self._document is not None
         self._project_tree_panel.setVisible(has_project)
         self._jobs_dock.setVisible(has_project)
+        self._schedule_default_jobs_dock_height()
         if has_project:
             # The panels are back in the layout, which sets the minimum from here on.
             self.setMinimumSize(0, 0)
 
     def showEvent(self, event) -> None:  # noqa: N802 - Qt API naming.
         super().showEvent(event)
-        if not self._jobs_dock_height_set:
-            self._jobs_dock_height_set = True
-            # The dock has its real geometry once this show has been laid out.
-            QTimer.singleShot(0, self._apply_default_jobs_dock_height)
+        self._schedule_default_jobs_dock_height()
+
+    def _schedule_default_jobs_dock_height(self) -> None:
+        """Size the dock once, the first time it is on screen."""
+
+        if self._jobs_dock_height_set or not self.isVisible() or self._jobs_dock.isHidden():
+            return
+        self._jobs_dock_height_set = True
+        # The dock has its real geometry once this show has been laid out.
+        QTimer.singleShot(0, self._apply_default_jobs_dock_height)
 
     def _apply_default_jobs_dock_height(self) -> None:
         """Size the dock to show about ``_JOB_DOCK_DEFAULT_ROWS`` rows."""
@@ -1635,13 +1640,15 @@ class MainWindow(QMainWindow):
             return
 
         focused_row: int | None = None
+        focused_path: str | None = None
         row = 0
         while self._home_recent_projects_layout.count():
             item = self._home_recent_projects_layout.takeAt(0)
             widget = item.widget()
             if widget is not None:
-                if widget.hasFocus():
+                if widget.hasFocus() and isinstance(widget, RecentProjectButton):
                     focused_row = row
+                    focused_path = widget.project_path
                 widget.deleteLater()
             row += 1
 
@@ -1663,14 +1670,17 @@ class MainWindow(QMainWindow):
             )
             self._home_recent_projects_layout.addWidget(button)
 
-        # The entry that had focus is gone; its neighbour takes over.
+        # Focus stays with its project; if that entry has gone, its neighbour takes over.
         if focused_row is not None:
-            neighbour = self._home_recent_projects_layout.itemAt(
-                min(focused_row, len(recent) - 1)
-            ).widget()
+            row = (
+                recent.index(focused_path)
+                if focused_path in recent
+                else min(focused_row, len(recent) - 1)
+            )
+            successor = self._home_recent_projects_layout.itemAt(row).widget()
             # The layout shows it only on its next pass, and a hidden widget takes no focus.
-            neighbour.show()
-            neighbour.setFocus(Qt.FocusReason.OtherFocusReason)
+            successor.show()
+            successor.setFocus(Qt.FocusReason.OtherFocusReason)
 
     def _build_menu(self) -> None:
         file_menu = self.menuBar().addMenu("File")

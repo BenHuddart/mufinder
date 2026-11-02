@@ -453,6 +453,30 @@ def test_the_only_missing_recent_entry_passes_focus_to_create_new_project(
     assert focused.text() == "Create New Project"
 
 
+@pytest.mark.parametrize("focused_row", [1, 2])
+def test_removing_another_recent_entry_keeps_focus_on_the_same_project(
+    window: MainWindow,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    focused_row: int,
+) -> None:
+    monkeypatch.setattr(main_window_module.QMessageBox, "warning", lambda *args, **kwargs: None)
+    _active(window)
+    paths = [str(tmp_path / f"{name}.mufinder") for name in ("nope", "Alpha", "Beta")]
+    _set_recents(window, paths)
+    layout = window._home_recent_projects_layout
+    layout.itemAt(focused_row).widget().setFocus()
+    focused_name = layout.itemAt(focused_row).widget().accessibleName()
+
+    # What File > Open Recent > nope does: the entry above the focused one goes.
+    window._open_recent_project(paths[0])
+    QApplication.processEvents()
+
+    assert window._recent_projects() == paths[1:]
+    assert QApplication.focusWidget().accessibleName() == focused_name
+    assert QApplication.focusWidget() is layout.itemAt(focused_row - 1).widget()
+
+
 def test_a_failed_open_from_the_menu_leaves_focus_on_the_welcome_page_alone(
     window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
