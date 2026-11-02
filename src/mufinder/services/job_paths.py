@@ -222,22 +222,26 @@ def job_output_directory(
     return None
 
 
-def job_directory_refusal(project_root: Path, job: Job, directory: Path) -> str | None:
-    """Return why ``directory`` must not be deleted as ``job``'s own folder, or ``None``.
+def job_directory_refusal(project_root: Path, job: Job | None, directory: Path) -> str | None:
+    """Return why ``directory`` must not be deleted as a job's own folder, or ``None``.
 
-    The last check before any job folder goes. A job's folder comes from names
-    saved in the project, and a name such as ``.`` or ``..`` resolves to a folder
-    holding every other job.
+    The last check before any job folder goes, on every route. A job's folder comes
+    from names saved in the project: ``.`` or ``..`` resolves to a folder holding every
+    other job, and an absolute name to a folder that is not the project's at all. So
+    the place is checked once resolved, and a name alone is never enough.
     """
 
     if ".." in directory.parts:
         return f"its folder name leads out of its own folder ({directory.name!r})"
+    # Before resolving, which would look through it: a link is not the job's folder,
+    # whatever it points at, and deleting one neither removes nor refuses.
+    if directory.is_symlink():
+        return f"its folder is a link to somewhere else ({directory.name!r})"
     resolved = directory.resolve()
-    root = project_root.resolve()
-    if root.is_relative_to(resolved):
-        return "its folder holds the whole project"
-    files_root = root / "files"
-    if resolved.is_relative_to(files_root) and len(resolved.relative_to(files_root).parts) < 2:
+    files_root = project_root.resolve() / "files"
+    if not resolved.is_relative_to(files_root):
+        return f"its folder is outside this project's job folders ({resolved})"
+    if len(resolved.relative_to(files_root).parts) < 2:
         return f"its folder is the folder of a whole workflow ({resolved.name!r})"
     charge_folders = {
         muon_charge_state_prefix(POSITIVE_MUON_CHARGE_STATE),
@@ -245,7 +249,8 @@ def job_directory_refusal(project_root: Path, job: Job, directory: Path) -> str 
     }
     # By place, not name alone: a job inside a charge folder may have a seed of that name.
     if (
-        is_muon_relaxation_calc_type(job.calc_type)
+        job is not None
+        and is_muon_relaxation_calc_type(job.calc_type)
         and resolved.name in charge_folders
         and resolved.parent.name not in charge_folders
     ):

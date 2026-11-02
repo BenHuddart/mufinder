@@ -44,7 +44,7 @@ def plain_error(exc: BaseException) -> str:
             return "permission denied"
         if isinstance(exc, FileNotFoundError):
             return "it is no longer there"
-        return (exc.strerror or "the file system refused it").lower()
+        return (exc.strerror or str(exc) or "the file system refused it").lower()
     return str(exc).rstrip(" .")
 
 

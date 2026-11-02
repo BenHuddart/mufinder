@@ -4363,7 +4363,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(
                 self,
                 "File cleanup failed",
-                f"Could not update files for cutoff {failure.item.key[0]:.8g} eV:\n{failure.error}",
+                f"Could not update files for cutoff {failure.item.key[0]:.8g} eV:\n{failure.reason}",
             )
 
         removed_cutoffs: list[float] = []
@@ -8612,7 +8612,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(
                 self,
                 "File cleanup failed",
-                f"Could not update files for job '{failure.item.label}':\n{failure.error}",
+                f"Could not update files for job '{failure.item.label}':\n{failure.reason}",
             )
         return outcome.completed
 
@@ -8892,30 +8892,27 @@ class MainWindow(QMainWindow):
         )
 
         if plan.unsafe:
-            QMessageBox.warning(
-                self,
+            self._warn_with_lines(
                 "Cannot remove safely",
-                "MuFinder will not delete these folders, so nothing was removed:\n\n"
-                + "\n".join(f"- {line}" for line in plan.unsafe),
+                f"MuFinder will not delete the folders of {plural(len(plan.unsafe), 'relaxation')}, "
+                "so nothing was removed.",
+                plan.unsafe,
             )
             return
 
         if plan.blockers:
-            QMessageBox.warning(
-                self,
+            self._warn_with_lines(
                 "Still in use",
-                "These imported relaxations cannot be removed because they are still "
-                "used by:\n\n"
-                + "\n".join(f"- {item}" for item in plan.blockers)
-                + "\n\nRemove those first.",
+                "These imported relaxations cannot be removed because other work uses them. "
+                "Remove that first.",
+                plan.blockers,
             )
             return
 
         if not workflow_table_utils.confirm_destructive(
             self,
             "Remove imported relaxations?",
-            f"Permanently remove {plural(len(plan.targets), 'imported relaxation')} and delete "
-            "their job directories, including the archived original input files?",
+            self._removal_question(plan),
             "MuFinder did not run these calculations and cannot recreate them.",
             accept_label=(f"Remove {plural(len(plan.targets), 'relaxation', 'relaxations')}"),
         ):
@@ -8924,11 +8921,7 @@ class MainWindow(QMainWindow):
         outcome = remove_imported_relaxations(document, plan, batch_id=batch_id)
         removed, errors = outcome.removed, outcome.errors
         if not removed:
-            QMessageBox.warning(
-                self,
-                "Cannot remove safely",
-                "Nothing was removed:\n\n" + "\n".join(f"- {line}" for line in errors),
-            )
+            self._warn_with_lines("Cannot remove safely", "Nothing was removed.", errors)
             return
         # Only what actually went: a row whose job stayed keeps its binding.
         gone = [ref for ref in plan.targets if ref.job_id not in document.jobs]
@@ -8955,13 +8948,52 @@ class MainWindow(QMainWindow):
         )
 
         if errors:
-            QMessageBox.warning(self, "Removal issues", "\n".join(errors))
+            self._warn_with_lines("Removal issues", "Some files could not be deleted.", errors)
             self.statusBar().showMessage(
                 f"Removed {plural(removed, 'imported relaxation')}; "
                 "some of its files could not be deleted"
             )
             return
+        if plan.kept_job_ids:
+            self.statusBar().showMessage(
+                f"Removed {plural(removed, 'imported relaxation')}; "
+                "the files stay because another import uses them"
+            )
+            return
         self.statusBar().showMessage(f"Removed {plural(removed, 'imported relaxation')}")
+
+    def _warn_with_lines(self, title: str, summary: str, lines: Sequence[str]) -> None:
+        """Warn with ``summary`` and one line per item, kept on screen however many there are."""
+
+        if len(lines) == 1:
+            QMessageBox.warning(self, title, f"{summary}\n\n- {lines[0]}")
+            return
+        show_detailed_warning(
+            self,
+            title,
+            summary + "\n" + "\n".join(f"- {line}" for line in lines),
+            informative_text="Open Details to see each one.",
+        )
+
+    @staticmethod
+    def _removal_question(plan) -> str:
+        """Return what removing a batch will do with its folders, in plain words."""
+
+        count = plural(len(plan.targets), "imported relaxation")
+        stays = (
+            "another import uses the same folder. The folder is deleted when the last import "
+            "using it is removed."
+        )
+        if not plan.directories and plan.kept_job_ids:
+            return f"Remove {count} from the project? Their files stay, because {stays}"
+        question = (
+            f"Permanently remove {count} and delete their job directories, including the "
+            "archived original input files?"
+        )
+        if plan.kept_job_ids:
+            kept = plural(len(plan.kept_job_ids), "relaxation")
+            question += f"\n\nThe files of {kept} stay, because {stays}"
+        return question
 
     def _muon_relaxation_form_state_without(self, targets) -> dict[str, object]:
         """Return the widget's form state with ``targets``' rows dropped."""

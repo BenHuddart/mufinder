@@ -2168,3 +2168,41 @@ def test_switching_host_from_a_mismatch_prompt_refreshes_both_sweeps(
 
     assert document.project.host_structure_id == other.id
     _assert_both_sweeps_show_the_fallback(window)
+
+
+def test_remove_cutoff_shows_why_its_folder_was_refused(
+    main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A refusal is not a filesystem error, and there is no error to print."""
+
+    window = main_window
+
+    from mufinder.services.job_file_cleanup import (
+        JobCleanupFailure,
+        JobCleanupItem,
+        JobCleanupOutcome,
+    )
+
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "project", "p")
+    window._document = doc
+    item = JobCleanupItem(label="300", key=(300.0, None))
+    monkeypatch.setattr(
+        window._job_file_cleanup,
+        "execute",
+        lambda *args, **kwargs: JobCleanupOutcome(
+            failures=(JobCleanupFailure(item, refusal="- 300: its folder is a link"),)
+        ),
+    )
+    warnings: list[str] = []
+    monkeypatch.setattr(
+        main_window_module.QMessageBox,
+        "warning",
+        lambda _parent, title, message: warnings.append(f"{title}: {message}"),
+    )
+
+    window._on_remove_cutoffs_from_convergence([300.0])
+
+    assert len(warnings) == 1
+    assert "its folder is a link" in warnings[0]
+    assert "None" not in warnings[0]

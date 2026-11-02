@@ -85,6 +85,9 @@ class RemovalPlan:
     blockers: tuple[str, ...] = ()
     #: Each target job's folder, as the project resolves it.
     job_directories: Mapping[UUID, Path] = field(default_factory=dict)
+    #: Target jobs whose folder another import also uses: their records go and
+    #: the folder stays, until the last import using it goes.
+    kept_job_ids: frozenset[UUID] = frozenset()
     #: The folders of every other job, none of which a removal may touch.
     other_job_directories: Mapping[UUID, Path] = field(default_factory=dict)
     #: Why a target's folder is not one this removal may delete. Non-empty means
@@ -95,7 +98,13 @@ class RemovalPlan:
     def directories(self) -> tuple[Path, ...]:
         """Return the folders the removal deletes."""
 
-        return tuple(self.job_directories.values())
+        return _folders_to_delete(self.job_directories, self.kept_job_ids)
+
+    @property
+    def kept_directories(self) -> tuple[Path, ...]:
+        """Return the folders that stay because another import also uses them."""
+
+        return tuple(dict.fromkeys(self.job_directories[job_id] for job_id in self.kept_job_ids))
 
     @property
     def allowed(self) -> bool:
@@ -248,19 +257,67 @@ def _folder_refusal(
     resolved = directory.resolve()
     charge_state = muon_relaxation_charge_state(job.calc_type)
     charge_folder = muon_charge_state_prefix(charge_state) if charge_state else None
-    if resolved.parent.name != charge_folder:
+    # Whole place, inside this project: <files>/<workflow>/<charge>/<job>.
+    place = resolved.relative_to(document.project_root.resolve() / "files").parts
+    if len(place) != 3 or place[1] != charge_folder:
         return f"its folder is not inside its charge folder ({directory.name!r})"
-    result = document.results.get(ref.result_id) if ref.result_id is not None else None
-    written = {Path(name).parts[0] for name in (result.output_files if result else ()) if name}
-    if directory.name not in written:
+    if directory.name not in _folders_recorded(document, ref.job_id):
         return f"its folder is not the one its files were written to ({directory.name!r})"
     for other_id, other in other_job_directories.items():
+        if other_id == ref.job_id:
+            continue
         other_resolved = other.resolve()
-        if other_id != ref.job_id and (
-            other_resolved.is_relative_to(resolved) or resolved.is_relative_to(other_resolved)
-        ):
+        if other_resolved == resolved and _is_import_of(document, other_id, other.name):
+            continue  # Another import of the same files: its records can go separately.
+        if other_resolved.is_relative_to(resolved) or resolved.is_relative_to(other_resolved):
             return f"another job uses its folder ({directory.name!r})"
     return None
+
+
+def _folders_recorded(document: Any, job_id: UUID) -> set[str]:
+    """Return the folders a job's results record its files being written to."""
+
+    folders: set[str] = set()
+    for run in document.runs.values():
+        if run.job_id != job_id or run.result_id is None:
+            continue
+        result = document.results.get(run.result_id)
+        if result is not None:
+            folders.update(Path(name).parts[0] for name in result.output_files if name)
+    return folders
+
+
+def _is_import_of(document: Any, job_id: UUID, folder: str) -> bool:
+    """Return whether a job is an imported one that recorded writing to ``folder``."""
+
+    job = document.jobs.get(job_id)
+    return (
+        job is not None
+        and IMPORTED_JOB_TAG in (job.tags or ())
+        and folder in _folders_recorded(document, job_id)
+    )
+
+
+def _folders_to_delete(
+    job_directories: Mapping[UUID, Path], kept_job_ids: frozenset[UUID]
+) -> tuple[Path, ...]:
+    return tuple(
+        dict.fromkeys(
+            path for job_id, path in job_directories.items() if job_id not in kept_job_ids
+        )
+    )
+
+
+def jobs_keeping_their_folder(
+    job_directories: Mapping[UUID, Path], other_job_directories: Mapping[UUID, Path]
+) -> frozenset[UUID]:
+    """Return the target jobs whose folder a job outside the removal also uses.
+
+    Read after :func:`unsafe_directories` has passed, so such a job is an import.
+    """
+
+    others = {path.resolve() for path in other_job_directories.values()}
+    return frozenset(job_id for job_id, path in job_directories.items() if path.resolve() in others)
 
 
 def unsafe_directories(
@@ -277,7 +334,6 @@ def unsafe_directories(
         directory = job_directories.get(ref.job_id)
         if directory is None:
             continue
-        # A batch's own jobs must not share a folder either.
         others = {
             **other_job_directories,
             **{key: value for key, value in target_directories.items() if key != ref.job_id},
@@ -303,12 +359,14 @@ def plan_removal(
         if (path := (job_directories or {}).get(ref.job_id)) is not None
     }
     others = dict(other_job_directories or {})
+    unsafe = unsafe_directories(document, targets, directories, others)
     return RemovalPlan(
         targets=tuple(targets),
         blockers=tuple(find_references(document, targets)),
         job_directories=directories,
+        kept_job_ids=frozenset() if unsafe else jobs_keeping_their_folder(directories, others),
         other_job_directories=others,
-        unsafe=unsafe_directories(document, targets, directories, others),
+        unsafe=unsafe,
     )
 
 
@@ -342,6 +400,7 @@ def remove_imported_relaxations(
     )
     if unsafe:
         return RemovalOutcome(removed=0, errors=list(unsafe))
+    kept = jobs_keeping_their_folder(plan.job_directories, plan.other_job_directories)
 
     errors: list[str] = []
     removed = 0
@@ -364,8 +423,9 @@ def remove_imported_relaxations(
         removed += 1
         removed_labels.append(ref.label)
 
+    deleted = _folders_to_delete(plan.job_directories, kept)
     if delete_files:
-        for directory in plan.directories:
+        for directory in deleted:
             if not directory.exists():
                 continue
             try:
@@ -384,7 +444,10 @@ def remove_imported_relaxations(
                 "batch_id": str(batch_id) if batch_id is not None else None,
                 "labels": removed_labels,
                 "deleted_files": bool(delete_files),
-                "directories": [str(path) for path in plan.directories],
+                "directories": [str(path) for path in deleted],
+                "kept_directories": [
+                    str(path) for path in dict.fromkeys(plan.job_directories[job] for job in kept)
+                ],
             },
             input_entity_ids=[ref.site_id for ref in plan.targets],
         )

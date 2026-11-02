@@ -299,3 +299,40 @@ def test_a_seed_named_like_a_charge_folder_is_still_its_own_folder(tmp_path: Pat
     assert job_directory_refusal(tmp_path, job, charge) is not None
     assert job_directory_refusal(tmp_path, job, charge.parent) is not None
     assert job_directory_refusal(tmp_path, job, charge / "..") is not None
+
+
+def test_a_folder_outside_the_projects_job_tree_is_refused(tmp_path: Path) -> None:
+    from mufinder.services.job_paths import job_directory_refusal
+
+    job = Job(
+        label="site",
+        workflow_stage=WorkflowStage.MUON_RELAXATION,
+        calc_type="castep_positivemuon_relaxation",
+    )
+    project = tmp_path / "project"
+    (project / "files" / "muon_relaxation" / "positivemuon" / "site").mkdir(parents=True)
+    outside = tmp_path / "elsewhere" / "positivemuon" / "site"
+    outside.mkdir(parents=True)
+    sibling = project / "notes" / "positivemuon" / "site"
+    sibling.mkdir(parents=True)
+
+    charge = project / "files" / "muon_relaxation" / "positivemuon"
+    assert job_directory_refusal(project, job, charge / "site") is None
+    assert "outside" in job_directory_refusal(project, job, outside)
+    assert "outside" in job_directory_refusal(project, job, sibling)
+    assert job_directory_refusal(project, None, outside) is not None
+
+
+def test_a_link_is_refused_wherever_it_points(tmp_path: Path) -> None:
+    from mufinder.services.job_paths import job_directory_refusal
+
+    job = Job(
+        label="site",
+        workflow_stage=WorkflowStage.MUON_RELAXATION,
+        calc_type="castep_positivemuon_relaxation",
+    )
+    charge = tmp_path / "files" / "muon_relaxation" / "positivemuon"
+    (charge / "real").mkdir(parents=True)
+    (charge / "link").symlink_to(charge / "real", target_is_directory=True)
+
+    assert "link" in job_directory_refusal(tmp_path, job, charge / "link")

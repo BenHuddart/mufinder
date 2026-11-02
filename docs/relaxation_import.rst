@@ -213,10 +213,17 @@ Decisions
    * - Host structure
      - Require a matching host: the import refuses until one is loaded.
    * - Deleting a job folder
-     - Only a folder strictly inside the job's charge folder once resolved, which the
-       import recorded writing to and no other job uses. Anything else is refused and
-       nothing goes. ``job_directory_refusal`` is the same last check on every
-       route that deletes a job's folder, native jobs included.
+     - Only a real folder, not a link, strictly inside this project's job folders and
+       the job's charge folder once resolved, which the import recorded writing to.
+       Anything else is refused and nothing goes. ``job_directory_refusal`` is the
+       same last check on every route that deletes a job's folder, native jobs
+       included.
+   * - A job folder that is a link
+     - Refused with rows kept, on every route. Unlinking would leave the target's files
+       unaccounted for, and the user can remove the link and try again.
+   * - A folder two imports share
+     - Each batch's removal takes its records and keeps the files; the last one using
+       the folder deletes it. Any job that is not an import of those files refuses.
    * - A seed that cannot name a folder
      - A leading or trailing space or dot is refused at the scan. A saved seed names
        the folder with exactly that name when one exists, so writing and reading agree.

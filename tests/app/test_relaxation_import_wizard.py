@@ -1327,26 +1327,6 @@ class TestRemovalDeletesOnlyItsOwnFolder:
         assert warned and "nothing was removed" in warned[0]
         assert item.site_id in window._document.sites
 
-    def test_a_folder_shared_by_two_jobs_is_not_deleted(
-        self,
-        window: MainWindow,
-        tmp_path: Path,
-        host_structure: Structure,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """A folder imported twice by an earlier version holds both batches' files."""
-
-        outcomes, output_root, warned = self._project(window, tmp_path, host_structure, monkeypatch)
-        item = outcomes[1].imported[0]
-        other = outcomes[0].imported[0]
-        self._point_at(window, item, other.seed_name)
-        before = _tree(output_root)
-
-        window._on_remove_imported_relaxations()
-
-        assert _tree(output_root) == before
-        assert warned and "another job" in warned[0]
-
     def test_a_seed_with_an_end_space_removes_its_own_folder_only(
         self,
         window: MainWindow,
@@ -1452,6 +1432,123 @@ class TestRemovalDeletesOnlyItsOwnFolder:
         assert warned and "its folder changed" in warned[0]
         assert not window.statusBar().currentMessage().startswith("Removed")
 
+    def test_an_absolute_seed_outside_the_project_is_not_deleted(
+        self,
+        window: MainWindow,
+        tmp_path: Path,
+        host_structure: Structure,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Its parent is named like a charge folder and its name matches what was written."""
+
+        outcomes, output_root, warned = self._project(window, tmp_path, host_structure, monkeypatch)
+        item = outcomes[1].imported[0]
+        victim = tmp_path / "elsewhere" / "positivemuon" / item.seed_name
+        victim.mkdir(parents=True)
+        (victim / "thesis.txt").write_text("kept")
+        definition = window._muon_relaxation_controller.active_definition()
+        definition.parameters["job_seed_names_by_label"][f"positivemuon:{item.label}"] = str(victim)
+        before = _tree(output_root)
+
+        window._on_remove_imported_relaxations()
+
+        assert (victim / "thesis.txt").is_file()
+        assert _tree(output_root) == before
+        assert item.site_id in window._document.sites
+        assert warned and "nothing was removed" in warned[0]
+
+    @pytest.mark.parametrize("target", ["outside", "other_job", "not_a_job"])
+    def test_a_job_folder_that_is_a_link_is_refused_and_nothing_goes(
+        self,
+        window: MainWindow,
+        tmp_path: Path,
+        host_structure: Structure,
+        monkeypatch: pytest.MonkeyPatch,
+        target: str,
+    ) -> None:
+        import shutil
+
+        outcomes, output_root, warned = self._project(window, tmp_path, host_structure, monkeypatch)
+        item = outcomes[1].imported[0]
+        destination = {
+            "outside": tmp_path / "elsewhere" / "positivemuon" / "victim",
+            "other_job": outcomes[0].imported[0].job_directory,
+            "not_a_job": output_root / "positivemuon" / "native_job",
+        }[target]
+        destination.mkdir(parents=True, exist_ok=True)
+        (destination / "thesis.txt").write_text("kept")
+        shutil.rmtree(item.job_directory)
+        item.job_directory.symlink_to(destination, target_is_directory=True)
+        before = _tree(output_root)
+
+        window._on_remove_imported_relaxations()
+
+        assert _tree(output_root) == before
+        assert item.job_directory.is_symlink()
+        assert (destination / "thesis.txt").is_file()
+        assert item.site_id in window._document.sites
+        assert item.job_id in window._document.jobs
+        assert warned and "nothing was removed" in warned[0]
+        assert "link" in warned[0]
+        assert "refused it" not in warned[0]
+        assert not window.statusBar().currentMessage().startswith("Removed")
+
+    def test_a_long_refusal_stays_on_screen_with_the_detail_in_a_scroll(
+        self,
+        window: MainWindow,
+        tmp_path: Path,
+        host_structure: Structure,
+        monkeypatch: pytest.MonkeyPatch,
+        qapp,
+    ) -> None:
+        from PySide6.QtCore import QTimer
+        from PySide6.QtWidgets import QApplication, QMessageBox
+
+        from mufinder.services.relaxation_import_commit import commit_relaxation_import
+
+        _outcomes, output_root, _warned = self._project(
+            window, tmp_path, host_structure, monkeypatch
+        )
+        document = window._document
+        scan = _scan(build_folder(tmp_path / "many", sites=range(10, 40)))
+        many = commit_relaxation_import(
+            document,
+            scan=scan,
+            runs=scan.importable_runs,
+            host_structure=host_structure,
+            output_root=output_root,
+        )
+        window.merge_imported_relaxation_rows(many, output_directory=output_root)
+        window._project_service.append_provenance(document, many.provenance)
+        for item in many.imported:
+            self._point_at(window, item, "..")
+        index = [
+            position
+            for position, batch in enumerate(window._imported_relaxation_batches())
+            if batch[2] == many.batch_id
+        ][0]
+        monkeypatch.setattr(
+            "mufinder.app.main_window.choose_import_batch", lambda *args, **kwargs: index
+        )
+        seen: dict[str, object] = {}
+
+        def _read_box() -> None:
+            box = QApplication.activeModalWidget()
+            assert isinstance(box, QMessageBox)
+            seen.update(text=box.text(), detail=box.detailedText(), height=box.sizeHint().height())
+            box.accept()
+
+        QTimer.singleShot(0, _read_box)
+        before = _tree(output_root)
+
+        window._on_remove_imported_relaxations()
+
+        assert _tree(output_root) == before
+        assert "30 relaxations" in seen["text"]
+        assert "nothing was removed" in seen["text"]
+        assert seen["detail"].count("\n") >= 29
+        assert seen["height"] < 500
+
     def test_a_native_job_whose_seed_leaves_its_folder_is_refused_on_every_route(
         self,
         window: MainWindow,
@@ -1525,6 +1622,235 @@ class TestRemovalDeletesOnlyItsOwnFolder:
         assert outcome.completed
         assert not (output_root / "positivemuon" / "native_job").exists()
         assert (output_root / "muonium" / "native_job").is_dir()
+
+
+class TestNativeRemovalRefusals:
+    """Row removal goes through ``JobFileCleanup``, with no ownership check asked for."""
+
+    def _native(self, window: MainWindow, tmp_path: Path, host: Structure, seed: str):
+        from mufinder.domain.enums import JobStatus, WorkflowStage
+        from mufinder.domain.models import Job
+
+        window._document = _document(tmp_path, host)
+        output_root = window._document.project_root / "files" / "muon_relaxation"
+        output_root.mkdir(parents=True)
+        definition = window._project_service.register_muon_relaxation_definition(
+            window._document,
+            input_structure_id=host.id,
+            parameters={"rows": []},
+            output_directory=output_root,
+        )
+        job = Job(
+            label="native",
+            workflow_stage=WorkflowStage.MUON_RELAXATION,
+            calc_type="castep_positivemuon_relaxation",
+            status=JobStatus.COMPLETED,
+            execution_target="local",
+        )
+        window._document.jobs[job.id] = job
+        definition.parameters["job_ids_by_label"]["positivemuon:native"] = str(job.id)
+        definition.parameters["job_seed_names_by_label"] = {"positivemuon:native": seed}
+        return job
+
+    def test_an_absolute_seed_outside_the_project_is_refused_in_words(
+        self,
+        window: MainWindow,
+        tmp_path: Path,
+        host_structure: Structure,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from mufinder.app import main_window as main_window_module
+
+        victim = tmp_path / "elsewhere" / "positivemuon" / "native"
+        victim.mkdir(parents=True)
+        (victim / "thesis.txt").write_text("kept")
+        job = self._native(window, tmp_path, host_structure, str(victim))
+        warnings: list[str] = []
+        monkeypatch.setattr(
+            main_window_module.QMessageBox,
+            "warning",
+            lambda _parent, title, message: warnings.append(f"{title}: {message}"),
+        )
+        monkeypatch.setattr(
+            window, "_prompt_relaxation_file_disposition", lambda *a, **k: "delete", raising=False
+        )
+
+        assert window._cleanup_relaxation_rows([job]) is False
+
+        assert (victim / "thesis.txt").is_file()
+        assert job.id in window._document.jobs
+        assert len(warnings) == 1
+        assert "None" not in warnings[0]
+        assert "outside" in warnings[0]
+
+    def test_a_native_job_folder_that_is_a_link_is_refused(
+        self, window: MainWindow, tmp_path: Path, host_structure: Structure
+    ) -> None:
+        job = self._native(window, tmp_path, host_structure, "linked")
+        charge = window._document.project_root / "files" / "muon_relaxation" / "positivemuon"
+        charge.mkdir()
+        destination = charge / "real"
+        destination.mkdir()
+        (charge / "linked").symlink_to(destination, target_is_directory=True)
+
+        outcome = window._job_file_cleanup.execute(
+            [window._job_file_cleanup.plan_item([job])],
+            choose_disposition=lambda _item: "delete",
+            stop_on_error=False,
+        )
+
+        assert outcome.failures and "link" in outcome.failures[0].refusal
+        assert (charge / "linked").is_symlink()
+        assert destination.is_dir()
+        assert job.id in window._document.jobs
+
+
+class TestABatchSharingItsFolder:
+    """An earlier version imported one folder twice into one job folder."""
+
+    def _shared(self, window: MainWindow, tmp_path: Path, host: Structure, monkeypatch):
+        from mufinder.services.relaxation_import_commit import commit_relaxation_import
+
+        window._document = _document(tmp_path, host)
+        document = window._document
+        output_root = document.project_root / "files" / "muon_relaxation"
+        folder = build_folder(tmp_path / "sites", sites=(1,))
+        outcomes = []
+        for _attempt in range(2):
+            scan = _scan(folder)
+            outcome = commit_relaxation_import(
+                document,
+                scan=scan,
+                runs=scan.importable_runs,
+                host_structure=host,
+                output_root=output_root,
+                existing_labels=[item.label for done in outcomes for item in done.imported],
+            )
+            window.merge_imported_relaxation_rows(outcome, output_directory=output_root)
+            window._project_service.append_provenance(document, outcome.provenance)
+            outcomes.append(outcome)
+        first, second = outcomes[0].imported[0], outcomes[1].imported[0]
+        # As that version left it: both jobs read and record the first's folder.
+        import shutil
+
+        shutil.rmtree(second.job_directory)
+        definition = window._muon_relaxation_controller.active_definition()
+        definition.parameters["job_seed_names_by_label"][f"positivemuon:{second.label}"] = (
+            first.seed_name
+        )
+        site = document.sites[second.site_id]
+        result = document.results[document.runs[site.relaxation_run_id].result_id]
+        result.output_files = [
+            str(Path(first.seed_name) / Path(name).name) for name in result.output_files
+        ]
+        monkeypatch.setattr(window, "_persist_document_ui_state", lambda **kwargs: None)
+        monkeypatch.setattr(window, "_refresh_muon_sites_summary", lambda **kwargs: None)
+        return outcomes, first, second
+
+    def _remove(self, window: MainWindow, monkeypatch, batch_id) -> list[tuple]:
+        index = [
+            position
+            for position, batch in enumerate(window._imported_relaxation_batches())
+            if batch[2] == batch_id
+        ][0]
+        monkeypatch.setattr(
+            "mufinder.app.main_window.choose_import_batch", lambda *args, **kwargs: index
+        )
+        asked: list[tuple] = []
+
+        def _confirm(*args, **kwargs) -> bool:
+            asked.append(args)
+            return True
+
+        monkeypatch.setattr(workflow_table_utils, "confirm_destructive", _confirm)
+        window._on_remove_imported_relaxations()
+        return asked
+
+    def test_each_goes_and_the_folder_goes_with_the_last(
+        self,
+        window: MainWindow,
+        tmp_path: Path,
+        host_structure: Structure,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        warned: list[str] = []
+        monkeypatch.setattr(
+            "mufinder.app.main_window.QMessageBox.warning",
+            lambda *args, **kwargs: warned.append(args[2]),
+        )
+        outcomes, first, second = self._shared(window, tmp_path, host_structure, monkeypatch)
+        document = window._document
+        folder = first.job_directory
+        before = _tree(folder)
+
+        asked = self._remove(window, monkeypatch, outcomes[1].batch_id)
+
+        # The first removal: records go, every file stays, and it says so.
+        assert "files stay" in " ".join(str(part) for part in asked[0])
+        assert "another import" in " ".join(str(part) for part in asked[0])
+        assert _tree(folder) == before
+        assert second.site_id not in document.sites
+        assert second.job_id not in document.jobs
+        assert first.site_id in document.sites
+        job = document.jobs[first.job_id]
+        assert window._job_output_directory(job) == folder
+        definition = window._muon_relaxation_controller.active_definition()
+        assert f"positivemuon:{first.label}" in definition.parameters["job_ids_by_label"]
+        assert "files stay" in window.statusBar().currentMessage()
+        assert warned == []
+        from mufinder.services.journal import build_journal
+
+        journal = build_journal("Test", document.provenance)
+        bodies = [entry.body for day in journal.days for entry in day.entries]
+        assert any("Their files stay" in body for body in bodies)
+        assert not any("were deleted" in body for body in bodies)
+
+        asked = self._remove(window, monkeypatch, outcomes[0].batch_id)
+
+        # The last one using it: the folder goes.
+        assert "delete" in " ".join(str(part) for part in asked[0])
+        assert not folder.exists()
+        assert first.site_id not in document.sites
+        assert window.statusBar().currentMessage() == "Removed 1 imported relaxation"
+        assert warned == []
+
+    def test_a_native_job_in_the_folder_still_refuses(
+        self,
+        window: MainWindow,
+        tmp_path: Path,
+        host_structure: Structure,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Only another import's own record of writing there makes it a shared folder."""
+
+        from mufinder.domain.enums import JobStatus, WorkflowStage
+        from mufinder.domain.models import Job
+
+        warned: list[str] = []
+        monkeypatch.setattr(
+            "mufinder.app.main_window.QMessageBox.warning",
+            lambda *args, **kwargs: warned.append(args[2]),
+        )
+        outcomes, first, second = self._shared(window, tmp_path, host_structure, monkeypatch)
+        document = window._document
+        native = Job(
+            label="native",
+            workflow_stage=WorkflowStage.MUON_RELAXATION,
+            calc_type="castep_positivemuon_relaxation",
+            status=JobStatus.COMPLETED,
+            execution_target="local",
+        )
+        document.jobs[native.id] = native
+        definition = window._muon_relaxation_controller.active_definition()
+        definition.parameters["job_ids_by_label"]["positivemuon:native"] = str(native.id)
+        definition.parameters["job_seed_names_by_label"]["positivemuon:native"] = first.seed_name
+        before = _tree(first.job_directory)
+
+        self._remove(window, monkeypatch, outcomes[1].batch_id)
+
+        assert _tree(first.job_directory) == before
+        assert second.site_id in document.sites
+        assert warned and "nothing was removed" in warned[0]
 
 
 class TestJournalAfterAnImport:

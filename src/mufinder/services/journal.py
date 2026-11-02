@@ -551,7 +551,9 @@ def _remove_imported_relaxations_entry(record: ProvenanceRecord) -> JournalEntry
     labels = record.parameters.get("labels")
     count = len(labels) if isinstance(labels, list) else 0
     body = f"Removed {plural(count, 'imported muon relaxation')} from the project."
-    if record.parameters.get("deleted_files"):
+    if record.parameters.get("kept_directories") and not record.parameters.get("directories"):
+        body += " Their files stay, because another import uses the same folder."
+    elif record.parameters.get("deleted_files"):
         body += " Their job directories were deleted, including the archived original input files."
     return _entry(
         record,

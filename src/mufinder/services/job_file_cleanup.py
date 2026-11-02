@@ -42,6 +42,7 @@ from typing import TYPE_CHECKING, Literal
 from uuid import UUID
 
 from mufinder.domain.models import Job
+from mufinder.domain.text import plain_error
 from mufinder.services.job_paths import job_directory_refusal
 
 if TYPE_CHECKING:
@@ -101,6 +102,14 @@ class JobCleanupFailure:
     item: JobCleanupItem
     refusal: str | None = None
     error: OSError | None = None
+
+    @property
+    def reason(self) -> str:
+        """Return why, in words, whichever of the two it was."""
+
+        if self.refusal is not None:
+            return self.refusal.removeprefix(f"- {self.item.label}: ")
+        return plain_error(self.error) if self.error is not None else "it was not cleaned"
 
 
 @dataclass(frozen=True, slots=True)
@@ -334,9 +343,10 @@ class JobFileCleanup:
         """
 
         document = self._document_getter()
-        if document is None or item.directory is None or not item.jobs:
+        if document is None or item.directory is None:
             return None
-        reason = job_directory_refusal(document.project_root, item.jobs[0], item.directory)
+        owner = item.jobs[0] if item.jobs else None
+        reason = job_directory_refusal(document.project_root, owner, item.directory)
         if reason is None:
             folder = item.directory.resolve()
             own = {job.id for job in item.jobs}

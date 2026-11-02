@@ -169,10 +169,16 @@ Removing an import
 3. Read the confirmation, which names what will be deleted. Its buttons are
    ``Remove <N> relaxations`` and ``Cancel``, and ``Cancel`` is the default.
 
+A folder imported twice by an earlier version holds both batches' files in one job
+folder. Removing one of those batches removes its rows and records and keeps the
+files, and the confirmation says so; the folder is deleted when the last batch using
+it is removed.
+
 MuFinder refuses while anything still references an imported site, its run or
 its structure; the message lists what still uses them. It also refuses, and nothing
-goes, unless each folder is strictly inside its charge folder, is the one the import
-recorded writing to, and is no other job's. Otherwise it deletes the
+goes, unless each folder is strictly inside its charge folder in this project, is a
+real folder rather than a link, is the one the import recorded writing to, and is
+used by no job other than another import of the same files. Otherwise it deletes the
 rows, mapping entries, jobs, runs, results, structures, sites and copied files
 as one unit, and records the removal in the project provenance and Journal.
 
@@ -190,7 +196,5 @@ Limitations
   tenth of a percent, so a run built on a different relaxed host lattice is
   refused.
 - Re-importing a folder does not detect runs already imported.
-- A folder imported twice by an earlier version holds both batches' files in one
-  job folder, and neither batch can be removed.
 - An import cannot be removed while downstream calculations, comparison tables
   or analysis workspaces still reference it.
