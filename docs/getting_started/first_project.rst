@@ -262,8 +262,8 @@ candidates one by one.
       density, not a CASTEP result.
 
 3. When the job completes, click ``Open Wizard`` in its ``Analysis`` column.
-4. On the ``Batch Search`` tab, accept the sampling values and click ``Run
-   Batch Search``.
+4. On the ``Batch Search`` tab, accept the values shown and click ``Run
+   Batch Search``. The table fills when the search ends.
 
    .. figure:: ../_generated/screenshots/uep_batch_search.webp
       :alt: The UEP analysis window's Batch Search tab after twelve random starts,

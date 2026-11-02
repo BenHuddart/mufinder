@@ -21,6 +21,7 @@ from mufinder.science.uep_clustering import (
     uep_batch_summary_from_dict,
     uep_grouping_report,
     uep_search_log,
+    uep_search_outcome,
 )
 
 from tests.support.uep_results import fake_optimization
@@ -339,3 +340,23 @@ def test_site_numbers_follow_the_classical_energy_of_the_included_results() -> N
 
     assert relaxed_site_number_map(results) == {3: 1, 1: 2, 0: 3, 2: 4}
     assert relaxed_site_number_map(results, included=(0, 1)) == {1: 1, 0: 2}
+
+
+def test_the_search_outcome_counts_each_ending_and_says_only_what_happened() -> None:
+    assert uep_search_outcome([fake_optimization((0.1, 0.1, 0.1), total=-1.0)] * 2) == (
+        "Converged: 2 minima."
+    )
+    assert (
+        uep_search_outcome(
+            [
+                fake_optimization((0.1, 0.1, 0.1), total=-1.0),
+                fake_optimization((0.2, 0.1, 0.1), total=-1.0, label="saddle"),
+                fake_optimization((0.3, 0.1, 0.1), total=-1.0, label="saddle"),
+                fake_optimization((0.4, 0.1, 0.1), total=-1.0, label="maximum"),
+                fake_optimization((0.5, 0.1, 0.1), total=-1.0, label="flat"),
+                fake_optimization((0.6, 0.1, 0.1), total=-1.0, success=False),
+            ]
+        )
+        == "Converged: 1 minimum, 2 saddle points, 1 maximum, 1 flat point. Failed to converge: 1."
+    )
+    assert uep_search_outcome([]) == "Converged: 0 minima."

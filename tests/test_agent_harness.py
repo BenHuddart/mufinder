@@ -375,7 +375,7 @@ PINNED_HEX_COLOUR_LITERALS: dict[str, tuple[frozenset[str], str]] = {
         "the wooden signpost is a fixed illustration, like the splash screen, in both themes",
     ),
     "app/uep_wizard.py": (
-        frozenset({"#dc2626", "#ffffff", "#1f1a17", "#FFFFFF", "#1d4ed8", "#0f766e", "#b91c1c"}),
+        frozenset({"#dc2626", "#ffffff", "#1f1a17", "#1d4ed8", "#0f766e", "#b91c1c"}),
         "#314 rebuilds this wizard's plots and overlays; their colours are not worth moving first",
     ),
 }
@@ -442,8 +442,8 @@ LITERAL_STYLE_CALLS = ("setContentsMargins", "setSpacing", "setPixelSize")
 #: "none" and not a step on a scale, so a call whose literals are all zero is not
 #: counted. Pages move to the scales when they are next rebuilt: lower the count then.
 PINNED_LITERAL_STYLE_CALLS: dict[str, int] = {
-    "setContentsMargins": 93,
-    "setSpacing": 143,
+    "setContentsMargins": 89,
+    "setSpacing": 137,
     "setPixelSize": 12,
 }
 

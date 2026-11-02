@@ -343,10 +343,10 @@ def include_every_job(dialog: QDialog) -> None:
 
 
 def run_uep_analysis(window: MainWindow, row: str) -> None:
-    """Open the UEP analysis of ``row``, run a batch search and its ZPE, as the buttons do.
+    """Open the UEP analysis of ``row`` and run a batch search, as its button does.
 
-    The batch search and ZPE run their worker threads' ``run`` in this thread,
-    and the random starts are seeded so every build finds the same minima.
+    The batch search runs its worker thread's ``run`` in this thread, and the
+    random starts are seeded so every build finds the same minima.
     """
 
     from functools import partial
@@ -357,17 +357,14 @@ def run_uep_analysis(window: MainWindow, row: str) -> None:
     job = window._uep_controller.jobs_for_keys([row])[0]
     window._on_open_uep_analysis_requested(row)
     dialog = window._uep_analysis_dialogs[job.id]
-    threads = (uep_wizard._BatchSearchThread, uep_wizard._BatchZpeThread)
-    starts = [thread.start for thread in threads]
-    for thread in threads:
-        thread.start = lambda worker: (worker.run(), worker.finished.emit())
+    thread = uep_wizard._BatchSearchThread
+    start = thread.start
+    thread.start = lambda worker: (worker.run(), worker.finished.emit())
     uep_wizard.generate_random_sites = partial(generate_random_sites, seed=7)
     try:
-        dialog._run_batch_search()
-        dialog._run_batch_zpe()
+        dialog._batch_run.click()
     finally:
-        for thread, start in zip(threads, starts, strict=True):
-            thread.start = start
+        thread.start = start
         uep_wizard.generate_random_sites = generate_random_sites
     settle(QApplication.instance())
     dialog.close()

@@ -294,6 +294,13 @@ def page_margins() -> QMargins:
     return QMargins(SPACING.md, SPACING.md, SPACING.md, SPACING.md)
 
 
+def set_progress_bar_state(bar: QWidget, state: str) -> None:
+    """Draw a themed progress bar as ``active``, ``complete`` or ``warning``."""
+
+    bar.setProperty("generationState", state)
+    refresh_widget_style(bar)
+
+
 def card_margins() -> QMargins:
     """Return the margins inside a card or a group of controls."""
 
@@ -478,6 +485,70 @@ def dark_palette() -> MuFinderPalette:
         status_failed="#F87171",
         status_cancelled="#9CA3AF",
     )
+
+
+def _relative_luminance(colour: str) -> float:
+    channels = [int(colour.lstrip("#")[index : index + 2], 16) / 255 for index in (0, 2, 4)]
+    red, green, blue = (
+        value / 12.92 if value <= 0.03928 else ((value + 0.055) / 1.055) ** 2.4
+        for value in channels
+    )
+    return 0.2126 * red + 0.7152 * green + 0.0722 * blue
+
+
+def _contrast_ratio(first: str, second: str) -> float:
+    lighter, darker = sorted(
+        (_relative_luminance(first), _relative_luminance(second)), reverse=True
+    )
+    return (lighter + 0.05) / (darker + 0.05)
+
+
+def _mixed_colour(colour: str, other: str, share: float) -> str:
+    """Return ``share`` of ``colour`` over ``other``."""
+
+    channels = (
+        round(
+            share * int(colour.lstrip("#")[index : index + 2], 16)
+            + (1.0 - share) * int(other.lstrip("#")[index : index + 2], 16)
+        )
+        for index in (0, 2, 4)
+    )
+    return "#" + "".join(f"{channel:02X}" for channel in channels)
+
+
+@dataclass(frozen=True, slots=True)
+class ProgressBarColours:
+    """The filled part of a themed progress bar and the text drawn over it."""
+
+    chunk: str
+    text: str
+
+
+def progress_bar_colours(p: MuFinderPalette) -> dict[str, ProgressBarColours]:
+    """Return the colours of each state of a themed progress bar, with text at 4.5:1 or better.
+
+    A running bar's one text colour lies over both its filled part and its empty track,
+    so the filled part is the accent faded toward the track until the text reads on it.
+    A finished bar is all filled part, so its text is whichever of the two ink colours
+    reads better on it.
+    """
+
+    share = 1.0
+    while share > 0.0 and (
+        _contrast_ratio(p.text_primary, _mixed_colour(p.accent, p.bg_surface_alt, share)) < 4.5
+    ):
+        share -= 0.05
+
+    def on(fill: str) -> str:
+        return max((p.text_primary, p.bg_surface), key=lambda ink: _contrast_ratio(ink, fill))
+
+    return {
+        "active": ProgressBarColours(
+            _mixed_colour(p.accent, p.bg_surface_alt, share), p.text_primary
+        ),
+        "complete": ProgressBarColours(p.success, on(p.success)),
+        "warning": ProgressBarColours(p.warning, on(p.warning)),
+    }
 
 
 _CURRENT_PALETTE: MuFinderPalette = light_palette()
@@ -2067,7 +2138,15 @@ def _muon_generation_styles(p: MuFinderPalette) -> str:
     QWidget#clusterPositionsCard QLabel {{
         background: transparent;
     }}
-    QProgressBar#muonGenerationProgress {{
+    {_progress_bar_rules(p)}
+    """
+
+
+def _progress_bar_rules(p: MuFinderPalette) -> str:
+    bars = ("QProgressBar#muonGenerationProgress", "QProgressBar#uepBatchProgress")
+    rules = [
+        f"""
+    {", ".join(bars)} {{
         border: 1px solid {p.border};
         border-radius: {RADIUS.control}px;
         background: {p.bg_surface_alt};
@@ -2075,18 +2154,23 @@ def _muon_generation_styles(p: MuFinderPalette) -> str:
         text-align: center;
         min-height: 22px;
     }}
-    QProgressBar#muonGenerationProgress::chunk {{
-        background: {p.accent};
+    {", ".join(f"{bar}::chunk" for bar in bars)} {{
         border-radius: {RADIUS.control}px;
         margin: 1px;
+    }}"""
+    ]
+    for state, colours in progress_bar_colours(p).items():
+        selected = [f'{bar}[generationState="{state}"]' for bar in bars]
+        rules.append(
+            f"""
+    {", ".join(selected)} {{
+        color: {colours.text};
     }}
-    QProgressBar#muonGenerationProgress[generationState="complete"] {{
-        color: #FFFFFF;
-    }}
-    QProgressBar#muonGenerationProgress[generationState="complete"]::chunk {{
-        background: {p.success};
-    }}
-    """
+    {", ".join(f"{selector}::chunk" for selector in selected)} {{
+        background: {colours.chunk};
+    }}"""
+        )
+    return "".join(rules)
 
 
 def _magnetic_field_styles(p: MuFinderPalette) -> str:
