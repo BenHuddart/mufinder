@@ -1168,3 +1168,26 @@ def test_source_table_widgets_share_targeting_and_action_state(
 
     assert run == [["first", "second"]]
     assert configured == [["second"]]
+
+
+def test_source_table_selects_rows_by_key(qapp) -> None:
+    widget = QuantumCorrectionsWidget()
+    widget.set_sources(
+        [
+            QuantumSourceRow(
+                key=key,
+                label=key,
+                charge_state="Muonium",
+                relative_energy="0.0 eV",
+                displacements="9",
+                source_job="relax",
+                num_farms_display="",
+                status="failed",
+            )
+            for key in ("site-a", "site-b")
+        ]
+    )
+
+    assert widget.select_rows_for_keys(["no-such-site"]) is False
+    assert widget.select_rows_for_keys(["site-b"]) is True
+    assert widget.selected_source_keys() == ["site-b"]

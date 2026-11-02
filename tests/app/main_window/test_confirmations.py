@@ -15,13 +15,11 @@ from uuid import uuid4
 import pytest
 
 from mufinder.app import workflow_table_utils
-from mufinder.domain.enums import JobStatus
 from mufinder.services.project_service import (
     ProjectService,
     SiteHostMismatch,
     StructureHostMismatch,
 )
-from tests.support.jobs import make_job
 from tests.support.main_window import open_project_with_host
 from tests.support.structures import host_structure
 
@@ -90,23 +88,6 @@ def test_magnetic_field_workspace_delete_names_its_action(
         ]
         * 2
     )
-
-
-def test_dashboard_job_delete_names_how_many_jobs_it_deletes(
-    main_window, tmp_path: Path, confirmed_destructive_actions
-) -> None:
-    window = main_window
-    service, document, _host = open_project_with_host(window, tmp_path)
-    jobs = [make_job(f"job-{index}", service=service, document=document) for index in range(2)]
-    for job in jobs:
-        job.status = JobStatus.COMPLETED
-
-    window._delete_dashboard_jobs(jobs)
-
-    (prompt,) = confirmed_destructive_actions
-    assert prompt["title"] == "Delete jobs"
-    assert prompt["accept_label"] == "Delete 2 jobs"
-    assert all(job.id not in document.jobs for job in jobs)
 
 
 @pytest.mark.parametrize("mismatch_type", [SiteHostMismatch, StructureHostMismatch])

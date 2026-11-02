@@ -15,6 +15,7 @@ from mufinder.services.failure_diagnosis import (
     MISSING_SCHEDULER_ENTRY_FAILURE_MESSAGE,
     RETRIEVAL_FAILURE_PREFIX,
     UNDIAGNOSED_SUMMARY,
+    failure_status_reason,
     FailureDiagnosis,
     diagnose_failure,
     failed_job_report,
@@ -329,3 +330,17 @@ def test_evidence_taken_from_the_recorded_message_is_not_repeated(tmp_path: Path
 
     assert diagnosis.evidence_source == "failure message"
     assert report.notes == (f"Recorded message: {message}",)
+
+
+@pytest.mark.parametrize(
+    ("reason", "message", "expected"),
+    [
+        (FailureReason.WALLTIME, "scheduler said TIMEOUT", "walltime"),
+        (FailureReason.CASTEP_ERROR, "SCF did not converge\nmore", "SCF did not converge"),
+        (FailureReason.CASTEP_ERROR, None, "CASTEP"),
+        (None, "  process exited with code 1\n", "process exited with code 1"),
+        (None, None, ""),
+    ],
+)
+def test_failure_status_reason_is_the_message_or_the_short_label(reason, message, expected) -> None:
+    assert failure_status_reason(reason, message) == expected

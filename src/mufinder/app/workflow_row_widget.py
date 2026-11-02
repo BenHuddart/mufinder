@@ -33,7 +33,7 @@ public hooks :meth:`SourceTableWidget.source_row_values`,
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
@@ -67,6 +67,7 @@ from mufinder.app.selection_snapshot import (
     SelectionSnapshotPushButton,
     SelectionSnapshotToolButton,
     resolve_target_keys,
+    select_and_reveal_table_rows,
 )
 from mufinder.app.theme import (
     make_empty_state_label,
@@ -883,6 +884,36 @@ class RowTableWidget(QWidget):
         rows = selected_table_rows(table) or tuple(range(table.rowCount()))
         return self._submission_keys_at_rows(rows, table=table)
 
+    def select_rows_for_keys(self, keys: Collection[object]) -> bool:
+        """Make the rows with ``keys`` the selection of every table; False when there are none.
+
+        Rows can span tables (one per charge state); the first table holding one
+        is left on show, and a table holding none loses any earlier selection.
+        With no match at all, nothing changes.
+        """
+
+        rows_by_table = [
+            (
+                table,
+                [
+                    row
+                    for row in range(table.rowCount())
+                    if self._label_at_row(row, table=table)
+                    and self._submission_key_at_row(row, table=table) in keys
+                ],
+            )
+            for table in self._all_tables()
+        ]
+        if not any(rows for _table, rows in rows_by_table):
+            return False
+        # Reversed, so the first table with a match is revealed last.
+        for table, rows in reversed(rows_by_table):
+            if rows:
+                select_and_reveal_table_rows(table, rows)
+            else:
+                table.clearSelection()
+        return True
+
     def _refresh_empty_rows_state(self) -> None:
         if self._empty_rows_label is None:
             return
@@ -1549,6 +1580,12 @@ class SourceTableWidget(QWidget):
         """Return the rows the run buttons act on: the selection, else every row."""
 
         return self.selected_source_keys() or [row.key for row in self._source_rows if row.key]
+
+    def select_rows_for_keys(self, keys: Collection[object]) -> bool:
+        """Select the source rows with ``keys``, showing their table; False when there are none."""
+
+        rows = [index for index, row in enumerate(self._source_rows) if row.key in keys]
+        return select_and_reveal_table_rows(self._sources_table, rows)
 
     def _source_key_at_row(self, row: int) -> str | None:
         if not (0 <= row < len(self._source_rows)):

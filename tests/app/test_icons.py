@@ -249,3 +249,7 @@ def test_unbranded_name_falls_back_to_platform_standard_icon(monkeypatch, qapp) 
 def test_unknown_name_gives_a_null_icon(qapp) -> None:
     assert icon("no_such_icon").isNull()
     assert "no_such_icon" not in icons_module.GLYPH_NAMES
+
+
+def test_stale_icon_is_a_painted_glyph(qapp) -> None:
+    assert not icon("stale").pixmap(QSize(16, 16), 1.0).isNull()

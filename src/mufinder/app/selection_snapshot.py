@@ -32,18 +32,23 @@ from collections.abc import Callable, Sequence
 from enum import Enum
 from typing import TypeVar
 
+import shiboken6
 from PySide6.QtCore import QEvent, QItemSelection, QItemSelectionModel, QObject, Qt, QTimer
 from PySide6.QtGui import QKeyEvent, QMouseEvent, QWheelEvent
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
+    QHBoxLayout,
     QMessageBox,
     QPushButton,
     QTableWidget,
+    QTabWidget,
     QToolButton,
     QWidget,
 )
 
 from mufinder.app.eliding_label import ElidingComboBox
+from mufinder.app.theme import SPACING
 
 KeyT = TypeVar("KeyT")
 
@@ -135,10 +140,12 @@ class _SnapshotMixin:
         self.selection_snapshot_rows = rows
 
     def _own_table_row(self, table: QTableWidget) -> int | None:
-        """Return the row of *table* this widget is installed in as a cell widget."""
+        """Return the row of *table* this widget is in, directly or inside a controls cell."""
+        parent = self.parent()  # type: ignore[attr-defined]
         for row in range(table.rowCount()):
             for column in range(table.columnCount()):
-                if table.cellWidget(row, column) is self:
+                cell = table.cellWidget(row, column)
+                if cell is not None and (cell is self or cell is parent):
                     return row
         return None
 
@@ -227,6 +234,68 @@ class SelectionSnapshotToolButton(_SnapshotMixin, QToolButton):
         if event.key() in (Qt.Key.Key_Space, Qt.Key.Key_Return, Qt.Key.Key_Enter):
             self._capture_selection_snapshot()
         super().keyPressEvent(event)
+
+
+class RowControlsCell(QWidget):
+    """A table cell holding several snapshot controls side by side.
+
+    Each control keeps the targeting rule of a control installed directly in the
+    cell. ``row_controls`` is what ``SelectionFeedback`` marks as multi-row
+    targets. Focus on a control in here is not focus on the cell widget, so it
+    does not collapse a multi-row selection.
+
+    Tab moves through the controls like cells of the table. The view hands focus
+    to a cell widget only when that widget takes focus, and takes it back only
+    from the cell widget itself, so this cell does both for its controls.
+    """
+
+    def __init__(self, *controls: QWidget, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.row_controls: tuple[QWidget, ...] = controls
+        self.setFocusPolicy(Qt.FocusPolicy.TabFocus)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(SPACING.xs)
+        for control in controls:
+            layout.addWidget(control)
+
+    def focusInEvent(self, event) -> None:  # noqa: N802 - Qt API naming.
+        # The view moved its current cell here. Shift+Tab arrives at the last control.
+        backward = bool(QApplication.keyboardModifiers() & Qt.KeyboardModifier.ShiftModifier)
+        if backward:
+            self.row_controls[-1].setFocus(Qt.FocusReason.BacktabFocusReason)
+        else:
+            self.row_controls[0].setFocus(Qt.FocusReason.TabFocusReason)
+
+    def focusNextPrevChild(self, next: bool) -> bool:  # noqa: A002, N802 - Qt API naming.
+        focused = QApplication.focusWidget()
+        if focused in self.row_controls:
+            target = self.row_controls.index(focused) + (1 if next else -1)
+            if 0 <= target < len(self.row_controls):
+                self.row_controls[target].setFocus(
+                    Qt.FocusReason.TabFocusReason if next else Qt.FocusReason.BacktabFocusReason
+                )
+                return True
+        table = self._owning_table()
+        if table is not None:
+            # A click focuses a control without moving the view's current cell.
+            for row in range(table.rowCount()):
+                for column in range(table.columnCount()):
+                    if table.cellWidget(row, column) is self:
+                        table.selectionModel().setCurrentIndex(
+                            table.model().index(row, column),
+                            QItemSelectionModel.SelectionFlag.NoUpdate,
+                        )
+            table.setFocus(
+                Qt.FocusReason.TabFocusReason if next else Qt.FocusReason.BacktabFocusReason
+            )
+        return super().focusNextPrevChild(next)
+
+    def _owning_table(self) -> QTableWidget | None:
+        parent = self.parentWidget()
+        while parent is not None and not isinstance(parent, QTableWidget):
+            parent = parent.parentWidget()
+        return parent
 
 
 class SelectionSnapshotComboBox(_SnapshotMixin, ElidingComboBox):
@@ -371,6 +440,29 @@ def _select_table_rows(table: QTableWidget, rows: Sequence[int]) -> None:
     )
 
 
+def select_and_reveal_table_rows(table: QTableWidget, rows: Sequence[int]) -> bool:
+    """Select *rows* of *table* and bring the first into view; False when there are none.
+
+    A table on a hidden tab (a charge-state tab, say) has that tab shown first.
+    """
+    if not rows:
+        return False
+    ancestor = table.parentWidget()
+    while ancestor is not None:
+        if isinstance(ancestor, QTabWidget):
+            for index in range(ancestor.count()):
+                page = ancestor.widget(index)
+                if page is table or page.isAncestorOf(table):
+                    ancestor.setCurrentIndex(index)
+                    break
+        ancestor = ancestor.parentWidget()
+    first = table.model().index(min(rows), 0)
+    table.setCurrentIndex(first)
+    _select_table_rows(table, rows)
+    table.scrollTo(first)
+    return True
+
+
 def resolve_target_keys(
     widget: _SnapshotMixin,
     *,
@@ -457,7 +549,8 @@ def resolve_target_keys(
         f"This {singular} only",
     )
 
-    table = widget._owning_table()
+    # A refresh during the prompt can have removed the control's row.
+    table = widget._owning_table() if shiboken6.isValid(widget) else None
     if table is not None:
         own_row = widget._own_table_row(table)
         if scope is SelectionScope.CLICKED_ONLY and own_row is not None:

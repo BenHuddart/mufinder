@@ -38,9 +38,9 @@ from mufinder.app.theme import (
 )
 from mufinder.castep_io.geometry_progress import GeometryIteration, GeometryProgress
 
-PROGRESS_COLUMN_TOOLTIP = (
-    "Geometry optimisation progress: latest iteration · convergence criteria met.\n"
-    "Hover a cell for each criterion; Inspect plots the history."
+STATUS_COLUMN_TOOLTIP = (
+    "Where each job is, with the reason a job failed or the step a relaxation has reached.\n"
+    "Hold the pointer over a cell for the details."
 )
 
 
@@ -58,15 +58,17 @@ def _criterion_colour(name: str, index: int) -> str:
     return roles.get(name, categorical_colour(index))
 
 
-def progress_cell_text(progress: GeometryProgress | None) -> str:
-    """Return the dashboard's compact Progress text, e.g. ``14 · 3/4``."""
+def progress_status_text(progress: GeometryProgress | None) -> str:
+    """Return the progress shown beside a running job's status, e.g. ``step 12 of 100``."""
 
     if progress is None:
         return ""
     latest = progress.latest
     if latest is None:
         return "starting"
-    return f"{latest.iteration} · {latest.criteria_met}/{len(latest.criteria)}"
+    if progress.max_iterations is not None:
+        return f"step {latest.iteration} of {progress.max_iterations}"
+    return f"step {latest.iteration}"
 
 
 def _format_value(value: float) -> str:

@@ -1226,3 +1226,46 @@ def test_muon_relaxation_export_action_asks_with_the_charge_qualified_key(
     assert action.tooltip == NO_STRUCTURE_REASON
     assert seen_keys and all(str(key).endswith(":Mu Site") for key in seen_keys)
     assert not str(seen_keys[0]).startswith("positivemuon")
+
+
+def test_select_rows_for_keys_selects_across_charge_state_tabs(qapp) -> None:
+    widget = MuonRelaxationWidget()
+    widget.add_staged_sites(
+        [{"id": str(uuid4()), "label": "Shared Site", "fractional_position": [0.1, 0.2, 0.3]}],
+        charge_states=("positive_muon", "muonium"),
+    )
+    positive = widget._tables_by_charge_state["positive_muon"]
+    muonium = widget._tables_by_charge_state["muonium"]
+    keys = [
+        widget._submission_key_at_row(0, table=positive),
+        widget._submission_key_at_row(0, table=muonium),
+    ]
+
+    assert widget.select_rows_for_keys(keys) is True
+
+    assert [index.row() for index in positive.selectionModel().selectedRows()] == [0]
+    assert [index.row() for index in muonium.selectionModel().selectedRows()] == [0]
+    assert widget._active_table() is positive
+
+
+def test_select_rows_for_keys_clears_an_earlier_selection_on_the_other_tab(qapp) -> None:
+    widget = MuonRelaxationWidget()
+    widget.add_staged_sites(
+        [{"id": str(uuid4()), "label": "Shared Site", "fractional_position": [0.1, 0.2, 0.3]}],
+        charge_states=("positive_muon", "muonium"),
+    )
+    positive = widget._tables_by_charge_state["positive_muon"]
+    muonium = widget._tables_by_charge_state["muonium"]
+    positive_key = widget._submission_key_at_row(0, table=positive)
+    positive.selectRow(0)
+
+    # A key that matches nothing leaves the selection alone.
+    assert widget.select_rows_for_keys(["no such row"]) is False
+    assert [index.row() for index in positive.selectionModel().selectedRows()] == [0]
+
+    assert widget.select_rows_for_keys([widget._submission_key_at_row(0, table=muonium)]) is True
+
+    assert positive.selectionModel().selectedRows() == []
+    assert [index.row() for index in muonium.selectionModel().selectedRows()] == [0]
+    assert widget._active_table() is muonium
+    assert positive_key != widget._submission_key_at_row(0, table=muonium)
