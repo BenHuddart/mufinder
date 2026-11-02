@@ -6,6 +6,7 @@ from collections.abc import Callable, Sequence
 import copy
 from dataclasses import dataclass
 from datetime import datetime
+from enum import Enum
 import hashlib
 import logging
 from pathlib import Path
@@ -43,6 +44,7 @@ from mufinder.persistence.project_codec import normalized_xc_functional
 from mufinder.services import site_generation_service, supercell_assets
 from mufinder.services.job_paths import job_output_directory
 from mufinder.services.perf_trace import PerfTrace
+from mufinder.services.project_summary import PROJECT_HOME_STAGE_KEY
 from mufinder.services.relaxed_structure_spins import (
     SPINS_KEPT_SCHEMA_VERSION,
     backfill_relaxed_structure_spins,
@@ -199,6 +201,42 @@ class StructureHostMismatch:
     ]  # (struct_id, label, resolved_host_id, host_label)
 
 
+class UnsavedChanges(Enum):
+    """What a save of a project would keep that is not on disk yet."""
+
+    NONE = "none"
+    #: Worth keeping but not worth a question: job state waiting for its coalesced
+    #: autosave, and the stage the project home opens at.
+    ROUTINE = "routine"
+    #: A layout or viewer choice, which only a save keeps.
+    UI_STATE = "ui_state"
+
+
+#: ``ui_state`` keys that follow the user around rather than record a choice. Moving
+#: between pages changes them, so they alone never make closing ask about a save.
+_QUIET_UI_STATE_KEYS = frozenset({PROJECT_HOME_STAGE_KEY})
+
+
+@dataclass(frozen=True, slots=True)
+class _SettledUiState:
+    """A digest of a settled ``ui_state``, with its quiet values to compare without them."""
+
+    digest: str
+    quiet_values: dict[str, Any]
+
+    @classmethod
+    def of(cls, payload: dict[str, Any], digest: str) -> _SettledUiState:
+        return cls(
+            digest, {key: payload[key] for key in _QUIET_UI_STATE_KEYS.intersection(payload)}
+        )
+
+    def with_quiet_keys(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Return ``payload`` with its quiet keys as they were when this was taken."""
+
+        kept = {key: value for key, value in payload.items() if key not in _QUIET_UI_STATE_KEYS}
+        return {**kept, **self.quiet_values}
+
+
 class ProjectService:
     """Creates, loads, and saves projects using ProjectStore.
 
@@ -231,6 +269,10 @@ class ProjectService:
     _UI_STATE_ENTITY_ID = "ui_state"
 
     def __init__(self) -> None:
+        # project_root -> what the last save, or the end of opening the project,
+        # left in memory: what ``unsaved_changes`` compares against.
+        self._settled_ui_state: dict[str, _SettledUiState] = {}
+        self._manifest_hashes: dict[str, str] = {}
         # (project_root, entity_type, entity_id) -> hash of the canonical
         # serialized payload last persisted for that entity. "entity_id" is the
         # entity UUID string for real entities, and a sentinel ("ui_state") for
@@ -291,6 +333,8 @@ class ProjectService:
         root_key = self._resolved_root(project_root)
         for key in [key for key in self._content_hashes if key[0] == root_key]:
             del self._content_hashes[key]
+        self._settled_ui_state.pop(root_key, None)
+        self._manifest_hashes.pop(root_key, None)
 
     def create_project(self, project_root: Path, name: str) -> ProjectDocument:
         """Create a new project document and persist baseline files."""
@@ -387,10 +431,18 @@ class ProjectService:
         # Regrouped after the cache is seeded, from what the project holds, so a
         # project with a retired grouping writes the new one at its next save.
         regroup_saved_uep_searches(document)
+        # An upgrade made here is kept by the next save, even if nothing else changes:
+        # no recorded hash is what ``unsaved_changes`` reports as still to write.
+        ui_key = (root_key, self._UI_STATE_ENTITY_TYPE, self._UI_STATE_ENTITY_ID)
+        if self._content_hashes.get(ui_key) != self._payload_hash(to_jsonable(document.ui_state)):
+            self._content_hashes.pop(ui_key, None)
+        if stored_version == stored_schema_version(manifest):
+            self._manifest_hashes[root_key] = self._manifest_hash(document)
 
         issues = self.validate_document(document)
         if issues:
             document.ui_state["_integrity_warnings"] = issues
+        self.settle_ui_state(document)
         return document
 
     @staticmethod
@@ -470,8 +522,67 @@ class ProjectService:
             store.write_json(store.state_path, ui_payload)
             self._content_hashes[ui_key] = ui_digest
             written += 1
+        self._settled_ui_state[root_key] = _SettledUiState.of(ui_payload, ui_digest)
+        self._manifest_hashes[root_key] = self._manifest_hash(document)
 
         trace.log_summary(extra=f"entity_files_written={written} entity_files_skipped={skipped}")
+
+    def settle_ui_state(self, document: ProjectDocument) -> None:
+        """Take ``document``'s UI state as what the user has seen and not changed.
+
+        A window calls this once it has finished showing a project it opened: its
+        pages tidy some saved forms as they fill, and that is no change of the user's.
+        """
+
+        payload = to_jsonable(document.ui_state)
+        self._settled_ui_state[self._resolved_root(document.project_root)] = _SettledUiState.of(
+            payload, self._payload_hash(payload)
+        )
+
+    def unsaved_changes(self, document: ProjectDocument) -> UnsavedChanges:
+        """Say what a save of ``document`` would keep that is not yet on disk."""
+
+        root_key = self._resolved_root(document.project_root)
+        settled = self._settled_ui_state.get(root_key)
+        if settled is None:
+            return UnsavedChanges.UI_STATE
+        payload = to_jsonable(document.ui_state)
+        ui_state_moved = self._payload_hash(payload) != settled.digest
+        if (
+            ui_state_moved
+            and self._payload_hash(settled.with_quiet_keys(payload)) != settled.digest
+        ):
+            return UnsavedChanges.UI_STATE
+        if ui_state_moved or self._durable_state_unwritten(document, root_key):
+            return UnsavedChanges.ROUTINE
+        return UnsavedChanges.NONE
+
+    def _manifest_hash(self, document: ProjectDocument) -> str:
+        """Hash the manifest without ``modified_at``, which every save bumps."""
+
+        payload = to_jsonable(document.project)
+        payload.pop("modified_at", None)
+        return self._payload_hash(payload)
+
+    def _durable_state_unwritten(self, document: ProjectDocument, root_key: str) -> bool:
+        """Whether the manifest or any entity differs from what was last written."""
+
+        if self._manifest_hashes.get(root_key) != self._manifest_hash(document):
+            return True
+        ui_key = (root_key, self._UI_STATE_ENTITY_TYPE, self._UI_STATE_ENTITY_ID)
+        if ui_key not in self._content_hashes:
+            return True
+        live_keys: set[tuple[str, str, str]] = set()
+        for entity_type, entities in self._entity_groups(document):
+            for entity_id, entity in entities:
+                key = (root_key, entity_type, entity_id)
+                live_keys.add(key)
+                if self._content_hashes.get(key) != self._payload_hash(to_jsonable(entity)):
+                    return True
+        return any(
+            key[0] == root_key and key[1] != self._UI_STATE_ENTITY_TYPE and key not in live_keys
+            for key in self._content_hashes
+        )
 
     def append_provenance(self, document: ProjectDocument, record: ProvenanceRecord) -> None:
         """Append a provenance record in-memory and to disk."""

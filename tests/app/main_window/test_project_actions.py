@@ -17,54 +17,19 @@ from mufinder.castep_setup import CastepSetup
 from mufinder.domain.models import Structure
 from mufinder.services.project_service import ProjectService
 from tests.support.qt import find_item_by_route
-from tests.support.main_window import select_route
+from tests.support.main_window import answer_new_project, select_route
 
 
 def test_new_project_success(main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     window = main_window
 
-    monkeypatch.setattr(
-        main_window_module.QInputDialog, "getText", lambda *args, **kwargs: ("MyProj", True)
-    )
-    monkeypatch.setattr(
-        main_window_module.QFileDialog,
-        "getExistingDirectory",
-        lambda *args, **kwargs: str(tmp_path),
-    )
+    answer_new_project(monkeypatch, "MyProj", location=tmp_path)
 
     window._new_project()
 
     assert window._document is not None
     assert window._document.project.name == "MyProj"
     assert (tmp_path / "MyProj.mufinder" / "project.json").exists()
-    window.close()
-
-
-def test_new_project_existing_non_empty_warns(
-    main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    root = tmp_path / "Exists.mufinder"
-    root.mkdir()
-    (root / "dummy.txt").write_text("x", encoding="utf-8")
-
-    window = main_window
-    calls: list[str] = []
-
-    monkeypatch.setattr(
-        main_window_module.QInputDialog, "getText", lambda *args, **kwargs: ("Exists", True)
-    )
-    monkeypatch.setattr(
-        main_window_module.QFileDialog,
-        "getExistingDirectory",
-        lambda *args, **kwargs: str(tmp_path),
-    )
-    monkeypatch.setattr(
-        main_window_module.QMessageBox, "warning", lambda *args, **kwargs: calls.append("warn")
-    )
-
-    window._new_project()
-
-    assert calls == ["warn"]
     window.close()
 
 
@@ -360,19 +325,6 @@ def test_file_dialogs_use_scoped_last_selected_directory(
     assert structure_dialog_dirs == [str(project_root)]
     assert len(chosen_dirs) == 2
     assert chosen_dirs[1] == str(project_root)
-    window.close()
-
-
-def test_save_without_document_shows_info(main_window, monkeypatch: pytest.MonkeyPatch) -> None:
-    window = main_window
-    infos: list[str] = []
-    monkeypatch.setattr(
-        main_window_module.QMessageBox, "information", lambda *args, **kwargs: infos.append("info")
-    )
-
-    window._save_project()
-
-    assert infos == ["info"]
     window.close()
 
 

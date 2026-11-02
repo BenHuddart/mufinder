@@ -248,13 +248,15 @@ right-click menu, or Delete/Backspace):
   rather than Yes/No. In the three-way row-control prompt the default button
   is the all-selected choice.
 - Questions that change nothing destructive also name their answers:
-  ``Save`` / ``Don't save`` / ``Cancel`` when closing a project, ``Switch
+  ``Save`` / ``Don't save`` / ``Cancel`` when closing a project whose layouts or
+  viewer choices changed since the last save, ``Switch
   host`` / ``Cancel`` for a host-structure mismatch, ``Change functional`` /
   ``Cancel`` when adopting a result converged with another functional, and
   ``Trust host key`` / ``Cancel`` for an unknown SSH host key.
-- If ``Save`` fails while closing, for example on a read-only folder or a full
-  disk, the reason is shown and the window stays open. The next close asks
-  again. The file that could not be written keeps its earlier content.
+- If a save fails while closing, for example on a read-only folder or a full
+  disk, the reason is shown and the window stays open, whether or not closing
+  asked first. The next close asks, so ``Don't save`` is always a way out. The
+  file that could not be written keeps its earlier content.
 
 The Job Dashboard
 -----------------

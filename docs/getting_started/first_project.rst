@@ -42,9 +42,12 @@ Create a project and set up CASTEP
 
 1. Start MuFinder (``python -m mufinder.main``, or ``mufinder`` for a source
    install).
-2. Choose ``File > New Project`` (or click ``Create New Project`` on the welcome
-   page). Enter a ``Project name:``, then choose where it goes in ``Select
-   parent folder``. MuFinder creates a ``<name>.mufinder`` folder there and
+2. Choose ``File > New Project…`` (or click ``Create New Project`` on the welcome
+   page). Enter a ``Name`` and a ``Location``, which starts at the last location
+   you used; ``Browse…`` picks another. The dialog shows the
+   ``<location>/<name>.mufinder`` folder it will create, and says why when
+   ``Create`` is unavailable: no name yet, or that folder already exists and is
+   not empty. ``Create`` makes the folder and
    opens the project home, with the project navigator on the left and the
    ``Job Dashboard`` at the bottom.
 3. Open ``Setup > CASTEP…`` and install a keyword catalog: pick the target in

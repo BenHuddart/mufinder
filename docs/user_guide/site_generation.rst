@@ -430,8 +430,8 @@ Saving
 Generating sites, ``Cluster Positions…``, removing generated sites and staging
 them as relaxation rows save the project straight away, as does creating the
 job records and input files when you submit. Saving a relaxation configuration
-updates the project in memory; it is written when you choose ``Save Project``
-or accept the close-project save prompt.
+updates the project in memory; it is written by ``Save Project``, the next
+autosave or closing the window.
 
 What MuFinder records about a generation run
 --------------------------------------------
