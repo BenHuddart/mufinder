@@ -2564,6 +2564,15 @@ def _label_styles(p: MuFinderPalette, heading_font: str) -> str:
         font-size: {t.body}px;
         color: {p.text_muted};
     }}
+    QLabel#recentProjectName {{
+        font-size: {t.body}px;
+        font-weight: 600;
+        color: {p.text_primary};
+    }}
+    QLabel#recentProjectFolder {{
+        font-size: {t.caption}px;
+        color: {p.text_muted};
+    }}
     QLabel#overviewCardTitle {{
         font-size: {t.emphasis}px;
         font-weight: 700;

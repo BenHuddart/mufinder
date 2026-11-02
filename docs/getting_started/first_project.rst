@@ -45,7 +45,8 @@ Create a project and set up CASTEP
 2. Choose ``File > New Project`` (or click ``Create New Project`` on the welcome
    page). Enter a ``Project name:``, then choose where it goes in ``Select
    parent folder``. MuFinder creates a ``<name>.mufinder`` folder there and
-   opens the project home.
+   opens the project home, with the project navigator on the left and the
+   ``Job Dashboard`` at the bottom.
 3. Open ``Setup > CASTEP…`` and install a keyword catalog: pick the target in
    ``Generate from`` and click ``Generate``, or click ``Use existing file…`` if
    you already have a ``castep_keywords.json``.

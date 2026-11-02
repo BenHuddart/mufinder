@@ -50,6 +50,7 @@ from mufinder.app.magnetic_component_dialogs import (
 from mufinder.app.magnetic_field_distribution_dialog import MagneticFieldDistributionDialog
 from mufinder.app.magnetic_site_dialog import MuonSiteSelectionDialog
 from mufinder.app.magnetic_structure_builder import MagneticStructureBuilderDialog
+from mufinder.app.result_notes import older_method_results_note
 from mufinder.app.theme import (
     magnetic_fields_stylesheet,
     style_hint_text,
@@ -100,9 +101,12 @@ from mufinder.services.magnetic_field_calculation import (
     site_count_text,
 )
 from mufinder.services.magnetic_field_results import (
+    CALCULATION_METHOD_VERSION,
+    CALCULATION_VERSION_KEY,
     UNRELAXED_ESTIMATE_SUFFIX,
     UNRELAXED_SITE_NOTE,
     is_unrelaxed_site_source,
+    uses_older_method,
 )
 from mufinder.services.magnetic_field_settings import (
     CONTACT_RADIUS_DECIMALS,
@@ -583,6 +587,7 @@ class MagneticFieldWidget(QWidget):
         self._calculation_status = QLabel("Results: -")
         self._calculation_status.setWordWrap(True)
         style_hint_text(self._calculation_status)
+        self._older_method_note = older_method_results_note(self)
         self._result_table = create_workflow_table(
             ("Site", "Bx (T)", "By (T)", "Bz (T)", "|B| (T)", "Result"),
             stretch_last_section=False,
@@ -702,7 +707,13 @@ class MagneticFieldWidget(QWidget):
         action_row.addStretch(1)
         action_row.addWidget(self._polarisation_button)
         results_layout.addLayout(action_row)
-        results_layout.addWidget(self._calculation_status)
+        # The note shares the status row at its natural width, so showing it moves the
+        # table only when the status then needs another line, in a narrow window.
+        self._older_method_note.setWordWrap(False)
+        status_row = QHBoxLayout()
+        status_row.addWidget(self._calculation_status, 1)
+        status_row.addWidget(self._older_method_note)
+        results_layout.addLayout(status_row)
         results_layout.addWidget(self._result_table)
         results_layout.addWidget(self._breakdown_label)
         results_layout.addWidget(self._breakdown_table)
@@ -860,6 +871,7 @@ class MagneticFieldWidget(QWidget):
         self._refresh_demag_summary()
         self._refresh_calculation_settings_summary()
         self._restore_field_results()
+        self._refresh_older_method_note()
 
     def _reset_form_state(self) -> None:
         self._restoring_form_state = True
@@ -1540,6 +1552,20 @@ class MagneticFieldWidget(QWidget):
         self._calculation_status.setText("Results: -")
         self._sync_distribution_plot_button()
         self._refresh_field_breakdown()
+        self._refresh_older_method_note()
+
+    def _refresh_older_method_note(self) -> None:
+        """Show the older-method note while the table holds results that predate the method."""
+
+        self._older_method_note.setVisible(
+            self._result_table.rowCount() > 0 and self._results_use_older_method()
+        )
+
+    def _results_use_older_method(self) -> bool:
+        """Return whether the shown field results predate the current calculation method."""
+
+        state = self._field_results_state
+        return isinstance(state, Mapping) and uses_older_method(state)
 
     def _refresh_field_breakdown(self) -> None:
         """List the field terms that sum to the selected result row.
@@ -1852,7 +1878,12 @@ class MagneticFieldWidget(QWidget):
             jsonable = to_jsonable(payload)
             if isinstance(jsonable, Mapping):
                 payloads.append(dict(jsonable))
-        return {"kind": kind, "results": payloads, "site_source": site_source}
+        return {
+            "kind": kind,
+            "results": payloads,
+            "site_source": site_source,
+            CALCULATION_VERSION_KEY: CALCULATION_METHOD_VERSION,
+        }
 
     @staticmethod
     def _field_result_object_to_state(result: object) -> dict[str, object]:
@@ -1910,6 +1941,7 @@ class MagneticFieldWidget(QWidget):
         Runs once per fill: resizing after every row is quadratic in the row count.
         """
 
+        self._refresh_older_method_note()
         self._result_table.resizeRowsToContents()
         if self._result_table.rowCount() > 0:
             self._result_table.selectRow(0)
@@ -1956,6 +1988,9 @@ class MagneticFieldWidget(QWidget):
             )
             return
         dialog = MagneticFieldDistributionDialog(
-            results, self, estimate=self._results_are_estimates()
+            results,
+            self,
+            estimate=self._results_are_estimates(),
+            older_method=self._results_use_older_method(),
         )
         dialog.exec()

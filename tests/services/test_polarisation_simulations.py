@@ -13,6 +13,8 @@ from mufinder.science.nuclear_relaxation import calculate_nuclear_width_tensors
 from mufinder.science.polarisation import PolarisationError, calculate_polarisation
 from mufinder.science.polarisation_simulation import PolarisationSettings, simulate_polarisation
 from mufinder.services.magnetic_field_results import (
+    CALCULATION_METHOD_VERSION,
+    CALCULATION_VERSION_KEY,
     MAGNETIC_FIELD_PAGE_OWNER,
     UEP_SITE_SOURCE,
     polarisation_result,
@@ -23,10 +25,13 @@ from mufinder.services.polarisation_simulations import (
     SimulationSource,
     field_results_for_source,
     field_sources,
+    older_method_sources,
     polarisation_simulation,
+    polarisation_simulation_summaries,
     polarisation_simulations,
     prepare_polarisation_simulation,
     remove_polarisation_simulation,
+    removed_sources,
     run_polarisation_simulation,
     run_prepared_polarisation_simulation,
     simulation_owner,
@@ -81,6 +86,85 @@ def document(tmp_path: Path):
         ),
     )
     return document
+
+
+def _simulate_page(document):
+    record = run_polarisation_simulation(
+        document,
+        title="ZF",
+        settings=SETTINGS,
+        sources=[SimulationSource(MAGNETIC_FIELD_PAGE_OWNER, "", "")],
+    )
+    store_polarisation_simulation(document, record)
+    return record
+
+
+def _current_fields() -> dict[str, object]:
+    return {
+        **_commensurate(_field((0.0, 0.0, 0.01))),
+        CALCULATION_VERSION_KEY: CALCULATION_METHOD_VERSION,
+    }
+
+
+def test_a_simulation_records_the_method_of_the_fields_it_ran_from(document) -> None:
+    older = _simulate_page(document)
+    assert older.sources[0].calculation_version is None
+    assert older_method_sources(older) == list(older.sources)
+
+    # Recalculating the fields leaves the stored traces old: stale, and still older.
+    _store_fields(document, MAGNETIC_FIELD_PAGE_OWNER, _current_fields())
+    stored = polarisation_simulation(document, older.simulation_id)
+    assert stale_sources(document, stored) == list(stored.sources)
+    assert older_method_sources(stored) == list(stored.sources)
+
+    current = _simulate_page(document)
+    assert current.sources[0].calculation_version == CALCULATION_METHOD_VERSION
+    assert older_method_sources(current) == []
+
+
+def test_removed_sources_are_those_with_no_fields_left(document) -> None:
+    record = run_polarisation_simulation(
+        document,
+        title="Both",
+        settings=SETTINGS,
+        sources=[
+            SimulationSource(MAGNETIC_FIELD_PAGE_OWNER, "", ""),
+            SimulationSource("ws-1", "", ""),
+        ],
+    )
+    assert removed_sources(document, record) == []
+
+    _store_fields(document, MAGNETIC_FIELD_PAGE_OWNER, _current_fields())
+    remove_magnetic_field_results(document, "ws-1")
+
+    assert [source.owner for source in removed_sources(document, record)] == ["ws-1"]
+    assert stale_sources(document, record) == list(record.sources)
+
+
+def test_a_recorded_method_version_survives_save_and_reopen(document) -> None:
+    _store_fields(document, MAGNETIC_FIELD_PAGE_OWNER, _current_fields())
+    record = _simulate_page(document)
+    service = ProjectService()
+    service.save_project(document)
+
+    reloaded = service.load_project(document.project_root)
+
+    assert polarisation_simulation(reloaded, record.simulation_id).sources == record.sources
+    assert older_method_sources(polarisation_simulation_summaries(reloaded)[0]) == []
+
+
+def test_a_simulation_stored_with_no_version_counts_as_older(document) -> None:
+    _store_fields(document, MAGNETIC_FIELD_PAGE_OWNER, _current_fields())
+    record = _simulate_page(document)
+    stored = next(
+        result
+        for result in document.results.values()
+        if result.data.get("simulation_id") == record.simulation_id
+    )
+    assert stored.data["sources"][0][CALCULATION_VERSION_KEY] == CALCULATION_METHOD_VERSION
+    del stored.data["sources"][0][CALCULATION_VERSION_KEY]
+
+    assert len(older_method_sources(polarisation_simulation_summaries(document)[0])) == 1
 
 
 def test_field_sources_list_the_page_then_each_workspace(document) -> None:

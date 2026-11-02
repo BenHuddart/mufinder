@@ -145,17 +145,25 @@ Stale simulations
 A simulation records which field results it used. When one of them is
 recalculated on its page, or its workspace is deleted, the simulation is kept
 and its ``Status`` reads ``Stale``; a note names the field results that
-changed. ``Recalculate`` brings it up to date once every field result it uses
-exists again. A simulation that uses a field result computed at an unrelaxed
+changed and says whether they were recalculated or removed. ``Recalculate``
+brings it up to date once every field result it uses exists again; until then
+the notes say it cannot be recalculated. A simulation that uses a field result computed at an unrelaxed
 UEP site is marked ``estimate``, with the same note as on the Magnetic Fields
 page.
+
+A simulation records which method calculated the fields it ran from. If that
+was an older method (see :ref:`older-method-results`), its ``Status`` includes
+``older method`` and a note names those field results. Calculating them again on
+their page makes the status ``Stale, older method``, because the stored traces
+still came from the older fields, and ``Recalculate`` then brings it up to date.
 
 Exported data
 -------------
 
 ``Export Data…`` writes a ``.dat`` or ``.txt`` file. Lines starting with
 ``#`` give the simulation's name, its field results and weights, every
-setting, any warning and, for an estimate, the estimate note. Two blocks of
+setting, any warning and, for an estimate or fields from an older method, the
+same note. Two blocks of
 columns follow, separated by a blank line:
 
 - the time domain: ``t_us``, one ``P_`` column per site, ``P_average``, and
@@ -168,7 +176,8 @@ For developers
 Each simulation is a ``Result`` of type ``muon_polarisation`` whose
 ``data["owner"]`` is ``polarisation:`` followed by the simulation id. It holds
 ``title``, ``settings``, ``sources`` (each with ``owner``, ``record_id`` of the
-field result used, ``title`` and ``weight``), ``result`` (the static traces),
+field result used, ``title``, ``weight`` and, when those fields had one,
+``calculation_version``), ``result`` (the static traces),
 ``dynamic``, ``warnings`` and ``site_source``. The spectrum is recomputed from
 the traces. The page's form is saved in the UI state under
 ``polarisation_form``. See :mod:`mufinder.services.polarisation_simulations`.

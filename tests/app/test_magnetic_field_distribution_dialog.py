@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -11,6 +12,7 @@ import mufinder.app.magnetic_field_distribution_dialog as magnetic_field_distrib
 from mufinder.app import export_dialogs
 from mufinder.app.magnetic_field_distribution_dialog import MagneticFieldDistributionDialog
 from mufinder.app.theme import plot_series_colours
+from mufinder.services.magnetic_field_results import OLDER_METHOD_RESULTS_NOTE
 
 
 def test_magnetic_field_distribution_dialog_plots_histogram(qapp) -> None:
@@ -47,6 +49,59 @@ def test_magnetic_field_distribution_dialog_marks_an_unrelaxed_estimate(qapp) ->
     assert relaxed._figure.axes[0].get_title() == "site 1"
     assert "# Estimate" not in relaxed._export_text()
     relaxed.close()
+
+
+@pytest.mark.parametrize(
+    ("estimate", "title"),
+    [(False, "site 1 (older method)"), (True, "site 1 (unrelaxed estimate, older method)")],
+)
+def test_magnetic_field_distribution_dialog_marks_an_older_method(qapp, estimate, title) -> None:
+    result = SimpleNamespace(
+        site_label="site 1",
+        fields_T=np.asarray([[0.0, 0.0, 1.0], [0.0, 0.0, 3.0]], dtype=float),
+        histogram_centres_T=np.asarray([1.0, 3.0], dtype=float),
+        histogram_counts=np.asarray([1.0, 1.0], dtype=float),
+    )
+
+    dialog = MagneticFieldDistributionDialog(result, estimate=estimate, older_method=True)
+
+    assert dialog.windowTitle() == f"Field Distribution - {title}"
+    assert dialog._figure.axes[0].get_title() == title
+    assert f"# Older method: {OLDER_METHOD_RESULTS_NOTE}" in dialog._export_text().splitlines()
+    dialog.close()
+
+    plain = MagneticFieldDistributionDialog(result)
+    assert plain._figure.axes[0].get_title() == "site 1"
+    assert "# Older method" not in plain._export_text()
+    plain.close()
+
+
+def test_a_long_distribution_title_wraps_inside_a_narrow_dialog(qapp) -> None:
+    results = [
+        SimpleNamespace(
+            site_label=f"site 1 equiv {index}",
+            fields_T=np.asarray([[0.0, 0.0, 1.0], [0.0, 0.0, 3.0]], dtype=float),
+            histogram_centres_T=np.asarray([1.0, 3.0], dtype=float),
+            histogram_counts=np.asarray([1.0, 1.0], dtype=float),
+        )
+        for index in range(4)
+    ]
+    dialog = MagneticFieldDistributionDialog(results, estimate=True, older_method=True)
+    dialog.resize(dialog.minimumSizeHint())
+    dialog.show()
+    qapp.processEvents()
+
+    dialog._canvas.draw()
+
+    axis = dialog._figure.axes[0]
+    extent = axis.title.get_window_extent(dialog._canvas.get_renderer())
+    figure_box = dialog._figure.bbox
+    assert axis.title.get_text() == "4 field distributions (unrelaxed estimate, older method)"
+    assert extent.x0 >= figure_box.x0
+    assert extent.x1 <= figure_box.x1
+    assert extent.y1 <= figure_box.y1
+    assert extent.y0 >= axis.get_window_extent().y1
+    dialog.close()
 
 
 def test_magnetic_field_distribution_dialog_overlays_multiple_histograms(qapp) -> None:
