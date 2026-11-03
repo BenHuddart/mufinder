@@ -20,6 +20,7 @@ from mufinder.domain.constants import (
     PLANCK_CONSTANT_J_S,
 )
 from mufinder.domain.models import Structure
+from mufinder.science.lattice import nearest_image_distance_matrix
 
 
 class PhononParseError(ValueError):
@@ -84,6 +85,23 @@ class PhononCalculation:
                 f"Expected exactly one atom labelled {species!r}; found {len(matches)}."
             )
         return matches[0]
+
+
+#: Atoms this close in distance from the muon, in Å, count as tied.
+_NEIGHBOUR_TIE_ANG = 1e-3
+
+
+@dataclass(frozen=True, slots=True)
+class MuonNeighbour:
+    """One atom near the muon: its distance and its correlation with the muon.
+
+    ``correlation`` is the harmonic ``|c|``, ``-w2`` of :func:`w2_entanglement_witness`.
+    """
+
+    atom_index: int
+    species: str
+    distance_ang: float
+    correlation: float
 
 
 @dataclass(frozen=True, slots=True)
@@ -436,6 +454,53 @@ def w2_entanglement_witness(
     if abs(denom) <= 0.0:
         return 0.0
     return float(-abs(cov_ab / denom))
+
+
+def muon_nearest_atoms(
+    calculation: PhononCalculation, count: int, *, muon_species: str = "H:mu"
+) -> tuple[MuonNeighbour, ...]:
+    """Return the ``count`` atoms nearest the muon, closest first.
+
+    Distances are to the nearest periodic image. Atoms in a run of distances each
+    within :data:`_NEIGHBOUR_TIE_ANG` of the last are tied, and tied atoms go in CASTEP
+    index order, so the order of a symmetry shell does not follow rounding noise in
+    the file's coordinates. The list holds exactly ``count`` atoms, or every other
+    atom when there are fewer, even if that divides a shell. Each ``correlation`` is
+    ``-w2`` from :func:`w2_entanglement_witness`.
+    """
+
+    if count < 1:
+        raise ValueError(f"The nearest-atom count must be positive, got {count}.")
+    muon = _atom_by_index(calculation, calculation.atom_index_for_species(muon_species))
+    others = [atom for atom in calculation.atoms if atom.index != muon.index]
+    if not others:
+        return ()
+    distances = nearest_image_distance_matrix(
+        [muon.fractional_coordinates],
+        [atom.fractional_coordinates for atom in others],
+        calculation.lattice_vectors,
+    )[0]
+    by_distance = sorted(
+        zip(others, (float(distance) for distance in distances)), key=lambda pair: pair[1]
+    )
+    shells: list[list[tuple[PhononAtom, float]]] = []
+    for pair in by_distance:
+        if shells and pair[1] - shells[-1][-1][1] < _NEIGHBOUR_TIE_ANG:
+            shells[-1].append(pair)
+        else:
+            shells.append([pair])
+    ranked = [
+        pair for shell in shells for pair in sorted(shell, key=lambda member: member[0].index)
+    ]
+    return tuple(
+        MuonNeighbour(
+            atom_index=atom.index,
+            species=atom.species,
+            distance_ang=distance,
+            correlation=abs(w2_entanglement_witness(calculation, muon.index, atom.index)),
+        )
+        for atom, distance in ranked[:count]
+    )
 
 
 def _find_line(lines: list[str], marker: str, *, start: int = 0) -> int:

@@ -17,6 +17,7 @@ import pytest
 
 from mufinder.castep_io.cell_parser import parse_cell_file
 from mufinder.castep_io.ts_parser import parse_transition_state_file
+from mufinder.science.energy_barriers import band_distances_ang
 from mufinder.science.quantum_phonons import (
     muon_mass_warning,
     muon_zpe,
@@ -55,6 +56,15 @@ def test_the_neb_band_from_site_1_to_site_2() -> None:
     # The transition state is image 23 of 42, at reaction coordinate 0.627.
     assert peak == 22
     assert path.images[peak].reaction_coordinate == pytest.approx(0.6266, abs=5e-5)
+    # 1.26 Å along a band of 2.02 Å, over all 41 atoms.
+    distances = band_distances_ang(path.images)
+    assert distances[peak] == pytest.approx(1.2626, abs=5e-5)
+    assert distances[-1] == pytest.approx(2.0151, abs=5e-5)
+    # The muon alone travels 1.88 Å along it, and its straight-line hop is 1.72 Å.
+    muon = np.array([image.cartesian_positions[-1] for image in path.images])
+    steps = np.linalg.norm(np.diff(muon, axis=0), axis=1)
+    assert steps.sum() == pytest.approx(1.8815, abs=5e-5)
+    assert np.linalg.norm(muon[-1] - muon[0]) == pytest.approx(1.7195, abs=5e-5)
 
 
 @pytest.mark.parametrize(

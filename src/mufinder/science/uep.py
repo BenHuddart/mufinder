@@ -40,7 +40,7 @@ from mufinder.science.lattice import cartesian_to_fractional, fractional_to_cart
 
 
 _COULOMB_PREFactor = 1.0 / (4.0 * np.pi * VACUUM_PERMITTIVITY_F_PER_M)
-_ISOSURFACE_PREVIEW_MAX_GRID_POINTS = 28
+_ISOSURFACE_PREVIEW_MAX_GRID_POINTS = 18
 
 
 def _pyvista_modules():
@@ -53,6 +53,10 @@ def _pyvista_modules():
 
 #: The gradient norm, in eV/Å, at which a search start counts as converged.
 DEFAULT_FORCE_TOLERANCE_EV_PER_ANG = 1e-5
+#: Below this σ·G_max the ionic Gaussian keeps over 13 % of its weight at the edge of the G
+#: sphere. On the fixtures and CoF₂ a batch minimum then moves or the potential rings.
+IONIC_GAUSSIAN_MIN_RESOLUTION = 2.0
+POTENTIAL_LEVEL_CEILING_PERCENTILE = 95.0
 #: The iteration limit of one search start.
 DEFAULT_OPTIMIZER_MAX_STEPS = 300
 
@@ -749,29 +753,16 @@ def potential_grid(field: UepField) -> UepPotentialGrid:
     )
 
 
-def _periodic_resample_axis(values: np.ndarray, target_size: int, *, axis: int) -> np.ndarray:
-    source = np.asarray(values, dtype=float)
-    if axis < 0 or axis >= source.ndim:
-        raise UepError("Periodic grid resampling axis is out of range.")
-    if target_size < 2:
-        raise UepError("Periodic grid resampling needs at least two points along each axis.")
+def _stride_for_axis(size: int, limit: int) -> int:
+    """The stride that leaves ``size`` periodic points closest, by ratio, to ``limit``.
 
-    source_size = int(source.shape[axis])
-    if target_size == source_size:
-        return source.copy()
+    A stride that divides ``size`` keeps the sub-lattice's spacing uniform across the
+    periodic boundary, so an axis of 25 points stays at 25 rather than falling to 5, and a
+    prime size keeps every point. CASTEP's FFT grids have small factors.
+    """
 
-    moved = np.moveaxis(source, axis, 0)
-    sample_positions = np.arange(target_size, dtype=float) * (
-        float(source_size) / float(target_size)
-    )
-    lower = np.floor(sample_positions).astype(int) % source_size
-    upper = (lower + 1) % source_size
-    weights = (sample_positions - np.floor(sample_positions)).astype(float)
-    reshape = (target_size,) + (1,) * (moved.ndim - 1)
-    resampled = (1.0 - weights).reshape(reshape) * moved[lower] + weights.reshape(reshape) * moved[
-        upper
-    ]
-    return np.moveaxis(resampled, 0, axis)
+    divisors = [d for d in range(1, size) if size % d == 0 and size // d >= 2]
+    return min(divisors, key=lambda d: (abs(np.log((size // d) / limit)), d), default=1)
 
 
 def preview_potential_grid(
@@ -779,7 +770,13 @@ def preview_potential_grid(
     *,
     max_grid_points: int = _ISOSURFACE_PREVIEW_MAX_GRID_POINTS,
 ) -> UepPotentialGrid:
-    """Return a capped-resolution periodic grid for responsive isosurface previews."""
+    """Return a coarse sub-lattice of ``potential`` for an isosurface preview while dragging.
+
+    Every value is one of the grid's own, so a surface drawn from it sits at the level
+    asked for at each of its points. Fourier truncation would ring around the nuclear
+    spikes once the coarser grid no longer resolves them, by several eV in the range of
+    interest.
+    """
 
     values = np.asarray(potential.potential_total_ev, dtype=float)
     if values.ndim != 3 or min(values.shape) < 2:
@@ -788,35 +785,58 @@ def preview_potential_grid(
         )
 
     limit = max(2, int(max_grid_points))
-    target_grid = tuple(min(int(size), limit) for size in values.shape)
-    if target_grid == tuple(int(size) for size in values.shape):
-        return UepPotentialGrid(
-            lattice_vectors=potential.lattice_vectors,
-            grid=tuple(int(size) for size in values.shape),
-            potential_total_ev=values.copy(),
-            gw_factor=potential.gw_factor,
-        )
-
-    resampled = values.copy()
-    for axis, target_size in enumerate(target_grid):
-        resampled = _periodic_resample_axis(resampled, int(target_size), axis=axis)
-
-    source_min = float(np.min(values))
-    source_max = float(np.max(values))
-    preview_min = float(np.min(resampled))
-    preview_max = float(np.max(resampled))
-    if np.isclose(preview_min, preview_max):
-        resampled = np.full(target_grid, 0.5 * (source_min + source_max), dtype=float)
-    else:
-        scale = (source_max - source_min) / (preview_max - preview_min)
-        resampled = (resampled - preview_min) * scale + source_min
-
+    strides = tuple(_stride_for_axis(int(size), limit) for size in values.shape)
+    reduced = values[:: strides[0], :: strides[1], :: strides[2]].copy()
     return UepPotentialGrid(
         lattice_vectors=potential.lattice_vectors,
-        grid=target_grid,
-        potential_total_ev=np.asarray(resampled, dtype=float),
+        grid=tuple(int(size) for size in reduced.shape),
+        potential_total_ev=reduced,
         gw_factor=potential.gw_factor,
     )
+
+
+def potential_above_minimum(potential: UepPotentialGrid) -> UepPotentialGrid:
+    """Return ``potential`` measured from its lowest grid value.
+
+    The potential's own zero is its cell average, because the G = 0 term is dropped, so
+    only differences between its values mean anything.
+    """
+
+    values = np.asarray(potential.potential_total_ev, dtype=float)
+    return UepPotentialGrid(
+        lattice_vectors=potential.lattice_vectors,
+        grid=potential.grid,
+        potential_total_ev=values - float(np.min(values)),
+        gw_factor=potential.gw_factor,
+    )
+
+
+def potential_level_ceiling(potential: UepPotentialGrid) -> float:
+    """Return the top of a useful level range: the grid's 95th percentile.
+
+    The nuclear spikes take the maximum far above the region a muon can reach. On a grid
+    too flat for the percentile to rise above the minimum, the maximum is returned.
+    """
+
+    values = np.asarray(potential.potential_total_ev, dtype=float)
+    ceiling = float(np.percentile(values, POTENTIAL_LEVEL_CEILING_PERCENTILE))
+    return ceiling if ceiling > float(np.min(values)) else float(np.max(values))
+
+
+def ionic_gaussian_resolution(field: UepField) -> float:
+    """Return σ·G_max for the narrowest ionic Gaussian on the field's FFT grid.
+
+    G_max is the radius of the sphere inscribed in the grid's G box. The Gaussian's
+    transform falls to exp(-½(σ·G_max)²) there, so a small value means the grid truncates
+    the ionic charge and the potential rings around the ions.
+    """
+
+    source = field.source
+    lattice = np.asarray(source.density.lattice_vectors, dtype=float)
+    grid = np.asarray(source.density.grid, dtype=float)
+    g_max = float(np.min((grid // 2) * (2.0 * np.pi) / np.linalg.norm(lattice, axis=1)))
+    width = min(pp.core_radius_ang for pp in source.pseudopotentials) / source.gw_factor
+    return float(width) * g_max
 
 
 def _slice_lattice(lattice_vectors: object) -> np.ndarray:

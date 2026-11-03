@@ -383,15 +383,14 @@ Compatibility ledger
        migration can stamp ``created_at`` on every job file that lacks it.
    * - ``potential_grid`` key in UEP analysis UI state
      - ``uep_analysis_states`` UI state; read by the UEP analysis open path
-       in ``mufinder.app.main_window`` and by
-       ``UepAnalysisDialog._restore_initial_state``
-     - Older UEP analysis snapshots repeated the full potential grid, which is
+       in ``mufinder.app.main_window``
+     - Older UEP analysis snapshots repeated the full potential grid, which was
        also persisted as the job's ``uep_potential_grid`` result. Snapshots no
        longer write it. Opening the analysis moves a grid found only in UI
-       state into that result and strips the key; the wizard still restores
-       from the key when no grid result is supplied.
+       state into that result and strips the key. The window itself reads neither:
+       it computes the grid from the density.
      - Keep until the next saved-project schema version bump, whose migration
-       can move the key into a ``uep_potential_grid`` result and drop it.
+       can drop the key and the result.
    * - ``group_relaxed_sites`` provenance action
      - ``provenance.jsonl``; read by ``mufinder.services.journal``
      - A grouping applied to an analysis workspace is recorded as
@@ -399,14 +398,46 @@ Compatibility ledger
        ``group_relaxed_sites`` keep their own Journal entry.
      - Provenance is append-only and never rewritten, so the reader stays for as
        long as a project may hold such a record.
-   * - Top-level ``isosurface_mesh`` key in UEP analysis UI state
+   * - Top-level ``isosurface_mesh`` key in UEP analysis UI state, and ``mesh`` in each of
+       ``isosurface_layers``, ``sample`` in each of ``slice_planes``,
+       ``isosurface_slider_value``, ``isosurface_level_value``, ``isosurface_color`` and the
+       ``status_text`` and ``status_kind`` keys
+     - ``uep_analysis_states`` UI state; ``level_ev`` of a top-level ``isosurface_mesh`` and
+       ``isosurface_level_value`` are read by ``UepAnalysisDialog._restore_initial_state``
+       when a snapshot has no ``isosurface_layers``, and ``isosurface_color`` with them. The
+       rest are ignored.
+     - The window works out meshes and samples again from the density, and has no status
+       card. The next save of the window's state omits these keys.
+     - Keep the read until the next saved-project schema version bump, whose migration can
+       wrap the keys into a one-entry ``isosurface_layers`` list.
+   * - ``current_tab`` of a window saved with the ``Isosurfaces`` and ``Slices`` tabs or the
+       seven tabs before them
      - ``uep_analysis_states`` UI state; read by
-       ``UepAnalysisDialog._restore_initial_state``
-     - Single-isosurface snapshots stored the mesh at the top level. Snapshots
-       now keep every mesh only under ``isosurface_layers``; the key is still
-       read when a snapshot has no ``isosurface_layers``.
-     - Keep until the next saved-project schema version bump, whose migration
-       can wrap the key into a one-entry ``isosurface_layers`` list.
+       ``UepAnalysisDialog._normalized_visible_tab_index``
+     - The window now has ``Batch Search`` (0) and ``Potential`` (1), and saves that index.
+       A saved 1, 2, 4 or 5 opens ``Potential``, a saved 0, 3 or 6 ``Batch Search``, as does
+       anything else.
+     - Read-side repair of a view setting. Keep until a saved-project schema version bump
+       includes a migration that rewrites saved tabs.
+   * - ``isosurface_viewer_muons``, ``slice_viewer_muons``, ``isosurface_selected_muon_keys``
+       and ``slice_selected_muon_keys``
+     - ``uep_analysis_states`` UI state; read by ``UepAnalysisDialog._restored_viewer_muons``
+       and ``_restore_initial_state``
+     - The two viewers became one, with ``viewer_muons`` and ``selected_viewer_muon_keys``.
+       The two lists are shown together, a muon in both once, and the next save writes
+       the new keys.
+     - Read-side repair. Keep until a saved-project schema version bump includes a migration
+       that merges the lists.
+   * - ``isosurface_zero_minimum``
+     - ``uep_analysis_states`` UI state, written and read by ``mufinder.app.uep_wizard``
+     - The key was the ``Set minimum potential to zero`` checkbox, and now says which scale
+       the saved ``level_ev`` values and ``slice_saturation_bounds`` are on. ``True`` holds
+       them above the grid's minimum. ``False`` or absent holds them on the potential's own
+       scale, whose zero is the cell average: they are moved above the minimum when the grid
+       is computed, so a surface stays at the potential it was at, and a saturation over the
+       whole range becomes the default. It reads ``False`` only until then.
+     - Keep until a saved-project schema version bump includes a migration, which needs the
+       density to find each job's minimum.
    * - ``default_cut_off_*`` / ``default_kpoint_stress_threshold`` keys in
        project UI state
      - Top-level ``ui_state`` (``state.json``); removed by
@@ -1017,7 +1048,8 @@ argument would change a result without saying so, so passing one raises
 
 - The ``fourier_grid``, ``thickness_voxels``, ``padding`` and ``smoothing``
   fields of ``DemagnetizingSample`` (``mufinder.science.demagnetization``): a
-  plate's voxels follow from its size and the box from ``FOURIER_PADDING``.
+  plate's voxels follow from its size, its box from ``PLATE_FOURIER_PADDING``
+  and a voxel grid's box from ``FOURIER_PADDING``.
 - The ``smoothing`` argument of ``voxel_demagnetizing_tensor``, which has no
   replacement. ``padding`` stays, with ``FOURIER_PADDING`` as its default.
 

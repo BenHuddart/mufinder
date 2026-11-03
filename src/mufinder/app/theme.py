@@ -2857,18 +2857,6 @@ def _card_and_menu_styles(p: MuFinderPalette) -> str:
         border-radius: {RADIUS.card}px;
         background: {p.bg_surface};
     }}
-    QFrame#uepIsosurfaceStatusCard[statusKind="busy"] {{
-        border-color: {p.status_running};
-    }}
-    QFrame#uepIsosurfaceStatusCard[statusKind="success"] {{
-        border-color: {p.status_completed};
-    }}
-    QFrame#uepIsosurfaceStatusCard[statusKind="exported"] {{
-        border-color: {p.status_ready};
-    }}
-    QFrame#uepIsosurfaceStatusCard[statusKind="error"] {{
-        border-color: {p.status_failed};
-    }}
     QFrame#journalEntryCard {{
         border: 1px solid {p.border};
         border-left: 4px solid {p.border};

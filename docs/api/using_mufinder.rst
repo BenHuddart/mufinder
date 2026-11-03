@@ -200,8 +200,8 @@ The FFT box is 2.5 times the longest edge, 4, along every axis, rounded up to a
 size the FFT handles quickly. A plate outlined in a photograph is the
 ``image_plate`` shape, made by
 :meth:`~mufinder.science.demagnetization.DemagnetizingSample.image_plate` from
-an in-plane mask; :mod:`mufinder.science.sample_image` segments the mask from
-a greyscale array.
+an in-plane mask, with a box 4 times its longest edge;
+:mod:`mufinder.science.sample_image` segments the mask from a greyscale array.
 
 Simulate the muon polarisation
 ------------------------------

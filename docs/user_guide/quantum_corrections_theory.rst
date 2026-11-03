@@ -366,20 +366,21 @@ The site's row
    are left out of every zero-point sum.
 
 .. figure:: ../_generated/screenshots/n2_muon_coupling.webp
-   :alt: The Muon Coupling tab with Atom A 65: H:mu and Atom B 57: N, w2 =
-         -0.310498, and the covariance and correlation tensors.
+   :alt: The Muon Coupling tab listing the twelve nitrogens nearest the muon,
+         from atom 57 at 1.268 Å with |c| 0.310 and atom 1 at 1.288 Å with |c|
+         0.298, and the covariance and correlation tensors of atom 57.
 
-   The muon and its nearest nitrogen.
+   The muon's nearest atoms.
 
 ``Muon Coupling``
-   With ``Atom A`` the muon and ``Atom B`` one of the two nearest nitrogens,
-   ``w2`` is −0.31 (and −0.30 for the other): a harmonic correlation
+   The two nearest nitrogens head the list with ``|c|`` = 0.31 and 0.30 (``w2``
+   is −0.31 and −0.30): a harmonic correlation
    :math:`|c| \approx 30\,\%`. The paper's harmonic estimate, about 26 %,
    keeps only the 20 modes with a muon participation of at least 10⁻⁴ (see
    :ref:`quantum-corrections-w2`); with that cutoff MuFinder's covariance
    gives 0.26 and 0.24 for the same two nitrogens. The paper's PIMD
-   correlation decays with distance from the muon, so expect smaller values
-   for nitrogens further away. The ``?`` button gives the equations:
+   correlation decays with distance from the muon, as the list's values do
+   overall. The ``?`` button gives the equations:
 
    .. figure:: ../_generated/screenshots/n2_coupling_help.webp
       :alt: The Muon coupling tensors help dialog with the covariance,

@@ -103,6 +103,7 @@ from mufinder.services.source_candidates import (
 from mufinder.domain.charge_states import muon_charge_state_label
 from mufinder.science.energy_barriers import (
     EnergyBarrierError,
+    band_distances_ang,
     hop_cartesian_vector,
     hop_direction_label,
     idpp_intermediate_structure,
@@ -547,6 +548,7 @@ class EnergyBarriersController(WorkflowJobController):
         """Show a finished band, each image's energy relative to the initial image.
 
         Absolute CASTEP energies are ~10⁵ eV, so differences vanish in the display.
+        Each image also gets its distance along the band.
         """
 
         document = self._context.document()
@@ -561,6 +563,11 @@ class EnergyBarriersController(WorkflowJobController):
         except TransitionStateParseError:
             view.clear_neb_preview(title=f"{hop}: the band file could not be read")
             return
+        try:
+            distances = band_distances_ang(transition_state.images)
+        except EnergyBarrierError as exc:
+            view.clear_neb_preview(title=f"{hop}: {exc}")
+            return
         initial_energy = transition_state.images[0].energy
         length_ang = float_from_source(source, "path_length_ang") if source is not None else None
         parts = [hop] if length_ang is None else [hop, f"{length_ang:.4g} Å"]
@@ -570,12 +577,14 @@ class EnergyBarriersController(WorkflowJobController):
             image_rows=[
                 EnergyBarrierPreviewImageRow(
                     label=f"Image {number}",
-                    reaction_coordinate=f"{image.reaction_coordinate:.6g}",
-                    energy=f"{image.energy - initial_energy:+.4g} eV",
-                    reaction_coordinate_value=image.reaction_coordinate,
+                    distance=f"{distance:.3f} Å",
+                    energy=format_energy_mev(image.energy - initial_energy, signed=True),
+                    distance_value=distance,
                     energy_value=image.energy,
                 )
-                for number, image in enumerate(transition_state.images, start=1)
+                for number, (image, distance) in enumerate(
+                    zip(transition_state.images, distances), start=1
+                )
             ],
             structures=[
                 self._image_structure(band.job.label, image) for image in transition_state.images

@@ -12,12 +12,11 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from typing import Any
-from uuid import UUID
 
 from mufinder.domain.charge_states import muon_charge_state_label
 from mufinder.domain.enums import WorkflowStage
 from mufinder.domain.models import CalculationDefinition, Job, ProvenanceRecord, Result
-from mufinder.services.job_results import latest_result_for_job, parse_numeric
+from mufinder.services.job_results import parse_numeric
 from mufinder.services.muon_sites_summary import pinned_source_selection
 from mufinder.services.project_document import (
     ProjectDocument,
@@ -39,6 +38,7 @@ from mufinder.services.source_candidates import (
     quantum_source_energy_group,
     quantum_source_relative_energies,
 )
+from mufinder.services.zpe_ranking import ZpeRanking, zpe_ranking
 from mufinder.services.study_findings import (
     FINGERPRINT_KEY,
     SUBJECT_KEY,
@@ -108,11 +108,9 @@ def _quantum_corrected_record(
     def label(item: QuantumSourceCandidate) -> str:
         return pinned.get(item.key) or item.site.label or item.job.label
 
-    comparison = (
-        _zpe_comparison(document, candidate, candidates, rows, label)
-        if candidate is not None
-        else []
-    )
+    ranking = zpe_ranking(document, candidates)
+    comparison = _zpe_comparison(candidate, candidates, ranking, label) if candidate else []
+    group = quantum_source_energy_group(candidate) if candidate else None
     modes = data.get("muon_zpe_modes")
     return ProvenanceRecord(
         action="quantum_corrected",
@@ -133,13 +131,27 @@ def _quantum_corrected_record(
             "mode_widths_A": list(mode_widths_from_result_data(data)),
             "w1": w1_from_result_data(data),
             "warnings": list(phonon_warnings_from_result_data(data)),
+            "zpe_mark": ranking.mark(key),
+            "ranking_notes": list(ranking.notes(key)),
             "comparison": comparison,
-            "ordering_changed": _ordering_changed(comparison),
+            "not_ranked": [
+                f"{label(item)} ({ranking.mark(item.key)})"
+                for item in candidates
+                if item.key != key
+                and quantum_source_energy_group(item) == group
+                and ranking.mark(item.key)
+            ],
+            # About a site outside the ranking, the other sites' order says nothing.
+            "ordering_changed": (
+                _ordering_changed(comparison) if ranking.corrected_eV(key) is not None else None
+            ),
             SUBJECT_KEY: key,
             FINGERPRINT_KEY: input_fingerprint(
                 key,
                 _row_settings(definition, key),
                 str(candidate.run.id) if candidate is not None else None,
+                # A rerun that brings the ZPE into the ranking is news, whatever its inputs.
+                ranking.mark(key),
             ),
         },
         job_id=job.id,
@@ -147,52 +159,38 @@ def _quantum_corrected_record(
 
 
 def _zpe_comparison(
-    document: ProjectDocument,
     candidate: QuantumSourceCandidate,
     candidates: Sequence[QuantumSourceCandidate],
-    rows: Mapping[str, tuple[CalculationDefinition, str]],
+    ranking: ZpeRanking,
     label: Any,
 ) -> list[dict[str, object]]:
-    """The sites comparable with ``candidate`` that have a ZPE, lowest ``ΔE + ZPE`` first.
+    """The sites ranked with ``candidate``, lowest ``ΔE + ZPE`` first.
 
-    ``ΔE`` is relative to the lowest of the sites compared, and ``ΔE + ZPE`` to the
-    lowest corrected energy, so each column starts from zero.
+    ``ΔE`` is relative to the lowest of the sites compared, and ``ΔE + ZPE`` is the
+    ranking's, so a flagged site can read below zero.
     """
 
     group = quantum_source_energy_group(candidate)
     relative = quantum_source_relative_energies(candidates)
-    zpe_by_key: dict[str, float] = {}
-    for key, (_definition, job_id) in rows.items():
-        try:
-            stored = latest_result_for_job(document, UUID(job_id))
-        except ValueError:
-            continue
-        value = (
-            parse_numeric(stored.data.get("muon_zpe_total_eV"))
-            if stored is not None and isinstance(stored.data, Mapping)
-            else None
-        )
-        if value is not None:
-            zpe_by_key[key] = value
     compared = [
-        (item, energy, zpe_by_key[item.key])
+        (item, energy, corrected)
         for item in candidates
         if quantum_source_energy_group(item) == group
         and (energy := relative.get(item.key)) is not None
-        and item.key in zpe_by_key
+        and (corrected := ranking.corrected_eV(item.key)) is not None
     ]
     if not compared:
         return []
-    lowest_energy = min(energy for _item, energy, _zpe in compared)
-    lowest_corrected = min(energy + zpe for _item, energy, zpe in compared)
+    lowest_energy = min(energy for _item, energy, _corrected in compared)
     comparison = [
         {
             "site_label": label(item),
             "relative_energy_eV": energy - lowest_energy,
-            "zpe_eV": zpe,
-            "corrected_energy_eV": energy + zpe - lowest_corrected,
+            "zpe_eV": ranking.zpe_eV(item.key),
+            "corrected_energy_eV": corrected,
+            "warned": ranking.warned(item.key),
         }
-        for item, energy, zpe in compared
+        for item, energy, corrected in compared
     ]
     comparison.sort(key=lambda row: (row["corrected_energy_eV"], row["site_label"]))
     return comparison

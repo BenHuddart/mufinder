@@ -13,6 +13,7 @@ import numpy as np
 from scipy.optimize import linear_sum_assignment
 from scipy.spatial import cKDTree
 
+from mufinder.castep_io.ts_parser import TransitionStateImage
 from mufinder.domain.magnetic_properties import (
     has_nonzero_spins,
     magnetic_moments_are_collinear,
@@ -21,6 +22,8 @@ from mufinder.domain.magnetic_properties import (
 from mufinder.domain.models import Structure
 from mufinder.science.ase_bridge import is_muon_label, structure_to_ase_atoms
 from mufinder.science.lattice import (
+    cartesian_to_fractional,
+    fractional_to_cartesian,
     nearest_image_delta_matrix,
     nearest_image_deltas,
     nearest_image_distance_matrix,
@@ -52,6 +55,8 @@ _PATH_SYMMETRY_SPINS = "mufinder_path_symmetry_spins"
 # loose enough for spins read from calculated populations (2.97 against -2.96), tight
 # enough to tell sublattices of a ferrimagnet apart.
 _SPIN_MATCH_RELATIVE_TOLERANCE = 0.05
+# Images of one band share a cell, which the `.ts` file repeats digit for digit.
+_BAND_CELL_TOLERANCE_ANG = 1e-6
 
 
 class EnergyBarrierError(ValueError):
@@ -576,6 +581,47 @@ def hop_direction_label(
             indexes = [int(value) for value in np.rint(multiples)]
             return f"along [{' '.join(str(index) for index in indexes)}]"
     return f"along [{' '.join(f'{value:.2g}' for value in scaled)}]"
+
+
+def band_distances_ang(images: Sequence[TransitionStateImage]) -> list[float]:
+    """Return each image's cumulative distance along a band from its first image, in Å.
+
+    A band is a path through the positions of all its atoms together, so each step
+    is the Euclidean norm over every atom of its displacement to the nearest periodic
+    image in the next image. This is the length CASTEP normalises its reaction
+    coordinate by, so the result divided by its last value is that coordinate. It is
+    longer than the path of the muon alone, because the host atoms move too.
+
+    Raises :class:`EnergyBarrierError` when the images do not share a cell and an
+    ordered list of species, since no such distance exists between them.
+    """
+
+    if not images:
+        return []
+    first = images[0]
+    lattice = np.asarray(first.lattice_vectors, dtype=float)
+    distances = [0.0]
+    for previous, image in zip(images, images[1:]):
+        if image.species != first.species:
+            raise EnergyBarrierError(
+                "The band's images must hold the same atoms in the same order."
+            )
+        if not np.allclose(image.lattice_vectors, lattice, rtol=0.0, atol=_BAND_CELL_TOLERANCE_ANG):
+            raise EnergyBarrierError("The band's images must share the same simulation cell.")
+        displacements = fractional_to_cartesian(
+            nearest_image_deltas(
+                cartesian_to_fractional(
+                    previous.cartesian_positions, lattice, error=EnergyBarrierError
+                ),
+                cartesian_to_fractional(
+                    image.cartesian_positions, lattice, error=EnergyBarrierError
+                ),
+                lattice,
+            ),
+            lattice,
+        )
+        distances.append(distances[-1] + float(np.linalg.norm(displacements)))
+    return distances
 
 
 def _wrapped_fractional_delta(start: np.ndarray, end: np.ndarray) -> np.ndarray:

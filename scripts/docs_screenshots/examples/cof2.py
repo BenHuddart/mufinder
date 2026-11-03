@@ -1137,6 +1137,44 @@ def open_uep_batch_search(window: MainWindow) -> QWidget:
     return analysis
 
 
+def open_uep_potential(window: MainWindow) -> QWidget:
+    """Open the Potential tab with its grid computed, one surface drawn and one plane in it."""
+
+    from mufinder.app import uep_wizard
+    from mufinder.science.uep import plane_from_fractional_anchor_and_miller
+
+    def start_in_this_thread(worker) -> None:
+        worker.run()
+        worker.finished.emit()
+
+    threads = (uep_wizard._IsosurfaceGridThread, uep_wizard._IsosurfaceMeshThread)
+    starts = [thread.start for thread in threads]
+    for thread in threads:
+        thread.start = start_in_this_thread
+    try:
+        analysis = _open_uep_analysis(window)
+        analysis._tabs.setCurrentWidget(analysis._potential_tab)
+        analysis._isosurface_level_input.setValue(6.0)
+        analysis._isosurface_level_input.editingFinished.emit()
+        analysis._slice_planes = [
+            uep_wizard._SlicePlaneState(
+                label="Plane 1",
+                plane=plane_from_fractional_anchor_and_miller(
+                    anchor_fractional=(0.0, 0.0, 0.5),
+                    miller_indices=(0.0, 0.0, 1.0),
+                    lattice_vectors=analysis._source.structure.lattice_vectors,
+                    points_u=161,
+                    points_v=161,
+                ),
+            )
+        ]
+        analysis._resample_all_slice_planes()
+    finally:
+        for thread, start in zip(threads, starts, strict=True):
+            thread.start = start
+    return analysis
+
+
 def _show_batch_tab(analysis: QWidget) -> None:
     from PySide6.QtWidgets import QTabWidget
 
@@ -1325,6 +1363,11 @@ SCENES: dict[str, Scene] = {
         results_project,
         "uep",
         Floating(open_uep_batch_search, size=(1280, 820), prepare=frame_viewers),
+    ),
+    "uep_potential": Scene(
+        results_project,
+        "uep",
+        Floating(open_uep_potential, size=(1280, 920), prepare=frame_viewers),
     ),
     # Muon relaxations and their analysis.
     "muon_relaxations_page": Scene(

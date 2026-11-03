@@ -27,6 +27,7 @@ from mufinder.domain.text import execution_target_text, folder_phrase, plural
 from mufinder.services.failure_diagnosis import FAILURE_REASON_SUMMARIES
 from mufinder.services.magnetic_field_results import MAGNETIC_FIELD_PAGE_OWNER
 from mufinder.services.magnetic_field_settings import phase_sampling_label
+from mufinder.services.quantum_results import WARNING_MARK
 from mufinder.services.generation_runs import (
     generation_run_from_provenance,
     run_journal_line,
@@ -1245,12 +1246,21 @@ def _polarisation_simulated_entry(record: ProvenanceRecord) -> JournalEntry:
     )
 
 
+def _marked_eV_text(row: Mapping[str, Any], key: str) -> str:
+    """A comparison row's number, with the mark when its phonon result carries a warning."""
+
+    text = _eV_text(row.get(key))
+    return f"{text} {WARNING_MARK}" if row.get("warned") else text
+
+
 def _quantum_corrected_entry(record: ProvenanceRecord) -> JournalEntry:
     """``ZPE at 4c: 0.680 eV; ordering unchanged``."""
 
     site = _text_param(record, "site_label") or "the muon site"
     zpe = _eV_text(record.parameters.get("muon_zpe_total_eV"))
     body = f"ZPE at {site}: {zpe} eV"
+    if mark := _text_param(record, "zpe_mark"):
+        body += f" ({mark})"
     changed = record.parameters.get("ordering_changed")
     if isinstance(changed, bool):
         body += "; ordering changed" if changed else "; ordering unchanged"
@@ -1276,12 +1286,16 @@ def _quantum_corrected_entry(record: ProvenanceRecord) -> JournalEntry:
         lines.append(f"w1 {w1:.3f}")
     warnings = [str(item) for item in record.parameters.get("warnings") or () if item]
     lines.extend(warnings)
+    lines.extend(str(item) for item in record.parameters.get("ranking_notes") or () if item)
+    not_ranked = [str(item) for item in record.parameters.get("not_ranked") or () if item]
+    if not_ranked:
+        lines.append("Not ranked: " + ", ".join(not_ranked))
     rows = tuple(
         (
             str(row.get("site_label") or ""),
             _eV_text(row.get("relative_energy_eV")),
-            _eV_text(row.get("zpe_eV")),
-            _eV_text(row.get("corrected_energy_eV")),
+            _marked_eV_text(row, "zpe_eV"),
+            _marked_eV_text(row, "corrected_energy_eV"),
         )
         for row in _mapping_rows(record, "comparison")
     )

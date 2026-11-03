@@ -17,7 +17,15 @@ import pytest
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QDialog, QFrame, QPushButton, QSizePolicy, QWidget
+from PySide6.QtWidgets import (
+    QCheckBox,
+    QDialog,
+    QFrame,
+    QLabel,
+    QLineEdit,
+    QPushButton,
+    QWidget,
+)
 
 from mufinder.app import theme as theme_module
 from mufinder.app.theme import cluster_color_map, current_palette
@@ -27,7 +35,11 @@ from mufinder.app.uep_wizard import (
     _EditSlicePlaneDialog,
     _SlicePlaneState,
 )
-from mufinder.app.atomic_structure_viewer import MUON_VIEWER_RADIUS_ANG, _CameraState
+from mufinder.app.atomic_structure_viewer import (
+    MUON_VIEWER_RADIUS_ANG,
+    AtomicStructureViewer,
+    _CameraState,
+)
 from mufinder.domain.models import Structure
 from mufinder.domain.text import plural
 from mufinder.science.site_generation import generate_random_sites, symmetry_equivalent_positions
@@ -44,6 +56,7 @@ from mufinder.science.uep import (
     plane_from_fractional_anchor_and_miller,
     potential_grid,
     serialize_potential_grid,
+    write_potential_grid_xsf,
 )
 
 
@@ -70,6 +83,15 @@ def _slice_plane_for_dialog(dialog: UepAnalysisDialog):
         lattice_vectors=dialog._source.structure.lattice_vectors,
         points_u=21,
         points_v=21,
+    )
+
+
+def _show_level(dialog: UepAnalysisDialog, level_above_minimum: float) -> None:
+    """Draw the active isosurface at a level, as the worker's mesh does when it arrives."""
+
+    dialog._render_isosurface_mesh_for_layer(
+        extract_isosurface(dialog._potential_grid_cache, level_ev=level_above_minimum),
+        layer_index=dialog._active_isosurface_index,
     )
 
 
@@ -126,38 +148,19 @@ def test_uep_analysis_dialog_shows_no_unlaid_widgets_over_the_tab_bar(qapp) -> N
 
 
 def test_uep_analysis_dialog_shrinks_for_small_screens(qapp) -> None:
-    """Isosurface/slices controls scroll instead of forcing a tall minimum.
-
-    Guards the SC-1 small-screen fix: the dialog's minimum height must fit a
-    13" MacBook's ~850px usable height, the controls column above each viewer
-    must live in a scrollable area (not push the viewer off-screen), and the
-    slider/viewer minimums must be small enough to avoid re-inflating the
-    dialog's minimum size.
-    """
+    """The Potential controls scroll, in a column beside the viewer, rather than force a tall minimum."""
     from PySide6.QtWidgets import QScrollArea
 
-    dialog = UepAnalysisDialog(
-        source_job_label="uep_source_row1",
-        source_structure_id="11111111-1111-1111-1111-111111111111",
-        source_structure=_source_structure_with_spins(),
-        den_fmt_path=_fixture_path("Si2.den_fmt"),
-        castep_path=_fixture_path("Si2.castep"),
-        cell_path=_fixture_path("Si2.cell"),
-    )
+    dialog = _si2_dialog()
 
     assert dialog.minimumWidth() == 980
     assert dialog.minimumHeight() == 640
 
-    assert isinstance(dialog._isosurface_controls_scroll, QScrollArea)
-    assert dialog._isosurface_controls_scroll.widgetResizable()
-    assert isinstance(dialog._slice_controls_scroll, QScrollArea)
-    assert dialog._slice_controls_scroll.widgetResizable()
-    for scroll in (dialog._isosurface_controls_scroll, dialog._slice_controls_scroll):
-        assert not scroll.focusPolicy() & Qt.FocusPolicy.TabFocus
-
-    assert dialog._isosurface_slider.minimumWidth() == 400
-    assert dialog._isosurface_viewer.minimumHeight() == 320
-    assert dialog._slice_viewer.minimumHeight() == 320
+    scroll = dialog._potential_controls_scroll
+    assert isinstance(scroll, QScrollArea)
+    assert scroll.widgetResizable()
+    assert not scroll.focusPolicy() & Qt.FocusPolicy.TabFocus
+    assert dialog._potential_viewer.minimumHeight() == 320
 
     dialog.close()
 
@@ -282,7 +285,7 @@ def test_edit_slice_plane_dialog_uses_fractional_anchor_and_lattice_plane_compon
 
 
 @pytest.mark.parametrize("confirmed", [False, True])
-def test_edit_slice_plane_dialog_confirms_before_deleting_the_plane(
+def test_edit_slice_plane_dialog_confirms_before_removing_the_plane(
     qapp, monkeypatch, confirmed: bool
 ) -> None:
     lattice_vectors = ((4.0, 0.0, 0.0), (0.0, 4.0, 0.0), (0.0, 0.0, 4.0))
@@ -304,12 +307,12 @@ def test_edit_slice_plane_dialog_confirms_before_deleting_the_plane(
     deleted: list[bool] = []
     dialog.plane_deleted.connect(lambda: deleted.append(True))
     delete_button = next(
-        button for button in dialog.findChildren(QPushButton) if button.text() == "Delete Plane"
+        button for button in dialog.findChildren(QPushButton) if button.text() == "Remove plane"
     )
 
     delete_button.click()
 
-    assert asked == [(dialog, "Delete slice plane", "Delete plane 2?", "Delete plane")]
+    assert asked == [(dialog, "Remove slice plane", "Remove plane 2?", "Remove plane")]
     assert deleted == ([True] if confirmed else [])
     assert dialog.result() == (2 if confirmed else 0)
     dialog.close()
@@ -357,99 +360,90 @@ def test_uep_wizard_theory_text_and_summary_include_reference_and_spin_note(qapp
     dialog.close()
 
 
-def test_uep_wizard_exposes_only_branded_batch_isosurface_and_slice_tabs(qapp) -> None:
-    dialog = UepAnalysisDialog(
-        source_job_label="uep_source_row1",
-        source_structure_id="11111111-1111-1111-1111-111111111111",
-        source_structure=_source_structure_with_spins(),
-        den_fmt_path=_fixture_path("Si2.den_fmt"),
-        castep_path=_fixture_path("Si2.castep"),
-        cell_path=_fixture_path("Si2.cell"),
-    )
+def test_the_window_has_two_tabs_one_potential_viewer_and_no_compute_button(qapp) -> None:
+    dialog = _si2_dialog()
 
     labels = [dialog._tabs.tabText(index) for index in range(dialog._tabs.count())]
     palette = current_palette()
-    dialog.show()
-    dialog._tabs.setCurrentIndex(2)
-    qapp.processEvents()
 
-    assert labels == ["Batch Search", "Isosurfaces", "Slices"]
+    assert labels == ["Batch Search", "Potential"]
     assert dialog._tabs.objectName() == "uepAnalysisTabs"
     assert palette.accent in dialog._tabs.styleSheet()
     assert palette.bg_surface in dialog._tabs.styleSheet()
-    assert dialog._slice_colorbar_canvas.minimumHeight() == 180
-    assert dialog._slice_colorbar_canvas.maximumHeight() == 320
-    assert (
-        dialog._slice_colorbar_canvas.sizePolicy().verticalPolicy() == QSizePolicy.Policy.Expanding
-    )
-    assert dialog._slice_manage_muons_button.isVisibleTo(dialog) is True
+    viewers = dialog.findChildren(AtomicStructureViewer)
+    assert {viewer for viewer in viewers} == {dialog._batch_viewer, dialog._potential_viewer}
+    button_texts = {button.text() for button in dialog.findChildren(QPushButton)}
+    assert "Calculate Cell Potential Grid" not in button_texts
+    assert "Export XSF…" in button_texts
+    assert "Add plane…" in button_texts
+    assert "Add / remove muon" in button_texts
+    checkbox_texts = {box.text() for box in dialog.findChildren(QCheckBox)}
+    assert "Set minimum potential to zero" not in checkbox_texts
+    assert "Hide atoms in front of planes" in checkbox_texts
+    assert dialog._manage_muons_button.isVisibleTo(dialog._potential_tab) is True
     dialog.close()
 
 
-def test_uep_wizard_initial_state_gw_factor_overrides_default_and_rejects_mismatched_grid(
-    qapp,
-) -> None:
-    baseline = UepAnalysisDialog(
-        source_job_label="uep_source_row1",
-        source_structure_id="11111111-1111-1111-1111-111111111111",
-        source_structure=_source_structure_with_spins(),
-        den_fmt_path=_fixture_path("Si2.den_fmt"),
-        castep_path=_fixture_path("Si2.castep"),
-        cell_path=_fixture_path("Si2.cell"),
-    )
-    cached_grid = potential_grid(baseline._field)
+def test_a_saved_width_factor_is_the_one_in_use_and_a_stored_grid_is_not_read(qapp) -> None:
+    baseline = _si2_dialog()
+    other_factor_grid = potential_grid(baseline._field)
     baseline.close()
 
-    restored = UepAnalysisDialog(
-        source_job_label="uep_source_row1",
-        source_structure_id="11111111-1111-1111-1111-111111111111",
-        source_structure=_source_structure_with_spins(),
-        den_fmt_path=_fixture_path("Si2.den_fmt"),
-        castep_path=_fixture_path("Si2.castep"),
-        cell_path=_fixture_path("Si2.cell"),
+    restored = _si2_dialog(
         initial_state={
             "gw_factor": 7.0,
-            "potential_grid": serialize_potential_grid(cached_grid),
+            "potential_grid": serialize_potential_grid(other_factor_grid),
         },
     )
 
     assert restored._source.gw_factor == pytest.approx(7.0)
     assert restored._gw_factor_input.value() == pytest.approx(7.0)
-    assert restored._slice_gw_factor_input.value() == pytest.approx(7.0)
     assert restored._potential_grid_cache is None
     restored.close()
 
 
-def test_uep_wizard_restores_legacy_visible_tab_indexes_into_new_tab_order(qapp) -> None:
-    for saved_index, expected_index in ((4, 1), (5, 2), (6, 0)):
-        dialog = UepAnalysisDialog(
-            source_job_label="uep_source_row1",
-            source_structure_id="11111111-1111-1111-1111-111111111111",
-            source_structure=_source_structure_with_spins(),
-            den_fmt_path=_fixture_path("Si2.den_fmt"),
-            castep_path=_fixture_path("Si2.castep"),
-            cell_path=_fixture_path("Si2.cell"),
-            initial_state={"current_tab": saved_index},
-        )
+@pytest.mark.parametrize(
+    ("saved_index", "expected_index"),
+    [
+        (0, 0),
+        (1, 1),
+        (2, 1),
+        (3, 0),
+        (4, 1),
+        (5, 1),
+        (6, 0),
+        (7, 0),
+        ("not a tab", 0),
+    ],
+)
+def test_a_saved_tab_restores(qapp, saved_index, expected_index) -> None:
+    dialog = _si2_dialog(initial_state={"current_tab": saved_index})
 
-        assert dialog._tabs.currentIndex() == expected_index
-        dialog.close()
+    assert dialog._tabs.currentIndex() == expected_index
+    dialog.close()
 
 
-def test_uep_wizard_pressing_enter_on_gw_factor_rebuilds_field_and_recalculates_grid(
+def test_the_potential_tab_saves_and_restores_as_its_visible_index(qapp) -> None:
+    first = _si2_dialog()
+    first._tabs.setCurrentWidget(first._potential_tab)
+    snapshot = first.state_snapshot()
+    first.close()
+
+    assert snapshot["current_tab"] == 1
+    restored = _si2_dialog(initial_state=snapshot)
+    assert restored._tabs.currentWidget() is restored._potential_tab
+    restored.close()
+
+
+def test_pressing_enter_on_the_width_factor_rebuilds_the_field_and_recalculates_the_grid(
     qapp, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    dialog = UepAnalysisDialog(
-        source_job_label="uep_source_row1",
-        source_structure_id="11111111-1111-1111-1111-111111111111",
-        source_structure=_source_structure_with_spins(),
-        den_fmt_path=_fixture_path("Si2.den_fmt"),
-        castep_path=_fixture_path("Si2.castep"),
-        cell_path=_fixture_path("Si2.cell"),
-    )
+    dialog = _si2_dialog()
     dialog._apply_potential_grid_cache(potential_grid(dialog._field))
     dialog._probe_point.set_values((0.25, 0.25, 0.25))
     dialog._run_probe()
+    dialog.show()
+    dialog._tabs.setCurrentWidget(dialog._potential_tab)
 
     started: list[bool] = []
     monkeypatch.setattr(dialog, "_start_isosurface_grid_calculation", lambda: started.append(True))
@@ -460,7 +454,6 @@ def test_uep_wizard_pressing_enter_on_gw_factor_rebuilds_field_and_recalculates_
     assert dialog._source.gw_factor == pytest.approx(7.0)
     assert dialog.state_snapshot()["gw_factor"] == pytest.approx(7.0)
     assert dialog._gw_factor_input.value() == pytest.approx(7.0)
-    assert dialog._slice_gw_factor_input.value() == pytest.approx(7.0)
     assert dialog._probe_output.toPlainText() == ""
     assert not hasattr(dialog, "_probe_promote")
     assert dialog._potential_grid_raw_cache is None
@@ -484,24 +477,19 @@ def test_uep_wizard_leaving_gw_factor_field_without_enter_reverts_to_active_valu
 
     assert dialog._source.gw_factor == pytest.approx(5.0)
     assert dialog._gw_factor_input.value() == pytest.approx(5.0)
-    assert dialog._slice_gw_factor_input.value() == pytest.approx(5.0)
     dialog.close()
 
 
-def test_uep_wizard_gw_factor_tooltip_and_controls_are_present(qapp) -> None:
-    dialog = UepAnalysisDialog(
-        source_job_label="uep_source_row1",
-        source_structure_id="11111111-1111-1111-1111-111111111111",
-        source_structure=_source_structure_with_spins(),
-        den_fmt_path=_fixture_path("Si2.den_fmt"),
-        castep_path=_fixture_path("Si2.castep"),
-        cell_path=_fixture_path("Si2.cell"),
-    )
+def test_the_width_factor_is_one_control_above_the_tabs(qapp) -> None:
+    dialog = _si2_dialog()
 
-    assert "Gaussian width factor" in dialog._gw_factor_input.toolTip()
     assert "Press Enter" in dialog._gw_factor_input.toolTip()
-    assert dialog._slice_gw_factor_input.toolTip() == dialog._gw_factor_input.toolTip()
     assert not any(button.text() == "Apply" for button in dialog.findChildren(QPushButton))
+    assert dialog._tabs.isAncestorOf(dialog._gw_factor_input) is False
+    assert (
+        sum(1 for label in dialog.findChildren(QLabel) if label.text() == "Gaussian width factor")
+        == 1
+    )
     dialog.close()
 
 
@@ -558,37 +546,26 @@ def test_uep_wizard_state_change_keeps_child_dialogs_after_parent_handlers(
     qapp,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    dialog = UepAnalysisDialog(
-        source_job_label="uep_source_row1",
-        source_structure_id="11111111-1111-1111-1111-111111111111",
-        source_structure=_source_structure_with_spins(),
-        den_fmt_path=_fixture_path("Si2.den_fmt"),
-        castep_path=_fixture_path("Si2.castep"),
-        cell_path=_fixture_path("Si2.cell"),
-    )
+    dialog = _si2_dialog()
     events: list[str] = []
 
     class _FakeChildDialog:
         def close(self) -> bool:
             return True
 
-    isosurface_dialog = _FakeChildDialog()
-    slice_dialog = _FakeChildDialog()
-    dialog._isosurface_muon_dialog = isosurface_dialog
-    dialog._slice_muon_dialog = slice_dialog
+    muon_dialog = _FakeChildDialog()
+    dialog._viewer_muon_dialog = muon_dialog
 
     def _keep_child(child) -> None:
-        if child is isosurface_dialog:
-            events.append("keep-isosurface")
-        elif child is slice_dialog:
-            events.append("keep-slice")
+        if child is muon_dialog:
+            events.append("keep-muons")
 
     monkeypatch.setattr(UepAnalysisDialog, "_keep_dialog_in_front", staticmethod(_keep_child))
     dialog.state_changed.connect(lambda _state: events.append("parent-handler"))
 
     dialog._emit_state_changed()
 
-    assert events == ["parent-handler", "keep-isosurface", "keep-slice"]
+    assert events == ["parent-handler", "keep-muons"]
     dialog.close()
 
 
@@ -659,14 +636,14 @@ def test_uep_wizard_isosurface_muon_management_adds_and_removes_clustered_muons(
     ]
 
     candidate = dialog._clustered_muon_candidates()[0]
-    dialog._add_candidate_muons_to_viewer("isosurface", [candidate.key], True)
+    dialog._add_candidate_muons_to_viewer([candidate.key], True)
 
-    assert len(dialog._isosurface_viewer_muons) == 1
-    assert dialog._isosurface_viewer._structure is not None
-    assert dialog._isosurface_viewer._structure.species.count("X") == 1
+    assert len(dialog._viewer_muons) == 1
+    assert dialog._potential_viewer._structure is not None
+    assert dialog._potential_viewer._structure.species.count("X") == 1
     expected_color = cluster_color_map([candidate.cluster_index])[candidate.cluster_index]
-    assert dialog._isosurface_viewer._structure.properties["atom_colors"][-1] == expected_color
-    viewer_entry = dialog._isosurface_viewer_muons[0]
+    assert dialog._potential_viewer._structure.properties["atom_colors"][-1] == expected_color
+    viewer_entry = dialog._viewer_muons[0]
     assert viewer_entry.linked_isosurface_layer_key is not None
     layer_index = dialog._find_isosurface_layer_index_by_key(
         viewer_entry.linked_isosurface_layer_key
@@ -676,37 +653,34 @@ def test_uep_wizard_isosurface_muon_management_adds_and_removes_clustered_muons(
     assert linked_layer.color == expected_color
     assert linked_layer.managed_muon_key == viewer_entry.key
     assert linked_layer.level_ev == pytest.approx(
-        float(candidate.total_energy_ev) + dialog._potential_grid_zero_shift_ev
+        float(candidate.total_energy_ev) - dialog._potential_minimum_ev
     )
-    assert linked_layer.status_text == (
-        "Isosurface at total (classical + zero-point) energy "
-        f"{float(candidate.total_energy_ev):.6f} eV for muon {candidate.label}."
-    )
+    assert linked_layer.mesh is not None
 
-    dialog._set_current_viewer_muon_selection("isosurface", [viewer_entry.key])
+    dialog._set_current_viewer_muon_selection([viewer_entry.key])
 
     host_count = len(dialog._viewer_host_structure.species)
-    assert dialog._isosurface_viewer._selected_indexes == [host_count]
+    assert dialog._potential_viewer._selected_indexes == [host_count]
     legend_texts = [
         label.text()
-        for label in dialog._isosurface_legend_entries.findChildren(
+        for label in dialog._viewer_muon_legend_entries.findChildren(
             type(dialog._isosurface_min_label)
         )
     ]
     assert any(candidate.label in text for text in legend_texts)
     assert any(f"Site {candidate.cluster_index}" in text for text in legend_texts)
 
-    dialog._remove_viewer_muons("isosurface", [viewer_entry.key])
+    dialog._remove_viewer_muons([viewer_entry.key])
 
-    assert dialog._isosurface_viewer_muons == []
-    assert dialog._isosurface_viewer._structure is dialog._viewer_host_structure
+    assert dialog._viewer_muons == []
+    assert dialog._potential_viewer._structure is dialog._viewer_host_structure
     assert (
         dialog._find_isosurface_layer_index_by_key(viewer_entry.linked_isosurface_layer_key) is None
     )
     dialog.close()
 
 
-def test_uep_wizard_editing_isosurface_muon_label_updates_linked_status_and_restores(
+def test_uep_wizard_editing_a_muon_label_keeps_its_isosurface_and_restores(
     qapp, monkeypatch
 ) -> None:
     _run_batch_search_inline(monkeypatch)
@@ -742,32 +716,23 @@ def test_uep_wizard_editing_isosurface_muon_label_updates_linked_status_and_rest
     ]
 
     candidate = dialog._clustered_muon_candidates()[0]
-    dialog._add_candidate_muons_to_viewer("isosurface", [candidate.key], True)
-    viewer_entry = dialog._isosurface_viewer_muons[0]
+    dialog._add_candidate_muons_to_viewer([candidate.key], True)
+    viewer_entry = dialog._viewer_muons[0]
     assert viewer_entry.linked_isosurface_layer_key is not None
     layer_index = dialog._find_isosurface_layer_index_by_key(
         viewer_entry.linked_isosurface_layer_key
     )
     assert layer_index is not None
 
-    dialog._open_isosurface_muon_dialog()
-    item = dialog._isosurface_muon_dialog._current_table.topLevelItem(0)
+    dialog._open_viewer_muon_dialog()
+    item = dialog._viewer_muon_dialog._current_table.topLevelItem(0)
     assert item is not None
     assert bool(item.flags() & Qt.ItemFlag.ItemIsEditable)
 
     item.setText(0, "Renamed Site")
     qapp.processEvents()
 
-    assert dialog._isosurface_viewer_muons[0].label == "Renamed Site"
-    linked_layer = dialog._isosurface_layers[layer_index]
-    assert linked_layer.status_text == (
-        "Isosurface at total (classical + zero-point) energy "
-        f"{float(candidate.total_energy_ev):.6f} eV for muon Renamed Site."
-    )
-
-    dialog._on_isosurface_tab_changed(layer_index)
-    assert dialog._isosurface_status_label.text() == linked_layer.status_text
-
+    assert dialog._viewer_muons[0].label == "Renamed Site"
     snapshot = dialog.state_snapshot()
     dialog.close()
 
@@ -781,15 +746,11 @@ def test_uep_wizard_editing_isosurface_muon_label_updates_linked_status_and_rest
         initial_state=snapshot,
     )
 
-    assert restored._isosurface_viewer_muons[0].label == "Renamed Site"
+    assert restored._viewer_muons[0].label == "Renamed Site"
     restored_layer_index = restored._find_isosurface_layer_index_by_key(
         viewer_entry.linked_isosurface_layer_key
     )
     assert restored_layer_index is not None
-    assert restored._isosurface_layers[restored_layer_index].status_text == (
-        "Isosurface at total (classical + zero-point) energy "
-        f"{float(candidate.total_energy_ev):.6f} eV for muon Renamed Site."
-    )
     restored.close()
 
 
@@ -802,14 +763,14 @@ def test_uep_wizard_isosurface_muon_changes_preserve_spin_toggle(qapp) -> None:
         castep_path=_fixture_path("Si2.castep"),
         cell_path=_fixture_path("Si2.cell"),
     )
-    dialog._isosurface_viewer._show_spins.setChecked(False)
+    dialog._potential_viewer._show_spins.setChecked(False)
 
-    dialog._add_custom_muon_to_viewer("isosurface", (0.125, 0.25, 0.375))
-    assert dialog._isosurface_viewer._show_spins.isChecked() is False
+    dialog._add_custom_muon_to_viewer((0.125, 0.25, 0.375))
+    assert dialog._potential_viewer._show_spins.isChecked() is False
 
-    muon_key = dialog._isosurface_viewer_muons[0].key
-    dialog._remove_viewer_muons("isosurface", [muon_key])
-    assert dialog._isosurface_viewer._show_spins.isChecked() is False
+    muon_key = dialog._viewer_muons[0].key
+    dialog._remove_viewer_muons([muon_key])
+    assert dialog._potential_viewer._show_spins.isChecked() is False
     dialog.close()
 
 
@@ -823,15 +784,15 @@ def test_uep_wizard_slice_muon_management_restores_custom_muons(qapp) -> None:
         cell_path=_fixture_path("Si2.cell"),
     )
 
-    first._add_custom_muon_to_viewer("slice", (0.125, 0.25, 0.375))
-    assert len(first._slice_viewer_muons) == 1
-    entry = first._slice_viewer_muons[0]
-    first._set_current_viewer_muon_selection("slice", [entry.key])
+    first._add_custom_muon_to_viewer((0.125, 0.25, 0.375))
+    assert len(first._viewer_muons) == 1
+    entry = first._viewer_muons[0]
+    first._set_current_viewer_muon_selection([entry.key])
 
     host_count = len(first._viewer_host_structure.species)
-    assert first._slice_viewer._structure is not None
-    assert first._slice_viewer._structure.species.count("X") == 1
-    assert first._slice_viewer._selected_indexes == [host_count]
+    assert first._potential_viewer._structure is not None
+    assert first._potential_viewer._structure.species.count("X") == 1
+    assert first._potential_viewer._selected_indexes == [host_count]
 
     snapshot = first.state_snapshot()
     first.close()
@@ -846,13 +807,11 @@ def test_uep_wizard_slice_muon_management_restores_custom_muons(qapp) -> None:
         initial_state=snapshot,
     )
 
-    assert len(restored._slice_viewer_muons) == 1
-    assert restored._slice_viewer._structure is not None
-    assert restored._slice_viewer._structure.species.count("X") == 1
-    assert restored._slice_viewer_muons[0].fractional_position == pytest.approx(
-        (0.125, 0.25, 0.375)
-    )
-    assert restored._slice_viewer._selected_indexes == [host_count]
+    assert len(restored._viewer_muons) == 1
+    assert restored._potential_viewer._structure is not None
+    assert restored._potential_viewer._structure.species.count("X") == 1
+    assert restored._viewer_muons[0].fractional_position == pytest.approx((0.125, 0.25, 0.375))
+    assert restored._potential_viewer._selected_indexes == [host_count]
     restored.close()
 
 
@@ -866,17 +825,14 @@ def test_uep_wizard_slice_muon_overlays_use_distinct_colors_and_legend(qapp) -> 
         cell_path=_fixture_path("Si2.cell"),
     )
 
-    dialog._add_custom_muon_to_viewer("slice", (0.125, 0.25, 0.375))
-    dialog._add_custom_muon_to_viewer("slice", (0.375, 0.25, 0.125))
+    dialog._add_custom_muon_to_viewer((0.125, 0.25, 0.375))
+    dialog._add_custom_muon_to_viewer((0.375, 0.25, 0.125))
 
-    assert dialog._slice_viewer._structure is not None
-    atom_colors = dialog._slice_viewer._structure.properties["atom_colors"]
+    assert dialog._potential_viewer._structure is not None
+    atom_colors = dialog._potential_viewer._structure.properties["atom_colors"]
     assert atom_colors[-2] != atom_colors[-1]
     legend_texts = [
-        label.text()
-        for label in dialog._slice_muon_legend_entries.findChildren(
-            type(dialog._slice_status_label)
-        )
+        label.text() for label in dialog._viewer_muon_legend_entries.findChildren(QLabel)
     ]
     assert any("Custom 1" in text for text in legend_texts)
     assert any("Custom 2" in text for text in legend_texts)
@@ -893,20 +849,20 @@ def test_uep_wizard_removing_last_slice_muon_resets_dialog_horizontal_scroll(qap
         cell_path=_fixture_path("Si2.cell"),
     )
 
-    dialog._add_custom_muon_to_viewer("slice", (0.125, 0.25, 0.375))
-    dialog._open_slice_muon_dialog()
+    dialog._add_custom_muon_to_viewer((0.125, 0.25, 0.375))
+    dialog._open_viewer_muon_dialog()
     qapp.processEvents()
 
-    scroll = dialog._slice_muon_dialog._current_table.horizontalScrollBar()
-    header = dialog._slice_muon_dialog._current_table.header()
+    scroll = dialog._viewer_muon_dialog._current_table.horizontalScrollBar()
+    header = dialog._viewer_muon_dialog._current_table.header()
     assert scroll is not None
     assert header is not None
     scroll.setValue(scroll.maximum())
     header.setOffset(max(header.offset(), 24))
     qapp.processEvents()
 
-    muon_key = dialog._slice_viewer_muons[0].key
-    dialog._remove_viewer_muons("slice", [muon_key])
+    muon_key = dialog._viewer_muons[0].key
+    dialog._remove_viewer_muons([muon_key])
     qapp.processEvents()
 
     assert scroll.value() == scroll.minimum()
@@ -923,14 +879,14 @@ def test_uep_wizard_slice_muon_changes_preserve_spin_toggle(qapp) -> None:
         castep_path=_fixture_path("Si2.castep"),
         cell_path=_fixture_path("Si2.cell"),
     )
-    dialog._slice_viewer._show_spins.setChecked(False)
+    dialog._potential_viewer._show_spins.setChecked(False)
 
-    dialog._add_custom_muon_to_viewer("slice", (0.125, 0.25, 0.375))
-    assert dialog._slice_viewer._show_spins.isChecked() is False
+    dialog._add_custom_muon_to_viewer((0.125, 0.25, 0.375))
+    assert dialog._potential_viewer._show_spins.isChecked() is False
 
-    muon_key = dialog._slice_viewer_muons[0].key
-    dialog._remove_viewer_muons("slice", [muon_key])
-    assert dialog._slice_viewer._show_spins.isChecked() is False
+    muon_key = dialog._viewer_muons[0].key
+    dialog._remove_viewer_muons([muon_key])
+    assert dialog._potential_viewer._show_spins.isChecked() is False
     dialog.close()
 
 
@@ -989,9 +945,9 @@ def test_uep_wizard_isosurface_muon_dialog_places_include_checkbox_in_clustered_
         cell_path=_fixture_path("Si2.cell"),
     )
 
-    muon_dialog = dialog._create_viewer_muon_dialog(viewer_kind="isosurface")
+    dialog._open_viewer_muon_dialog()
+    muon_dialog = dialog._viewer_muon_dialog
 
-    assert muon_dialog._include_isosurfaces is not None
     assert muon_dialog._include_isosurfaces.parentWidget() is not None
     assert muon_dialog._include_isosurfaces.parentWidget().title() == "Batch-search sites"
     assert [
@@ -1059,8 +1015,6 @@ def test_uep_wizard_batch_search_default_split_and_headers_are_compact(qapp) -> 
     assert dialog._batch_table.verticalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAlwaysOn
     assert dialog._tabs.styleSheet().count("margin-top: 0px;") == 1
     assert dialog._batch_tab.layout().contentsMargins().top() == 2
-    assert dialog._isosurface_tab.layout().contentsMargins().top() == 2
-    assert dialog._slices_tab.layout().contentsMargins().top() == 2
     dialog.close()
 
 
@@ -1201,94 +1155,17 @@ def test_uep_wizard_state_snapshot_restores_generated_analysis(qapp, monkeypatch
     restored.close()
 
 
-def test_uep_wizard_restores_isosurface_overlay(qapp) -> None:
-    first = UepAnalysisDialog(
-        source_job_label="uep_source_row1",
-        source_structure_id="11111111-1111-1111-1111-111111111111",
-        source_structure=_source_structure_with_spins(),
-        den_fmt_path=_fixture_path("Si2.den_fmt"),
-        castep_path=_fixture_path("Si2.castep"),
-        cell_path=_fixture_path("Si2.cell"),
-    )
-    grid = potential_grid(first._field)
-    level = 0.5 * (float(grid.potential_total_ev.min()) + float(grid.potential_total_ev.max()))
-    mesh = extract_isosurface(grid, level_ev=level)
-    first._apply_potential_grid_cache(grid)
-    first._render_isosurface_mesh(mesh)
-    snapshot = first.state_snapshot()
-    first.close()
-
-    # As MainWindow does, hand the grid back from its persisted result.
-    restored = UepAnalysisDialog(
-        source_job_label="uep_source_row1",
-        source_structure_id="11111111-1111-1111-1111-111111111111",
-        source_structure=_source_structure_with_spins(),
-        den_fmt_path=_fixture_path("Si2.den_fmt"),
-        castep_path=_fixture_path("Si2.castep"),
-        cell_path=_fixture_path("Si2.cell"),
-        initial_potential_grid=grid,
-        initial_state=snapshot,
-    )
-
-    assert restored._latest_isosurface_mesh is not None
-    assert restored._isosurface_viewer._isosurface_vertices is not None
-    assert restored._isosurface_min_label.text().endswith("eV")
-    assert restored._isosurface_max_label.text().endswith("eV")
-    assert "Displaying" in restored._isosurface_status_label.text()
-    assert restored._isosurface_slider.isEnabled() is True
-    assert restored._isosurface_level_input.isEnabled() is True
-    assert restored._potential_grid_cache is not None
-    assert restored._isosurface_color_button.toolTip() == "Choose the isosurface preview color."
-    assert len(restored._isosurface_layers) == 1
-    restored.close()
-
-
-def test_uep_wizard_stays_open_when_isosurface_calculation_completes(
+def test_the_grid_rebuilds_the_surface_of_every_isosurface(
     qapp, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _run_isosurface_threads_inline(monkeypatch)
-    dialog = UepAnalysisDialog(
-        source_job_label="uep_source_row1",
-        source_structure_id="11111111-1111-1111-1111-111111111111",
-        source_structure=_source_structure_with_spins(),
-        den_fmt_path=_fixture_path("Si2.den_fmt"),
-        castep_path=_fixture_path("Si2.castep"),
-        cell_path=_fixture_path("Si2.cell"),
-    )
-    dialog.show()
-    qapp.processEvents()
-
-    dialog._start_isosurface_grid_calculation()
-    qapp.processEvents()
-
-    assert dialog.isVisible() is True
-    assert dialog._potential_grid_cache is not None
-    assert dialog._active_isosurface_layer().mesh is not None
-    assert "filled isosurface preview" in dialog._isosurface_status_label.text()
-    dialog.close()
-
-
-def test_uep_wizard_recalculating_grid_refreshes_all_isosurface_layers(
-    qapp, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    _run_isosurface_threads_inline(monkeypatch)
-    dialog = UepAnalysisDialog(
-        source_job_label="uep_source_row1",
-        source_structure_id="11111111-1111-1111-1111-111111111111",
-        source_structure=_source_structure_with_spins(),
-        den_fmt_path=_fixture_path("Si2.den_fmt"),
-        castep_path=_fixture_path("Si2.castep"),
-        cell_path=_fixture_path("Si2.cell"),
-    )
+    dialog = _si2_dialog()
     grid = potential_grid(dialog._field)
-    minimum = float(grid.potential_total_ev.min())
-    maximum = float(grid.potential_total_ev.max())
-    first_level = minimum + 0.35 * (maximum - minimum)
-    second_level = minimum + 0.7 * (maximum - minimum)
+    span = float(np.ptp(grid.potential_total_ev))
     dialog._apply_potential_grid_cache(grid)
-    dialog._render_isosurface_mesh(extract_isosurface(grid, level_ev=first_level))
+    _show_level(dialog, 0.35 * span)
     dialog._add_isosurface_layer()
-    dialog._render_isosurface_mesh(extract_isosurface(grid, level_ev=second_level))
+    _show_level(dialog, 0.7 * span)
     dialog._on_isosurface_tab_changed(0)
 
     dialog._start_isosurface_grid_calculation()
@@ -1296,112 +1173,63 @@ def test_uep_wizard_recalculating_grid_refreshes_all_isosurface_layers(
 
     assert len(dialog._isosurface_layers) == 2
     assert all(layer.mesh is not None for layer in dialog._isosurface_layers)
-    layer_statuses = [(layer.status_kind, layer.status_text) for layer in dialog._isosurface_layers]
-    assert all(layer.status_kind == "success" for layer in dialog._isosurface_layers), (
-        layer_statuses
-    )
-    assert not any("Calculating" in layer.status_text for layer in dialog._isosurface_layers)
-    assert len(dialog._isosurface_viewer._isosurface_specs) == 2
+    assert len(dialog._potential_viewer._isosurface_specs) == 2
+    assert not dialog._potential_status.text()
     dialog.close()
 
 
-def test_uep_wizard_recalculating_grid_keeps_visible_isosurface_until_ready(
-    qapp, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    dialog = UepAnalysisDialog(
-        source_job_label="uep_source_row1",
-        source_structure_id="11111111-1111-1111-1111-111111111111",
-        source_structure=_source_structure_with_spins(),
-        den_fmt_path=_fixture_path("Si2.den_fmt"),
-        castep_path=_fixture_path("Si2.castep"),
-        cell_path=_fixture_path("Si2.cell"),
-    )
-    grid = potential_grid(dialog._field)
-    minimum = float(grid.potential_total_ev.min())
-    maximum = float(grid.potential_total_ev.max())
-    level = minimum + 0.45 * (maximum - minimum)
-    dialog._apply_potential_grid_cache(grid)
-    dialog._render_isosurface_mesh(extract_isosurface(grid, level_ev=level))
-    original_mesh = dialog._active_isosurface_layer().mesh
-    original_specs = list(dialog._isosurface_viewer._isosurface_specs)
-    assert original_mesh is not None
-    assert original_specs
-
-    sync_calls: list[str] = []
-    original_sync = dialog._sync_isosurface_viewer_layers
-
-    def _record_sync() -> None:
-        sync_calls.append("sync")
-        original_sync()
-
-    monkeypatch.setattr(dialog, "_sync_isosurface_viewer_layers", _record_sync)
-    monkeypatch.setattr("mufinder.app.uep_wizard._IsosurfaceGridThread.start", lambda _thread: None)
-
-    dialog._start_isosurface_grid_calculation()
-
-    assert sync_calls == []
-    assert dialog._active_isosurface_layer().mesh is original_mesh
-    assert dialog._isosurface_viewer._isosurface_specs == original_specs
-    assert dialog._active_isosurface_layer().status_kind == "busy"
-    dialog.close()
-
-
-def test_uep_wizard_isosurface_level_editor_tracks_full_range(qapp) -> None:
-    dialog = UepAnalysisDialog(
-        source_job_label="uep_source_row1",
-        source_structure_id="11111111-1111-1111-1111-111111111111",
-        source_structure=_source_structure_with_spins(),
-        den_fmt_path=_fixture_path("Si2.den_fmt"),
-        castep_path=_fixture_path("Si2.castep"),
-        cell_path=_fixture_path("Si2.cell"),
-    )
+def test_levels_start_at_zero_and_the_slider_stops_at_the_clipped_top(qapp) -> None:
+    dialog = _si2_dialog()
     grid = potential_grid(dialog._field)
     dialog._apply_potential_grid_cache(grid)
-    minimum = float(grid.potential_total_ev.min())
-    maximum = float(grid.potential_total_ev.max())
+    values = grid.potential_total_ev
+    above_minimum = values - values.min()
+    ceiling = float(np.percentile(above_minimum, 95))
 
     assert dialog._isosurface_level_input.isEnabled() is True
-    assert dialog._isosurface_min_label.text() == f"{minimum:.2f} eV"
-    assert dialog._isosurface_max_label.text() == f"{maximum:.2f} eV"
-    assert dialog._potential_grid_preview_cache is not None
-    assert dialog._potential_grid_preview_cache.grid[0] <= grid.grid[0]
+    assert dialog._isosurface_level_input.minimum() == 0.0
+    assert dialog._isosurface_min_label.text() == "0 eV"
+    assert dialog._isosurface_max_label.text() == f"{ceiling:.2f} eV"
+    assert ceiling < float(above_minimum.max())
 
-    target_level = minimum + 0.75 * (maximum - minimum)
-    dialog._set_isosurface_level(target_level)
-    level = dialog._current_isosurface_level()
-    assert level == pytest.approx(target_level, abs=1e-3)
-
-    mesh = extract_isosurface(grid, level_ev=level if level is not None else target_level)
-    dialog._render_isosurface_mesh(mesh)
-
-    assert dialog._isosurface_min_label.text() == f"{minimum:.2f} eV"
-    assert dialog._isosurface_max_label.text() == f"{maximum:.2f} eV"
-    assert "filled isosurface preview" in dialog._isosurface_status_label.text()
-    assert dialog._isosurface_status_kind == "success"
-    assert dialog._isosurface_viewer._isosurface_color == "#dc2626"
-    assert dialog._active_isosurface_layer().mesh is not None
+    dialog._isosurface_slider.setValue(dialog._isosurface_slider.maximum())
+    assert dialog._current_isosurface_level() == pytest.approx(ceiling)
+    dialog._isosurface_slider.setValue(0)
+    assert dialog._current_isosurface_level() == pytest.approx(0.0)
     dialog.close()
+
+
+def test_a_level_above_the_clipped_top_can_be_typed_and_survives_a_reopen(qapp) -> None:
+    dialog = _si2_dialog()
+    grid = potential_grid(dialog._field)
+    dialog._apply_potential_grid_cache(grid)
+    top = float(np.ptp(grid.potential_total_ev))
+    typed = 0.9 * top
+
+    dialog._isosurface_level_input.setValue(typed)
+    dialog._isosurface_level_input.editingFinished.emit()
+
+    assert dialog._current_isosurface_level() == pytest.approx(typed, abs=1e-3)
+    assert dialog._isosurface_slider.value() == dialog._isosurface_slider.maximum()
+    snapshot = dialog.state_snapshot()
+    dialog.close()
+
+    restored = _si2_dialog(initial_state=snapshot)
+    restored._apply_potential_grid_cache(grid)
+    assert restored._isosurface_layers[0].level_ev == pytest.approx(typed, abs=1e-3)
+    restored.close()
 
 
 def test_uep_wizard_isosurface_refresh_preserves_manual_spin_visibility(qapp) -> None:
-    dialog = UepAnalysisDialog(
-        source_job_label="uep_source_row1",
-        source_structure_id="11111111-1111-1111-1111-111111111111",
-        source_structure=_source_structure_with_spins(),
-        den_fmt_path=_fixture_path("Si2.den_fmt"),
-        castep_path=_fixture_path("Si2.castep"),
-        cell_path=_fixture_path("Si2.cell"),
-    )
-    grid = potential_grid(dialog._field)
-    level = 0.5 * (float(grid.potential_total_ev.min()) + float(grid.potential_total_ev.max()))
-    mesh = extract_isosurface(grid, level_ev=level)
+    dialog = _si2_dialog()
+    dialog._apply_potential_grid_cache(potential_grid(dialog._field))
 
-    assert dialog._isosurface_viewer._show_spins.isChecked() is True
-    dialog._isosurface_viewer._show_spins.setChecked(False)
+    assert dialog._potential_viewer._show_spins.isChecked() is True
+    dialog._potential_viewer._show_spins.setChecked(False)
 
-    dialog._render_isosurface_mesh(mesh)
+    _show_level(dialog, 5.0)
 
-    assert dialog._isosurface_viewer._show_spins.isChecked() is False
+    assert dialog._potential_viewer._show_spins.isChecked() is False
     dialog.close()
 
 
@@ -1416,11 +1244,8 @@ def test_uep_wizard_choose_isosurface_color_updates_viewer_and_state(
         castep_path=_fixture_path("Si2.castep"),
         cell_path=_fixture_path("Si2.cell"),
     )
-    grid = potential_grid(dialog._field)
-    level = 0.5 * (float(grid.potential_total_ev.min()) + float(grid.potential_total_ev.max()))
-    mesh = extract_isosurface(grid, level_ev=level)
-    dialog._apply_potential_grid_cache(grid)
-    dialog._render_isosurface_mesh(mesh)
+    dialog._apply_potential_grid_cache(potential_grid(dialog._field))
+    _show_level(dialog, 5.0)
 
     monkeypatch.setattr(
         "mufinder.app.uep_wizard.QColorDialog.getColor",
@@ -1430,29 +1255,24 @@ def test_uep_wizard_choose_isosurface_color_updates_viewer_and_state(
     dialog._choose_isosurface_color()
 
     assert dialog._active_isosurface_layer().color == "#12ab34"
-    assert dialog._isosurface_viewer._isosurface_color == "#12ab34"
+    assert dialog._potential_viewer._isosurface_color == "#12ab34"
     assert dialog._isosurface_layer_tabs._layer_colors[0].name() == "#12ab34"
-    assert dialog.state_snapshot()["isosurface_color"] == "#12ab34"
+    assert dialog.state_snapshot()["isosurface_layers"][0]["color"] == "#12ab34"
     assert dialog._isosurface_color_button.text() == ""
     dialog.close()
 
 
-def test_uep_wizard_multi_isosurface_tabs_add_switch_delete_and_restore(qapp) -> None:
-    first = UepAnalysisDialog(
-        source_job_label="uep_source_row1",
-        source_structure_id="11111111-1111-1111-1111-111111111111",
-        source_structure=_source_structure_with_spins(),
-        den_fmt_path=_fixture_path("Si2.den_fmt"),
-        castep_path=_fixture_path("Si2.castep"),
-        cell_path=_fixture_path("Si2.cell"),
+def test_uep_wizard_multi_isosurface_tabs_add_switch_delete_and_restore(qapp, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "mufinder.app.workflow_table_utils.confirm_destructive", lambda *_args, **_kwargs: True
     )
+    first = _si2_dialog()
     grid = potential_grid(first._field)
-    minimum = float(grid.potential_total_ev.min())
-    maximum = float(grid.potential_total_ev.max())
-    first_level = minimum + 0.35 * (maximum - minimum)
-    second_level = minimum + 0.7 * (maximum - minimum)
+    span = float(np.ptp(grid.potential_total_ev))
+    first_level = 0.35 * span
+    second_level = 0.7 * span
     first._apply_potential_grid_cache(grid)
-    first._render_isosurface_mesh(extract_isosurface(grid, level_ev=first_level))
+    _show_level(first, first_level)
     first._set_isosurface_color("#dc2626", emit_state=False)
 
     first._add_isosurface_layer()
@@ -1463,11 +1283,11 @@ def test_uep_wizard_multi_isosurface_tabs_add_switch_delete_and_restore(qapp) ->
     assert first._isosurface_delete_button.isEnabled() is True
 
     first._set_isosurface_color("#12ab34", emit_state=False)
-    first._render_isosurface_mesh(extract_isosurface(grid, level_ev=second_level))
+    _show_level(first, second_level)
 
-    assert len(first._isosurface_viewer._isosurface_specs) == 2
-    assert first._isosurface_viewer._isosurface_specs[0].color == "#dc2626"
-    assert first._isosurface_viewer._isosurface_specs[1].color == "#12ab34"
+    assert len(first._potential_viewer._isosurface_specs) == 2
+    assert first._potential_viewer._isosurface_specs[0].color == "#dc2626"
+    assert first._potential_viewer._isosurface_specs[1].color == "#12ab34"
     assert first._isosurface_layer_tabs._layer_colors[1].name() == "#12ab34"
     assert first._isosurface_legend_entries_layout.count() >= 2
 
@@ -1486,20 +1306,16 @@ def test_uep_wizard_multi_isosurface_tabs_add_switch_delete_and_restore(qapp) ->
     snapshot = first.state_snapshot()
     first.close()
 
-    restored = UepAnalysisDialog(
-        source_job_label="uep_source_row1",
-        source_structure_id="11111111-1111-1111-1111-111111111111",
-        source_structure=_source_structure_with_spins(),
-        den_fmt_path=_fixture_path("Si2.den_fmt"),
-        castep_path=_fixture_path("Si2.castep"),
-        cell_path=_fixture_path("Si2.cell"),
-        initial_state=snapshot,
-    )
+    _run_isosurface_threads_inline(monkeypatch)
+    restored = _si2_dialog(initial_state=snapshot)
+    restored.show()
+    restored._tabs.setCurrentWidget(restored._potential_tab)
+    qapp.processEvents()
 
     assert len(restored._isosurface_layers) == 2
     assert restored._active_isosurface_index == 0
     assert restored._isosurface_layer_tabs.count() == 2
-    assert len(restored._isosurface_viewer._isosurface_specs) == 2
+    assert len(restored._potential_viewer._isosurface_specs) == 2
     assert restored._isosurface_layers[0].color == "#dc2626"
     assert restored._isosurface_layers[1].color == "#12ab34"
     assert restored._isosurface_legend_entries_layout.count() >= 2
@@ -1511,30 +1327,18 @@ def test_uep_wizard_multi_isosurface_tabs_add_switch_delete_and_restore(qapp) ->
     restored._delete_current_isosurface_layer()
     assert len(restored._isosurface_layers) == 1
     assert restored._isosurface_layer_tabs.isHidden() is False
-    assert len(restored._isosurface_viewer._isosurface_specs) == 1
+    assert len(restored._potential_viewer._isosurface_specs) == 1
     restored.close()
 
 
 def test_uep_wizard_switching_isosurface_tabs_does_not_rebuild_tab_bar(
     qapp, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    dialog = UepAnalysisDialog(
-        source_job_label="uep_source_row1",
-        source_structure_id="11111111-1111-1111-1111-111111111111",
-        source_structure=_source_structure_with_spins(),
-        den_fmt_path=_fixture_path("Si2.den_fmt"),
-        castep_path=_fixture_path("Si2.castep"),
-        cell_path=_fixture_path("Si2.cell"),
-    )
-    grid = potential_grid(dialog._field)
-    minimum = float(grid.potential_total_ev.min())
-    maximum = float(grid.potential_total_ev.max())
-    first_level = minimum + 0.35 * (maximum - minimum)
-    second_level = minimum + 0.7 * (maximum - minimum)
-    dialog._apply_potential_grid_cache(grid)
-    dialog._render_isosurface_mesh(extract_isosurface(grid, level_ev=first_level))
+    dialog = _si2_dialog()
+    dialog._apply_potential_grid_cache(potential_grid(dialog._field))
+    _show_level(dialog, 5.0)
     dialog._add_isosurface_layer()
-    dialog._render_isosurface_mesh(extract_isosurface(grid, level_ev=second_level))
+    _show_level(dialog, 10.0)
 
     remove_calls: list[int] = []
     original_remove_tab = dialog._isosurface_layer_tabs.removeTab
@@ -1554,54 +1358,39 @@ def test_uep_wizard_switching_isosurface_tabs_does_not_rebuild_tab_bar(
     dialog.close()
 
 
-def test_uep_wizard_delete_current_isosurface_via_button_keeps_window_open(qapp) -> None:
-    dialog = UepAnalysisDialog(
-        source_job_label="uep_source_row1",
-        source_structure_id="11111111-1111-1111-1111-111111111111",
-        source_structure=_source_structure_with_spins(),
-        den_fmt_path=_fixture_path("Si2.den_fmt"),
-        castep_path=_fixture_path("Si2.castep"),
-        cell_path=_fixture_path("Si2.cell"),
-    )
-    grid = potential_grid(dialog._field)
-    minimum = float(grid.potential_total_ev.min())
-    maximum = float(grid.potential_total_ev.max())
-    first_level = minimum + 0.35 * (maximum - minimum)
-    second_level = minimum + 0.7 * (maximum - minimum)
-    dialog._apply_potential_grid_cache(grid)
-    dialog._render_isosurface_mesh(extract_isosurface(grid, level_ev=first_level))
+@pytest.mark.parametrize("confirmed", [False, True])
+def test_removing_an_isosurface_asks_first_and_keeps_the_window_open(
+    qapp, monkeypatch, confirmed: bool
+) -> None:
+    asked = _answer_confirmations(monkeypatch, answer=confirmed)
+    dialog = _si2_dialog()
+    dialog._apply_potential_grid_cache(potential_grid(dialog._field))
+    _show_level(dialog, 5.0)
     dialog._add_isosurface_layer()
-    dialog._render_isosurface_mesh(extract_isosurface(grid, level_ev=second_level))
+    _show_level(dialog, 10.0)
     dialog.show()
     qapp.processEvents()
 
     dialog._isosurface_delete_button.click()
     qapp.processEvents()
 
+    assert asked == ["Remove isosurface"]
     assert dialog.isVisible() is True
-    assert len(dialog._isosurface_layers) == 1
-    assert dialog._isosurface_layer_tabs.count() == 1
-    assert dialog._active_isosurface_index == 0
+    assert len(dialog._isosurface_layers) == (1 if confirmed else 2)
+    assert dialog._isosurface_layer_tabs.count() == (1 if confirmed else 2)
     dialog.close()
 
 
 def test_uep_wizard_isosurface_mesh_busy_keeps_level_controls_enabled(qapp) -> None:
-    dialog = UepAnalysisDialog(
-        source_job_label="uep_source_row1",
-        source_structure_id="11111111-1111-1111-1111-111111111111",
-        source_structure=_source_structure_with_spins(),
-        den_fmt_path=_fixture_path("Si2.den_fmt"),
-        castep_path=_fixture_path("Si2.castep"),
-        cell_path=_fixture_path("Si2.cell"),
-    )
+    dialog = _si2_dialog()
     dialog._apply_potential_grid_cache(potential_grid(dialog._field))
     dialog._isosurface_mesh_thread = object()
 
-    dialog._set_isosurface_busy(True, status_text="Extracting isosurface preview…")
+    dialog._refresh_isosurface_controls()
 
     assert dialog._isosurface_slider.isEnabled() is True
     assert dialog._isosurface_level_input.isEnabled() is True
-    assert dialog._isosurface_compute_button.isEnabled() is False
+    assert dialog._isosurface_export_button.isEnabled() is False
     dialog._isosurface_mesh_thread = None
     dialog.close()
 
@@ -1642,42 +1431,12 @@ def test_uep_wizard_slider_schedule_triggers_live_preview_and_debounced_request(
     dialog.close()
 
 
-def test_uep_wizard_live_preview_status_explains_approximate_then_refined(qapp) -> None:
-    dialog = UepAnalysisDialog(
-        source_job_label="uep_source_row1",
-        source_structure_id="11111111-1111-1111-1111-111111111111",
-        source_structure=_source_structure_with_spins(),
-        den_fmt_path=_fixture_path("Si2.den_fmt"),
-        castep_path=_fixture_path("Si2.castep"),
-        cell_path=_fixture_path("Si2.cell"),
-    )
-    dialog._apply_potential_grid_cache(potential_grid(dialog._field))
-
-    dialog._render_live_isosurface_preview(dialog._current_isosurface_level() or 0.0)
-
-    status = dialog._isosurface_status_label.text()
-    assert "approximate live preview" in status
-    assert "pause or release the slider" in status
-    assert dialog._isosurface_status_kind == "info"
-    dialog.close()
-
-
 def test_uep_wizard_live_preview_does_not_update_legend_until_refined(qapp) -> None:
-    dialog = UepAnalysisDialog(
-        source_job_label="uep_source_row1",
-        source_structure_id="11111111-1111-1111-1111-111111111111",
-        source_structure=_source_structure_with_spins(),
-        den_fmt_path=_fixture_path("Si2.den_fmt"),
-        castep_path=_fixture_path("Si2.castep"),
-        cell_path=_fixture_path("Si2.cell"),
-    )
-    grid = potential_grid(dialog._field)
-    minimum = float(grid.potential_total_ev.min())
-    maximum = float(grid.potential_total_ev.max())
-    settled_level = minimum + 0.35 * (maximum - minimum)
-    preview_level = minimum + 0.7 * (maximum - minimum)
-    dialog._apply_potential_grid_cache(grid)
-    dialog._render_isosurface_mesh(extract_isosurface(grid, level_ev=settled_level))
+    dialog = _si2_dialog()
+    dialog._apply_potential_grid_cache(potential_grid(dialog._field))
+    settled_level = 5.0
+    preview_level = 10.0
+    _show_level(dialog, settled_level)
 
     legend_row = dialog._isosurface_legend_entries_layout.itemAt(0).widget()
     assert legend_row is not None
@@ -1788,213 +1547,8 @@ def test_uep_wizard_exports_cached_potential_grid_to_xsf(qapp, monkeypatch, tmp_
     assert output_path.exists()
     content = output_path.read_text(encoding="utf-8")
     assert "BEGIN_DATAGRID_3D_UEP_POTENTIAL" in content
-    assert "exported to" in dialog._isosurface_status_label.text()
-    assert dialog._isosurface_status_kind == "exported"
-    dialog.close()
-
-
-def test_uep_wizard_zero_minimum_toggle_shifts_displayed_grid_and_mesh(qapp) -> None:
-    dialog = UepAnalysisDialog(
-        source_job_label="uep_source_row1",
-        source_structure_id="11111111-1111-1111-1111-111111111111",
-        source_structure=_source_structure_with_spins(),
-        den_fmt_path=_fixture_path("Si2.den_fmt"),
-        castep_path=_fixture_path("Si2.castep"),
-        cell_path=_fixture_path("Si2.cell"),
-    )
-    grid = potential_grid(dialog._field)
-    raw_minimum = float(grid.potential_total_ev.min())
-    raw_maximum = float(grid.potential_total_ev.max())
-    raw_level = raw_minimum + 0.35 * (raw_maximum - raw_minimum)
-    dialog._apply_potential_grid_cache(grid)
-    dialog._render_isosurface_mesh(extract_isosurface(grid, level_ev=raw_level))
-
-    assert dialog._isosurface_zero_minimum.isEnabled() is True
-    assert dialog._isosurface_zero_minimum.isChecked() is False
-    assert dialog._potential_grid_raw_cache is not None
-    assert float(dialog._potential_grid_raw_cache.potential_total_ev.min()) == pytest.approx(
-        raw_minimum
-    )
-
-    dialog._isosurface_zero_minimum.setChecked(True)
-
-    shifted_level = raw_level - raw_minimum
-    assert dialog._isosurface_min_label.text() == "0.00 eV"
-    assert dialog._isosurface_max_label.text() == f"{(raw_maximum - raw_minimum):.2f} eV"
-    assert dialog._active_isosurface_layer().mesh is not None
-    assert dialog._active_isosurface_layer().mesh.level_ev == pytest.approx(shifted_level)
-    assert dialog._latest_isosurface_mesh is not None
-    assert dialog._latest_isosurface_mesh.level_ev == pytest.approx(shifted_level)
-    assert dialog._current_isosurface_level() == pytest.approx(shifted_level, abs=1e-3)
-    assert dialog._potential_grid_cache is not None
-    assert float(dialog._potential_grid_cache.potential_total_ev.min()) == pytest.approx(0.0)
-
-    legend_row = dialog._isosurface_legend_entries_layout.itemAt(0).widget()
-    assert legend_row is not None
-    legend_texts = [
-        label.text() for label in legend_row.findChildren(type(dialog._isosurface_min_label))
-    ]
-    assert any(text == f"{shifted_level:.6f} eV" for text in legend_texts)
-    dialog.close()
-
-
-def test_uep_wizard_zero_minimum_export_uses_shifted_grid(qapp, monkeypatch, tmp_path) -> None:
-    dialog = UepAnalysisDialog(
-        source_job_label="uep_source_row1",
-        source_structure_id="11111111-1111-1111-1111-111111111111",
-        source_structure=_source_structure_with_spins(),
-        den_fmt_path=_fixture_path("Si2.den_fmt"),
-        castep_path=_fixture_path("Si2.castep"),
-        cell_path=_fixture_path("Si2.cell"),
-    )
-    dialog._apply_potential_grid_cache(potential_grid(dialog._field))
-    dialog._isosurface_zero_minimum.setChecked(True)
-
-    captured: dict[str, object] = {}
-    output_path = tmp_path / "uep_export_zeroed.xsf"
-    monkeypatch.setattr(
-        "mufinder.app.uep_wizard.QFileDialog.getSaveFileName",
-        lambda *args, **kwargs: (str(output_path), "XSF Files (*.xsf)"),
-    )
-
-    def _capture_export(path, *, structure, potential):
-        captured["path"] = Path(path)
-        captured["potential"] = potential
-        Path(path).write_text("mock xsf", encoding="utf-8")
-        return Path(path)
-
-    monkeypatch.setattr("mufinder.app.uep_wizard.write_potential_grid_xsf", _capture_export)
-
-    dialog._export_potential_grid_xsf()
-
-    exported_grid = captured["potential"]
-    assert float(exported_grid.potential_total_ev.min()) == pytest.approx(0.0)
-    assert output_path.exists()
-    dialog.close()
-
-
-def test_uep_wizard_zero_minimum_snapshot_restores_raw_and_shifted_grid(qapp) -> None:
-    first = UepAnalysisDialog(
-        source_job_label="uep_source_row1",
-        source_structure_id="11111111-1111-1111-1111-111111111111",
-        source_structure=_source_structure_with_spins(),
-        den_fmt_path=_fixture_path("Si2.den_fmt"),
-        castep_path=_fixture_path("Si2.castep"),
-        cell_path=_fixture_path("Si2.cell"),
-    )
-    grid = potential_grid(first._field)
-    raw_minimum = float(grid.potential_total_ev.min())
-    raw_maximum = float(grid.potential_total_ev.max())
-    raw_level = raw_minimum + 0.4 * (raw_maximum - raw_minimum)
-    first._apply_potential_grid_cache(grid)
-    first._render_isosurface_mesh(extract_isosurface(grid, level_ev=raw_level))
-    first._isosurface_zero_minimum.setChecked(True)
-
-    snapshot = first.state_snapshot()
-    assert snapshot["isosurface_zero_minimum"] is True
-    # The raw grid is persisted once, as its own result, and handed back
-    # through ``initial_potential_grid``; the per-change UI state omits it.
-    assert "potential_grid" not in snapshot
-    first.close()
-
-    restored = UepAnalysisDialog(
-        source_job_label="uep_source_row1",
-        source_structure_id="11111111-1111-1111-1111-111111111111",
-        source_structure=_source_structure_with_spins(),
-        den_fmt_path=_fixture_path("Si2.den_fmt"),
-        castep_path=_fixture_path("Si2.castep"),
-        cell_path=_fixture_path("Si2.cell"),
-        initial_potential_grid=grid,
-        initial_state=snapshot,
-    )
-
-    assert restored._isosurface_zero_minimum.isChecked() is True
-    assert restored._potential_grid_raw_cache is not None
-    assert float(restored._potential_grid_raw_cache.potential_total_ev.min()) == pytest.approx(
-        raw_minimum
-    )
-    assert restored._potential_grid_cache is not None
-    assert float(restored._potential_grid_cache.potential_total_ev.min()) == pytest.approx(0.0)
-    assert restored._active_isosurface_layer().mesh is not None
-    assert restored._active_isosurface_layer().mesh.level_ev == pytest.approx(
-        raw_level - raw_minimum
-    )
-    assert restored._isosurface_min_label.text() == "0.00 eV"
-    restored.close()
-
-
-def test_uep_wizard_restores_legacy_state_grid_and_single_isosurface_mesh(qapp) -> None:
-    # Projects saved before the state snapshot dropped its "potential_grid" and
-    # top-level "isosurface_mesh" copies still restore from them.
-    baseline = UepAnalysisDialog(
-        source_job_label="uep_source_row1",
-        source_structure_id="11111111-1111-1111-1111-111111111111",
-        source_structure=_source_structure_with_spins(),
-        den_fmt_path=_fixture_path("Si2.den_fmt"),
-        castep_path=_fixture_path("Si2.castep"),
-        cell_path=_fixture_path("Si2.cell"),
-    )
-    grid = potential_grid(baseline._field)
-    level = float(grid.potential_total_ev.min()) + 0.4 * float(np.ptp(grid.potential_total_ev))
-    mesh = extract_isosurface(grid, level_ev=level)
-    baseline.close()
-
-    restored = UepAnalysisDialog(
-        source_job_label="uep_source_row1",
-        source_structure_id="11111111-1111-1111-1111-111111111111",
-        source_structure=_source_structure_with_spins(),
-        den_fmt_path=_fixture_path("Si2.den_fmt"),
-        castep_path=_fixture_path("Si2.castep"),
-        cell_path=_fixture_path("Si2.cell"),
-        initial_state={
-            "potential_grid": serialize_potential_grid(grid),
-            "isosurface_mesh": {
-                "level_ev": mesh.level_ev,
-                "minimum_potential_ev": mesh.minimum_potential_ev,
-                "maximum_potential_ev": mesh.maximum_potential_ev,
-                "vertices_ang": [list(vertex) for vertex in mesh.vertices_ang],
-                "faces": [list(face) for face in mesh.faces],
-            },
-        },
-    )
-
-    assert restored._potential_grid_raw_cache is not None
-    assert np.allclose(
-        restored._potential_grid_raw_cache.potential_total_ev, grid.potential_total_ev
-    )
-    restored_mesh = restored._active_isosurface_layer().mesh
-    assert restored_mesh is not None
-    assert restored_mesh.level_ev == pytest.approx(level)
-    assert len(restored_mesh.faces) == len(mesh.faces)
-    snapshot = restored.state_snapshot()
-    assert "potential_grid" not in snapshot and "isosurface_mesh" not in snapshot
-    assert snapshot["isosurface_layers"][0]["mesh"]["level_ev"] == pytest.approx(level)
-    restored.close()
-
-
-def test_uep_wizard_state_snapshot_reuses_serialized_isosurface_mesh(qapp) -> None:
-    dialog = UepAnalysisDialog(
-        source_job_label="uep_source_row1",
-        source_structure_id="11111111-1111-1111-1111-111111111111",
-        source_structure=_source_structure_with_spins(),
-        den_fmt_path=_fixture_path("Si2.den_fmt"),
-        castep_path=_fixture_path("Si2.castep"),
-        cell_path=_fixture_path("Si2.cell"),
-    )
-    grid = potential_grid(dialog._field)
-    dialog._apply_potential_grid_cache(grid)
-    low, high = float(grid.potential_total_ev.min()), float(grid.potential_total_ev.max())
-    dialog._render_isosurface_mesh(extract_isosurface(grid, level_ev=low + 0.4 * (high - low)))
-
-    first = dialog.state_snapshot()["isosurface_layers"][0]["mesh"]
-    assert first is not None
-    assert dialog.state_snapshot()["isosurface_layers"][0]["mesh"] is first
-
-    dialog._render_isosurface_mesh(extract_isosurface(grid, level_ev=low + 0.6 * (high - low)))
-    second = dialog.state_snapshot()["isosurface_layers"][0]["mesh"]
-    assert second is not first
-    assert second["level_ev"] == pytest.approx(low + 0.6 * (high - low))
-    assert len(dialog._serialized_mesh_cache) == 1
+    assert dialog._potential_status.text() == "Exported uep_export.xsf"
+    assert dialog._potential_status.property("statusKind") == "exported"
     dialog.close()
 
 
@@ -2010,8 +1564,8 @@ def test_uep_wizard_viewer_uses_source_structure_spins(qapp) -> None:
     )
 
     assert dialog._viewer_host_structure.properties["atomic_spins"] == [1.5, -1.5]
-    assert dialog._isosurface_viewer._spins is not None
-    assert dialog._isosurface_viewer._spins.tolist() == pytest.approx([1.5, -1.5])
+    assert dialog._potential_viewer._spins is not None
+    assert dialog._potential_viewer._spins.tolist() == pytest.approx([1.5, -1.5])
     dialog.close()
 
 
@@ -2073,60 +1627,6 @@ def test_uep_wizard_viewer_hides_tiny_mulliken_ligand_spins() -> None:
     assert viewer_structure.properties["atomic_spins"] == pytest.approx([0.0, 0.0, 2.658, -2.656])
 
 
-def test_uep_wizard_slice_controls_share_zero_minimum_with_isosurface(qapp) -> None:
-    dialog = UepAnalysisDialog(
-        source_job_label="uep_source_row1",
-        source_structure_id="11111111-1111-1111-1111-111111111111",
-        source_structure=_source_structure_with_spins(),
-        den_fmt_path=_fixture_path("Si2.den_fmt"),
-        castep_path=_fixture_path("Si2.castep"),
-        cell_path=_fixture_path("Si2.cell"),
-    )
-    dialog._apply_potential_grid_cache(potential_grid(dialog._field))
-
-    dialog._slice_zero_minimum.setChecked(True)
-
-    assert dialog._slice_zero_minimum.isChecked() is True
-    assert dialog._isosurface_zero_minimum.isChecked() is True
-    assert dialog._isosurface_min_label.text() == "0.00 eV"
-    assert dialog._slice_min_label.text() == "0.00 eV"
-    assert dialog._slice_colorbar_figure.get_constrained_layout() is False
-    dialog.close()
-
-
-def test_uep_wizard_slice_saturation_window_shifts_with_zero_minimum_reference(qapp) -> None:
-    dialog = UepAnalysisDialog(
-        source_job_label="uep_source_row1",
-        source_structure_id="11111111-1111-1111-1111-111111111111",
-        source_structure=_source_structure_with_spins(),
-        den_fmt_path=_fixture_path("Si2.den_fmt"),
-        castep_path=_fixture_path("Si2.castep"),
-        cell_path=_fixture_path("Si2.cell"),
-    )
-    grid = potential_grid(dialog._field)
-    raw_minimum = float(grid.potential_total_ev.min())
-    raw_maximum = float(grid.potential_total_ev.max())
-    dialog._apply_potential_grid_cache(grid)
-    dialog._set_slice_bounds(raw_minimum + 0.5, raw_minimum + 1.5, emit_state=False)
-
-    dialog._slice_zero_minimum.setChecked(True)
-
-    assert dialog._slice_min_input.value() == pytest.approx(0.5)
-    assert dialog._slice_max_input.value() == pytest.approx(1.5)
-    colorbar_axis = dialog._slice_colorbar_figure.axes[0]
-    texts = [text.get_text() for text in colorbar_axis.texts]
-    assert any(text.startswith("1.500") for text in texts)
-    assert any(text.startswith("0.500") for text in texts)
-
-    dialog._slice_zero_minimum.setChecked(False)
-
-    assert dialog._slice_min_input.value() == pytest.approx(raw_minimum + 0.5)
-    assert dialog._slice_max_input.value() == pytest.approx(raw_minimum + 1.5)
-    assert dialog._slice_min_label.text() == f"{raw_minimum:.2f} eV"
-    assert dialog._slice_max_label.text() == f"{raw_maximum:.2f} eV"
-    dialog.close()
-
-
 def test_uep_wizard_adds_slice_plane_and_updates_viewer(
     qapp, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2157,10 +1657,11 @@ def test_uep_wizard_adds_slice_plane_and_updates_viewer(
 
     assert len(dialog._slice_planes) == 1
     assert dialog._slice_planes[0].sample is not None
-    assert len(dialog._slice_viewer._slice_specs) == 1
-    assert dialog._slice_viewer._slice_specs[0].cmap == "coolwarm"
-    assert dialog._slice_viewer._slice_specs[0].alpha == pytest.approx(0.72)
-    assert dialog._slice_plane_buttons_layout.count() >= 1
+    assert len(dialog._potential_viewer._slice_specs) == 1
+    assert dialog._potential_viewer._slice_specs[0].cmap == "coolwarm"
+    assert dialog._potential_viewer._slice_specs[0].alpha == pytest.approx(0.72)
+    assert dialog._slice_plane_list.count() == 1
+    assert dialog._slice_plane_list.item(0).text() == "Plane 1"
     dialog.close()
 
 
@@ -2177,9 +1678,9 @@ def test_uep_wizard_adding_slice_plane_preserves_viewer_camera(
     )
     dialog._apply_potential_grid_cache(potential_grid(dialog._field))
     plane = _slice_plane_for_dialog(dialog)
-    dialog._slice_viewer._camera_state = _CameraState(17.0, 38.0, 9.0)
-    dialog._slice_viewer._axis.set_from_state(dialog._slice_viewer._camera_state)
-    dialog._slice_viewer._limits = ((-1.0, 1.0), (-2.0, 2.0), (-3.0, 3.0))
+    dialog._potential_viewer._camera_state = _CameraState(17.0, 38.0, 9.0)
+    dialog._potential_viewer._axis.set_from_state(dialog._potential_viewer._camera_state)
+    dialog._potential_viewer._limits = ((-1.0, 1.0), (-2.0, 2.0), (-3.0, 3.0))
 
     class _FakeDialog:
         def __init__(self, *args, **kwargs) -> None:
@@ -2195,8 +1696,8 @@ def test_uep_wizard_adding_slice_plane_preserves_viewer_camera(
 
     dialog._open_add_slice_plane_dialog()
 
-    assert dialog._slice_viewer._camera_state == _CameraState(17.0, 38.0, 9.0)
-    assert dialog._slice_viewer._limits == ((-1.0, 1.0), (-2.0, 2.0), (-3.0, 3.0))
+    assert dialog._potential_viewer._camera_state == _CameraState(17.0, 38.0, 9.0)
+    assert dialog._potential_viewer._limits == ((-1.0, 1.0), (-2.0, 2.0), (-3.0, 3.0))
     dialog.close()
 
 
@@ -2213,8 +1714,8 @@ def test_uep_wizard_sync_slice_viewer_restores_live_pyvista_snapshot(
     )
     # The live camera shows the scene only once the viewer has drawn it, on show.
     dialog.show()
-    dialog._tabs.setCurrentWidget(dialog._slices_tab)
-    viewer = dialog._slice_viewer
+    dialog._tabs.setCurrentWidget(dialog._potential_tab)
+    viewer = dialog._potential_viewer
     viewer._backend_name = "pyvista"
     viewer._camera_state = _CameraState(17.0, 38.0, 9.0)
     viewer._axis.set_from_state(viewer._camera_state)
@@ -2271,7 +1772,9 @@ def test_uep_wizard_passes_viewer_direction_into_add_slice_plane_dialog(
         castep_path=_fixture_path("Si2.castep"),
         cell_path=_fixture_path("Si2.cell"),
     )
-    monkeypatch.setattr(dialog._slice_viewer, "current_view_direction", lambda: (0.0, 0.0, -1.0))
+    monkeypatch.setattr(
+        dialog._potential_viewer, "current_view_direction", lambda: (0.0, 0.0, -1.0)
+    )
     captured: dict[str, object] = {}
 
     class _FakeDialog:
@@ -2305,9 +1808,9 @@ def test_uep_wizard_add_slice_plane_dialog_treats_selected_muons_like_atoms(
         castep_path=_fixture_path("Si2.castep"),
         cell_path=_fixture_path("Si2.cell"),
     )
-    dialog._add_custom_muon_to_viewer("slice", (0.125, 0.25, 0.375))
+    dialog._add_custom_muon_to_viewer((0.125, 0.25, 0.375))
     host_count = len(dialog._viewer_host_structure.species)
-    dialog._slice_viewer.select_atoms([host_count])
+    dialog._potential_viewer.select_atoms([host_count])
     captured: dict[str, object] = {}
 
     class _FakeDialog:
@@ -2359,9 +1862,9 @@ def test_uep_wizard_deleting_slice_plane_preserves_viewer_camera(
         )
     ]
     dialog._resample_all_slice_planes()
-    dialog._slice_viewer._camera_state = _CameraState(21.0, 57.0, -11.0)
-    dialog._slice_viewer._axis.set_from_state(dialog._slice_viewer._camera_state)
-    dialog._slice_viewer._limits = ((-4.0, 4.0), (-5.0, 5.0), (-6.0, 6.0))
+    dialog._potential_viewer._camera_state = _CameraState(21.0, 57.0, -11.0)
+    dialog._potential_viewer._axis.set_from_state(dialog._potential_viewer._camera_state)
+    dialog._potential_viewer._limits = ((-4.0, 4.0), (-5.0, 5.0), (-6.0, 6.0))
 
     class _DummySignal:
         def connect(self, _callback) -> None:
@@ -2380,20 +1883,13 @@ def test_uep_wizard_deleting_slice_plane_preserves_viewer_camera(
     dialog._edit_slice_plane(0)
 
     assert dialog._slice_planes == []
-    assert dialog._slice_viewer._camera_state == _CameraState(21.0, 57.0, -11.0)
-    assert dialog._slice_viewer._limits == ((-4.0, 4.0), (-5.0, 5.0), (-6.0, 6.0))
+    assert dialog._potential_viewer._camera_state == _CameraState(21.0, 57.0, -11.0)
+    assert dialog._potential_viewer._limits == ((-4.0, 4.0), (-5.0, 5.0), (-6.0, 6.0))
     dialog.close()
 
 
 def test_uep_wizard_slice_colorbar_marks_clipped_bounds(qapp) -> None:
-    dialog = UepAnalysisDialog(
-        source_job_label="uep_source_row1",
-        source_structure_id="11111111-1111-1111-1111-111111111111",
-        source_structure=_source_structure_with_spins(),
-        den_fmt_path=_fixture_path("Si2.den_fmt"),
-        castep_path=_fixture_path("Si2.castep"),
-        cell_path=_fixture_path("Si2.cell"),
-    )
+    dialog = _si2_dialog()
     dialog._apply_potential_grid_cache(potential_grid(dialog._field))
     dialog._slice_planes = [
         _SlicePlaneState(
@@ -2416,10 +1912,11 @@ def test_uep_wizard_slice_colorbar_marks_clipped_bounds(qapp) -> None:
 
     assert len(dialog._slice_colorbar_figure.axes) == 1
     colorbar_axis = dialog._slice_colorbar_figure.axes[0]
-    texts = [text.get_text() for text in colorbar_axis.texts]
-    assert any("(and below)" in text for text in texts)
-    assert any("(and above)" in text for text in texts)
-    assert list(colorbar_axis.get_yticks()) == []
+    texts = [label.get_text() for label in colorbar_axis.xaxis.get_ticklabels()]
+    assert texts[0].startswith("≤ ")
+    assert texts[1].startswith("≥ ")
+    assert colorbar_axis.get_xlabel() == "Potential above minimum (eV)"
+    assert dialog._slice_colorbar_figure.get_layout_engine() is not None
     dialog.close()
 
 
@@ -2448,7 +1945,7 @@ def test_uep_wizard_slice_slider_defers_colorbar_refresh_until_release(
         )
     ]
     dialog._resample_all_slice_planes()
-    full_shape = dialog._slice_viewer._slice_specs[0].x_coordinates.shape
+    full_shape = dialog._potential_viewer._slice_specs[0].x_coordinates.shape
     calls = {"count": 0}
     original_refresh = dialog._refresh_slice_colorbar
 
@@ -2461,11 +1958,11 @@ def test_uep_wizard_slice_slider_defers_colorbar_refresh_until_release(
     baseline = calls["count"]
     dialog._on_slice_slider_changed(2500, 7500)
     after_drag = calls["count"]
-    drag_shape = dialog._slice_viewer._slice_specs[0].x_coordinates.shape
+    drag_shape = dialog._potential_viewer._slice_specs[0].x_coordinates.shape
     dialog._dispatch_pending_slice_preview()
-    preview_shape = dialog._slice_viewer._slice_specs[0].x_coordinates.shape
+    preview_shape = dialog._potential_viewer._slice_specs[0].x_coordinates.shape
     dialog._on_slice_slider_released()
-    released_shape = dialog._slice_viewer._slice_specs[0].x_coordinates.shape
+    released_shape = dialog._potential_viewer._slice_specs[0].x_coordinates.shape
 
     assert after_drag == baseline
     assert calls["count"] == baseline + 1
@@ -2477,14 +1974,7 @@ def test_uep_wizard_slice_slider_defers_colorbar_refresh_until_release(
 
 
 def test_uep_wizard_restores_slice_state_and_hide_atoms(qapp) -> None:
-    dialog = UepAnalysisDialog(
-        source_job_label="uep_source_row1",
-        source_structure_id="11111111-1111-1111-1111-111111111111",
-        source_structure=_source_structure_with_spins(),
-        den_fmt_path=_fixture_path("Si2.den_fmt"),
-        castep_path=_fixture_path("Si2.castep"),
-        cell_path=_fixture_path("Si2.cell"),
-    )
+    dialog = _si2_dialog()
     grid = potential_grid(dialog._field)
     dialog._apply_potential_grid_cache(grid)
     plane = _slice_plane_for_dialog(dialog)
@@ -2495,23 +1985,16 @@ def test_uep_wizard_restores_slice_state_and_hide_atoms(qapp) -> None:
     snapshot = dialog.state_snapshot()
     dialog.close()
 
-    # As MainWindow does, hand the grid back from its persisted result.
-    restored = UepAnalysisDialog(
-        source_job_label="uep_source_row1",
-        source_structure_id="11111111-1111-1111-1111-111111111111",
-        source_structure=_source_structure_with_spins(),
-        den_fmt_path=_fixture_path("Si2.den_fmt"),
-        castep_path=_fixture_path("Si2.castep"),
-        cell_path=_fixture_path("Si2.cell"),
-        initial_potential_grid=grid,
-        initial_state=snapshot,
-    )
+    restored = _si2_dialog(initial_state=snapshot)
 
     assert len(restored._slice_planes) == 1
-    assert restored._slice_planes[0].sample is not None
-    assert len(restored._slice_viewer._slice_specs) == 1
+    assert restored._slice_plane_list.count() == 1
     assert restored._slice_hide_atoms.isChecked() is True
-    assert restored._slice_viewer._hide_atoms_in_front_of_planes is True
+    assert restored._potential_viewer._hide_atoms_in_front_of_planes is True
+    assert restored._slice_planes[0].sample is None
+    restored._apply_potential_grid_cache(grid)
+    assert restored._slice_planes[0].sample is not None
+    assert len(restored._potential_viewer._slice_specs) == 1
     restored.close()
 
 
@@ -2530,16 +2013,11 @@ def test_uep_wizard_close_shuts_down_viewers_and_threads(
     emitted_states: list[dict[str, object]] = []
     dialog.state_changed.connect(lambda state: emitted_states.append(state))
 
-    viewer_calls = {"isosurface": 0, "slices": 0, "batch": 0}
+    viewer_calls = {"potential": 0, "batch": 0}
     monkeypatch.setattr(
-        dialog._isosurface_viewer,
+        dialog._potential_viewer,
         "shutdown",
-        lambda: viewer_calls.__setitem__("isosurface", viewer_calls["isosurface"] + 1),
-    )
-    monkeypatch.setattr(
-        dialog._slice_viewer,
-        "shutdown",
-        lambda: viewer_calls.__setitem__("slices", viewer_calls["slices"] + 1),
+        lambda: viewer_calls.__setitem__("potential", viewer_calls["potential"] + 1),
     )
     monkeypatch.setattr(
         dialog._batch_viewer,
@@ -2575,7 +2053,7 @@ def test_uep_wizard_close_shuts_down_viewers_and_threads(
 
     assert emitted_states
     assert emitted_states[-1]["current_tab"] == current_tab
-    assert viewer_calls == {"isosurface": 1, "slices": 1, "batch": 1}
+    assert viewer_calls == {"potential": 1, "batch": 1}
     assert grid_thread.interrupt_calls == 1
     assert grid_thread.quit_calls == 1
     assert grid_thread.wait_calls == 1
@@ -2958,13 +2436,13 @@ def test_a_muon_in_a_viewer_follows_its_site_into_a_new_group(qapp, monkeypatch)
         for candidate in dialog._clustered_muon_candidates()
         if candidate.cluster_index == 2
     )
-    dialog._add_candidate_muons_to_viewer("slice", [second.key], False)
-    assert dialog._slice_viewer_muons[0].source_label == "Site 2"
+    dialog._add_candidate_muons_to_viewer([second.key], False)
+    assert dialog._viewer_muons[0].source_label == "Site 2"
 
     dialog._batch_grouping_tolerance.setText("0.5")
 
-    assert dialog._slice_viewer_muons[0].source_label == "Site 1"
-    assert dialog._slice_viewer_muons[0].cluster_index == 1
+    assert dialog._viewer_muons[0].source_label == "Site 1"
+    assert dialog._viewer_muons[0].cluster_index == 1
     dialog.close()
 
 
@@ -3189,9 +2667,9 @@ def test_the_muons_of_a_supercell_job_stay_where_the_job_cell_has_them(qapp, mon
     )
     assert candidate.fractional_position == pytest.approx((0.6, 0.2, 0.3))
     assert candidate.display_fractional_position == pytest.approx((0.2, 0.2, 0.3), abs=1e-6)
-    dialog._add_candidate_muons_to_viewer("slice", [candidate.key], False)
-    assert dialog._slice_viewer_structure.fractional_positions[-1] == pytest.approx([0.6, 0.2, 0.3])
-    assert dialog._slice_viewer_muons[0].display_fractional_position == pytest.approx(
+    dialog._add_candidate_muons_to_viewer([candidate.key], False)
+    assert dialog._viewer_structure.fractional_positions[-1] == pytest.approx([0.6, 0.2, 0.3])
+    assert dialog._viewer_muons[0].display_fractional_position == pytest.approx(
         (0.2, 0.2, 0.3), abs=1e-6
     )
     dialog.close()
@@ -3221,8 +2699,8 @@ def test_a_saved_viewer_muon_with_a_default_label_reads_in_the_new_words(qapp, m
     dialog = _dialog_with_endpoints(monkeypatch, _two_nearby_sites(host), host)
     dialog._run_batch_search()
     candidate = dialog._clustered_muon_candidates()[0]
-    dialog._add_candidate_muons_to_viewer("slice", [candidate.key], False)
-    entry = dialog._slice_viewer_muons[0]
+    dialog._add_candidate_muons_to_viewer([candidate.key], False)
+    entry = dialog._viewer_muons[0]
     entry.label, entry.source_label = "Site 1", "Cluster 1"
 
     dialog._relabel_viewer_muons()
@@ -3238,7 +2716,7 @@ def test_a_gaussian_width_of_zero_then_return_keeps_the_batch_results(qapp, monk
     dialog = _shown_dialog_with_two_sites(qapp, monkeypatch)
     results = list(dialog._latest_batch_results)
     width = dialog._source.gw_factor
-    dialog._tabs.setCurrentWidget(dialog._isosurface_tab)
+    dialog._tabs.setCurrentWidget(dialog._potential_tab)
     field = dialog._gw_factor_input
     field.setFocus()
     field.selectAll()
@@ -3248,7 +2726,6 @@ def test_a_gaussian_width_of_zero_then_return_keeps_the_batch_results(qapp, monk
     QTest.keyClick(field, Qt.Key.Key_Return)
     qapp.processEvents()
 
-    assert field.text() == "0"
     assert dialog._source.gw_factor == width
     assert dialog._latest_batch_results == results
     assert dialog._batch_table.topLevelItemCount() == 2
@@ -3264,7 +2741,8 @@ def test_the_muon_dialog_says_which_cell_its_positions_are_in(qapp) -> None:
         castep_path=_fixture_path("Si2.castep"),
         cell_path=_fixture_path("Si2.cell"),
     )
-    muon_dialog = dialog._create_viewer_muon_dialog(viewer_kind="slice")
+    dialog._open_viewer_muon_dialog()
+    muon_dialog = dialog._viewer_muon_dialog
 
     assert muon_dialog._cell_note.text() == (
         "Start rows are in the input structure's cell, Custom rows in the job's cell."
@@ -3282,6 +2760,16 @@ def _si2_dialog(**overrides: object) -> UepAnalysisDialog:
         castep_path=_fixture_path("Si2.castep"),
         cell_path=_fixture_path("Si2.cell"),
         **overrides,
+    )
+
+
+def _uep_si8_dialog() -> UepAnalysisDialog:
+    return UepAnalysisDialog(
+        source_job_label="uep_source_row1",
+        source_structure_id="11111111-1111-1111-1111-111111111111",
+        den_fmt_path=_fixture_path("Si8.den_fmt"),
+        castep_path=_fixture_path("Si8.castep"),
+        cell_path=_fixture_path("Si8.cell"),
     )
 
 
@@ -3409,7 +2897,7 @@ def test_a_failed_new_search_leaves_no_results_behind_it(qapp, monkeypatch) -> N
     dialog.close()
 
 
-@pytest.mark.parametrize("input_name", ["_gw_factor_input", "_slice_gw_factor_input"])
+@pytest.mark.parametrize("input_name", ["_gw_factor_input", "_gw_factor_input"])
 def test_a_width_change_asks_first_and_cancel_keeps_the_results_and_the_field(
     qapp, monkeypatch, input_name: str
 ) -> None:
@@ -3427,7 +2915,6 @@ def test_a_width_change_asks_first_and_cancel_keeps_the_results_and_the_field(
     assert asked == ["Change the Gaussian width factor"]
     assert dialog._source.gw_factor == pytest.approx(5.0)
     assert dialog._gw_factor_input.value() == pytest.approx(5.0)
-    assert dialog._slice_gw_factor_input.value() == pytest.approx(5.0)
     assert dialog._latest_batch_results == results
     assert dialog._batch_table.topLevelItemCount() >= 1
     dialog.close()
@@ -3682,12 +3169,12 @@ def test_the_discard_question_counts_what_exists_and_names_muons_only_when_there
     assert details[-1] == f"This discards {plural(sites, 'site')} from {plural(starts, 'start')}."
 
     candidate = dialog._clustered_muon_candidates()[0]
-    dialog._add_candidate_muons_to_viewer("slice", [candidate.key], False)
+    dialog._add_candidate_muons_to_viewer([candidate.key], False)
     dialog._batch_run.click()
 
     assert details[-1] == (
         f"This discards {plural(sites, 'site')} from {plural(starts, 'start')} "
-        "and removes 1 muon from the viewers."
+        "and removes 1 muon from the viewer."
     )
     dialog.close()
 
@@ -3749,3 +3236,602 @@ def test_opening_a_search_an_older_build_saved_changes_nothing_once_it_has_loade
 
     assert "batch_zpe_completed" not in loaded
     assert snapshot == loaded
+
+
+def test_the_grid_is_computed_the_first_time_the_potential_tab_is_shown(qapp, monkeypatch) -> None:
+    _run_isosurface_threads_inline(monkeypatch)
+    dialog = _si2_dialog()
+    dialog.show()
+    qapp.processEvents()
+
+    assert dialog._tabs.currentWidget() is dialog._batch_tab
+    assert dialog._potential_grid_cache is None
+
+    dialog._tabs.setCurrentWidget(dialog._potential_tab)
+    qapp.processEvents()
+
+    assert dialog._potential_grid_cache is not None
+    assert dialog._active_isosurface_layer().mesh is not None
+    assert dialog._isosurface_slider.isEnabled() is True
+    assert dialog._isosurface_export_button.isEnabled() is True
+    assert not dialog._potential_status.isVisibleTo(dialog)
+    dialog.close()
+
+
+def test_a_window_saved_on_the_potential_tab_computes_its_grid_when_shown(
+    qapp, monkeypatch
+) -> None:
+    _run_isosurface_threads_inline(monkeypatch)
+    dialog = _si2_dialog(initial_state={"current_tab": 1})
+
+    assert dialog._potential_grid_cache is None
+
+    dialog.show()
+    qapp.processEvents()
+
+    assert dialog._potential_grid_cache is not None
+    dialog.close()
+
+
+def test_the_tab_says_so_when_the_grid_cannot_be_computed_and_tries_again_on_return(
+    qapp, monkeypatch
+) -> None:
+    _run_isosurface_threads_inline(monkeypatch)
+    dialog = _si2_dialog()
+
+    def _fail(_field):
+        raise ValueError("no memory left")
+
+    monkeypatch.setattr("mufinder.app.uep_wizard.potential_grid", _fail)
+    dialog.show()
+    dialog._tabs.setCurrentWidget(dialog._potential_tab)
+    qapp.processEvents()
+
+    assert "no memory left" in dialog._potential_status.text()
+    assert dialog._potential_status.property("statusKind") == "error"
+    assert dialog._isosurface_slider.isEnabled() is False
+
+    monkeypatch.undo()
+    _run_isosurface_threads_inline(monkeypatch)
+    dialog._tabs.setCurrentWidget(dialog._batch_tab)
+    dialog._tabs.setCurrentWidget(dialog._potential_tab)
+    qapp.processEvents()
+
+    assert dialog._potential_grid_cache is not None
+    assert not dialog._potential_status.text()
+    dialog.close()
+
+
+def test_one_width_factor_drives_the_search_and_the_potential(qapp, monkeypatch) -> None:
+    _run_batch_search_inline(monkeypatch)
+    _run_isosurface_threads_inline(monkeypatch)
+    dialog = _si2_dialog()
+    dialog.show()
+
+    dialog._gw_factor_input.setValue(4.0)
+    dialog._gw_factor_input.returnPressed.emit()
+    dialog._batch_count.setValue(1)
+    dialog._batch_run.click()
+    dialog._tabs.setCurrentWidget(dialog._potential_tab)
+    qapp.processEvents()
+
+    assert "Gaussian width factor: 4" in dialog._batch_summary.toPlainText()
+    assert dialog._potential_grid_raw_cache.gw_factor == pytest.approx(4.0)
+    dialog.close()
+
+
+def test_a_saved_width_factor_outside_the_range_stays_in_use_and_says_so(qapp) -> None:
+    # The search a project holds ran on this factor: the window must not change it unasked.
+    dialog = _si2_dialog(initial_state={"gw_factor": 20.0})
+
+    assert dialog._source.gw_factor == pytest.approx(20.0)
+    assert dialog._gw_factor_input.value() == pytest.approx(20.0)
+    assert dialog.state_snapshot()["gw_factor"] == pytest.approx(20.0)
+    assert "saved with a width factor of 20" in dialog._gw_factor_warning.text()
+
+    dialog._on_gw_factor_editing_finished()
+    assert dialog._source.gw_factor == pytest.approx(20.0)
+    dialog.close()
+
+
+@pytest.mark.parametrize("saved", [1.0, 2.0])
+def test_a_saved_low_width_factor_stays_in_use_and_warns_about_the_low_end(
+    qapp, saved: float
+) -> None:
+    # The search a project holds ran on this factor: the window must not change it unasked.
+    dialog = _si2_dialog(initial_state={"gw_factor": saved})
+
+    assert dialog._source.gw_factor == pytest.approx(saved)
+    assert dialog._gw_factor_input.value() == pytest.approx(saved)
+    assert dialog.state_snapshot()["gw_factor"] == pytest.approx(saved)
+    text = dialog._gw_factor_warning.text()
+    assert f"saved with a width factor of {saved:g}, outside 3 to 10" in text
+    assert "far below any relaxed site" in text
+
+    dialog._on_gw_factor_editing_finished()
+    assert dialog._source.gw_factor == pytest.approx(saved)
+    dialog.close()
+
+
+@pytest.mark.parametrize("factor", [3.0, 10.0])
+def test_the_ends_of_the_width_factor_range_can_be_applied(qapp, factor: float) -> None:
+    dialog = _si2_dialog()
+
+    dialog._gw_factor_input.setValue(factor)
+    dialog._gw_factor_input.returnPressed.emit()
+
+    assert dialog._source.gw_factor == pytest.approx(factor)
+    assert "outside" not in dialog._gw_factor_warning.text()
+    dialog.close()
+
+
+def test_a_saved_low_width_factor_once_changed_cannot_be_typed_again(qapp) -> None:
+    dialog = _si2_dialog(initial_state={"gw_factor": 2.0})
+
+    dialog._gw_factor_input.setValue(5.0)
+    dialog._gw_factor_input.returnPressed.emit()
+
+    assert dialog._source.gw_factor == pytest.approx(5.0)
+    assert dialog._gw_factor_input.minimum() == pytest.approx(3.0)
+    assert not dialog._gw_factor_warning.isVisibleTo(dialog)
+    dialog.close()
+
+
+@pytest.mark.parametrize("typed", ["1", "2", "20"])
+def test_a_width_factor_outside_the_range_is_not_applied_and_says_why(qapp, typed: str) -> None:
+    dialog = _si2_dialog()
+    dialog.show()
+    field = dialog._gw_factor_input
+    field.setFocus()
+    field.selectAll()
+    qapp.processEvents()
+
+    QTest.keyClicks(field, typed)
+    QTest.keyClick(field, Qt.Key.Key_Return)
+    qapp.processEvents()
+
+    assert dialog._source.gw_factor == pytest.approx(5.0)
+    assert "Enter a width factor from 3 to 10." in dialog._gw_factor_warning.text()
+    dialog.close()
+
+
+def test_the_width_factor_warns_when_the_grid_does_not_resolve_the_gaussians(qapp) -> None:
+    dialog = _si2_dialog()
+    assert not dialog._gw_factor_warning.isVisibleTo(dialog)
+
+    dialog._gw_factor_input.setValue(10.0)
+    dialog._gw_factor_input.returnPressed.emit()
+
+    assert dialog._source.gw_factor == pytest.approx(10.0)
+    assert "does not resolve the ionic Gaussians" in dialog._gw_factor_warning.text()
+    assert dialog._gw_factor_warning.isVisibleTo(dialog)
+
+    dialog._gw_factor_input.setValue(5.0)
+    dialog._gw_factor_input.returnPressed.emit()
+    assert not dialog._gw_factor_warning.isVisibleTo(dialog)
+    dialog.close()
+
+
+def test_saved_levels_on_the_potentials_own_scale_keep_their_surface_above_the_minimum(
+    qapp,
+) -> None:
+    baseline = _si2_dialog()
+    grid = potential_grid(baseline._field)
+    baseline.close()
+    minimum = float(grid.potential_total_ev.min())
+    state = {
+        "isosurface_zero_minimum": False,
+        "isosurface_layers": [
+            {"label": "Isosurface 1", "key": "a", "level_ev": minimum + 3.0, "color": "#123456"}
+        ],
+        "slice_saturation_bounds": [minimum + 1.0, minimum + 2.0],
+    }
+
+    dialog = _si2_dialog(initial_state=state)
+
+    # Before the grid there is no minimum to measure from, so the state keeps its own scale.
+    snapshot = dialog.state_snapshot()
+    assert snapshot["isosurface_zero_minimum"] is False
+    assert snapshot["isosurface_layers"][0]["level_ev"] == pytest.approx(minimum + 3.0)
+
+    dialog._apply_potential_grid_cache(grid)
+
+    assert dialog._isosurface_layers[0].level_ev == pytest.approx(3.0)
+    assert dialog._slice_saturation_bounds == pytest.approx((1.0, 2.0))
+    snapshot = dialog.state_snapshot()
+    assert snapshot["isosurface_zero_minimum"] is True
+    assert snapshot["isosurface_layers"][0]["level_ev"] == pytest.approx(3.0)
+    dialog.close()
+
+
+def test_saved_levels_above_the_minimum_are_read_as_they_are(qapp) -> None:
+    state = {
+        "isosurface_zero_minimum": True,
+        "isosurface_layers": [{"label": "Isosurface 1", "key": "a", "level_ev": 3.0}],
+        "slice_saturation_bounds": [1.0, 2.0],
+    }
+
+    dialog = _si2_dialog(initial_state=state)
+    dialog._apply_potential_grid_cache(potential_grid(dialog._field))
+
+    assert dialog._isosurface_layers[0].level_ev == pytest.approx(3.0)
+    assert dialog._slice_saturation_bounds == pytest.approx((1.0, 2.0))
+    dialog.close()
+
+
+def test_a_saved_whole_range_saturation_becomes_the_clipped_default(qapp) -> None:
+    baseline = _si2_dialog()
+    grid = potential_grid(baseline._field)
+    baseline.close()
+    values = grid.potential_total_ev
+
+    dialog = _si2_dialog(
+        initial_state={"slice_saturation_bounds": [float(values.min()), float(values.max())]}
+    )
+    dialog._apply_potential_grid_cache(grid)
+
+    assert dialog._slice_saturation_bounds == pytest.approx(
+        (0.0, float(np.percentile(values - values.min(), 95)))
+    )
+    dialog.close()
+
+
+def test_a_single_mesh_saved_at_the_top_level_gives_its_level(qapp) -> None:
+    dialog = _si2_dialog(
+        initial_state={"isosurface_zero_minimum": True, "isosurface_mesh": {"level_ev": 3.0}}
+    )
+
+    assert dialog._isosurface_layers[0].level_ev == pytest.approx(3.0)
+    assert "isosurface_mesh" not in dialog.state_snapshot()
+    dialog.close()
+
+
+def test_a_window_saved_with_two_viewers_shows_both_lists_of_muons_once(qapp) -> None:
+    def _muon(key: str, position: tuple[float, float, float], **extra) -> dict:
+        return {
+            "key": key,
+            "label": key,
+            "source_kind": "custom",
+            "fractional_position": list(position),
+            "cartesian_position_ang": [0.0, 0.0, 0.0],
+            **extra,
+        }
+
+    state = {
+        "isosurface_viewer_muons": [
+            _muon("both", (0.1, 0.2, 0.3)),
+            _muon("site", (0.4, 0.4, 0.4), source_kind="clustered", result_index=2),
+        ],
+        "slice_viewer_muons": [
+            _muon("both-again", (0.1, 0.2, 0.3)),
+            _muon("site-again", (0.4, 0.4, 0.4), source_kind="clustered", result_index=2),
+            _muon("only-slice", (0.7, 0.2, 0.3)),
+        ],
+        "isosurface_selected_muon_keys": ["both"],
+        "slice_selected_muon_keys": ["only-slice", "both-again"],
+    }
+
+    dialog = _si2_dialog(initial_state=state)
+
+    assert [entry.key for entry in dialog._viewer_muons] == ["both", "site", "only-slice"]
+    assert dialog._selected_viewer_muon_keys == ["both", "only-slice"]
+    assert dialog._potential_viewer._structure.species.count("X") == 3
+    snapshot = dialog.state_snapshot()
+    assert [entry["key"] for entry in snapshot["viewer_muons"]] == ["both", "site", "only-slice"]
+    assert "isosurface_viewer_muons" not in snapshot
+    assert "slice_viewer_muons" not in snapshot
+    dialog.close()
+
+
+def test_two_custom_muons_at_one_position_both_survive_a_reopen(qapp) -> None:
+    first = _si2_dialog()
+    first._add_custom_muon_to_viewer((0.1, 0.2, 0.3))
+    first._add_custom_muon_to_viewer((0.1, 0.2, 0.3))
+    snapshot = first.state_snapshot()
+    first.close()
+
+    restored = _si2_dialog(initial_state=snapshot)
+
+    assert [entry.label for entry in restored._viewer_muons] == ["Custom 1", "Custom 2"]
+    restored.close()
+
+
+def test_two_custom_muons_at_one_position_in_one_old_list_both_survive(qapp) -> None:
+    first = _si2_dialog()
+    first._add_custom_muon_to_viewer((0.1, 0.2, 0.3))
+    first._add_custom_muon_to_viewer((0.1, 0.2, 0.3))
+    saved = first.state_snapshot()["viewer_muons"]
+    first.close()
+
+    restored = _si2_dialog(initial_state={"isosurface_viewer_muons": saved})
+
+    assert len(restored._viewer_muons) == 2
+    restored.close()
+
+
+def test_the_saved_state_holds_what_the_grid_cannot_give_back(qapp) -> None:
+    dialog = _si2_dialog()
+    dialog._apply_potential_grid_cache(potential_grid(dialog._field))
+    _show_level(dialog, 5.0)
+    dialog._slice_planes = [
+        _SlicePlaneState(label="Plane 1", plane=_slice_plane_for_dialog(dialog))
+    ]
+    dialog._resample_all_slice_planes()
+
+    snapshot = dialog.state_snapshot()
+
+    assert set(snapshot["isosurface_layers"][0]) == {
+        "label",
+        "key",
+        "level_ev",
+        "color",
+        "managed_muon_key",
+    }
+    assert set(snapshot["slice_planes"][0]) == {"label", "plane"}
+    assert "potential_grid" not in snapshot
+    assert not hasattr(dialog, "potential_grid_ready")
+    dialog.close()
+
+
+def test_the_settled_surface_comes_from_the_whole_grid(qapp, monkeypatch) -> None:
+    _run_isosurface_threads_inline(monkeypatch)
+    dialog = _uep_si8_dialog()
+    dialog.show()
+    dialog._tabs.setCurrentWidget(dialog._potential_tab)
+    qapp.processEvents()
+
+    level = dialog._active_isosurface_layer().level_ev
+    whole_grid = extract_isosurface(dialog._potential_grid_cache, level_ev=level)
+    assert len(dialog._active_isosurface_layer().mesh.faces) == len(whole_grid.faces)
+    live = dialog._potential_grid_live_preview_cache
+    assert live.grid[0] < dialog._potential_grid_cache.grid[0]
+    dialog.close()
+
+
+def test_xsf_export_writes_the_potential_on_its_own_scale(qapp, monkeypatch, tmp_path) -> None:
+    dialog = _si2_dialog()
+    grid = potential_grid(dialog._field)
+    dialog._apply_potential_grid_cache(grid)
+    exported = tmp_path / "from_window.xsf"
+    monkeypatch.setattr(
+        "mufinder.app.uep_wizard.QFileDialog.getSaveFileName",
+        lambda *args, **kwargs: (str(exported), "XSF Files (*.xsf)"),
+    )
+
+    dialog._isosurface_export_button.click()
+
+    reference = tmp_path / "reference.xsf"
+    write_potential_grid_xsf(reference, structure=dialog._source.structure, potential=grid)
+    assert exported.read_bytes() == reference.read_bytes()
+    dialog.close()
+
+
+def _dialog_with_a_plane(confirmed: bool, monkeypatch) -> tuple[UepAnalysisDialog, list[str]]:
+    asked = _answer_confirmations(monkeypatch, answer=confirmed)
+    dialog = _si2_dialog()
+    dialog._apply_potential_grid_cache(potential_grid(dialog._field))
+    dialog._slice_planes = [
+        _SlicePlaneState(label="Plane 1", plane=_slice_plane_for_dialog(dialog))
+    ]
+    dialog._resample_all_slice_planes()
+    dialog._slice_plane_list.setCurrentRow(0)
+    return dialog, asked
+
+
+@pytest.mark.parametrize("confirmed", [False, True])
+def test_the_remove_button_asks_before_it_removes_a_plane(
+    qapp, monkeypatch, confirmed: bool
+) -> None:
+    dialog, asked = _dialog_with_a_plane(confirmed, monkeypatch)
+
+    dialog._slice_remove_plane_button.click()
+
+    assert asked == ["Remove slice plane"]
+    assert len(dialog._slice_planes) == (0 if confirmed else 1)
+    assert dialog._slice_plane_list.count() == (0 if confirmed else 1)
+    dialog.close()
+
+
+@pytest.mark.parametrize("key", [Qt.Key.Key_Delete, Qt.Key.Key_Backspace])
+@pytest.mark.parametrize("confirmed", [False, True])
+def test_both_delete_keys_ask_before_they_remove_a_plane(
+    qapp, monkeypatch, key, confirmed: bool
+) -> None:
+    dialog, asked = _dialog_with_a_plane(confirmed, monkeypatch)
+    dialog.show()
+    dialog._tabs.setCurrentWidget(dialog._potential_tab)
+    dialog.activateWindow()
+    dialog._slice_plane_list.setFocus()
+    qapp.processEvents()
+
+    QTest.keyClick(dialog._slice_plane_list, key)
+    qapp.processEvents()
+
+    assert asked == ["Remove slice plane"]
+    assert len(dialog._slice_planes) == (0 if confirmed else 1)
+    dialog.close()
+
+
+def test_a_delete_key_with_no_plane_selected_asks_nothing(qapp, monkeypatch) -> None:
+    dialog, asked = _dialog_with_a_plane(True, monkeypatch)
+    dialog._slice_plane_list.clearSelection()
+
+    dialog._remove_selected_slice_plane()
+
+    assert asked == []
+    assert len(dialog._slice_planes) == 1
+    dialog.close()
+
+
+def _dialog_with_a_muon(confirmed: bool, monkeypatch):
+    asked = _answer_confirmations(monkeypatch, answer=confirmed)
+    dialog = _si2_dialog()
+    dialog._add_custom_muon_to_viewer((0.125, 0.25, 0.375))
+    dialog._open_viewer_muon_dialog()
+    muon_dialog = dialog._viewer_muon_dialog
+    table = muon_dialog._current_table
+    table.setCurrentItem(table.topLevelItem(0))
+    table.topLevelItem(0).setSelected(True)
+    return dialog, muon_dialog, asked
+
+
+@pytest.mark.parametrize("confirmed", [False, True])
+def test_remove_selected_muons_asks_first(qapp, monkeypatch, confirmed: bool) -> None:
+    dialog, muon_dialog, asked = _dialog_with_a_muon(confirmed, monkeypatch)
+
+    muon_dialog._remove_selected_button.click()
+
+    assert asked == ["Remove muons"]
+    assert len(dialog._viewer_muons) == (0 if confirmed else 1)
+    dialog.close()
+
+
+@pytest.mark.parametrize("key", [Qt.Key.Key_Delete, Qt.Key.Key_Backspace])
+@pytest.mark.parametrize("confirmed", [False, True])
+def test_both_delete_keys_ask_before_they_remove_a_muon(
+    qapp, monkeypatch, key, confirmed: bool
+) -> None:
+    dialog, muon_dialog, asked = _dialog_with_a_muon(confirmed, monkeypatch)
+    muon_dialog.activateWindow()
+    muon_dialog._current_table.setFocus()
+    qapp.processEvents()
+
+    QTest.keyClick(muon_dialog._current_table, key)
+    qapp.processEvents()
+
+    assert asked == ["Remove muons"]
+    assert len(dialog._viewer_muons) == (0 if confirmed else 1)
+    dialog.close()
+
+
+def test_deleting_text_while_renaming_a_muon_does_not_remove_it(qapp, monkeypatch) -> None:
+    dialog, muon_dialog, asked = _dialog_with_a_muon(True, monkeypatch)
+    muon_dialog.activateWindow()
+    table = muon_dialog._current_table
+    table.editItem(table.topLevelItem(0), 0)
+    qapp.processEvents()
+    editor = table.findChild(QLineEdit)
+    assert editor is not None
+    editor.setFocus()
+    qapp.processEvents()
+
+    QTest.keyClick(editor, Qt.Key.Key_Backspace)
+    qapp.processEvents()
+
+    assert asked == []
+    assert len(dialog._viewer_muons) == 1
+    dialog.close()
+
+
+def test_closing_during_the_rebuilds_starts_no_further_mesh(qapp, monkeypatch) -> None:
+    dialog = _si2_dialog()
+    dialog._apply_potential_grid_cache(potential_grid(dialog._field))
+    dialog._add_isosurface_layer()
+    started: list[float] = []
+    monkeypatch.setattr(
+        dialog, "_start_isosurface_mesh_calculation", lambda level, **_: started.append(level)
+    )
+    dialog._pending_isosurface_rebuilds = [(dialog._isosurface_layers[1].key, 5.0)]
+
+    dialog.close()
+    dialog._on_isosurface_mesh_thread_finished()
+
+    assert started == []
+
+
+def test_a_mesh_follows_its_isosurface_when_another_is_removed(qapp, monkeypatch) -> None:
+    dialog = _si2_dialog()
+    dialog._apply_potential_grid_cache(potential_grid(dialog._field))
+    _show_level(dialog, 5.0)
+    dialog._add_isosurface_layer()
+    dialog._add_isosurface_layer()
+    keys = [layer.key for layer in dialog._isosurface_layers]
+    monkeypatch.setattr("mufinder.app.uep_wizard._IsosurfaceMeshThread.start", lambda _thread: None)
+    dialog._start_isosurface_mesh_calculation(7.0, layer_index=2)
+    dialog._isosurface_mesh_thread = None
+    request_id = dialog._isosurface_request_id
+    dialog._pending_isosurface_rebuilds = []
+
+    dialog._remove_isosurface_layer_by_key(keys[0])
+    mesh = extract_isosurface(dialog._potential_grid_cache, level_ev=7.0)
+    dialog._on_isosurface_mesh_ready(request_id, 2, mesh)
+
+    assert [layer.key for layer in dialog._isosurface_layers] == keys[1:]
+    assert dialog._isosurface_layers[1].mesh is mesh
+    assert dialog._isosurface_layers[1].level_ev == pytest.approx(7.0)
+    dialog.close()
+
+
+def test_a_level_asked_for_while_a_mesh_runs_is_drawn_after_it(qapp, monkeypatch) -> None:
+    dialog = _si2_dialog()
+    dialog._apply_potential_grid_cache(potential_grid(dialog._field))
+    monkeypatch.setattr("mufinder.app.uep_wizard._IsosurfaceMeshThread.start", lambda _thread: None)
+    dialog._start_isosurface_mesh_calculation(5.0)
+    running = dialog._isosurface_request_id
+
+    dialog._isosurface_level_input.setValue(9.0)
+    dialog._isosurface_level_input.editingFinished.emit()
+    dialog._on_isosurface_mesh_ready(
+        running, 0, extract_isosurface(dialog._potential_grid_cache, level_ev=5.0)
+    )
+
+    assert dialog._isosurface_level_input.value() == pytest.approx(9.0)
+    started: list[float] = []
+    monkeypatch.setattr(
+        dialog, "_start_isosurface_mesh_calculation", lambda level, **_: started.append(level)
+    )
+    dialog._on_isosurface_mesh_thread_finished()
+    assert started == [pytest.approx(9.0)]
+    dialog._isosurface_mesh_thread = None
+    dialog.close()
+
+
+def test_the_next_level_clears_an_earlier_message(qapp, monkeypatch) -> None:
+    _run_isosurface_threads_inline(monkeypatch)
+    dialog = _si2_dialog()
+    dialog._apply_potential_grid_cache(potential_grid(dialog._field))
+    dialog._set_potential_status("Exported x.xsf", kind="exported")
+
+    dialog._isosurface_level_input.setValue(4.0)
+    dialog._isosurface_level_input.editingFinished.emit()
+
+    assert dialog._potential_status.text() == ""
+    dialog.close()
+
+
+def test_a_level_above_a_new_grids_top_is_drawn_at_the_top(qapp, monkeypatch) -> None:
+    _run_isosurface_threads_inline(monkeypatch)
+    dialog = _si2_dialog()
+    grid = potential_grid(dialog._field)
+    dialog._isosurface_layers[0].level_ev = 10_000.0
+
+    dialog._on_isosurface_grid_ready(grid)
+    qapp.processEvents()
+
+    assert dialog._isosurface_layers[0].level_ev == pytest.approx(
+        float(np.ptp(grid.potential_total_ev))
+    )
+    assert dialog._isosurface_layers[0].mesh is None
+    dialog.close()
+
+
+def test_the_potential_tabs_legend_follows_a_regrouping(qapp, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "mufinder.app.workflow_table_utils.confirm_destructive", lambda *_a, **_k: True
+    )
+    host = _no_symmetry_host()
+    dialog = _dialog_with_endpoints(monkeypatch, _two_nearby_sites(host), host)
+    dialog._run_batch_search()
+    second = next(
+        candidate
+        for candidate in dialog._clustered_muon_candidates()
+        if candidate.cluster_index == 2
+    )
+    dialog._add_candidate_muons_to_viewer([second.key], False)
+
+    dialog._batch_grouping_tolerance.setText("0.5")
+
+    legend = [label.text() for label in dialog._viewer_muon_legend_entries.findChildren(QLabel)]
+    assert any("Site 1" in text for text in legend)
+    assert not any("Site 2" in text for text in legend)
+    dialog.close()
