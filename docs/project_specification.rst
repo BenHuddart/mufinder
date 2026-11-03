@@ -564,8 +564,9 @@ Quantum corrections
   ``Phonon Modes`` tab (all Gamma-point modes, the muon-dominated subset
   highlighted, one selected mode synchronized to a muonated-structure viewer
   with amplitude-controlled playback) and a ``Muon Coupling`` tab
-  (covariance/correlation tensors plus pairwise ``w2`` witnesses). Path-integral
-  molecular dynamics is out of scope.
+  (the muon's nearest atoms with distance and ``|c| = -w2``, covariance and
+  correlation tensors for the selected atom, and any other pair on request).
+  Path-integral molecular dynamics is out of scope.
 
 Energy barriers
 ~~~~~~~~~~~~~~~

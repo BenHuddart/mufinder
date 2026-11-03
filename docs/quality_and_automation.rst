@@ -511,7 +511,7 @@ phonon modes look down a, in which plane the [011] complex lies.
 set's checksums and pins the geometry, the displacements, the zero-point
 energies, mode frequencies, widths and witnesses that the pages report. The
 scenes show the host, the relaxation workspace, the displacements, the Muon
-Sites summary, the configuration dialog, the completed result, and the three
+Sites summary, the configuration dialog, the completed result, and the two
 tabs of the analysis window with the help of ``Muon Coupling``.
 
 The GdRu₂Si₂ example
