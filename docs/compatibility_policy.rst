@@ -252,13 +252,17 @@ Compatibility ledger
      - ``data`` of a ``magnetic_field`` result, ``magnetic_field_results`` in a
        form, and each source of a polarisation simulation
        (``mufinder.services.magnetic_field_results``, ``TRANSLATION_METHOD_VERSION``)
-     - Written for a commensurate field result with a component at ``q ≠ 0``, and for
-       every source of a simulation, where 0 means the method does not apply. A field
-       record without it reads its own rows: a commensurate record whose rows have
-       ``modulated`` in ``calculation_parameters`` and all lie in the home cell is older.
-       A simulation source without it reads the record named by its ``record_id``, and
-       is not marked once that record is gone, when the simulation is stale instead.
-       Additive, so no migration.
+     - Written for a commensurate field result with a component at ``q ≠ 0``, for every
+       distribution, and for every source of a simulation, where 0 means the method
+       does not apply. A commensurate record without it reads its own rows: one whose
+       rows have ``modulated`` in ``calculation_parameters`` and all lie in the home cell
+       is older. A distribution without it reads the magnetic structure its owner keeps
+       (the project's for the page, the workspace's own for a workspace), which is the
+       one it was calculated from because a new structure clears the results: one with
+       a ``q ≠ 0`` term of period up to the recorded ``commensurate_max_period`` is
+       older. A simulation source without it reads the record named by its
+       ``record_id`` and that owner's structure, and is not marked once that record is
+       gone, when the simulation is stale instead. Additive, so no migration.
      - Current project data, not deprecated. It may not be dropped without a schema
        migration that first records which results list their translations.
    * - ``generate_random_sites_by_distance``
@@ -727,12 +731,14 @@ Compatibility ledger
        table
      - A distribution entry stores ``terms``, ``total_rms_T``, ``applied_T``
        and ``demag_T``, and its ``calculation_parameters`` hold
-       ``phase_sampling_seed`` and ``component_phase_coefficients``. An entry
-       saved before these keys existed loads with empty ``terms`` and ``None``
-       for the rest; selecting its row shows its convergence checks and asks
-       for a recalculation instead of a breakdown, and
-       ``regenerate_phase_samples`` refuses it. The next calculation writes
-       the keys. Nothing is recomputed on load.
+       ``phase_sampling_seed``, ``component_phase_coefficients`` and
+       ``listed_phase_q_rlu``. An entry saved before the first of these keys
+       existed loads with empty ``terms`` and ``None`` for the rest; selecting its
+       row shows its convergence checks and asks for a recalculation instead of a
+       breakdown, and ``regenerate_phase_samples`` refuses it. One without
+       ``listed_phase_q_rlu`` sampled no exact phases, and
+       ``regenerate_phase_samples`` rebuilds it with none. The next calculation
+       writes the keys. Nothing is recomputed on load.
      - Read-side repair. Current behaviour for any entry without the keys;
        keep until a saved-project schema version bump includes a migration
        that drops such entries or the page stops reading them.

@@ -1860,9 +1860,10 @@ def test_incommensurate_distribution_collapses_dependent_physical_q_rows(monkeyp
     assert result.calculation_parameters["phase_sample_count"] == 4
 
 
-def test_incommensurate_distribution_holds_commensurate_components_at_zero_phase(
+def test_incommensurate_distribution_samples_a_commensurate_component_at_each_translation(
     monkeypatch,
 ) -> None:
+    # The q = 1/2 wave takes both its phases at every phase of the helix, not only T = 0.
     model = MagneticStructureModel(
         q_basis_rlu=((0.12345, 0.0, 0.0), (0.0, 0.0, 0.5), (0.0, 0.0, 0.0)),
         components=(
@@ -1896,11 +1897,14 @@ def test_incommensurate_distribution_holds_commensurate_components_at_zero_phase
     np.testing.assert_allclose(
         result.calculation_parameters["phase_basis_rlu"], [[0.12345, 0.0, 0.0]]
     )
-    np.testing.assert_allclose(result.fields_T[:, 0], np.arange(4.0))
-    np.testing.assert_allclose(result.fields_T[:, 2], 7.0)
+    assert result.calculation_parameters["listed_phase_q_rlu"] == [[0.0, 0.0, 0.5]]
+    np.testing.assert_allclose(result.fields_T[:, 0], np.repeat(np.arange(4.0), 2))
+    np.testing.assert_allclose(result.fields_T[:, 2], np.tile([7.0, -7.0], 4))
 
 
-def test_incommensurate_distribution_of_commensurate_model_has_a_single_phase(monkeypatch) -> None:
+def test_incommensurate_distribution_of_commensurate_model_takes_each_translation(
+    monkeypatch,
+) -> None:
     _install_fake_muesr(monkeypatch, locfield=_fields_per_muon(Dipolar=(0.0, 0.0, 2.0)))
 
     (result,) = calculate_incommensurate_field_distributions(
@@ -1911,8 +1915,8 @@ def test_incommensurate_distribution_of_commensurate_model_has_a_single_phase(mo
     )
 
     assert result.calculation_parameters["phase_basis_rlu"] == []
-    assert result.calculation_parameters["phase_sample_count"] == 1
-    np.testing.assert_allclose(result.fields_T, [[0.0, 0.0, 2.0]])
+    assert result.calculation_parameters["phase_sample_count"] == 2
+    np.testing.assert_allclose(result.fields_T, [[0.0, 0.0, 2.0], [0.0, 0.0, -2.0]])
 
 
 @pytest.mark.parametrize("sampling", ["montecarlo", "random"])
@@ -2202,7 +2206,7 @@ def test_regenerate_phase_samples_of_a_single_phase_is_one_empty_row(monkeypatch
     _install_fake_muesr(monkeypatch, locfield=_fields_per_muon(Dipolar=(0.0, 0.0, 2.0)))
     (result,) = calculate_incommensurate_field_distributions(
         _structure(),
-        _model([0.0, 0.0, 0.5]),
+        _model([0.0, 0.0, 0.0]),
         [_SITE_A],
         options=MagneticFieldOptions(supercell=(1, 1, 1), nangles=4, histogram_bins=4),
     )
@@ -2211,6 +2215,56 @@ def test_regenerate_phase_samples_of_a_single_phase_is_one_empty_row(monkeypatch
 
     assert regenerated.phases_turns.shape == (1, 0)
     assert regenerated.component_phase_coefficients.shape == (1, 0)
+    assert regenerated.listed_phases_turns.shape == (1, 0)
+
+
+def _helix_beside_a_listed_wave() -> MagneticStructureModel:
+    return MagneticStructureModel(
+        q_basis_rlu=((0.12345, 0.0, 0.0), (0.0, 0.0, 0.25), (0.0, 0.0, 0.0)),
+        components=(
+            _helix("incommensurate", (1.0, 0.0, 0.0)),
+            MagneticComponent(
+                component_id="listed",
+                label="listed",
+                kind="custom",
+                selector=AtomSelector.all(),
+                terms=(FourierTerm((0.0, 1.0, 0.0), ComplexVector.from_vector([0.0, 0.0, 1.0])),),
+            ),
+        ),
+    )
+
+
+@pytest.mark.parametrize(("sampling", "sample_count"), [("grid", 12), ("montecarlo", 9)])
+def test_regenerate_phase_samples_rebuilds_the_listed_phases(
+    monkeypatch, sampling: str, sample_count: int
+) -> None:
+    _install_fake_muesr(monkeypatch, locfield=_fields_per_muon(Dipolar=_LOOKUP))
+    (result,) = calculate_incommensurate_field_distributions(
+        _structure(),
+        _helix_beside_a_listed_wave(),
+        [_SITE_A],
+        options=MagneticFieldOptions(
+            supercell=(1, 1, 1),
+            nangles=4,
+            phase_sample_count=sample_count,
+            phase_sampling=sampling,
+            random_seed=5,
+            histogram_bins=4,
+        ),
+    )
+    saved = MagneticFieldDistributionResult.from_json(json.loads(json.dumps(result.to_json())))
+
+    regenerated = regenerate_phase_samples(saved)
+
+    listed = regenerated.listed_phases_turns
+    assert listed.shape == (sample_count, 1)
+    assert set(np.round(listed[:, 0] * 4).astype(int)) == {0, 1, 2, 3}
+    if sampling == "grid":
+        # Three helix phases, each with all four phases of the period-4 wave.
+        np.testing.assert_allclose(regenerated.phases_turns[:, 0], np.repeat([0, 1, 2], 4) / 3)
+        np.testing.assert_allclose(listed[:, 0], np.tile([0, 1, 2, 3], 3) / 4)
+    regenerated_again = regenerate_phase_samples(saved)
+    np.testing.assert_array_equal(regenerated_again.listed_phases_turns, listed)
 
 
 def test_auto_two_q_sampling_is_bounded_by_phase_sample_count() -> None:
@@ -2840,11 +2894,23 @@ def test_half_resolution_grid_keeps_every_other_point_per_axis() -> None:
     axis = np.arange(4, dtype=float) / 4.0
     grid = np.stack([mesh.ravel() for mesh in np.meshgrid(axis, axis, indexing="ij")], axis=1)
 
-    half = module._half_resolution_phase_samples(grid, "grid")
+    def half(continuous, listed=None, sets=1):
+        listed = np.zeros((len(continuous), 0)) if listed is None else listed
+        selection = module._half_resolution_selection(
+            module._PhaseSamples(continuous, listed, "grid", sets, lookup_limited=False)
+        )
+        return None if selection is None else continuous[selection]
 
-    np.testing.assert_allclose(half, [(0.0, 0.0), (0.0, 0.5), (0.5, 0.0), (0.5, 0.5)])
-    assert module._half_resolution_phase_samples(grid[:15], "grid") is None
-    assert module._half_resolution_phase_samples(np.zeros((1, 0)), "grid") is None
+    np.testing.assert_allclose(half(grid), [(0.0, 0.0), (0.0, 0.5), (0.5, 0.0), (0.5, 0.5)])
+    assert half(grid[:15]) is None
+    assert half(np.zeros((1, 0))) is None
+    # Each kept point keeps every listed phase set beside it; the sets alone have no half.
+    paired, listed = module._grid_with_listed_sets(grid, np.array([[0.0], [0.5]]))
+    np.testing.assert_allclose(
+        half(paired, listed, sets=2),
+        np.repeat([(0.0, 0.0), (0.0, 0.5), (0.5, 0.0), (0.5, 0.5)], 2, axis=0),
+    )
+    assert half(np.zeros((2, 0)), np.array([[0.0], [0.5]]), sets=2) is None
 
 
 def test_cdf_distance_measures_the_largest_cumulative_difference() -> None:
@@ -4252,6 +4318,120 @@ def test_real_muesr_long_period_distribution_matches_the_sum_at_every_translatio
     assert sampled.max() >= direct.max() - 1e-6
     # Every translation's field is on the sampled curve.
     assert np.max(np.min(np.abs(direct[:, np.newaxis] - sampled[::16]), axis=1)) < 2e-3
+
+
+def _two_q_model(q_long, q_short) -> MagneticStructureModel:
+    """A helix at ``q_long`` and a collinear wave at ``q_short``, both along a, on every atom."""
+
+    return MagneticStructureModel(
+        q_basis_rlu=((q_long, 0.0, 0.0), (q_short, 0.0, 0.0), (0.0, 0.0, 0.0)),
+        components=(
+            MagneticComponent(
+                component_id="long",
+                label="Long",
+                kind="custom",
+                selector=AtomSelector.all(),
+                terms=(
+                    FourierTerm(
+                        (1.0, 0.0, 0.0),
+                        ComplexVector(real=(0.0, 0.0, 1.0), imaginary=(0.0, 1.0, 0.0)),
+                    ),
+                ),
+            ),
+            MagneticComponent(
+                component_id="short",
+                label="Short",
+                kind="custom",
+                selector=AtomSelector.all(),
+                terms=(FourierTerm((0.0, 1.0, 0.0), ComplexVector.from_vector([0.6, 0.0, 0.0])),),
+            ),
+        ),
+    )
+
+
+@pytest.mark.parametrize(
+    ("q_long", "q_short", "period"),
+    [(1.0 / 13.0, 0.25, 52), (1.0 / 24.0, 1.0 / 12.0, 24)],
+    ids=["independent", "harmonic"],
+)
+def test_real_muesr_a_short_period_beside_a_long_one_is_sampled_at_every_translation(
+    real_muesr, q_long, q_short, period
+) -> None:
+    # Period 13 with 4 meets every pair of phases over 52 cells; the harmonic at 1/12 keeps
+    # twice the phase of 1/24, so 24 cells give every field.
+    model = _two_q_model(q_long, q_short)
+    assert classify_magnetic_model(_structure(), model) == "incommensurate"
+
+    (result,) = calculate_incommensurate_field_distributions(
+        _structure(),
+        model,
+        [_GENERAL_SITE],
+        options=MagneticFieldOptions(supercell=(15, 15, 15), radius=_RADIUS, include_lorentz=False),
+    )
+
+    direct = np.array(
+        [
+            _direct_lattice_field(_structure(), model, np.add(_GENERAL_SITE, (n, 0, 0)), _RADIUS)
+            for n in range(period)
+        ]
+    )
+    sampled = np.asarray(result.fields_T)
+    # A harmonic rides on the continuous phase; any other short period has its own exact phases.
+    harmonic = period == 24
+    assert result.calculation_parameters["listed_phase_q_rlu"] == (
+        [] if harmonic else [[q_short, 0.0, 0.0]]
+    )
+    # The short wave averages to zero over its translations, as over the direct ones.
+    np.testing.assert_allclose(sampled.mean(axis=0), direct.mean(axis=0), atol=1e-6)
+    assert result.total_rms_T == pytest.approx(
+        np.sqrt(np.mean(np.sum(direct**2, axis=1))), rel=1e-6
+    )
+    # Every translation's field vector is one of the samples.
+    nearest = [np.min(np.linalg.norm(sampled - row, axis=1)) for row in direct]
+    assert max(nearest) < 2e-3
+
+
+def _three_q_helix_model(q: float) -> MagneticStructureModel:
+    return MagneticStructureModel(
+        q_basis_rlu=((q, 0.0, 0.0), (0.0, q, 0.0), (0.0, 0.0, q)),
+        components=(
+            _helix("q1", (1.0, 0.0, 0.0)),
+            _helix("q2", (0.0, 1.0, 0.0)),
+            _helix("q3", (0.0, 0.0, 1.0)),
+        ),
+    )
+
+
+def test_real_muesr_too_many_phase_sets_to_list_are_a_distribution_over_all_of_them(
+    real_muesr,
+) -> None:
+    # Three helices of period 9 give 729 phase sets, more than the 512 a list holds.
+    model = _three_q_helix_model(1.0 / 9.0)
+    options = MagneticFieldOptions(supercell=(15, 15, 15), radius=_RADIUS, include_lorentz=False)
+
+    assert classify_magnetic_model(_structure(), model) == "incommensurate"
+    (result,) = calculate_incommensurate_field_distributions(
+        _structure(), model, [_GENERAL_SITE], options=options
+    )
+
+    direct = np.array(
+        [
+            _direct_lattice_field(_structure(), model, np.add(_GENERAL_SITE, (a, b, c)), _RADIUS)
+            for a in range(9)
+            for b in range(9)
+            for c in range(9)
+        ]
+    )
+    sampled = np.asarray(result.fields_T)
+    # Every phase set once: the samples are the direct fields, in some order.
+    assert sampled.shape == direct.shape
+    np.testing.assert_allclose(
+        np.sort(np.linalg.norm(sampled, axis=1)),
+        np.sort(np.linalg.norm(direct, axis=1)),
+        rtol=1e-6,
+        atol=1e-9,
+    )
+    assert result.calculation_parameters["resolved_phase_sampling"] == "grid"
 
 
 def _explicit_magnetic_supercell(

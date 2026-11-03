@@ -87,6 +87,7 @@ from tests.support.magnetic_field_sites import (
     uep_search_document,
 )
 from tests.support.magnetic_fields import (
+    collinear_waves_model,
     coo_structure,
     custom_muon_site,
     photo_plate_sample,
@@ -1487,10 +1488,45 @@ def test_fresh_q_results_record_the_translation_method_and_q_zero_results_do_not
     assert TRANSLATION_METHOD_VERSION_KEY not in page._field_results_to_state(
         "commensurate", [plain], site_source="custom"
     )
-    assert TRANSLATION_METHOD_VERSION_KEY not in page._field_results_to_state(
-        "distribution", [payload], site_source="custom"
-    )
+    # Every distribution records it: a short-period component's phases are sampled since then.
+    distribution = page._field_results_to_state("distribution", [payload], site_source="custom")
+    assert distribution[TRANSLATION_METHOD_VERSION_KEY] == TRANSLATION_METHOD_VERSION
     page.close()
+
+
+def test_a_stored_distribution_reads_as_older_when_its_model_has_a_short_period(
+    qapp, tmp_path, monkeypatch
+) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "frozen.mufinder", "Frozen")
+    service.add_structure(document, feo_host_structure())
+    distribution = {
+        "kind": "distribution",
+        "results": [
+            {
+                "site_label": "site 1",
+                "muon_position": [0.1, 0.2, 0.3],
+                "fields_T": [[0.0, 0.0, 1.0], [0.0, 0.0, 3.0]],
+                "histogram_centres_T": [1.0, 3.0],
+                "histogram_counts": [4.0, 2.0],
+            }
+        ],
+        "site_source": "custom",
+        CALCULATION_VERSION_KEY: CALCULATION_METHOD_VERSION,
+    }
+    older = {}
+    for name, model in (
+        ("helix", collinear_waves_model((0.22, 0.0, 0.0))),
+        ("beside a quarter", collinear_waves_model((0.22, 0.0, 0.0), (0.25, 0.0, 0.0))),
+    ):
+        page = MagneticFieldWidget()
+        page.set_document(document)
+        page.set_model(model)
+        page.set_form_state({"magnetic_field_results": distribution})
+        older[name] = not page._older_method_note.isHidden()
+        page.close()
+
+    assert older == {"helix": False, "beside a quarter": True}
 
 
 def test_a_voxel_grid_result_stays_older_through_a_save_until_it_is_calculated(

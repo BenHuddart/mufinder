@@ -42,11 +42,14 @@ without a plate or before the key existed, so
 :func:`field_result_uses_older_method` decides from the sample in the owner's
 saved form (:func:`sample_predates_plate_method`).
 
-A commensurate result of an order with ``q != 0`` also records
+A commensurate result of an order with ``q != 0``, and every distribution, also records
 :data:`TRANSLATION_METHOD_VERSION` in ``data["translation_method_version"]``.
-A record without the key decides from its own rows: one that gave only ``T = 0``
-is older (:func:`lists_only_one_translation`), while a ``q = 0`` result, a distribution and the
-translated rows of an approximant had nothing to change.
+A commensurate record without the key decides from its own rows: one that gave only ``T = 0``
+is older (:func:`lists_only_one_translation`), while a ``q = 0`` result and the translated rows
+of an approximant had nothing to change. A distribution without the key decides from the
+magnetic structure its owner keeps, which calculating with a new one replaces: one with a
+``q != 0`` term of period up to its ``commensurate_max_period`` held that term at ``T = 0`` and
+is older (:func:`distribution_held_a_short_period_at_zero`).
 
 A muon-polarisation record (:data:`MUON_POLARISATION_RESULT_TYPE`) holds a
 :class:`~mufinder.science.polarisation.PolarisationResult` in
@@ -66,6 +69,12 @@ from mufinder.domain.enums import WorkflowStage
 from mufinder.domain.models import ProvenanceRecord, Result
 from mufinder.persistence.codec import to_jsonable
 from mufinder.science.demagnetization import FOURIER_PADDING
+from mufinder.science.magnetic_fields import (
+    MAX_LISTED_TRANSLATION_PERIOD,
+    MagneticFieldError,
+    has_short_period_modulation,
+)
+from mufinder.science.magnetic_structure import MagneticStructureError, MagneticStructureModel
 from mufinder.science.polarisation import PolarisationError, PolarisationResult
 from mufinder.services.project_document import ProjectDocument
 from mufinder.services.study_findings import (
@@ -131,10 +140,12 @@ PLATE_METHOD_VERSION_KEY = "plate_method_version"
 _UNRECORDED_PLATE_METHOD_VERSION = 1
 #: What a simulation keeps for a source whose fields used no plate, so it never reads as older.
 PLATE_METHOD_NOT_USED = 0
-#: The method behind the translations a commensurate ``q != 0`` result lists. Add 1 whenever a
-#: change means such an order gives different rows. A field result that it applies to records it;
-#: ``q = 0`` results and distributions are never marked by it. Version 1 is every such result
-#: from before the version was recorded, which gave the field at ``T = 0`` alone.
+#: The method behind the translations of a ``q != 0`` order: the rows a commensurate result lists,
+#: and the phases a distribution samples for a component of period up to 12. Add 1 whenever a
+#: change means such an order gives different rows or samples. A commensurate result with
+#: ``q != 0`` and every distribution record it; ``q = 0`` results are never marked by it.
+#: Version 1 is every such result from before the version was recorded, which took a
+#: commensurate component at ``T = 0`` alone.
 TRANSLATION_METHOD_VERSION = 2
 #: Where a stored field result keeps the :data:`TRANSLATION_METHOD_VERSION` it was calculated with.
 TRANSLATION_METHOD_VERSION_KEY = "translation_method_version"
@@ -200,10 +211,14 @@ def sample_predates_plate_method(form_state: object) -> bool:
 
 
 def translation_method_applies(result: Mapping[str, Any]) -> bool:
-    """Return whether a dipolar-field result is a commensurate one with a component at ``q != 0``."""
+    """Return whether a dipolar-field result is a distribution or a commensurate one at ``q != 0``."""
 
     rows = result.get("results")
-    if result.get("kind") != "commensurate" or not isinstance(rows, list):
+    if not isinstance(rows, list):
+        return False
+    if result.get("kind") == "distribution":
+        return True
+    if result.get("kind") != "commensurate":
         return False
     for row in rows:
         parameters = row.get("calculation_parameters") if isinstance(row, Mapping) else None
@@ -220,8 +235,10 @@ def lists_only_one_translation(result: Mapping[str, Any]) -> bool:
     it, is not one.
     """
 
-    return translation_method_applies(result) and not any(
-        _lies_beyond_home_cell(row) for row in result["results"]
+    return (
+        result.get("kind") == "commensurate"
+        and translation_method_applies(result)
+        and not any(_lies_beyond_home_cell(row) for row in result["results"])
     )
 
 
@@ -232,10 +249,47 @@ def _lies_beyond_home_cell(row: object) -> bool:
     )
 
 
-def _predates_translation_method(result: Mapping[str, Any]) -> bool:
+def distribution_held_a_short_period_at_zero(
+    result: Mapping[str, Any], magnetic_structure: object
+) -> bool:
+    """Return whether a distribution saved without the key took a short-period term at ``T = 0`` alone.
+
+    That is what a distribution did for a ``q != 0`` term of period up to
+    ``commensurate_max_period`` before :data:`TRANSLATION_METHOD_VERSION` was recorded.
+    ``magnetic_structure`` is the model its owner keeps, as JSON or a model; it is the one the
+    distribution was calculated from, since giving the owner another model clears its results.
+    ``None`` or a model that does not read counts as not older.
+    """
+
+    rows = result.get("results")
+    if result.get("kind") != "distribution" or not isinstance(rows, list) or not rows:
+        return False
+    try:
+        model = (
+            magnetic_structure
+            if isinstance(magnetic_structure, MagneticStructureModel)
+            else MagneticStructureModel.from_json(magnetic_structure)
+        )
+        first = rows[0] if isinstance(rows[0], Mapping) else {}
+        parameters = first.get("calculation_parameters")
+        parameters = parameters if isinstance(parameters, Mapping) else {}
+        return has_short_period_modulation(
+            model,
+            tolerance=float(parameters.get("commensurate_tolerance", 1e-8)),
+            max_period=int(
+                parameters.get("commensurate_max_period", MAX_LISTED_TRANSLATION_PERIOD)
+            ),
+        )
+    except (MagneticFieldError, MagneticStructureError, TypeError, ValueError):
+        return False
+
+
+def _predates_translation_method(result: Mapping[str, Any], magnetic_structure: object) -> bool:
     version = result.get(TRANSLATION_METHOD_VERSION_KEY)
     if version is None:
-        return lists_only_one_translation(result)
+        return lists_only_one_translation(result) or distribution_held_a_short_period_at_zero(
+            result, magnetic_structure
+        )
     if version == TRANSLATION_METHOD_NOT_USED and not isinstance(version, bool):
         return False
     return (
@@ -245,16 +299,20 @@ def _predates_translation_method(result: Mapping[str, Any]) -> bool:
     )
 
 
-def field_result_uses_older_method(result: object, form_state: object = None) -> bool:
+def field_result_uses_older_method(
+    result: object, form_state: object = None, magnetic_structure: object = None
+) -> bool:
     """Return whether a stored dipolar-field result predates the method that now applies to it.
 
     ``form_state`` is the saved form of the result's owner, or just its ``demag_shape`` and
     ``demag_sample``. It decides for a result that records no plate method version.
+    ``magnetic_structure`` is the owner's model (:func:`magnetic_field_owner_model`); it decides
+    for a distribution that records no translation method version.
     """
 
     if not isinstance(result, Mapping) or not result:
         return False
-    if uses_older_method(result) or _predates_translation_method(result):
+    if uses_older_method(result) or _predates_translation_method(result, magnetic_structure):
         return True
     version = result.get(PLATE_METHOD_VERSION_KEY)
     if version is None:
@@ -280,6 +338,18 @@ def magnetic_field_owner_form(document: ProjectDocument, owner: str) -> Mapping[
     return None
 
 
+def magnetic_field_owner_model(document: ProjectDocument, owner: str) -> object:
+    """Return the magnetic structure JSON the page or workspace ``owner`` keeps; ``None`` once it is gone."""
+
+    if owner == MAGNETIC_FIELD_PAGE_OWNER:
+        return document.project.magnetic_structure
+    workspaces = document.ui_state.get("magnetic_field_workspaces")
+    for workspace in workspaces if isinstance(workspaces, list) else ():
+        if isinstance(workspace, Mapping) and str(workspace.get("id", "")).strip() == owner:
+            return workspace.get("magnetic_structure")
+    return None
+
+
 def recorded_plate_method_version(data: Mapping[str, Any], form_state: object) -> object:
     """Return the plate method version of a field record, as a simulation of it should keep it."""
 
@@ -291,13 +361,20 @@ def recorded_plate_method_version(data: Mapping[str, Any], form_state: object) -
     return PLATE_METHOD_NOT_USED
 
 
-def recorded_translation_method_version(data: Mapping[str, Any]) -> object:
-    """Return the translation method version of a field record, as a simulation should keep it."""
+def recorded_translation_method_version(
+    data: Mapping[str, Any], magnetic_structure: object = None
+) -> object:
+    """Return the translation method version of a field record, as a simulation should keep it.
+
+    ``magnetic_structure`` is the record owner's model, which decides for a distribution.
+    """
 
     version = data.get(TRANSLATION_METHOD_VERSION_KEY)
     if version is not None:
         return version
-    if lists_only_one_translation(data):
+    if lists_only_one_translation(data) or distribution_held_a_short_period_at_zero(
+        data, magnetic_structure
+    ):
         return _UNRECORDED_TRANSLATION_METHOD_VERSION
     return TRANSLATION_METHOD_NOT_USED
 

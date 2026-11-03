@@ -96,9 +96,10 @@ A typical pass through the page is:
 
 ``Calculate Dipolar Field`` sends the selected magnetic structure and muon site
 to the magnetic-field calculation helpers. Commensurate magnetic structures,
-those whose wavevectors have a period of 12 or less, produce finite vector field
-results. Incommensurate structures, including a fraction of longer period such as
-``q = (0.22, 0, 0)``, produce sampled field-distribution summaries, or the finite field list of their commensurate
+those whose wavevectors have a period of 12 or less and give at most 512 sets of
+phases, produce finite vector field results. Incommensurate structures, including a
+fraction of longer period such as ``q = (0.22, 0, 0)`` and more sets of phases than
+that, produce sampled field-distribution summaries, or the finite field list of their commensurate
 approximant when that option is on. ``muesr``/``muLFC`` environment errors are
 reported in the page status area rather than during application startup.
 
@@ -1615,8 +1616,11 @@ nuclear relaxation results do not use the sample.
 The list of translations of an order with ``q ≠ 0`` has its own version too. A
 commensurate result for such an order that lists only the field at
 :math:`\mathbf{T} = 0` is older, and so is the single row of a wavevector of period
-13 or more, which MuFinder samples as a distribution. A result at ``q = 0``, a sampled distribution
-and the list of an approximant are not marked by it.
+13 or more, which MuFinder samples as a distribution. A distribution is older when its
+structure has a component at ``q ≠ 0`` of period 12 or less, which it held at
+:math:`\mathbf{T} = 0`; the page reads that from the structure it keeps, since choosing
+another structure clears the results. A result at ``q = 0``, any other distribution and
+the list of an approximant are not marked by it.
 MuFinder never rewrites or recalculates them on its own, so they stay exactly as
 calculated, and saving, reopening or saving a workspace keeps them and the line.
 The calculation's ``Calculate`` button replaces them with new numbers and clears
@@ -1648,8 +1652,8 @@ commensurate entry), its ``convergence`` checks, ``terms`` (each of
 ``mean_T`` and ``rms_T``), ``total_rms_T``, and the constant ``applied_T`` and
 ``demag_T`` vectors; the finite field
 list of a commensurate approximant is stored as ``commensurate`` entries, one per
-translation as for any commensurate result, and such a result with ``q ≠ 0`` records
-``translation_method_version``. A
+translation as for any commensurate result. Such a result with ``q ≠ 0``, and every
+distribution, records ``translation_method_version``. A
 ``magnetic_dipolar_tensor`` record holds ``results`` and a
 ``nuclear_relaxation`` record holds ``result``. The form state saves the
 measured magnetisation as ``use_measured_magnetization`` and

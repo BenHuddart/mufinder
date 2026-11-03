@@ -55,6 +55,7 @@ from mufinder.science.magnetic_fields import (
     find_commensurate_approximant,
     find_equivalent_muon_sites,
     regenerate_phase_samples,
+    has_short_period_modulation,
     is_commensurate_propagation_vector,
 )
 from mufinder.science.magnetic_structure import (
@@ -209,6 +210,7 @@ __all__ = [
     "find_commensurate_approximant",
     "find_equivalent_muon_sites",
     "regenerate_phase_samples",
+    "has_short_period_modulation",
     "is_commensurate_propagation_vector",
     "AtomSelector",
     "ComplexVector",

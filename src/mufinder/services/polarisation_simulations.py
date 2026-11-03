@@ -38,8 +38,9 @@ A source's ``plate_method_version`` does the same for a plate from a photo; a
 simulation from before it existed decides from the sample in the source's saved
 form, so only one that used such a plate is marked. A source's
 ``translation_method_version`` does the same for the translations of a ``q != 0`` order; a
-simulation from before it existed decides from the field record it ran from, and if that has
-been replaced the simulation is stale, which says it needs running again.
+simulation from before it existed decides from the field record it ran from, with its owner's
+magnetic structure for a distribution, and if that record has been replaced the simulation is
+stale, which says it needs running again.
 A source with no calculation version recorded counts as older.
 """
 
@@ -83,6 +84,7 @@ from mufinder.services.magnetic_field_results import (
     TRANSLATION_METHOD_VERSION_KEY,
     field_result_uses_older_method,
     magnetic_field_owner_form,
+    magnetic_field_owner_model,
     recorded_plate_method_version,
     recorded_translation_method_version,
 )
@@ -356,7 +358,9 @@ def prepare_polarisation_simulation(
                 plate_method_version=recorded_plate_method_version(
                     data, magnetic_field_owner_form(document, source.owner)
                 ),
-                translation_method_version=recorded_translation_method_version(data),
+                translation_method_version=recorded_translation_method_version(
+                    data, magnetic_field_owner_model(document, source.owner)
+                ),
             )
         )
         field_results.append(tuple(_field_results(data)))
@@ -583,7 +587,9 @@ def _source_translation_method_version(
     record = None if document is None else document.results.get(source.record_id)
     if record is None or not isinstance(record.data, Mapping):
         return TRANSLATION_METHOD_NOT_USED
-    return recorded_translation_method_version(record.data)
+    return recorded_translation_method_version(
+        record.data, magnetic_field_owner_model(document, source.owner)
+    )
 
 
 def _field_source(document: ProjectDocument, owner: str, title: str) -> FieldSource | None:

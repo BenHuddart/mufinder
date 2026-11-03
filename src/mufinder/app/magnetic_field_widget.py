@@ -1594,7 +1594,9 @@ class MagneticFieldWidget(QWidget):
     def _results_use_older_method(self) -> bool:
         """Return whether the shown field results predate the current calculation method."""
 
-        return field_result_uses_older_method(self._field_results_state, self._loaded_demag_form)
+        return field_result_uses_older_method(
+            self._field_results_state, self._loaded_demag_form, self._model
+        )
 
     def _refresh_field_breakdown(self) -> None:
         """List the field terms that sum to the selected result row.

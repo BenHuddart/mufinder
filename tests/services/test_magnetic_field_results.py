@@ -41,8 +41,11 @@ from mufinder.services.magnetic_field_results import (
     recorded_translation_method_version,
     field_result_uses_older_method,
     magnetic_field_owner_form,
+    magnetic_field_owner_model,
+    translation_method_applies,
 )
 from mufinder.services.project_service import ProjectService
+from tests.support.magnetic_fields import collinear_waves_model
 
 
 _FIELD = {
@@ -699,3 +702,61 @@ def test_a_translation_version_is_stored_and_comes_back(tmp_path: Path) -> None:
     ]
     assert restored[TRANSLATION_METHOD_VERSION_KEY] == TRANSLATION_METHOD_VERSION
     assert not field_result_uses_older_method(restored)
+
+
+def _model_json(*q_vectors: tuple[float, float, float]) -> dict[str, object]:
+    return collinear_waves_model(*q_vectors).to_json()
+
+
+@pytest.mark.parametrize(
+    ("model", "older"),
+    [
+        # Before the key, a short period beside an incommensurate helix stayed at T = 0.
+        (_model_json((0.22, 0.0, 0.0), (0.25, 0.0, 0.0)), True),
+        (_model_json((0.22, 0.0, 0.0), (0.0, 0.0, 0.5)), True),
+        # A helix alone, or with a uniform part, sampled every phase already.
+        (_model_json((0.22, 0.0, 0.0)), False),
+        (_model_json((0.22, 0.0, 0.0), (1.0, 0.0, 0.0)), False),
+        # No model to read: not marked.
+        (None, False),
+        ({"components": "malformed"}, False),
+    ],
+    ids=["quarter", "half", "helix", "uniform", "no-model", "malformed"],
+)
+def test_a_distribution_with_no_translation_version_is_decided_by_its_owners_model(
+    model, older
+) -> None:
+    result = _current_field_result("distribution", _field_rows(_HOME))
+
+    assert field_result_uses_older_method(result, None, model) is older
+    assert recorded_translation_method_version(result, model) == (
+        1 if older else TRANSLATION_METHOD_NOT_USED
+    )
+
+
+def test_a_distribution_records_the_translation_version_and_keeps_its_status() -> None:
+    model = _model_json((0.22, 0.0, 0.0), (0.25, 0.0, 0.0))
+    result = _current_field_result(
+        "distribution",
+        _field_rows(_HOME),
+        **{TRANSLATION_METHOD_VERSION_KEY: TRANSLATION_METHOD_VERSION},
+    )
+
+    assert translation_method_applies(result)
+    assert not field_result_uses_older_method(result, None, model)
+    assert recorded_translation_method_version(result, model) == TRANSLATION_METHOD_VERSION
+
+
+def test_the_owner_model_is_the_page_structure_or_the_workspaces_own(tmp_path: Path) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "owners.mufinder", "Owners")
+    page = _model_json((0.25, 0.0, 0.0))
+    workspace = _model_json((0.22, 0.0, 0.0))
+    document.project.magnetic_structure = page
+    document.ui_state["magnetic_field_workspaces"] = [
+        {"id": "workspace-1", "magnetic_structure": workspace, "form": {}}
+    ]
+
+    assert magnetic_field_owner_model(document, MAGNETIC_FIELD_PAGE_OWNER) == page
+    assert magnetic_field_owner_model(document, "workspace-1") == workspace
+    assert magnetic_field_owner_model(document, "gone") is None

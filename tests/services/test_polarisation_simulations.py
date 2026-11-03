@@ -51,6 +51,7 @@ from mufinder.services.project_service import ProjectService
 from mufinder.services.project_summary import MAGNETIC_FIELD_WORKSPACES_KEY
 from tests.support.controllers import muon_host_document
 from tests.support.field_results import field_result
+from tests.support.magnetic_fields import collinear_waves_model
 
 ZERO = (0.0, 0.0, 0.0)
 SETTINGS = PolarisationSettings(end_time_us=4.0, time_points=401)
@@ -241,6 +242,35 @@ def test_a_simulation_saved_before_the_translation_method_reads_the_record_it_ra
     _store_fields(document, MAGNETIC_FIELD_PAGE_OWNER, _current_fields())
     assert older_method_sources(record, document) == []
     assert stale_sources(document, record) == list(record.sources)
+
+
+def test_a_distribution_from_before_the_translation_method_reads_its_owners_model(
+    document,
+) -> None:
+    distribution = MagneticFieldDistributionResult(
+        site_label="helix",
+        muon_position=(0.5, 0.5, 0.5),
+        fields_T=np.array([[0.0, 0.0, 0.01], [0.0, 0.01, 0.0]]),
+        histogram_centres_T=np.array([0.01]),
+        histogram_counts=np.array([2.0]),
+        applied_T=ZERO,
+    )
+    keyless = {"kind": "distribution", "results": [distribution.to_json()]}
+    _store_fields(document, MAGNETIC_FIELD_PAGE_OWNER, {**_current_fields(), **keyless})
+
+    # A helix alone sampled every phase before the key existed.
+    document.project.magnetic_structure = collinear_waves_model((0.22, 0.0, 0.0)).to_json()
+    helix = _simulate_page(document)
+    assert helix.sources[0].translation_method_version == TRANSLATION_METHOD_NOT_USED
+    assert older_method_sources(helix, document) == []
+
+    # Beside a period 4 wave, that wave stayed at T = 0.
+    document.project.magnetic_structure = collinear_waves_model(
+        (0.22, 0.0, 0.0), (0.25, 0.0, 0.0)
+    ).to_json()
+    frozen = _simulate_page(document)
+    assert frozen.sources[0].translation_method_version == 1
+    assert older_method_sources(frozen, document) == list(frozen.sources)
 
 
 def test_removed_sources_are_those_with_no_fields_left(document) -> None:

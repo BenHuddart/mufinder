@@ -372,3 +372,37 @@ def test_the_period_of_q_chooses_between_a_list_and_a_distribution(
     assert calculation.kind == kind
     assert len(calculation.results) == rows
     assert calculation.status.startswith(status)
+
+
+def test_more_phase_sets_than_a_list_holds_are_a_distribution_over_every_set(real_muesr) -> None:
+    # Three helices of period 9, along a, b and c: 729 sets of phases, beyond the 512 listed.
+    q = 1.0 / 9.0
+    components = tuple(
+        build_magnetic_preset_component(
+            "helix",
+            lattice_vectors=_fe().lattice_vectors,
+            q_rlu=tuple(q if axis == index else 0.0 for axis in range(3)),
+            q_coeff=tuple(1.0 if axis == index else 0.0 for axis in range(3)),
+            moment=1.0,
+            reference_axis="abc"[(index + 1) % 3],
+            selector=AtomSelector.all(),
+        )
+        for index in range(3)
+    )
+    model = MagneticStructureModel(
+        q_basis_rlu=((q, 0.0, 0.0), (0.0, q, 0.0), (0.0, 0.0, q)), components=components
+    )
+
+    calculation = run_magnetic_field_calculation(
+        None,
+        _fe(),
+        model,
+        _site((0.1, 0.2, 0.3)),
+        MagneticFieldOptions(supercell=(8, 8, 8)),
+        use_approximants=False,
+    )
+
+    assert calculation.kind == DISTRIBUTION_RESULTS
+    (distribution,) = calculation.results
+    assert np.asarray(distribution.fields_T).shape == (729, 3)
+    assert distribution.calculation_parameters["resolved_phase_sampling"] == "grid"

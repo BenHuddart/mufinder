@@ -81,3 +81,27 @@ def select_combo_data(combo, data) -> None:
     index = combo.findData(data)
     assert index >= 0
     combo.setCurrentIndex(index)
+
+
+def collinear_waves_model(*q_vectors: tuple[float, float, float]) -> MagneticStructureModel:
+    """One collinear z component on every atom per wavevector, each on its own q-basis row."""
+
+    rows = [tuple(q) for q in q_vectors] + [(0.0, 0.0, 0.0)] * (3 - len(q_vectors))
+    return MagneticStructureModel(
+        q_basis_rlu=tuple(rows),
+        components=tuple(
+            MagneticComponent(
+                component_id=f"wave {index + 1}",
+                label=f"Wave {index + 1}",
+                kind="custom",
+                selector=AtomSelector.all(),
+                terms=(
+                    FourierTerm(
+                        tuple(1.0 if axis == index else 0.0 for axis in range(3)),
+                        ComplexVector.from_vector([0.0, 0.0, 1.0]),
+                    ),
+                ),
+            )
+            for index in range(len(q_vectors))
+        ),
+    )
