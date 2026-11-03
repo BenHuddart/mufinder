@@ -12,6 +12,7 @@ Fixtures are hand-authored: see ``docs/relaxation_import.rst``.
 from __future__ import annotations
 
 from pathlib import Path
+import shutil
 from uuid import uuid4
 
 import pytest
@@ -252,6 +253,52 @@ class TestRemoval:
 
         assert result.removed == 2
         assert all(path.is_dir() for path in plan.directories)
+
+    def test_the_outcome_and_record_name_only_the_folders_that_went(
+        self, imported, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        document, outcome = imported
+        plan = self._plan(document, outcome)
+        stuck, gone = plan.directories
+        real_rmtree = shutil.rmtree
+
+        def _rmtree(path, *args, **kwargs):
+            if Path(path) == stuck:
+                raise PermissionError(13, "denied")
+            real_rmtree(path, *args, **kwargs)
+
+        monkeypatch.setattr("mufinder.services.relaxation_import_removal.shutil.rmtree", _rmtree)
+
+        result = remove_imported_relaxations(document, plan)
+
+        assert result.deleted_directories == (gone,)
+        assert result.provenance.parameters["directories"] == [str(gone)]
+        assert result.provenance.parameters["undeleted_directories"] == [str(stuck)]
+
+    def test_a_target_that_stopped_being_imported_keeps_its_folder(self, imported) -> None:
+        document, outcome = imported
+        plan = self._plan(document, outcome)
+        stayed = outcome.imported[0]
+        document.jobs[stayed.job_id].tags = []
+        tree = sorted(stayed.job_directory.rglob("*"))
+
+        result = remove_imported_relaxations(document, plan)
+
+        assert result.removed == 1
+        assert stayed.job_id in document.jobs
+        assert sorted(stayed.job_directory.rglob("*")) == tree
+        assert not outcome.imported[1].job_directory.exists()
+        assert result.deleted_directories == (outcome.imported[1].job_directory,)
+
+    def test_keeping_the_files_records_no_folder_as_deleted(self, imported) -> None:
+        document, outcome = imported
+
+        result = remove_imported_relaxations(
+            document, self._plan(document, outcome), delete_files=False
+        )
+
+        assert result.deleted_directories == ()
+        assert result.provenance.parameters["directories"] == []
 
     def test_a_blocked_plan_removes_nothing(self, imported) -> None:
         """The guard is on the removal itself, not only on the caller, so a

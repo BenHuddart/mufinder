@@ -330,7 +330,8 @@ Outputs and interpretation
    :alt: The Energy Barriers page with the completed GdRu2Si2 site 1 to site 2
          path selected: a forward barrier of 495 meV, a reverse barrier of
          213 meV and a Delta E of +283 meV in the table, and below it the
-         profile and the transition-state image 23 of 42 in the viewer.
+         reaction profile against distance along the band, and the
+         transition-state image 23 of 42 in the viewer.
 
    The real CASTEP band from GdRu₂Si₂ site 1 to site 2 (Huddart *et al.*
    2025), with its transition state in the viewer.
@@ -350,13 +351,26 @@ stored per-image energies; a result without stored per-image energies shows only
 eligible, keeps a row of its own, named by its sites or its job.
 
 Selecting a finished row shows its band under ``Selected path``, headed by the hop,
-its length and the number of images. On the left is the reaction-coordinate profile
-with labelled axes and a dashed annotation marking the forward barrier at the peak
-image. Energies are plotted relative to the initial image (``E − E₀``) so the axis
-stays readable despite the large absolute CASTEP energies. The plot is the primary
-scrub surface: click or drag to select the nearest image, use the Left/Right arrow
-keys to step, or use the ``◀ Image n / N ▶`` stepper under the plot. The readout
-beside the heading gives the selected image's reaction coordinate and energy. The
+its length and the number of images. On the left is the reaction profile: ``E − E₀``
+in meV against the distance along the band in Å. Energies are relative to the initial
+image, so the axis stays readable despite the large absolute CASTEP energies. A
+diamond marks the transition state, the highest image, with a dashed guide up from the
+initial energy and the forward barrier above it, which is the row's ``Forward``.
+A band that never rises above its initial image has no such mark.
+
+The distance along the band is cumulative. Each step between consecutive images is the
+Euclidean norm, over all atoms together, of their minimum-image displacements, so it
+includes the relaxation of the host around the muon. This is the length CASTEP
+normalises its reaction coordinate by: the distance divided by the band's total is that
+coordinate. It is longer than the hop's straight-line ``Length`` and than the path of
+the muon alone. In the GdRu₂Si₂ band below the band is 2.02 Å long, the muon travels
+1.88 Å along it and the hop is 1.72 Å.
+
+The plot is the primary scrub surface: click or drag to select the nearest image,
+click the plot and use the Left/Right arrow keys to step, or use the
+``◀ Image n / N ▶`` stepper under the plot. A larger circle marks the selected image. The
+readout beside the heading gives its distance along the band and energy. The button in
+the plot's corner opens it in its own window with zoom, pan and save tools. The
 structure viewer follows the selected image and preserves the current camera
 orientation and zoom while scrubbing along the band; the view only resets when
 another path is selected. CASTEP writes the ``.ts`` file in atomic units (Hartree,

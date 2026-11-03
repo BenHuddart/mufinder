@@ -12,18 +12,19 @@ from PySide6.QtCore import QSignalBlocker, Qt, QTimer
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QAbstractScrollArea,
     QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
     QDoubleSpinBox,
-    QGridLayout,
     QGroupBox,
     QHeaderView,
     QHBoxLayout,
     QLabel,
     QPushButton,
     QSizePolicy,
+    QSpinBox,
     QSplitter,
     QTableWidget,
     QTableWidgetItem,
@@ -37,22 +38,35 @@ from mufinder.app.atomic_structure_viewer import AtomicStructureViewer
 from mufinder.app.math_label import MathLabel
 from mufinder.app.screen_utils import clamped_size
 from mufinder.app.theme import (
+    SPACING,
     STRUCTURE_OVERLAY_COLOURS,
+    card_margins,
     current_palette,
+    page_margins,
     reading_scroll_area,
     style_hint_text,
     style_section_title,
     style_warning_text,
 )
 from mufinder.app.viewer_dialog import StructureViewerDialog
-from mufinder.app.workflow_table_utils import create_workflow_table
+from mufinder.app.workflow_table_utils import (
+    create_workflow_table,
+    fill_workflow_table,
+    format_three_figures,
+    selected_table_rows,
+    set_header_tooltips,
+    set_workflow_table_item,
+    table_natural_width,
+)
 from mufinder.domain.models import Structure
 from mufinder.science.quantum_phonons import (
+    MuonNeighbour,
     PhononCalculation,
     correlation_matrix,
     covariance_matrix,
     muon_mass_warning,
     muon_mode_participations,
+    muon_nearest_atoms,
     parse_phonon_path,
     real_mode_displacements,
     scaled_mode_displacements,
@@ -60,6 +74,10 @@ from mufinder.science.quantum_phonons import (
     structure_from_phonon_calculation,
     w2_entanglement_witness,
 )
+
+
+#: How many of the muon's nearest atoms ``Muon Coupling`` lists at first.
+NEAREST_ATOMS_SHOWN = 12
 
 
 @dataclass(frozen=True, slots=True)
@@ -293,94 +311,129 @@ class QuantumPhononAnalysisDialog(StructureViewerDialog):
 
         layout.addLayout(
             _section_header(
-                "Phonon covariance and correlation",
-                "Use this view to inspect how zero-point motion couples the selected atom pair.",
+                "Muon's nearest atoms",
+                "How strongly each nearby atom's zero-point motion follows the muon's. "
+                "Select an atom to see its tensors.",
                 self._show_correlation_help,
             )
         )
 
         controls = QHBoxLayout()
-        controls.addWidget(QLabel("Atom A"))
-        self._atom_a_combo = QComboBox()
-        controls.addWidget(self._atom_a_combo)
-        controls.addWidget(QLabel("Atom B"))
-        self._atom_b_combo = QComboBox()
-        controls.addWidget(self._atom_b_combo)
-        self._calculate_button = QPushButton("Calculate")
-        self._calculate_button.clicked.connect(self._calculate_pair_matrices)
-        controls.addWidget(self._calculate_button)
+        controls.addWidget(QLabel(f"Muon: atom {self._muon_atom_index + 1}"))
+        controls.addSpacing(SPACING.md)
+        count_label = QLabel("Atoms shown")
+        controls.addWidget(count_label)
+        other_atoms = len(self._calculation.atoms) - 1
+        self._nearest_count_spin = QSpinBox()
+        self._nearest_count_spin.setRange(1, max(1, other_atoms))
+        self._nearest_count_spin.setValue(min(NEAREST_ATOMS_SHOWN, max(1, other_atoms)))
+        self._nearest_count_spin.setAccessibleName("Atoms shown")
+        # A half-typed count must not shrink the list and lose the selected atom.
+        self._nearest_count_spin.setKeyboardTracking(False)
+        self._nearest_count_spin.setToolTip("How many of the muon's nearest atoms to list.")
+        count_label.setBuddy(self._nearest_count_spin)
+        controls.addWidget(self._nearest_count_spin)
         controls.addStretch(1)
+        self._other_pair_button = QPushButton("Other pair…")
+        self._other_pair_button.setToolTip("Show the tensors for any two atoms.")
+        self._other_pair_button.clicked.connect(self._open_other_pair)
+        controls.addWidget(self._other_pair_button)
         layout.addLayout(controls)
 
-        for atom in self._calculation.atoms:
-            label = f"{atom.index}: {atom.species}"
-            self._atom_a_combo.addItem(label, atom.index)
-            self._atom_b_combo.addItem(label, atom.index)
-        muon_index = self._calculation.atom_index_for_species("H:mu")
-        self._atom_a_combo.setCurrentIndex(max(0, muon_index - 1))
-        self._atom_b_combo.setCurrentIndex(
-            0 if muon_index != 1 else min(1, len(self._calculation.atoms) - 1)
+        content = QHBoxLayout()
+        content.setSpacing(SPACING.sm)
+        self._neighbour_table = _quantum_analysis_table(
+            ("Atom", "Species", "Distance (Å)", "|c|"), accessible_name="Muon's nearest atoms"
         )
-
-        summary = QHBoxLayout()
-        self._w2_label = QLabel("w2")
-        style_section_title(self._w2_label)
-        summary.addWidget(self._w2_label)
-        summary.addStretch(1)
-        layout.addLayout(summary)
-
-        matrices = QGridLayout()
-        matrices.setContentsMargins(0, 0, 0, 0)
-        matrices.setHorizontalSpacing(8)
-        matrices.setVerticalSpacing(8)
-        matrices.setColumnStretch(0, 1)
-        matrices.setColumnStretch(1, 1)
-        covariance_box = QGroupBox("Covariance")
-        covariance_layout = QVBoxLayout(covariance_box)
-        covariance_layout.setContentsMargins(12, 12, 12, 12)
-        covariance_layout.setSpacing(10)
-        covariance_layout.addStretch(1)
-        covariance_layout.addWidget(
-            MathLabel(r"C_{ab}\;(\AA^2)", display_mode=False, parent=covariance_box),
-            0,
-            Qt.AlignmentFlag.AlignHCenter,
+        self._neighbour_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self._neighbour_table.horizontalHeader().setSectionResizeMode(
+            QHeaderView.ResizeMode.Stretch
         )
-        covariance_layout.addSpacing(10)
-        self._covariance_table = _matrix_table()
-        covariance_layout.addWidget(self._covariance_table, 0, Qt.AlignmentFlag.AlignHCenter)
-        covariance_layout.addStretch(1)
-        matrices.addWidget(covariance_box, 0, 0)
-
-        correlation_box = QGroupBox("Correlation")
-        correlation_layout = QVBoxLayout(correlation_box)
-        correlation_layout.setContentsMargins(12, 12, 12, 12)
-        correlation_layout.setSpacing(10)
-        correlation_layout.addStretch(1)
-        correlation_layout.addWidget(
-            MathLabel(r"\rho_{ab}", display_mode=False, parent=correlation_box),
-            0,
-            Qt.AlignmentFlag.AlignHCenter,
+        set_header_tooltips(
+            self._neighbour_table,
+            {
+                "Atom": "The atom's one-based CASTEP index.",
+                "Distance (Å)": "Distance from the muon to the nearest periodic image of the atom.",
+                "|c|": "Correlation of the atom's zero-point motion with the muon's, from 0 to 1. "
+                "It equals −w2.",
+            },
         )
-        correlation_layout.addSpacing(10)
-        self._correlation_table = _matrix_table()
-        correlation_layout.addWidget(self._correlation_table, 0, Qt.AlignmentFlag.AlignHCenter)
-        correlation_layout.addStretch(1)
-        matrices.addWidget(correlation_box, 0, 1)
-        layout.addLayout(matrices, 1)
-        self._calculate_pair_matrices()
+        content.addWidget(self._neighbour_table, 1)
 
-    def _calculate_pair_matrices(self) -> None:
-        if not hasattr(self, "_atom_a_combo"):
+        tensor_column = QVBoxLayout()
+        tensor_column.setSpacing(SPACING.sm)
+        self._selected_atom_label = QLabel()
+        style_section_title(self._selected_atom_label)
+        tensor_column.addWidget(self._selected_atom_label)
+        self._neighbour_tensors = _CouplingTensors()
+        tensor_column.addWidget(self._neighbour_tensors)
+        tensor_column.addStretch(1)
+        content.addLayout(tensor_column)
+        layout.addLayout(content, 1)
+
+        self._neighbours: tuple[MuonNeighbour, ...] = ()
+        self._refresh_nearest_atoms()
+        self._neighbour_table.setMinimumWidth(table_natural_width(self._neighbour_table))
+        self._neighbour_table.itemSelectionChanged.connect(self._show_selected_neighbour)
+        self._nearest_count_spin.valueChanged.connect(lambda _value: self._refresh_nearest_atoms())
+
+    def _selected_neighbour(self) -> MuonNeighbour | None:
+        rows = selected_table_rows(self._neighbour_table)
+        return self._neighbours[rows[0]] if rows else None
+
+    def _refresh_nearest_atoms(self) -> None:
+        """List the nearest atoms, keeping the selected atom if it is still listed."""
+
+        previous = self._selected_neighbour()
+        self._neighbours = muon_nearest_atoms(self._calculation, self._nearest_count_spin.value())
+        with QSignalBlocker(self._neighbour_table):
+            fill_workflow_table(
+                self._neighbour_table,
+                [
+                    (
+                        str(neighbour.atom_index),
+                        neighbour.species,
+                        f"{neighbour.distance_ang:.3f}",
+                        format_three_figures(neighbour.correlation),
+                    )
+                    for neighbour in self._neighbours
+                ],
+            )
+            kept = next(
+                (
+                    row
+                    for row, neighbour in enumerate(self._neighbours)
+                    if previous is not None and neighbour.atom_index == previous.atom_index
+                ),
+                0,
+            )
+            self._neighbour_table.selectRow(kept)
+        selected = self._selected_neighbour()
+        if selected is None or selected != previous:
+            self._show_selected_neighbour()
+
+    def _show_selected_neighbour(self) -> None:
+        neighbour = self._selected_neighbour()
+        if neighbour is None:
+            self._selected_atom_label.setText("No atom selected")
+            self._neighbour_tensors.clear()
             return
-        atom_a = int(self._atom_a_combo.currentData())
-        atom_b = int(self._atom_b_combo.currentData())
-        cov = covariance_matrix(self._calculation, atom_a, atom_b)
-        corr = correlation_matrix(self._calculation, atom_a, atom_b)
-        _fill_matrix_table(self._covariance_table, cov)
-        _fill_matrix_table(self._correlation_table, corr)
-        self._w2_label.setText(
-            f"w₂ = {w2_entanglement_witness(self._calculation, atom_a, atom_b):.6g}"
+        self._selected_atom_label.setText(
+            f"Muon and atom {neighbour.atom_index}: {neighbour.species}"
         )
+        self._neighbour_tensors.show_pair(
+            self._calculation, self._muon_atom_index + 1, neighbour.atom_index
+        )
+
+    def _open_other_pair(self) -> None:
+        neighbour = self._selected_neighbour()
+        dialog = MuonCouplingPairDialog(
+            self._calculation,
+            atom_b_index=neighbour.atom_index if neighbour is not None else None,
+            parent=self,
+        )
+        dialog.exec()
+        dialog.deleteLater()
 
     def _show_correlation_help(self) -> None:
         dialog = QuantumAnalysisHelpDialog(_correlation_help_definition(), parent=self)
@@ -603,6 +656,94 @@ class QuantumPhononAnalysisDialog(StructureViewerDialog):
         super().shutdown_viewers()
 
 
+class _CouplingTensors(QWidget):
+    """The covariance and correlation tensors of one atom pair, sized to fit."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(SPACING.sm)
+        self.covariance_table = _matrix_table("Covariance tensor")
+        layout.addWidget(_tensor_box("Covariance", r"C_{ab}\;(\AA^2)", self.covariance_table))
+        self.correlation_table = _matrix_table("Correlation tensor")
+        layout.addWidget(_tensor_box("Correlation", r"\rho_{ab}", self.correlation_table))
+
+    def show_pair(self, calculation: PhononCalculation, atom_a: int, atom_b: int) -> None:
+        """Show the tensors of two one-based atoms."""
+
+        _fill_matrix_table(self.covariance_table, covariance_matrix(calculation, atom_a, atom_b))
+        _fill_matrix_table(self.correlation_table, correlation_matrix(calculation, atom_a, atom_b))
+
+    def clear(self) -> None:
+        """Show no pair."""
+
+        self.covariance_table.clearContents()
+        self.correlation_table.clearContents()
+
+
+class MuonCouplingPairDialog(QDialog):
+    """The coupling of any two atoms, chosen by their CASTEP index."""
+
+    def __init__(
+        self,
+        calculation: PhononCalculation,
+        *,
+        atom_b_index: int | None = None,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setObjectName("muonCouplingPairDialog")
+        self.setWindowTitle("Other pair")
+        self._calculation = calculation
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(page_margins())
+        layout.setSpacing(SPACING.sm)
+
+        controls = QHBoxLayout()
+        muon_index = calculation.atom_index_for_species("H:mu")
+        self._atom_a_combo = self._atom_combo("Atom A", muon_index, controls)
+        fallback = next((a.index for a in calculation.atoms if a.index != muon_index), muon_index)
+        self._atom_b_combo = self._atom_combo("Atom B", atom_b_index or fallback, controls)
+        controls.addStretch(1)
+        layout.addLayout(controls)
+
+        self._correlation_label = QLabel()
+        style_section_title(self._correlation_label)
+        layout.addWidget(self._correlation_label)
+        self._tensors = _CouplingTensors(self)
+        layout.addWidget(self._tensors)
+        layout.addStretch(1)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close, parent=self)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+        self._show_pair()
+        self._atom_a_combo.currentIndexChanged.connect(lambda _index: self._show_pair())
+        self._atom_b_combo.currentIndexChanged.connect(lambda _index: self._show_pair())
+
+    def _atom_combo(self, title: str, atom_index: int, row: QHBoxLayout) -> QComboBox:
+        label = QLabel(title)
+        combo = QComboBox()
+        combo.setAccessibleName(title)
+        label.setBuddy(combo)
+        for atom in self._calculation.atoms:
+            combo.addItem(f"{atom.index}: {atom.species}", atom.index)
+        combo.setCurrentIndex(combo.findData(atom_index))
+        row.addWidget(label)
+        row.addWidget(combo)
+        return combo
+
+    def _show_pair(self) -> None:
+        atom_a = int(self._atom_a_combo.currentData())
+        atom_b = int(self._atom_b_combo.currentData())
+        self._tensors.show_pair(self._calculation, atom_a, atom_b)
+        correlation = abs(w2_entanglement_witness(self._calculation, atom_a, atom_b))
+        self._correlation_label.setText(f"|c| = {format_three_figures(correlation)}")
+
+
 class QuantumAnalysisHelpDialog(QDialog):
     """Read-only documentation for one quantum-analysis panel."""
 
@@ -658,16 +799,18 @@ class QuantumAnalysisHelpDialog(QDialog):
         layout.addWidget(buttons)
 
 
-def _quantum_analysis_table(headers: tuple[str, ...]) -> QTableWidget:
-    """Shared chrome for this dialog's phonon-mode and matrix tables.
+def _quantum_analysis_table(headers: tuple[str, ...], *, accessible_name: str = "") -> QTableWidget:
+    """Shared chrome for this dialog's tables.
 
-    All columns size to content (not stretch-to-fill): these tables show
-    compact numeric columns that should not stretch to the dialog width.
+    Columns size to content (not stretch-to-fill) unless the caller says
+    otherwise: most of these tables show compact numeric columns that should
+    not stretch to the dialog width.
     """
     table = create_workflow_table(
         headers,
         default_resize_mode=QHeaderView.ResizeMode.ResizeToContents,
         stretch_last_section=False,
+        accessible_name=accessible_name,
     )
     table.horizontalHeader().setMinimumSectionSize(48)
     return table
@@ -741,9 +884,9 @@ def _correlation_help_definition() -> dict[str, object]:
     return {
         "title": "Muon coupling tensors",
         "paragraphs": (
-            "The covariance matrix estimates how zero-point displacements of two atoms are coupled by the parsed Gamma-point phonon modes. MuFinder reports the tensor for the selected one-based CASTEP atom indices.",
+            "The covariance matrix estimates how zero-point displacements of two atoms are coupled by the parsed Gamma-point phonon modes. MuFinder reports the tensor for the muon and the selected atom, or for any two atoms through 'Other pair…'.",
             "The correlation matrix normalizes each covariance component by the corresponding auto-covariances, so values are dimensionless and easier to compare across atom pairs.",
-            "The w2 witness is minus the magnitude of the pair-covariance trace, normalized by the geometric mean of the two auto-covariance traces. It lies between -1 and 0, with values closer to -1 indicating more strongly correlated zero-point motion, and is intended as a comparative diagnostic rather than a standalone proof of many-body quantum behavior.",
+            "The w2 witness is minus the magnitude of the pair-covariance trace, normalized by the geometric mean of the two auto-covariance traces. It lies between -1 and 0, with values closer to -1 indicating more strongly correlated zero-point motion, and is intended as a comparative diagnostic rather than a standalone proof of many-body quantum behavior. The table lists its size, |c| = −w2, from 0 to 1.",
             "Here w2 is the harmonic (phonon-covariance) estimate of the positional entanglement witness w2 = −|c| of Gomilšek et al., where c is the Pearson correlation of the muon and nuclear displacements. The sum runs over every stable mode; modes with imaginary frequencies are left out. On the α-N₂ phonon run of that paper this gives |c| = 0.30 and 0.31 for the two nitrogens nearest the muon, against 0.30(4) from path-integral molecular dynamics. The paper's harmonic ≈ 0.26 sums only the modes that carry some muon motion (a participation of at least 1e-4), so it leaves out the soft host modes that widen each nitrogen's motion.",
         ),
         "equations": (
@@ -763,14 +906,34 @@ def _correlation_help_definition() -> dict[str, object]:
     }
 
 
-def _matrix_table() -> QTableWidget:
-    table = _quantum_analysis_table(("x", "y", "z"))
+def _tensor_box(title: str, symbol: str, table: QTableWidget) -> QGroupBox:
+    box = QGroupBox(title)
+    layout = QVBoxLayout(box)
+    layout.setContentsMargins(card_margins())
+    layout.setSpacing(SPACING.sm)
+    layout.addWidget(
+        MathLabel(symbol, display_mode=False, parent=box), 0, Qt.AlignmentFlag.AlignHCenter
+    )
+    layout.addWidget(table, 0, Qt.AlignmentFlag.AlignHCenter)
+    return box
+
+
+def _matrix_table(accessible_name: str) -> QTableWidget:
+    """A 3 × 3 table that takes the size of its contents and never scrolls."""
+
+    table = _quantum_analysis_table(("x", "y", "z"), accessible_name=accessible_name)
     table.setRowCount(3)
     table.setVerticalHeaderLabels(("x", "y", "z"))
     table.verticalHeader().setVisible(True)
-    table.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
-    table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-    table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+    # Wide enough for any three-figure value, so moving between atoms moves nothing.
+    table.horizontalHeader().setMinimumSectionSize(
+        table.fontMetrics().horizontalAdvance("-0.000000") + SPACING.lg
+    )
+    table.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+    table.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+    table.setSizeAdjustPolicy(QAbstractScrollArea.SizeAdjustPolicy.AdjustToContents)
+    table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+    table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
     return table
 
 
@@ -813,28 +976,9 @@ def _resize_table_width_to_contents(table: QTableWidget, *, minimum: int, maximu
 
 
 def _fill_matrix_table(table: QTableWidget, matrix: np.ndarray) -> None:
-    table.setRowCount(3)
+    scale = float(np.abs(matrix).max())
     for row in range(3):
         for column in range(3):
-            table.setItem(row, column, QTableWidgetItem(f"{float(matrix[row, column]):.6g}"))
-    table.resizeColumnsToContents()
-    table.resizeRowsToContents()
-    _resize_matrix_table_to_contents(table)
-
-
-def _resize_matrix_table_to_contents(table: QTableWidget) -> None:
-    width = table.verticalHeader().width() + table.frameWidth() * 2
-    for column in range(table.columnCount()):
-        width += table.columnWidth(column)
-    if table.verticalScrollBar().isVisible():
-        width += table.verticalScrollBar().sizeHint().width()
-
-    height = table.horizontalHeader().height() + table.frameWidth() * 2
-    for row in range(table.rowCount()):
-        height += table.rowHeight(row)
-    if table.horizontalScrollBar().isVisible():
-        height += table.horizontalScrollBar().sizeHint().height()
-
-    # Cap rather than lock the size: narrowing the dialog should let the
-    # table scroll instead of refusing to shrink and starving its neighbours.
-    table.setMaximumSize(width, height)
+            set_workflow_table_item(
+                table, row, column, format_three_figures(matrix[row, column], scale=scale)
+            )

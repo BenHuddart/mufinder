@@ -335,25 +335,10 @@ def show_muon_modes(analysis: QWidget) -> None:
     show_molecules("a")(analysis)
 
 
-def nearest_nitrogen(analysis: QWidget) -> int:
-    """The one-based index of a nitrogen nearest the muon in the phonon structure."""
-
-    lattice = analysis._phonon_lattice
-    fractional = analysis._phonon_fractional_positions
-    muon = analysis._muon_atom_index
-    separation = (fractional - fractional[muon] + 0.5) % 1.0 - 0.5
-    distances = np.linalg.norm(separation @ lattice, axis=1)
-    distances[muon] = np.inf
-    return int(np.argmin(distances)) + 1
-
-
 def show_muon_coupling(analysis: QWidget) -> None:
-    """Open ``Muon Coupling`` with Atom A the muon and Atom B its nearest nitrogen, and click ``Calculate``."""
+    """Open ``Muon Coupling``, which lists the muon's nearest atoms with the nearest selected."""
 
     _show_tab(analysis, "Muon Coupling")
-    combo = analysis._atom_b_combo
-    combo.setCurrentIndex(combo.findData(nearest_nitrogen(analysis)))
-    analysis._calculate_button.click()
 
 
 def open_coupling_help(window: MainWindow) -> None:

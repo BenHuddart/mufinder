@@ -539,7 +539,11 @@ defined by two of these modules, and a pinned count may only fall.
    * - ``mufinder.services.job_paths``
      - Where a job's files live: ``definition_output_directory``,
        ``job_output_directory`` (the definition mappings that claim a job, then
-       the ``files/`` fallbacks), ``job_seed_name`` and ``job_output_files``.
+       the ``files/`` fallbacks), ``job_seed_name``, ``job_output_files``, and
+       the guard on a job's folder: ``job_directory_refusal`` (a link anywhere
+       below ``files/``, found by ``job_directory_link``, or a place outside the
+       job folders), ``job_directory_foreign`` (a muon relaxation's folder not in
+       its workflow and charge folder) and ``job_directory_on_disk``.
    * - ``mufinder.services.job_file_cleanup``
      - Cleaning up jobs' files and records when rows are removed or reset
        (``JobFileCleanup``): ``plan_item`` turns jobs into a
@@ -549,7 +553,12 @@ defined by two of these modules, and a pinned count may only fall.
        job); ``execute`` deletes or archives each item's files as a
        ``choose_disposition`` callable answers, applies an *Apply to All*
        answer to later items, deletes the records (``delete_job_records``)
-       and returns a ``JobCleanupOutcome``. It never shows a dialog: the
+       and returns a ``JobCleanupOutcome`` naming each folder deleted, archived
+       or kept. A link is refused and its item stays; any other folder that is not
+       the item's alone or not its own is not offered, so its records go and the
+       folder stays. ``mufinder.domain.text`` words the result for every route:
+       ``folder_outcome_status`` counts for the status bar, ``kept_folders_message``
+       says why with names for Details. It never shows a dialog: the
        window asks and reports. ``clear_directory_contents`` empties a
        directory but keeps its inputs, for the failed-job reset and fresh
        start. Every workflow controller reaches it as
@@ -660,6 +669,15 @@ defined by two of these modules, and a pinned count may only fall.
        energies comparable (``relaxation_calculation_key``,
        ``mixes_calculations``) and the newest completed pristine relaxation
        (``newest_completed_structure_id``).
+   * - ``mufinder.services.zpe_ranking``
+     - The one zero-point-corrected ranking of a project's relaxed sites
+       (``zpe_ranking``), read by the Quantum Corrections table, the Journal's ZPE
+       comparison and the project survey: each site's result, the newest of its row's
+       job in the current definition while that job is completed; which relaxation it
+       read (``phonon_zpe_source_state``); and ``dE + ZPE``
+       (``quantum_source_corrected_relative_energies``), which leaves out a ZPE not tied
+       to the current relaxation and keeps a non-positive muon mode from setting the
+       zero.
    * - ``mufinder.services.structure_comparison``
      - Building a saved comparison table from completed pristine relaxations
        (``build_comparison_table``, ``comparison_inputs``): the values-only
@@ -1587,13 +1605,10 @@ Controller summary
        shares with the phonon job. It also owns the Configure dialog
        (``configure_sources``, with its lock explanation from
        ``configure_request``), the site rename and the analysis window
-       (``open_analysis``). ``refresh_view`` builds one row per site: the newest
-       result of the site's job while that job is completed, and ``dE + ZPE``
-       from ``quantum_source_corrected_relative_energies``, leaving out a result
-       that ``phonon_zpe_source_state`` cannot tie to the site's current relaxation
-       run (``materialize`` records that run in ``phonon_source_run_ids_by_label``; a job
-       without a record is settled by its timestamps where they prove it) and keeping a row with a
-       non-positive muon mode from setting the zero. A completed result
+       (``open_analysis``). ``refresh_view`` builds one row per site from
+       ``services.zpe_ranking``, whose stale-ZPE rule reads the run ``materialize``
+       records in ``phonon_source_run_ids_by_label`` (a job
+       without a record is settled by its timestamps where they prove it). A completed result
        that no listed site's job stands behind gets a read-only row with an empty
        key, outside the ranking.
    * - ``HyperfineCouplingController``

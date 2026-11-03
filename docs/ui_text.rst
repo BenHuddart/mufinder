@@ -26,7 +26,9 @@ Punctuation
   ends in ``…`` too (``Connecting to SCARF…``), and so does text cut short.
   Never write three dots.
 - **Status messages** are in the past tense and have no final period
-  (``Submitted 3 jobs``, ``Saved project``).
+  (``Submitted 3 jobs``, ``Saved project``). They give counts, not names, so
+  they fit the bar (``Removed 10 jobs; deleted 7 folders; kept 3``); a box says
+  why and lists the names under ``Details``.
 - **Tooltips and message text** are full sentences that end in a period. A
   tooltip that only names a value (a column header, ``Relaxed site: Mu-3``)
   stays a label.

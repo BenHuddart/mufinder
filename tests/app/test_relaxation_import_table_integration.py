@@ -90,7 +90,7 @@ class TestResetIsBlocked:
         monkeypatch.setattr(window, "_refresh_views_after_job_reset", lambda: None)
         monkeypatch.setattr(window, "_record_job_reset", lambda **kwargs: None)
 
-        reset_count, errors = window._apply_failed_job_reset(
+        reset_count, errors, _folders = window._apply_failed_job_reset(
             [job], cleanup_choice=True, detach_convergence=False
         )
 
@@ -115,7 +115,7 @@ class TestResetIsBlocked:
         monkeypatch.setattr(window, "_refresh_views_after_job_reset", lambda: None)
         monkeypatch.setattr(window, "_record_job_reset", lambda **kwargs: None)
 
-        reset_count, _errors = window._apply_failed_job_reset(
+        reset_count, _errors, _folders = window._apply_failed_job_reset(
             [job], cleanup_choice=True, detach_convergence=False
         )
 
