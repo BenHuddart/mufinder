@@ -1017,7 +1017,8 @@ argument would change a result without saying so, so passing one raises
 
 - The ``fourier_grid``, ``thickness_voxels``, ``padding`` and ``smoothing``
   fields of ``DemagnetizingSample`` (``mufinder.science.demagnetization``): a
-  plate's voxels follow from its size and the box from ``FOURIER_PADDING``.
+  plate's voxels follow from its size, its box from ``PLATE_FOURIER_PADDING``
+  and a voxel grid's box from ``FOURIER_PADDING``.
 - The ``smoothing`` argument of ``voxel_demagnetizing_tensor``, which has no
   replacement. ``padding`` stays, with ``FOURIER_PADDING`` as its default.
 
