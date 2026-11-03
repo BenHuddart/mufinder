@@ -53,11 +53,13 @@ def mnsi_structure() -> Structure:
     )
 
 
-def mnsi_helix(handedness: int = -1) -> MagneticStructureModel:
+def mnsi_helix(
+    handedness: int = -1, q: tuple[float, float, float] = MNSI_Q
+) -> MagneticStructureModel:
     component = build_magnetic_preset_component(
         "helix",
         lattice_vectors=mnsi_structure().lattice_vectors,
-        q_rlu=MNSI_Q,
+        q_rlu=q,
         q_coeff=(1.0, 0.0, 0.0),
         moment=MNSI_MOMENT,
         reference_axis="a",
@@ -65,7 +67,7 @@ def mnsi_helix(handedness: int = -1) -> MagneticStructureModel:
         handedness=handedness,
     )
     return MagneticStructureModel(
-        q_basis_rlu=(MNSI_Q, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)), components=(component,)
+        q_basis_rlu=(q, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)), components=(component,)
     )
 
 

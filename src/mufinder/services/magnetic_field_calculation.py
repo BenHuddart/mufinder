@@ -33,6 +33,7 @@ from mufinder.science.magnetic_fields import (
     MagneticFieldError,
     MagneticFieldOptions,
     MagneticFieldResult,
+    approximant_lists_its_fields,
     calculate_commensurate_approximant_fields,
     calculate_commensurate_fields,
     calculate_dipolar_tensors_for_atoms,
@@ -76,6 +77,9 @@ def non_finite_field_label(results: Sequence[object]) -> str | None:
         if isinstance(result, Mapping):
             label = result.get("site_label")
             arrays = [result.get(key) for key in ("total_T", "magnitude_T", "fields_T")]
+            factors = result.get("fields_T_factors")
+            if isinstance(factors, Mapping):
+                arrays += [factors.get("continuous_T"), factors.get("listed_T")]
         else:
             label = getattr(result, "site_label", None)
             arrays = [getattr(result, key, None) for key in ("total", "magnitude", "fields_T")]
@@ -206,7 +210,15 @@ def run_prepared_magnetic_field_calculation(
     distorted_structures = [request.distorted_structure]
     corrected = " with muon-induced distortion corrections" if site.include_distortion else ""
     suffix = UNRELAXED_ESTIMATE_SUFFIX if is_unrelaxed_site_source(site.source) else ""
-    if classify_magnetic_model(host, model) == "commensurate":
+    if (
+        classify_magnetic_model(
+            host,
+            model,
+            tolerance=options.commensurate_tolerance,
+            max_period=options.commensurate_max_period,
+        )
+        == "commensurate"
+    ):
         results = calculate_commensurate_fields(
             host, model, positions, options=options, distorted_structures=distorted_structures
         )
@@ -223,7 +235,14 @@ def run_prepared_magnetic_field_calculation(
         tolerance=options.approximant_tolerance,
         max_period=options.approximant_max_period,
     )
-    if approximant is not None and request.use_approximants:
+    listable = approximant is not None and approximant_lists_its_fields(
+        host,
+        model,
+        tolerance=options.approximant_tolerance,
+        max_period=options.approximant_max_period,
+        max_fields=options.max_approximant_fields,
+    )
+    if listable and request.use_approximants:
         results = calculate_commensurate_approximant_fields(
             host, model, positions, options=options, distorted_structures=distorted_structures
         )
@@ -249,7 +268,13 @@ def run_prepared_magnetic_field_calculation(
     if flagged:
         status += f"; {plural(flagged, 'convergence check needs', 'convergence checks need')} attention, select a row for advice"
     status += "."
-    if approximant is not None:
+    if approximant is not None and request.use_approximants:
+        status += (
+            f" The commensurate approximant {approximant.describe()} gives more than "
+            f"{options.max_approximant_fields} sets of phases, too many to list as finite fields, "
+            "so it is sampled."
+        )
+    elif approximant is not None:
         status += (
             f" q is within {approximant.max_deviation_rlu:.2g} r.l.u. of the commensurate "
             f"approximant {approximant.describe()}; turn on commensurate approximants in "

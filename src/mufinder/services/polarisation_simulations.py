@@ -36,8 +36,12 @@ reads this version and not the current field record: a simulation of older
 fields stays marked after the fields are recalculated, until it is run again.
 A source's ``plate_method_version`` does the same for a plate from a photo; a
 simulation from before it existed decides from the sample in the source's saved
-form, so only one that used such a plate is marked.
-A source with no version recorded counts as older.
+form, so only one that used such a plate is marked. A source's
+``translation_method_version`` does the same for the translations of a ``q != 0`` order; a
+simulation from before it existed decides from the field record it ran from, with its owner's
+magnetic structure for a distribution, and if that record has been replaced the simulation is
+stale, which says it needs running again.
+A source with no calculation version recorded counts as older.
 """
 
 from __future__ import annotations
@@ -52,6 +56,7 @@ from uuid import uuid4
 from mufinder.domain.enums import WorkflowStage
 from mufinder.domain.models import ProvenanceRecord, Result, Structure
 from mufinder.science.magnetic_fields import (
+    distribution_fields_from_json,
     MagneticFieldDistributionResult,
     MagneticFieldResult,
 )
@@ -76,9 +81,13 @@ from mufinder.services.magnetic_field_results import (
     is_unrelaxed_site_source,
     magnetic_field_result,
     PLATE_METHOD_VERSION_KEY,
+    TRANSLATION_METHOD_NOT_USED,
+    TRANSLATION_METHOD_VERSION_KEY,
     field_result_uses_older_method,
     magnetic_field_owner_form,
+    magnetic_field_owner_model,
     recorded_plate_method_version,
+    recorded_translation_method_version,
 )
 from mufinder.services.project_document import ProjectDocument, active_host_structure
 from mufinder.services.project_summary import magnetic_field_workspaces
@@ -97,7 +106,7 @@ _FIELD_KEYS = {
     "commensurate": frozenset(
         {"muon_position", "dipolar_T", "lorentz_T", "contact_T", "demag_T", "applied_T"}
     ),
-    "distribution": frozenset({"fields_T"}),
+    "distribution": frozenset(),
 }
 # How each kind of field record decodes its entries.
 _FIELD_KINDS = {
@@ -157,6 +166,7 @@ class SimulationSource:
     weight: float = 1.0
     calculation_version: object = None
     plate_method_version: object = None
+    translation_method_version: object = None
 
     def to_json(self) -> dict[str, object]:
         payload: dict[str, object] = {
@@ -169,6 +179,8 @@ class SimulationSource:
             payload[CALCULATION_VERSION_KEY] = self.calculation_version
         if self.plate_method_version is not None:
             payload[PLATE_METHOD_VERSION_KEY] = self.plate_method_version
+        if self.translation_method_version is not None:
+            payload[TRANSLATION_METHOD_VERSION_KEY] = self.translation_method_version
         return payload
 
     @classmethod
@@ -180,6 +192,7 @@ class SimulationSource:
             weight=float(payload.get("weight", 1.0)),
             calculation_version=payload.get(CALCULATION_VERSION_KEY),
             plate_method_version=payload.get(PLATE_METHOD_VERSION_KEY),
+            translation_method_version=payload.get(TRANSLATION_METHOD_VERSION_KEY),
         )
 
 
@@ -346,6 +359,9 @@ def prepare_polarisation_simulation(
                 plate_method_version=recorded_plate_method_version(
                     data, magnetic_field_owner_form(document, source.owner)
                 ),
+                translation_method_version=recorded_translation_method_version(
+                    data, magnetic_field_owner_model(document, source.owner)
+                ),
             )
         )
         field_results.append(tuple(_field_results(data)))
@@ -379,11 +395,12 @@ def run_prepared_polarisation_simulation(
         raise PolarisationError("at least one source needs a positive weight")
     tensors = None
     if settings.sigma_from_nuclear_widths and host is not None:
-        # Equivalent translations of one site share a position: sum it once.
+        # The nuclei repeat with the host cell, so the translated rows of one site share
+        # their widths: sum them once.
         by_position: dict[tuple[float, ...], NuclearWidthTensors] = {}
         tensors = []
         for result in results:
-            key = tuple(round(float(value), 9) for value in result.muon_position)
+            key = tuple(round(float(value) % 1.0, 9) % 1.0 for value in result.muon_position)
             if key not in by_position:
                 by_position[key] = calculate_nuclear_width_tensors(
                     host, result.muon_position, site_label=result.site_label
@@ -552,10 +569,43 @@ def older_method_sources(
             {
                 CALCULATION_VERSION_KEY: source.calculation_version,
                 PLATE_METHOD_VERSION_KEY: source.plate_method_version,
+                TRANSLATION_METHOD_VERSION_KEY: _source_translation_method_version(
+                    source, document
+                ),
             },
             None if document is None else magnetic_field_owner_form(document, source.owner),
         )
     ]
+
+
+def _source_translation_method_version(
+    source: SimulationSource, document: ProjectDocument | None
+) -> object:
+    """Return a source's translation method version, reading its field record if it has none."""
+
+    if source.translation_method_version is not None:
+        return source.translation_method_version
+    record = None if document is None else document.results.get(source.record_id)
+    if record is None or not isinstance(record.data, Mapping):
+        return TRANSLATION_METHOD_NOT_USED
+    return recorded_translation_method_version(
+        record.data, magnetic_field_owner_model(document, source.owner)
+    )
+
+
+def _has_samples(payload: Mapping[str, object]) -> bool:
+    """Return whether a saved distribution entry holds samples, sample by sample or as factors."""
+
+    if "fields_T" not in payload and "fields_T_factors" not in payload:
+        return False
+    if "fields_T" in payload and not (
+        isinstance(payload["fields_T"], list) and payload["fields_T"]
+    ):
+        return False
+    try:
+        return distribution_fields_from_json(payload).shape[0] > 0
+    except (TypeError, ValueError):
+        return False
 
 
 def _field_source(document: ProjectDocument, owner: str, title: str) -> FieldSource | None:
@@ -577,9 +627,7 @@ def _field_source(document: ProjectDocument, owner: str, title: str) -> FieldSou
         )
     ):
         return None
-    if kind == "distribution" and not all(
-        isinstance(payload["fields_T"], list) and payload["fields_T"] for payload in payloads
-    ):
+    if kind == "distribution" and not all(_has_samples(payload) for payload in payloads):
         return None
     try:
         applied = {_payload_applied(payload) for payload in payloads}

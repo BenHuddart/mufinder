@@ -15,7 +15,9 @@ Calculate fields on the Magnetic Fields page, or in a saved workspace, with
 ``Calculate Dipolar Field``. Each page and workspace holds one field result: the
 field at its muon site, or at the site and its symmetry equivalents when
 ``Include equivalent sites`` is on. A commensurate structure gives one field per
-site; an incommensurate one gives a field distribution per site.
+site and per translation with a distinct magnetic phase (see :ref:`What a commensurate
+result lists <magnetic-fields-translations>`), and every row counts equally; an
+incommensurate one gives a field distribution per site.
 
 Simulate the polarisation
 -------------------------

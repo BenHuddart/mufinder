@@ -75,6 +75,7 @@ from mufinder.science.magnetic_fields import (
     MagneticFieldError,
     MagneticFieldOptions,
     classify_magnetic_model,
+    distribution_fields_from_json,
     contact_coupling_to_angstrom_minus3,
     contact_shell_tie_checker,
     muon_site_clearance_error,
@@ -105,7 +106,10 @@ from mufinder.services.magnetic_field_results import (
     CALCULATION_VERSION_KEY,
     PLATE_METHOD_VERSION,
     PLATE_METHOD_VERSION_KEY,
+    TRANSLATION_METHOD_VERSION,
+    TRANSLATION_METHOD_VERSION_KEY,
     field_result_uses_older_method,
+    translation_method_applies,
     sample_predates_plate_method,
     UNRELAXED_ESTIMATE_SUFFIX,
     UNRELAXED_SITE_NOTE,
@@ -1591,7 +1595,9 @@ class MagneticFieldWidget(QWidget):
     def _results_use_older_method(self) -> bool:
         """Return whether the shown field results predate the current calculation method."""
 
-        return field_result_uses_older_method(self._field_results_state, self._loaded_demag_form)
+        return field_result_uses_older_method(
+            self._field_results_state, self._loaded_demag_form, self._model
+        )
 
     def _refresh_field_breakdown(self) -> None:
         """List the field terms that sum to the selected result row.
@@ -1840,7 +1846,10 @@ class MagneticFieldWidget(QWidget):
                 self._distribution_result_from_payload(result) for result in result_payloads
             ]
             for index, result in enumerate(result_payloads):
-                fields = np.asarray(result.get("fields_T", []), dtype=float)
+                try:
+                    fields = distribution_fields_from_json(result)
+                except (TypeError, ValueError):
+                    fields = np.zeros((0, 3), dtype=float)
                 if fields.ndim == 2 and fields.shape[1] == 3 and fields.size:
                     mean = np.mean(fields, axis=0)
                     magnitude = float(np.mean(np.linalg.norm(fields, axis=1)))
@@ -1912,6 +1921,8 @@ class MagneticFieldWidget(QWidget):
         }
         if self._demag_shape() == "image_plate":
             state[PLATE_METHOD_VERSION_KEY] = PLATE_METHOD_VERSION
+        if translation_method_applies(state):
+            state[TRANSLATION_METHOD_VERSION_KEY] = TRANSLATION_METHOD_VERSION
         return state
 
     @staticmethod

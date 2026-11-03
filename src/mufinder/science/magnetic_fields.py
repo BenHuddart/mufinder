@@ -43,6 +43,7 @@ from mufinder.science.magnetic_structure import (
     AtomSelector,
     MagneticStructureModel,
     MuesrModelData,
+    enabled_magnetic_components,
     get_muesr_model_data,
     resolve_atom_selector,
     split_muesr_model_data_into_helices,
@@ -89,9 +90,22 @@ class MagneticFieldDependencyError(ImportError):
     """Raised when the optional muesr backend is unavailable."""
 
 
+#: The longest period of a wavevector whose translations are listed as separate fields. The
+#: period of ``q`` is the smallest ``n`` that makes ``n q`` a reciprocal lattice vector, which is
+#: the number of distinct phases ``q . T``. Beyond it the phases are sampled as a distribution.
+MAX_LISTED_TRANSLATION_PERIOD = 12
+#: The most translations a commensurate result lists. One wavevector has at most
+#: :data:`MAX_LISTED_TRANSLATION_PERIOD`; independent wavevectors multiply.
+MAX_LISTED_TRANSLATIONS = 512
+
+
 @dataclass(frozen=True, slots=True)
 class MagneticFieldOptions:
-    """Calculation options for a magnetic field run."""
+    """Calculation options for a magnetic field run.
+
+    A wavevector counts as commensurate up to ``commensurate_max_period``, so its
+    translations are listed as separate fields; a longer period is sampled as a distribution.
+    """
 
     supercell: tuple[int, int, int] = (100, 100, 100)
     radius: float | None = None
@@ -108,7 +122,7 @@ class MagneticFieldOptions:
     find_equivalent_sites: bool = False
     equivalent_tolerance: float = 1e-3
     commensurate_tolerance: float = 1e-8
-    commensurate_max_period: int = 64
+    commensurate_max_period: int = MAX_LISTED_TRANSLATION_PERIOD
     nangles: int = 32_768
     phase_sample_count: int = 200_000
     phase_sampling: str = "auto"
@@ -117,7 +131,7 @@ class MagneticFieldOptions:
     histogram_bins: int = 512
     approximant_tolerance: float = 1e-3
     approximant_max_period: int = 12
-    max_approximant_fields: int = 512
+    max_approximant_fields: int = MAX_LISTED_TRANSLATIONS
 
 
 #: The closest a muon site may sit to any host atom, in Angstrom. The dipolar and
@@ -334,6 +348,11 @@ class MagneticFieldDistributionResult:
     modulated structure (``calculation_parameters["modulated"]``) only that sum
     is independent of the sphere radius. A result saved before the breakdown
     existed has empty ``terms`` and ``None`` for the rest.
+
+    ``fields_T_factors`` is set for a grid with listed phase sets: its
+    ``(continuous, listed)`` rows give every sample as
+    ``continuous[i] + listed[k]``, the sets varying fastest, which is how the
+    samples were summed. It is stored in their place (:func:`distribution_fields_from_json`).
     """
 
     site_label: str
@@ -348,6 +367,7 @@ class MagneticFieldDistributionResult:
     applied_T: tuple[float, float, float] | None = None
     demag_T: tuple[float, float, float] | None = None
     dipolar_lorentz: FieldTermStatistics | None = None
+    fields_T_factors: tuple[np.ndarray, np.ndarray] | None = None
 
     @property
     def magnitudes_T(self) -> np.ndarray:
@@ -357,7 +377,7 @@ class MagneticFieldDistributionResult:
         payload: dict[str, object] = {
             "site_label": self.site_label,
             "muon_position": list(self.muon_position),
-            "fields_T": np.asarray(self.fields_T, dtype=float).tolist(),
+            **_fields_payload(self.fields_T, self.fields_T_factors),
             "histogram_centres_T": np.asarray(self.histogram_centres_T, dtype=float).tolist(),
             "histogram_counts": np.asarray(self.histogram_counts, dtype=float).tolist(),
             "mean_T": np.mean(self.fields_T, axis=0).tolist(),
@@ -381,11 +401,8 @@ class MagneticFieldDistributionResult:
     def from_json(cls, payload: Mapping[str, Any]) -> MagneticFieldDistributionResult:
         """Rebuild a result from :meth:`to_json` output, including one saved without a breakdown."""
 
-        fields = np.asarray(payload.get("fields_T", []), dtype=float)
-        if fields.size == 0:
-            fields = np.zeros((0, 3), dtype=float)
-        elif fields.ndim != 2 or fields.shape[1] != 3:
-            raise ValueError(f"fields_T must have shape (n, 3), got {fields.shape}")
+        factors = _field_factors_from_json(payload)
+        fields = distribution_fields_from_json(payload)
         terms = _terms_from_json(payload.get("terms"))
         raw_parameters = payload.get("calculation_parameters")
         raw_checks = payload.get("convergence")
@@ -410,7 +427,63 @@ class MagneticFieldDistributionResult:
             applied_T=None if payload.get("applied_T") is None else _tuple3(payload["applied_T"]),
             demag_T=None if payload.get("demag_T") is None else _tuple3(payload["demag_T"]),
             dipolar_lorentz=_optional_term_from_json(payload.get("dipolar_lorentz")),
+            fields_T_factors=factors,
         )
+
+
+def _fields_payload(
+    fields: np.ndarray, factors: tuple[np.ndarray, np.ndarray] | None
+) -> dict[str, object]:
+    if factors is None:
+        return {"fields_T": np.asarray(fields, dtype=float).tolist()}
+    continuous, listed = factors
+    return {
+        "fields_T_factors": {
+            "continuous_T": np.asarray(continuous, dtype=float).tolist(),
+            "listed_T": np.asarray(listed, dtype=float).tolist(),
+        }
+    }
+
+
+def _field_factors_from_json(payload: Mapping[str, Any]) -> tuple[np.ndarray, np.ndarray] | None:
+    raw = payload.get("fields_T_factors")
+    if raw is None:
+        return None
+    if not isinstance(raw, Mapping) or "continuous_T" not in raw or "listed_T" not in raw:
+        raise ValueError("fields_T_factors must hold continuous_T and listed_T")
+    continuous = np.asarray(raw["continuous_T"], dtype=float)
+    listed = np.asarray(raw["listed_T"], dtype=float)
+    for name, rows in (("continuous_T", continuous), ("listed_T", listed)):
+        if rows.ndim != 2 or rows.shape[1] != 3 or rows.shape[0] == 0:
+            raise ValueError(f"fields_T_factors {name} must have shape (n, 3), got {rows.shape}")
+    return continuous, listed
+
+
+def _expand_field_factors(continuous: np.ndarray, listed: np.ndarray) -> np.ndarray:
+    """Return ``continuous[i] + listed[k]`` for every pair, the listed rows varying fastest."""
+
+    return np.repeat(continuous, listed.shape[0], axis=0) + np.tile(
+        listed, (continuous.shape[0], 1)
+    )
+
+
+def distribution_fields_from_json(payload: Mapping[str, Any]) -> np.ndarray:
+    """Return the sampled fields, shape ``(n, 3)``, of a saved distribution entry.
+
+    An entry stores ``fields_T``, or, for a grid with listed phase sets, ``fields_T_factors``
+    (:class:`MagneticFieldDistributionResult`), from which every sample is rebuilt bit for bit.
+    Raises :class:`ValueError` for a malformed entry.
+    """
+
+    factors = _field_factors_from_json(payload)
+    if factors is not None:
+        return _expand_field_factors(*factors)
+    fields = np.asarray(payload.get("fields_T", []), dtype=float)
+    if fields.size == 0:
+        return np.zeros((0, 3), dtype=float)
+    if fields.ndim != 2 or fields.shape[1] != 3:
+        raise ValueError(f"fields_T must have shape (n, 3), got {fields.shape}")
+    return fields
 
 
 def _optional_term_from_json(raw_term: object) -> FieldTermStatistics | None:
@@ -449,10 +522,13 @@ class RegeneratedPhaseSamples:
     sampled phase per independent incommensurate wavevector, in turns.
     ``component_phase_coefficients`` has one row per backend component, giving
     the phase of that component's lookup table as a combination of those phases.
+    ``listed_phases_turns`` has shape ``(n_samples, n_listed)``: the exact phase
+    ``q . T`` of each component in ``listed_phase_q_rlu`` at each sample.
     """
 
     phases_turns: np.ndarray
     component_phase_coefficients: np.ndarray
+    listed_phases_turns: np.ndarray
 
 
 def regenerate_phase_samples(
@@ -460,8 +536,8 @@ def regenerate_phase_samples(
 ) -> RegeneratedPhaseSamples:
     """Rebuild the phase samples a distribution was evaluated at, bit for bit.
 
-    A grid is a function of the sample count and the number of independent
-    wavevectors; Monte Carlo samples come from the recorded
+    A grid is a function of the sample count, the number of independent
+    wavevectors and the listed wavevectors; Monte Carlo samples come from the recorded
     ``phase_sampling_seed``. Raises :class:`MagneticFieldError` for a result
     saved before the seed and phase coefficients were recorded.
     """
@@ -479,21 +555,52 @@ def regenerate_phase_samples(
             len(raw_coefficients), n_dim
         )
         sample_count = int(params["phase_sample_count"])
-        seed = None if grid or n_dim == 0 else int(params["phase_sampling_seed"])
+        rationals = _listed_phase_rationals(params)
+        seed = (
+            None if grid or (n_dim == 0 and not rationals) else int(params["phase_sampling_seed"])
+        )
     except (KeyError, TypeError, ValueError) as exc:
         raise MagneticFieldError(f"this distribution's phase sampling is malformed: {exc}") from exc
-    if n_dim == 0:
+    if not rationals and n_dim == 0:
         phases = np.zeros((1, 0), dtype=float)
+        listed = np.zeros((1, 0), dtype=float)
     elif grid:
-        axis_count = int(round(sample_count ** (1.0 / n_dim)))
-        if axis_count**n_dim != sample_count:
+        sets = (
+            np.zeros((1, 0), dtype=float)
+            if not rationals
+            else _listed_phase_sets(rationals, limit=max(sample_count, 1))
+        )
+        points = sample_count // len(sets) if sets is not None and len(sets) else 0
+        axis_count = int(round(points ** (1.0 / n_dim))) if n_dim else 1
+        if sets is None or points * len(sets) != sample_count or axis_count**n_dim != points:
             raise MagneticFieldError(
                 f"{sample_count} grid samples do not form a {n_dim}-dimensional phase grid"
             )
-        phases = _phase_grid(axis_count, n_dim)
+        continuous = _phase_grid(axis_count, n_dim) if n_dim else np.zeros((1, 0), dtype=float)
+        phases, listed = _grid_with_listed_sets(continuous, sets)
     else:
-        phases = _monte_carlo_phases(seed, sample_count, n_dim)
-    return RegeneratedPhaseSamples(phases_turns=phases, component_phase_coefficients=coefficients)
+        phases, listed = _monte_carlo_phase_samples(int(seed), sample_count, n_dim, rationals)
+    return RegeneratedPhaseSamples(
+        phases_turns=phases, component_phase_coefficients=coefficients, listed_phases_turns=listed
+    )
+
+
+def _listed_phase_rationals(params: Mapping[str, Any]) -> list[tuple[np.ndarray, np.ndarray]]:
+    """Return the exact wavevectors of a distribution's listed components, from its parameters."""
+
+    rationals = []
+    for q_rlu in params.get("listed_phase_q_rlu") or []:
+        rational = _rational_propagation_vector(
+            q_rlu,
+            tolerance=float(params.get("commensurate_tolerance", 1e-8)),
+            max_period=int(params.get("commensurate_max_period", MAX_LISTED_TRANSLATION_PERIOD)),
+        )
+        if rational is None:
+            raise MagneticFieldError(
+                f"listed wavevector {list(q_rlu)} has no period up to the recorded maximum"
+            )
+        rationals.append(rational)
+    return rationals
 
 
 @dataclass(frozen=True, slots=True)
@@ -577,7 +684,7 @@ def is_commensurate_propagation_vector(
     k_rlu: Sequence[float],
     *,
     tolerance: float = 1e-8,
-    max_period: int = 64,
+    max_period: int = MAX_LISTED_TRANSLATION_PERIOD,
 ) -> bool:
     """Return whether a propagation vector is commensurate within a bounded period."""
 
@@ -594,19 +701,79 @@ def classify_magnetic_model(
     model: MagneticStructureModel,
     *,
     tolerance: float = 1e-8,
-    max_period: int = 64,
+    max_period: int = MAX_LISTED_TRANSLATION_PERIOD,
 ) -> str:
-    """Classify a model as commensurate or incommensurate."""
+    """Classify a model as commensurate or incommensurate.
+
+    A period above ``max_period`` counts as incommensurate, whether or not ``q`` is a fraction,
+    because it is sampled as a distribution rather than listed. So does an order whose
+    wavevectors together give more than :data:`MAX_LISTED_TRANSLATIONS` distinct sets of phases,
+    such as three independent ones of period 9.
+    """
 
     models = get_muesr_model_data(structure, model, merge_equivalent_k=False)
     if not models:
         raise MagneticFieldError("magnetic structure has no non-zero Fourier components")
-    if all(
-        is_commensurate_propagation_vector(m.k_rlu, tolerance=tolerance, max_period=max_period)
+    rationals = [
+        _rational_propagation_vector(m.k_rlu, tolerance=tolerance, max_period=max_period)
+        if is_commensurate_propagation_vector(m.k_rlu, tolerance=tolerance, max_period=max_period)
+        else None
         for m in models
-    ):
-        return "commensurate"
-    return "incommensurate"
+    ]
+    if any(rational is None for rational in rationals):
+        return "incommensurate"
+    if _distinct_phase_translations(rationals, limit=MAX_LISTED_TRANSLATIONS) is None:
+        return "incommensurate"
+    return "commensurate"
+
+
+def has_short_period_modulation(
+    model: MagneticStructureModel,
+    *,
+    tolerance: float = 1e-8,
+    max_period: int = MAX_LISTED_TRANSLATION_PERIOD,
+) -> bool:
+    """Return whether an enabled, non-zero term of ``model`` has ``q != 0`` of period up to ``max_period``.
+
+    In a distribution such a term is sampled at the phases its translations take
+    (:func:`calculate_incommensurate_field_distributions`). The model needs no host: the
+    wavevector of a term is its combination of the model's q-basis rows.
+    """
+
+    for component in enabled_magnetic_components(model):
+        for term in component.terms:
+            if not np.any(term.coefficient.to_array()):
+                continue
+            q_rlu = model.q_coeff_to_rlu(term.q_coeff)
+            if not _is_uniform_wavevector(q_rlu) and is_commensurate_propagation_vector(
+                q_rlu, tolerance=tolerance, max_period=max_period
+            ):
+                return True
+    return False
+
+
+def approximant_lists_its_fields(
+    structure: Structure,
+    model: MagneticStructureModel,
+    *,
+    tolerance: float = 1e-3,
+    max_period: int = 12,
+    max_fields: int = MAX_LISTED_TRANSLATIONS,
+) -> bool:
+    """Return whether the approximant of ``model`` has at most ``max_fields`` sets of phases.
+
+    :func:`calculate_commensurate_approximant_fields` lists one row per set, and refuses more.
+    A model with no approximant within ``tolerance`` and ``max_period`` gives ``False``.
+    """
+
+    models = get_muesr_model_data(structure, model, merge_equivalent_k=True)
+    rationals = [
+        _rational_propagation_vector(m.k_rlu, tolerance=tolerance, max_period=max_period)
+        for m in models
+    ]
+    if not models or any(rational is None for rational in rationals):
+        return False
+    return _distinct_phase_translations(rationals, limit=int(max_fields)) is not None
 
 
 def find_commensurate_approximant(
@@ -967,8 +1134,8 @@ def _host_contact_ions(
     named by its atom and its cell offset from the muon's own cell.
     """
 
-    # The approximant path asks again for every translation and the settings
-    # dialog for every value typed, so the search is cached on its inputs.
+    # The tie checks and the settings dialog ask again for every value typed, so the
+    # search is cached on its inputs.
     return _cached_host_contact_ions(
         tuple(tuple(float(v) for v in row) for row in structure.lattice_vectors),
         tuple(tuple(float(v) for v in row) for row in structure.fractional_positions),
@@ -1297,6 +1464,14 @@ def calculate_commensurate_fields(
 ) -> tuple[MagneticFieldResult, ...]:
     """Calculate commensurate vector fields with the optional muesr backend.
 
+    One result is returned per muon position and per lattice translation ``T``
+    that gives a distinct set of magnetic phases ``q . T``
+    (:func:`_translated_field_results`), so a ``q = 0`` structure gives one result
+    per position and a helix of period 3 gives three. The positions are the muon
+    sites and, when ``options.find_equivalent_sites`` is set, their symmetry images.
+    Each listed translation stands for the same number of translation-equivalent
+    sites, so the list carries equal weights.
+
     ``distorted_structures`` optionally gives, per entry of ``muon_sites``, the
     relaxed supercell containing that muon. A site with one receives the
     muon-induced distortion correction
@@ -1320,53 +1495,23 @@ def calculate_commensurate_fields(
     ]
     if noncomm:
         raise MagneticFieldError("commensurate field calculation received an incommensurate model")
-
-    locfield, find_largest_sphere, _dipten = _load_muesr_engines()
-    muons = _expanded_muon_positions(structure, muon_sites, opts)
-    sample = _build_muesr_sample(structure, [position for _label, position in muons])
-    radius = (
-        float(opts.radius)
-        if opts.radius is not None
-        else float(find_largest_sphere(sample, list(opts.supercell)))
-    )
-
-    dipolar, lorentz, contact = _commensurate_field_terms(
-        structure,
-        models,
-        [position for _label, position in muons],
-        opts,
-        radius,
-        locfield,
-    )
-
-    applied = _as_vector(opts.applied_field, "applied_field")
-    demag = _demag_field(structure, models, opts)
-    parameters = _contact_calculation_parameters(opts)
-    parameters["modulated"] = _has_modulated_component(models)
-    results: list[MagneticFieldResult] = []
-    for index, (label, position) in enumerate(muons):
-        distortion = distortions[index]
-        warnings = _contact_shell_warnings(structure, models, position, opts, distortion)
-        results.append(
-            MagneticFieldResult(
-                site_label=label,
-                muon_position=_tuple3(position),
-                dipolar=_tuple3(dipolar[index]),
-                lorentz=_tuple3(lorentz[index]),
-                contact=_tuple3(contact[index]),
-                demag=_tuple3(demag),
-                applied=_tuple3(applied),
-                distortion=(
-                    None
-                    if distortion is None
-                    else _distortion_correction(
-                        _distortion_changes(models, distortion, opts), (0, 0, 0)
-                    )
-                ),
-                calculation_parameters=_with_contact_warnings(parameters, warnings),
-            )
+    rationals = [
+        _rational_propagation_vector(
+            model_data.k_rlu,
+            tolerance=opts.commensurate_tolerance,
+            max_period=opts.commensurate_max_period,
         )
-    return tuple(results)
+        for model_data in models
+    ]
+    translations = _distinct_phase_translations(rationals, limit=MAX_LISTED_TRANSLATIONS)
+    if translations is None:
+        raise MagneticFieldError(
+            f"these wavevectors give more than {MAX_LISTED_TRANSLATIONS} inequivalent "
+            "translations, too many to list as separate fields"
+        )
+    return _translated_field_results(
+        structure, models, rationals, translations, muon_sites, distortions, opts
+    )
 
 
 def calculate_commensurate_approximant_fields(
@@ -1381,13 +1526,8 @@ def calculate_commensurate_approximant_fields(
 
     Every component wavevector is replaced by its rational approximant
     (:func:`find_commensurate_approximant` with ``options.approximant_tolerance``
-    and ``options.approximant_max_period``). The approximant repeats over a
-    finite magnetic supercell, so translation-equivalent copies ``r + T`` of a
-    muon site see a finite set of fields. One result is returned per muon site
-    and per translation ``T`` that gives a distinct set of magnetic phases; the
-    field at ``r + T`` is the commensurate sum with every Fourier phase advanced
-    by ``q . T``. Each listed translation stands for the same number of
-    translation-equivalent sites, so the list carries equal weights.
+    and ``options.approximant_max_period``), and the fields are then listed as for
+    an exactly commensurate structure (:func:`calculate_commensurate_fields`).
 
     ``distorted_structures`` works as for :func:`calculate_commensurate_fields`;
     the correction at ``r + T`` uses the approximant order advanced by ``q . T``.
@@ -1417,52 +1557,80 @@ def calculate_commensurate_approximant_fields(
             f"the commensurate approximant has more than {int(opts.max_approximant_fields)} inequivalent "
             "translations; lower the approximant period or sample a distribution instead"
         )
-    approximant_models = [
+    return _translated_field_results(
+        structure, models, rationals, translations, muon_sites, distortions, opts
+    )
+
+
+def _translated_field_results(
+    structure: Structure,
+    models: Sequence[MuesrModelData],
+    rationals: Sequence[tuple[np.ndarray, np.ndarray]],
+    translations: Sequence[tuple[int, int, int]],
+    muon_sites: Sequence[MuonSite | Sequence[float]],
+    distortions: Sequence[MuonDistortion | None],
+    options: MagneticFieldOptions,
+) -> tuple[MagneticFieldResult, ...]:
+    """Return one result per muon position and translation of a rational-``q`` order.
+
+    ``rationals`` holds each model's ``q`` as integer numerators and denominators, and
+    ``translations`` one ``T`` per distinct set of phases. The field at ``r + T`` is the field
+    at ``r`` of the order with every Fourier phase advanced by ``q . T``. A row's label names
+    its translation when there is more than one, and its position is ``r + T``.
+    """
+
+    exact_models = [
         replace(model_data, k_rlu=numerators / denominators)
         for model_data, (numerators, denominators) in zip(models, rationals, strict=True)
     ]
-
     locfield, find_largest_sphere, _dipten = _load_muesr_engines()
-    muons = _expanded_muon_positions(structure, muon_sites, opts)
+    muons = _expanded_muon_positions(structure, muon_sites, options)
     positions = [position for _label, position in muons]
     sample = _build_muesr_sample(structure, positions)
     radius = (
-        float(opts.radius)
-        if opts.radius is not None
-        else float(find_largest_sphere(sample, list(opts.supercell)))
+        float(options.radius)
+        if options.radius is not None
+        else float(find_largest_sphere(sample, list(options.supercell)))
     )
-    applied = _as_vector(opts.applied_field, "applied_field")
-    demag = _demag_field(structure, approximant_models, opts)
-    parameters = _contact_calculation_parameters(opts)
-    parameters["modulated"] = _has_modulated_component(approximant_models)
-
-    terms_by_translation = []
-    for translation in translations:
-        shifted = [
-            replace(
-                model_data,
-                phi=np.asarray(model_data.phi, dtype=float)
-                + float(np.dot(model_data.k_rlu, translation)),
-            )
-            for model_data in approximant_models
-        ]
-        terms_by_translation.append(
-            _commensurate_field_terms(structure, shifted, positions, opts, radius, locfield)
-        )
+    applied = _as_vector(options.applied_field, "applied_field")
+    demag = _demag_field(structure, exact_models, options)
+    parameters = _contact_calculation_parameters(options)
+    parameters["modulated"] = _has_modulated_component(exact_models)
+    coefficients = _commensurate_field_coefficients(
+        structure, exact_models, positions, options, radius, locfield
+    )
 
     results: list[MagneticFieldResult] = []
+    phases_by_translation = [
+        [
+            numerator / denominator
+            for numerator, denominator in (
+                _phase_numerator(numerators, denominators, translation)
+                for numerators, denominators in rationals
+            )
+        ]
+        for translation in translations
+    ]
     for index, (label, position) in enumerate(muons):
         changes = (
             None
             if distortions[index] is None
-            else _distortion_changes(approximant_models, distortions[index], opts)
+            else _distortion_changes(exact_models, distortions[index], options)
         )
         warnings = _contact_shell_warnings(
-            structure, approximant_models, position, opts, distortions[index]
+            structure, exact_models, position, options, distortions[index]
         )
-        for translation, (dipolar, lorentz, contact) in zip(
-            translations, terms_by_translation, strict=True
-        ):
+        for translation, phases in zip(translations, phases_by_translation, strict=True):
+            dipolar, lorentz, contact = (
+                sum(
+                    (
+                        _phase_shifted_fields(terms[term][index], np.array([phase]))[0]
+                        for terms, phase in zip(coefficients, phases, strict=True)
+                    ),
+                    np.zeros(3, dtype=float),
+                )
+                for term in range(3)
+            )
             site_label = label
             if len(translations) > 1:
                 site_label = f"{label} + ({translation[0]}, {translation[1]}, {translation[2]})"
@@ -1472,9 +1640,9 @@ def calculate_commensurate_approximant_fields(
                     muon_position=_tuple3(
                         np.asarray(position, dtype=float) + np.asarray(translation, dtype=float)
                     ),
-                    dipolar=_tuple3(dipolar[index]),
-                    lorentz=_tuple3(lorentz[index]),
-                    contact=_tuple3(contact[index]),
+                    dipolar=_tuple3(dipolar),
+                    lorentz=_tuple3(lorentz),
+                    contact=_tuple3(contact),
                     demag=_tuple3(demag),
                     applied=_tuple3(applied),
                     distortion=(
@@ -1553,50 +1721,80 @@ def _has_modulated_component(models: Sequence[MuesrModelData]) -> bool:
     return any(not _is_uniform_wavevector(model_data.k_rlu) for model_data in models)
 
 
-def _commensurate_field_terms(
+def _commensurate_field_coefficients(
     structure: Structure,
-    models: Sequence[object],
+    models: Sequence[MuesrModelData],
     positions: Sequence[np.ndarray],
     options: MagneticFieldOptions,
     radius: float,
     locfield,
-) -> tuple[list[np.ndarray], list[np.ndarray], list[np.ndarray]]:
-    """Sum the dipolar, Lorentz and contact fields of commensurate models at each position."""
+) -> list[tuple[np.ndarray, np.ndarray, np.ndarray]]:
+    """Return each model's complex dipolar, Lorentz and contact fields at each position.
 
-    dipolar = [np.zeros(3, dtype=float) for _ in positions]
-    lorentz = [np.zeros(3, dtype=float) for _ in positions]
-    contact = [np.zeros(3, dtype=float) for _ in positions]
+    Every field is linear in the moments, so advancing a model's Fourier phase by ``theta``
+    turns gives ``Re[exp(-2 pi i theta) B]`` with ``B = B(0) + i B(1/4)``. That makes every
+    translation of the muon cost no further lattice sum: a modulated model takes two sums. A model
+    whose phases ``q . T`` are only 0 and 1/2 takes one, since they never read ``B(1/4)``, and so
+    does one at ``q = 0``, whose phase never advances. Each array has shape ``(n, 3)``.
+    """
+
+    coefficients = []
     for model_data in models:
-        continuum = _continuum_field_projector(structure, model_data.k_rlu)
-        sample = _build_muesr_sample(structure, positions)
-        sample.new_mm()
-        sample.mm.k = model_data.k_rlu
-        sample.mm.fc = _muesr_fourier_components(model_data, options.supercell)
-        sample.mm.phi = model_data.phi
-        fields = locfield(
-            sample,
-            "s",
-            list(options.supercell),
-            radius,
-            nnn=int(options.nnn),
-            rcont=float(options.rcont),
+        real = _model_field_terms(structure, model_data, positions, options, radius, locfield)
+        if _is_uniform_wavevector(2.0 * np.asarray(model_data.k_rlu, dtype=float)):
+            coefficients.append(tuple(np.asarray(term, dtype=complex) for term in real))
+            continue
+        quarter_turn = replace(model_data, fc=-1j * np.asarray(model_data.fc, dtype=complex))
+        imaginary = _model_field_terms(
+            structure, quarter_turn, positions, options, radius, locfield
         )
-        for index, local_field in enumerate(fields):
-            if options.contact_coupling is not None:
-                local_field.ACont = float(options.contact_coupling)
-            dipolar[index] += _field_vector(local_field, "Dipolar", "D")
-            if options.include_lorentz:
-                lorentz[index] += continuum @ _field_vector(local_field, "Lorentz", "L")
-            contact[index] += _field_vector(local_field, "Contact", "C")
+        coefficients.append(tuple(re + 1j * im for re, im in zip(real, imaginary, strict=True)))
     if options.contact_coupling is not None and _needs_shared_contact_shell(models):
-        for index, position in enumerate(positions):
-            contact[index] = sum(
-                (
-                    change.real
-                    for change in _shared_contact_coefficients(structure, models, position, options)
-                ),
-                np.zeros(3, dtype=float),
-            )
+        shared = [
+            _shared_contact_coefficients(structure, models, position, options)
+            for position in positions
+        ]
+        coefficients = [
+            (dipolar, lorentz, np.array([site[model_index] for site in shared], dtype=complex))
+            for model_index, (dipolar, lorentz, _contact) in enumerate(coefficients)
+        ]
+    return coefficients
+
+
+def _model_field_terms(
+    structure: Structure,
+    model_data: MuesrModelData,
+    positions: Sequence[np.ndarray],
+    options: MagneticFieldOptions,
+    radius: float,
+    locfield,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Sum the dipolar, Lorentz and contact fields of one model at each position, shape ``(n, 3)``."""
+
+    dipolar = np.zeros((len(positions), 3), dtype=float)
+    lorentz = np.zeros((len(positions), 3), dtype=float)
+    contact = np.zeros((len(positions), 3), dtype=float)
+    continuum = _continuum_field_projector(structure, model_data.k_rlu)
+    sample = _build_muesr_sample(structure, positions)
+    sample.new_mm()
+    sample.mm.k = model_data.k_rlu
+    sample.mm.fc = _muesr_fourier_components(model_data, options.supercell)
+    sample.mm.phi = model_data.phi
+    fields = locfield(
+        sample,
+        "s",
+        list(options.supercell),
+        radius,
+        nnn=int(options.nnn),
+        rcont=float(options.rcont),
+    )
+    for index, local_field in enumerate(fields):
+        if options.contact_coupling is not None:
+            local_field.ACont = float(options.contact_coupling)
+        dipolar[index] = _field_vector(local_field, "Dipolar", "D")
+        if options.include_lorentz:
+            lorentz[index] = continuum @ _field_vector(local_field, "Lorentz", "L")
+        contact[index] = _field_vector(local_field, "Contact", "C")
     return dipolar, lorentz, contact
 
 
@@ -1733,6 +1931,12 @@ def calculate_incommensurate_field_distributions(
 ) -> tuple[MagneticFieldDistributionResult, ...]:
     """Calculate field distributions for incommensurate structures.
 
+    The phases of the incommensurate wavevectors are sampled as continuous phases. Every other
+    component at ``q != 0`` takes the phases its translations give: a whole multiple of the
+    basis keeps that multiple of the phase, and any other short period is sampled at its exact
+    phases ``q . T``, every set of them equally at each continuous phase (:class:`_PhaseBasis`,
+    :func:`_sample_phases`).
+
     ``distorted_structures`` works as for :func:`calculate_commensurate_fields`.
     Each component's complex distortion change ``dB`` is added to its dipolar
     and contact lookup tables as ``Re[exp(-2 pi i theta) dB]`` at the phase
@@ -1761,41 +1965,49 @@ def calculate_incommensurate_field_distributions(
         else float(find_largest_sphere(radius_sample, list(opts.supercell)))
     )
     calculation_parameters = _distribution_calculation_parameters(opts, radius)
-    phase_basis_rlu, phase_coeffs_by_model = _active_phase_basis_and_coefficients(
+    phase_basis = _active_phase_basis_and_coefficients(
         models,
         tolerance=opts.commensurate_tolerance,
         max_period=opts.commensurate_max_period,
     )
-    active_q_indices = _active_component_q_indices(models)
-    resolved_sampling = _resolved_phase_sampling(
-        n_dim=phase_basis_rlu.shape[0],
-        nangles=int(opts.nangles),
-        phase_sample_count=int(opts.phase_sample_count),
-        sampling=opts.phase_sampling,
-        max_grid_samples=int(opts.max_grid_samples),
-    )
-    # Monte Carlo always runs from a recorded seed, so the samples can be rebuilt later.
-    phase_sampling_seed = (
-        None
-        if resolved_sampling == "grid"
-        else (
-            int(opts.random_seed)
-            if opts.random_seed is not None
-            else int(np.random.SeedSequence().entropy) % 2**63
+    phase_basis_rlu = phase_basis.basis_rlu
+    n_dim = phase_basis_rlu.shape[0]
+    listed_models = [models[index] for index in phase_basis.listed]
+    listed_rationals = [
+        _rational_propagation_vector(
+            model_data.k_rlu,
+            tolerance=opts.commensurate_tolerance,
+            max_period=opts.commensurate_max_period,
         )
+        for model_data in listed_models
+    ]
+    active_q_indices = _active_component_q_indices(models)
+    # Monte Carlo always runs from a recorded seed, so the samples can be rebuilt later.
+    seed = (
+        int(opts.random_seed)
+        if opts.random_seed is not None
+        else int(np.random.SeedSequence().entropy) % 2**63
     )
-    phase_samples_turns = _build_phase_samples_turns(
-        n_dim=phase_basis_rlu.shape[0],
+    samples = _sample_phases(
+        n_dim=n_dim,
+        listed_rationals=listed_rationals,
         nangles=int(opts.nangles),
         phase_sample_count=int(opts.phase_sample_count),
         sampling=opts.phase_sampling,
-        random_seed=phase_sampling_seed,
+        random_seed=seed,
         max_grid_samples=int(opts.max_grid_samples),
     )
+    resolved_sampling = samples.sampling
+    phase_sampling_seed = None if resolved_sampling == "grid" else seed
+    phase_samples_turns = samples.continuous_turns
+    sample_count = phase_samples_turns.shape[0]
     calculation_parameters["modulated"] = _has_modulated_component(models)
     calculation_parameters["independent_q_indices"] = list(active_q_indices)
     calculation_parameters["phase_basis_rlu"] = phase_basis_rlu.tolist()
-    calculation_parameters["phase_sample_count"] = int(phase_samples_turns.shape[0])
+    calculation_parameters["listed_phase_q_rlu"] = [
+        [float(value) for value in model_data.k_rlu] for model_data in listed_models
+    ]
+    calculation_parameters["phase_sample_count"] = int(sample_count)
     calculation_parameters["resolved_phase_sampling"] = resolved_sampling
     calculation_parameters["phase_sampling_seed"] = phase_sampling_seed
     component_totals_by_site: list[list[np.ndarray]] = [[] for _ in muons]
@@ -1803,26 +2015,33 @@ def calculate_incommensurate_field_distributions(
     component_terms_by_site: list[dict[str, list[np.ndarray]]] = [
         {"dipolar": [], "lorentz": [], "contact": []} for _ in muons
     ]
+    # Per site, the dipolar, Lorentz and contact fields of the listed components at each sample.
+    listed_terms_by_site: list[dict[str, np.ndarray]] = [
+        {
+            name: np.zeros((sample_count, 3), dtype=float)
+            for name in ("dipolar", "lorentz", "contact")
+        }
+        for _ in muons
+    ]
     component_phase_coeffs: list[tuple[float, ...]] = []
 
-    # One backend call per entry: incommensurate components split into circular helices.
-    backend_entries: list[tuple[str, Sequence[float], MuesrModelData]] = []
-    for model_data, phase_coeff in zip(models, phase_coeffs_by_model, strict=True):
-        mode = (
-            "s"
-            if is_commensurate_propagation_vector(
-                model_data.k_rlu,
-                tolerance=opts.commensurate_tolerance,
-                max_period=opts.commensurate_max_period,
-            )
-            else "i"
-        )
+    # One backend call per entry: incommensurate components split into circular helices. A
+    # listed component is summed as a commensurate list sums it, at no phase and a quarter turn.
+    listed_columns = {model_index: column for column, model_index in enumerate(phase_basis.listed)}
+    backend_entries: list[tuple[str, Sequence[float], MuesrModelData, int | None]] = []
+    for model_index, (model_data, phase_coeff) in enumerate(
+        zip(models, phase_basis.coefficients, strict=True)
+    ):
+        if model_index in listed_columns:
+            backend_entries.append(("s", phase_coeff, model_data, listed_columns[model_index]))
+            continue
+        mode = "s" if _is_uniform_wavevector(model_data.k_rlu) else "i"
         model_entries = (
             split_muesr_model_data_into_helices(model_data) if mode == "i" else (model_data,)
         )
-        backend_entries.extend((mode, phase_coeff, entry) for entry in model_entries)
+        backend_entries.extend((mode, phase_coeff, entry, None) for entry in model_entries)
     # The distortion changes, and so the contact-shell checks, come before any lattice sum.
-    entry_models = [entry for *_, entry in backend_entries]
+    entry_models = [entry for _mode, _coeff, entry, _column in backend_entries]
     magnetic_atoms = _magnetic_atom_mask(entry_models, len(structure.species))
     changes_by_site = [
         None
@@ -1847,10 +2066,32 @@ def calculate_incommensurate_field_distributions(
         if opts.contact_coupling is not None and _needs_shared_contact_shell(entry_models)
         else None
     )
+    positions = [position for _label, position in muons]
 
-    for entry_index, (mode, phase_coeff, model_entry) in enumerate(backend_entries):
+    for entry_index, (mode, phase_coeff, model_entry, listed_column) in enumerate(backend_entries):
+        if listed_column is not None:
+            ((dip_c, lor_c, con_c),) = _commensurate_field_coefficients(
+                structure, [model_entry], positions, opts, radius, locfield
+            )
+            listed_phases = samples.listed_turns[:, listed_column]
+            for index in range(len(muons)):
+                dip = dip_c[index]
+                con = (
+                    con_c[index]
+                    if shared_contact_by_site is None
+                    else shared_contact_by_site[index][entry_index]
+                )
+                site_changes = changes_by_site[index]
+                if site_changes is not None:
+                    dip = dip + site_changes[entry_index][0]
+                    con = con + site_changes[entry_index][1]
+                site_terms = listed_terms_by_site[index]
+                site_terms["dipolar"] += _phase_shifted_fields(dip, listed_phases)
+                site_terms["lorentz"] += _phase_shifted_fields(lor_c[index], listed_phases)
+                site_terms["contact"] += _phase_shifted_fields(con, listed_phases)
+            continue
         continuum = _continuum_field_projector(structure, model_entry.k_rlu)
-        sample = _build_muesr_sample(structure, [position for _label, position in muons])
+        sample = _build_muesr_sample(structure, positions)
         sample.new_mm()
         sample.mm.k = model_entry.k_rlu
         sample.mm.fc = _muesr_fourier_components(model_entry, opts.supercell)
@@ -1906,7 +2147,7 @@ def calculate_incommensurate_field_distributions(
     applied = _as_vector(opts.applied_field, "applied_field")
     demag = _demag_field(structure, models, opts)
     offset = applied + demag
-    half_samples = _half_resolution_phase_samples(phase_samples_turns, resolved_sampling)
+    half_selection = _half_resolution_selection(samples)
     # The lookup rows each phase sample reads depend only on the phases, so every
     # site and term shares them.
     full_indices = _component_lookup_indices(
@@ -1916,21 +2157,33 @@ def calculate_incommensurate_field_distributions(
         _component_lookup_indices(
             component_phase_coeffs, phase_samples_turns, nangles=int(opts.nangles), stride=2
         )
-        if phase_basis_rlu.shape[0] and int(opts.nangles) % 2 == 0
+        if n_dim and int(opts.nangles) % 2 == 0
         else None
     )
     half_sample_indices = (
-        _component_lookup_indices(component_phase_coeffs, half_samples, nangles=int(opts.nangles))
-        if half_samples is not None
-        else None
+        [rows[half_selection] for rows in full_indices] if half_selection is not None else None
     )
     results: list[MagneticFieldDistributionResult] = []
     for index, (label, position) in enumerate(muons):
-        term_fields = {
-            name: _sum_component_lookups(tables, full_indices)
+        listed_terms = listed_terms_by_site[index]
+        listed_total = listed_terms["dipolar"] + listed_terms["lorentz"] + listed_terms["contact"]
+        lookup_fields = {
+            name: _sum_component_lookups(tables, full_indices, sample_count=sample_count)
             for name, tables in component_terms_by_site[index].items()
         }
-        fields = sum(term_fields.values()) + offset[np.newaxis, :]
+        factors = None
+        if not phase_basis.listed:
+            term_fields = lookup_fields
+            fields = sum(term_fields.values()) + offset[np.newaxis, :]
+        else:
+            term_fields = {name: lookup_fields[name] + listed_terms[name] for name in lookup_fields}
+            continuous_total = sum(lookup_fields.values()) + offset[np.newaxis, :]
+            fields = continuous_total + listed_total
+            if resolved_sampling == "grid":
+                # Every continuous point repeats with each listed set, so two factors hold it all.
+                sets = samples.listed_set_count
+                factors = (continuous_total[::sets].copy(), listed_total[:sets].copy())
+                fields = _expand_field_factors(*factors)
         magnitudes = np.linalg.norm(fields, axis=1)
         terms = {name: _sampled_term_statistics(values) for name, values in term_fields.items()}
         terms["demag"] = _constant_term_statistics(demag)
@@ -1942,8 +2195,12 @@ def calculate_incommensurate_field_distributions(
             half_lookup_magnitudes=(
                 np.linalg.norm(
                     _sum_component_lookups(
-                        component_totals_by_site[index], half_lookup_indices, stride=2
+                        component_totals_by_site[index],
+                        half_lookup_indices,
+                        stride=2,
+                        sample_count=sample_count,
                     )
+                    + listed_total
                     + offset,
                     axis=1,
                 )
@@ -1952,7 +2209,12 @@ def calculate_incommensurate_field_distributions(
             ),
             half_sample_magnitudes=(
                 np.linalg.norm(
-                    _sum_component_lookups(component_totals_by_site[index], half_sample_indices)
+                    _sum_component_lookups(
+                        component_totals_by_site[index],
+                        half_sample_indices,
+                        sample_count=len(half_selection),
+                    )
+                    + listed_total[half_selection]
                     + offset,
                     axis=1,
                 )
@@ -1960,15 +2222,11 @@ def calculate_incommensurate_field_distributions(
                 else None
             ),
             nangles=int(opts.nangles),
-            lookup_limited=(
-                resolved_sampling == "grid"
-                and phase_basis_rlu.shape[0] > 0
-                and _grid_axis_count(
-                    n_dim=phase_basis_rlu.shape[0],
-                    nangles=int(opts.nangles),
-                    phase_sample_count=int(opts.phase_sample_count),
-                )
-                == int(opts.nangles)
+            lookup_limited=samples.lookup_limited,
+            exact_sets=(
+                samples.listed_set_count
+                if resolved_sampling == "grid" and n_dim == 0 and phase_basis.listed
+                else None
             ),
         )
         results.append(
@@ -1993,6 +2251,7 @@ def calculate_incommensurate_field_distributions(
                 dipolar_lorentz=_sampled_term_statistics(
                     term_fields["dipolar"] + term_fields["lorentz"]
                 ),
+                fields_T_factors=factors,
             )
         )
     return tuple(results)
@@ -2009,26 +2268,32 @@ def _constant_term_statistics(vector: np.ndarray) -> FieldTermStatistics:
     return FieldTermStatistics(mean_T=_tuple3(vector), rms_T=float(np.linalg.norm(vector)))
 
 
-def _half_resolution_phase_samples(
-    phase_samples_turns: np.ndarray, sampling: str
-) -> np.ndarray | None:
-    """Return the phase samples at half the sample budget, or ``None`` for a single phase.
+def _half_resolution_selection(samples: _PhaseSamples) -> np.ndarray | None:
+    """Return which samples make up half the sample budget, or ``None`` when nothing halves.
 
-    Monte Carlo keeps every other sample; a grid keeps every other point along
-    each phase axis, the grid a budget of half the points per axis would build.
+    Monte Carlo keeps every other sample. A grid keeps every other point along each continuous
+    phase axis, with every listed phase set at each; a grid of listed phase sets alone already
+    holds every set, so it has no half.
     """
 
-    phases = np.asarray(phase_samples_turns, dtype=float)
+    phases = samples.continuous_turns
     n_dim = phases.shape[1]
-    if n_dim == 0 or phases.shape[0] < 2:
+    total = phases.shape[0]
+    if total < 2:
         return None
-    if sampling == "grid":
-        axis_count = int(round(phases.shape[0] ** (1.0 / n_dim)))
-        if axis_count < 2 or axis_count**n_dim != phases.shape[0]:
+    if samples.sampling != "grid":
+        if n_dim == 0 and samples.listed_turns.shape[1] == 0:
             return None
-        grid = phases.reshape((axis_count,) * n_dim + (n_dim,))
-        return grid[(slice(None, None, 2),) * n_dim].reshape(-1, n_dim)
-    return phases[::2]
+        return np.arange(0, total, 2)
+    if n_dim == 0:
+        return None
+    sets = int(samples.listed_set_count)
+    points = total // sets
+    axis_count = int(round(points ** (1.0 / n_dim)))
+    if axis_count < 2 or axis_count**n_dim != points or points * sets != total:
+        return None
+    kept = np.arange(points).reshape((axis_count,) * n_dim)[(slice(None, None, 2),) * n_dim]
+    return (kept.reshape(-1, 1) * sets + np.arange(sets)[np.newaxis, :]).reshape(-1)
 
 
 def _distribution_convergence_checks(
@@ -2039,12 +2304,15 @@ def _distribution_convergence_checks(
     half_sample_magnitudes: np.ndarray | None,
     nangles: int,
     lookup_limited: bool,
+    exact_sets: int | None = None,
 ) -> tuple[DistributionConvergenceCheck, ...]:
     """Check a p(|B|) distribution against half the lookup angles, half the samples and its bin filling.
 
     ``half_lookup_magnitudes`` is ``None`` for a single phase or an odd lookup
     count, which has no uniform half-resolution lookup. ``lookup_limited`` marks a grid whose axes already use every lookup angle, so
-    more samples need more lookup angles.
+    more samples need more lookup angles. ``exact_sets`` is the number of phase sets of a
+    distribution that takes each of them once, which no further samples change: its histogram
+    check passes and says it is exact.
     """
 
     checks: list[DistributionConvergenceCheck] = []
@@ -2091,6 +2359,17 @@ def _distribution_convergence_checks(
         )
     occupied = int(np.count_nonzero(counts))
     per_bin = float(np.asarray(magnitudes).size) / float(max(occupied, 1))
+    if exact_sets is not None:
+        checks.append(
+            DistributionConvergenceCheck(
+                setting="histogram_bins",
+                label="Histogram bins",
+                converged=True,
+                metric=per_bin,
+                message=f"Exact: every one of the {exact_sets} sets of phases is a sample.",
+            )
+        )
+        return tuple(checks)
     converged = per_bin >= MIN_SAMPLES_PER_OCCUPIED_BIN or occupied <= 1
     checks.append(
         DistributionConvergenceCheck(
@@ -2122,13 +2401,35 @@ def _cdf_distance(reference: np.ndarray, other: np.ndarray) -> float:
     return float(np.max(np.abs(first_cdf - second_cdf)))
 
 
+@dataclass(frozen=True, slots=True)
+class _PhaseBasis:
+    """How each component of a distribution takes its phase at a sampled translation.
+
+    ``basis_rlu`` holds the independent incommensurate wavevectors, each sampled as a continuous
+    phase, and ``coefficients`` gives every component's phase as a combination of those. A
+    component in ``listed`` has a period of at most ``max_period`` that is no whole multiple of
+    the basis, so its phase is sampled exactly, at the phases ``q . T`` its translations take,
+    independently of the continuous ones; its coefficients are zero. A ``q = 0`` component has
+    zero coefficients and no phase.
+    """
+
+    basis_rlu: np.ndarray
+    coefficients: list[tuple[float, ...]]
+    listed: tuple[int, ...]
+
+
 def _active_phase_basis_and_coefficients(
     models: Sequence[object],
     *,
     tolerance: float,
     max_period: int,
-) -> tuple[np.ndarray, list[tuple[float, ...]]]:
-    """Build the independent physical phase basis used to combine lookup tables."""
+) -> _PhaseBasis:
+    """Build the independent physical phase basis used to combine lookup tables.
+
+    A short-period component that is a whole multiple of the basis, such as a 1/12 harmonic
+    of a 1/24 helix, keeps that multiple of the phase, as its translations do. Any other
+    ``q != 0`` component of period up to ``max_period`` is listed (:class:`_PhaseBasis`).
+    """
 
     q_vectors: list[np.ndarray] = []
     for model_data in models:
@@ -2138,23 +2439,39 @@ def _active_phase_basis_and_coefficients(
         if _rank_increases(q_vectors, q_rlu, tolerance=tolerance):
             q_vectors.append(q_rlu)
 
-    if not q_vectors:
-        return np.zeros((0, 3), dtype=float), [() for _model_data in models]
-
-    basis = np.asarray(q_vectors, dtype=float)
+    basis = np.asarray(q_vectors, dtype=float).reshape(len(q_vectors), 3)
     coeffs: list[tuple[float, ...]] = []
-    for model_data in models:
+    listed: list[int] = []
+    for index, model_data in enumerate(models):
         q_rlu = np.asarray(model_data.k_rlu, dtype=float).reshape(3)
-        if is_commensurate_propagation_vector(q_rlu, tolerance=tolerance, max_period=max_period):
-            coeffs.append(tuple(0.0 for _ in range(basis.shape[0])))
+        zero = tuple(0.0 for _ in range(basis.shape[0]))
+        if _is_uniform_wavevector(q_rlu):
+            coeffs.append(zero)
             continue
-        solved, *_ = np.linalg.lstsq(basis.T, q_rlu, rcond=None)
-        if not np.allclose(solved @ basis, q_rlu, atol=max(float(tolerance), 1e-10), rtol=0.0):
+        commensurate = is_commensurate_propagation_vector(
+            q_rlu, tolerance=tolerance, max_period=max_period
+        )
+        solved = (
+            np.linalg.lstsq(basis.T, q_rlu, rcond=None)[0]
+            if basis.shape[0]
+            else np.zeros(0, dtype=float)
+        )
+        in_span = basis.shape[0] > 0 and np.allclose(
+            solved @ basis, q_rlu, atol=max(float(tolerance), 1e-10), rtol=0.0
+        )
+        if commensurate:
+            if in_span and np.allclose(solved, np.rint(solved), atol=1e-9, rtol=0.0):
+                coeffs.append(tuple(float(value) for value in np.rint(solved)))
+            else:
+                coeffs.append(zero)
+                listed.append(index)
+            continue
+        if not in_span:
             raise MagneticFieldError(
                 "could not express component q vector in the sampled phase basis"
             )
         coeffs.append(tuple(float(value) for value in solved))
-    return basis, coeffs
+    return _PhaseBasis(basis_rlu=basis, coefficients=coeffs, listed=tuple(listed))
 
 
 def _rank_increases(
@@ -2224,6 +2541,191 @@ def _build_phase_samples_turns(
             )
         return _phase_grid(axis_count, n_dim)
     return _monte_carlo_phases(random_seed, int(phase_sample_count), n_dim)
+
+
+@dataclass(frozen=True, slots=True)
+class _PhaseSamples:
+    """The phases a distribution is evaluated at, one row per sample.
+
+    ``continuous_turns`` holds the phase of each independent incommensurate wavevector and
+    ``listed_turns`` the exact phase ``q . T`` of each listed component (:class:`_PhaseBasis`).
+    A grid pairs every continuous point with each of its ``listed_set_count`` listed phase
+    sets, so the two are sampled independently and every set equally often.
+    """
+
+    continuous_turns: np.ndarray
+    listed_turns: np.ndarray
+    sampling: str
+    listed_set_count: int
+    lookup_limited: bool
+
+
+def _sample_phases(
+    *,
+    n_dim: int,
+    listed_rationals: Sequence[tuple[np.ndarray, np.ndarray]],
+    nangles: int,
+    phase_sample_count: int,
+    sampling: str,
+    random_seed: int,
+    max_grid_samples: int,
+) -> _PhaseSamples:
+    """Sample the continuous phases and, beside them, the listed components' phase sets.
+
+    A grid pairs every listed phase set with each continuous point, within the same budget of
+    samples, so it has fewer points per continuous axis. The sets are enumerated for a grid;
+    more of them than ``max_grid_samples`` turns ``auto`` into Monte Carlo, which draws a
+    lattice translation for each sample instead.
+    """
+
+    requested = _resolved_phase_sampling(
+        n_dim=n_dim,
+        nangles=nangles,
+        phase_sample_count=phase_sample_count,
+        sampling=sampling,
+        max_grid_samples=max_grid_samples,
+    )
+    if not listed_rationals:
+        phases = _build_phase_samples_turns(
+            n_dim=n_dim,
+            nangles=nangles,
+            phase_sample_count=phase_sample_count,
+            sampling=sampling,
+            random_seed=None if requested == "grid" else random_seed,
+            max_grid_samples=max_grid_samples,
+        )
+        return _PhaseSamples(
+            continuous_turns=phases,
+            listed_turns=np.zeros((phases.shape[0], 0), dtype=float),
+            sampling=requested,
+            listed_set_count=1,
+            lookup_limited=_grid_reaches_lookup(requested, n_dim, nangles, phase_sample_count),
+        )
+    sets = _listed_phase_sets(listed_rationals, limit=max(int(max_grid_samples), 1))
+    if sets is None:
+        if requested == "grid" and str(sampling).strip().lower() == "grid":
+            raise MagneticFieldError(
+                f"these wavevectors give more than {int(max_grid_samples)} phase sets, too many "
+                "for a grid; use Monte Carlo sampling"
+            )
+        mode = "montecarlo"
+    else:
+        mode = _resolved_phase_sampling(
+            n_dim=n_dim,
+            nangles=nangles,
+            phase_sample_count=max(1, int(phase_sample_count) // len(sets)),
+            sampling=sampling,
+            max_grid_samples=max(1, int(max_grid_samples) // len(sets)),
+        )
+    if mode == "grid" and sets is not None:
+        budget = max(1, int(phase_sample_count) // len(sets))
+        continuous = _build_phase_samples_turns(
+            n_dim=n_dim,
+            nangles=nangles,
+            phase_sample_count=budget,
+            sampling="grid",
+            random_seed=None,
+            max_grid_samples=max(1, int(max_grid_samples) // len(sets)),
+        )
+        continuous, listed = _grid_with_listed_sets(continuous, sets)
+        return _PhaseSamples(
+            continuous_turns=continuous,
+            listed_turns=listed,
+            sampling="grid",
+            listed_set_count=len(sets),
+            lookup_limited=_grid_reaches_lookup("grid", n_dim, nangles, budget),
+        )
+    continuous, listed = _monte_carlo_phase_samples(
+        random_seed, int(phase_sample_count), n_dim, listed_rationals
+    )
+    return _PhaseSamples(
+        continuous_turns=continuous,
+        listed_turns=listed,
+        sampling="montecarlo",
+        listed_set_count=1,
+        lookup_limited=False,
+    )
+
+
+def _grid_reaches_lookup(sampling: str, n_dim: int, nangles: int, budget: int) -> bool:
+    """Return whether a grid's continuous axes already use every lookup angle."""
+
+    return (
+        sampling == "grid"
+        and n_dim > 0
+        and _grid_axis_count(n_dim=n_dim, nangles=nangles, phase_sample_count=budget) == nangles
+    )
+
+
+def _listed_phase_sets(
+    rationals: Sequence[tuple[np.ndarray, np.ndarray]], *, limit: int
+) -> np.ndarray | None:
+    """Return every distinct set of phases ``q . T`` of ``rationals`` in turns, or ``None`` above ``limit``."""
+
+    translations = _distinct_phase_translations(rationals, limit=limit)
+    if translations is None:
+        return None
+    return np.array(
+        [
+            [
+                numerator / denominator
+                for numerator, denominator in (
+                    _phase_numerator(numerators, denominators, translation)
+                    for numerators, denominators in rationals
+                )
+            ]
+            for translation in translations
+        ],
+        dtype=float,
+    ).reshape(len(translations), len(rationals))
+
+
+def _grid_with_listed_sets(
+    continuous: np.ndarray, sets: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
+    """Pair every continuous grid point with every listed phase set, the sets varying fastest."""
+
+    return (
+        np.repeat(continuous, sets.shape[0], axis=0),
+        np.tile(sets, (continuous.shape[0], 1)),
+    )
+
+
+def _monte_carlo_phase_samples(
+    seed: int,
+    sample_count: int,
+    n_dim: int,
+    rationals: Sequence[tuple[np.ndarray, np.ndarray]],
+) -> tuple[np.ndarray, np.ndarray]:
+    """Draw the continuous phases and, per sample, a lattice translation for the listed ones.
+
+    The translations are uniform over one period along each axis, so every listed phase set is
+    drawn equally often. They come from their own stream of ``seed``, which leaves the
+    continuous phases what the same seed gives without listed components.
+    """
+
+    continuous = (
+        _monte_carlo_phases(seed, sample_count, n_dim)
+        if n_dim
+        else np.zeros((sample_count, 0), dtype=float)
+    )
+    if not rationals:
+        return continuous, np.zeros((sample_count, 0), dtype=float)
+    periods = [
+        math.lcm(*(int(denominators[axis]) for _numerators, denominators in rationals))
+        for axis in range(3)
+    ]
+    rng = np.random.default_rng((int(seed), 1))
+    translations = rng.integers(0, periods, size=(sample_count, 3), dtype=np.int64)
+    columns = []
+    for numerators, denominators in rationals:
+        common = math.lcm(*(int(value) for value in denominators))
+        weights = np.array(
+            [int(numerators[axis]) * (common // int(denominators[axis])) for axis in range(3)],
+            dtype=np.int64,
+        )
+        columns.append(np.mod(translations @ weights, common) / float(common))
+    return continuous, np.stack(columns, axis=1)
 
 
 def _phase_grid(axis_count: int, n_dim: int) -> np.ndarray:
@@ -2326,11 +2828,19 @@ def _component_lookup_indices(
 
 
 def _sum_component_lookups(
-    component_fields: Sequence[np.ndarray], indices: Sequence[np.ndarray], *, stride: int = 1
+    component_fields: Sequence[np.ndarray],
+    indices: Sequence[np.ndarray],
+    *,
+    stride: int = 1,
+    sample_count: int | None = None,
 ) -> np.ndarray:
-    """Sum each component's lookup field at the rows :func:`_component_lookup_indices` chose."""
+    """Sum each component's lookup field at the rows :func:`_component_lookup_indices` chose.
 
-    sample_count = indices[0].shape[0] if indices else 0
+    ``sample_count`` sizes the sum when there are no lookup components at all.
+    """
+
+    if sample_count is None:
+        sample_count = indices[0].shape[0] if indices else 0
     combined = np.zeros((sample_count, 3), dtype=float)
     for fields, rows in zip(component_fields, indices, strict=True):
         lookup = np.asarray(fields, dtype=float)

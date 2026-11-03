@@ -102,7 +102,8 @@ call the Magnetic Fields page makes for a commensurate structure.
    :language: python
 
 The function returns one
-:class:`~mufinder.science.magnetic_fields.MagneticFieldResult` per muon site,
+:class:`~mufinder.science.magnetic_fields.MagneticFieldResult` per muon site and
+per translation with a distinct magnetic phase, which at ``q = 0`` is one per site,
 with the dipolar, Lorentz, contact, demagnetizing and applied terms as
 Cartesian vectors in tesla, and their sum as ``total``. With no contact
 coupling and no demagnetizing field, the defaults of
@@ -234,7 +235,7 @@ the field along ``n̂``, not the zero-field Kubo–Toyabe ``Δ``, whose variance
 per site, or a list of them, and returns a
 :class:`~mufinder.science.polarisation.PolarisationResult` with one trace per
 site and their weighted mean (equal weights by default, which is right for
-equivalent sites and approximant translations). The rules it follows:
+equivalent sites and for the translations of an order with ``q ≠ 0``). The rules it follows:
 
 - **Directions.** ``polarisation_direction`` and ``detector_direction`` (default:
   the same) are laboratory directions; ``crystal_rotation`` takes the
