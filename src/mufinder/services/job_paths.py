@@ -13,6 +13,7 @@ Layering: this lives in ``mufinder.services`` and imports ``domain`` and
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+import os
 from pathlib import Path
 import posixpath
 from typing import TYPE_CHECKING
@@ -23,6 +24,7 @@ from mufinder.domain.charge_states import (
     POSITIVE_MUON_CHARGE_STATE,
     is_muon_relaxation_calc_type,
     muon_charge_state_prefix,
+    muon_relaxation_charge_state,
 )
 from mufinder.domain.enums import WorkflowStage
 from mufinder.domain.models import CalculationDefinition, Job
@@ -222,22 +224,82 @@ def job_output_directory(
     return None
 
 
+def resolved_path(path: Path) -> Path:
+    """Return ``path`` resolved, or as written when it cannot be: a link cycle raises."""
+
+    try:
+        return path.resolve()
+    except (OSError, RuntimeError):
+        return path
+
+
+def job_directory_link(project_root: Path, directory: Path) -> Path | None:
+    """Return the first link on the way to ``directory`` below ``files/``, or ``None``.
+
+    Read from the path as written, since resolving would look through the link. A path
+    spelled from elsewhere that lands inside ``files/`` is walked back up to it. Links above
+    ``files/``, such as a project opened by another spelling of its path, are the user's own
+    arrangement of their disk and do not count.
+    """
+
+    files_root = project_root.resolve() / "files"
+    for root in (project_root / "files", files_root):
+        if directory.is_relative_to(root):
+            current = root
+            for part in directory.relative_to(root).parts:
+                current = current / part
+                if current.is_symlink():
+                    return current
+            return None
+    if not resolved_path(directory).is_relative_to(files_root):
+        return None
+    for path in (directory, *directory.parents):
+        if resolved_path(path) == files_root:
+            return None
+        if path.is_symlink():
+            return path
+    return None
+
+
+def job_directory_on_disk(project_root: Path, directory: Path) -> bool:
+    """Return whether there is anything at ``directory`` for a clean-up to deal with.
+
+    A dangling link counts, and so does a missing folder reached through one: neither
+    exists, and both have to be refused rather than read as nothing being there.
+    """
+
+    return directory.exists() or job_directory_link(project_root, directory) is not None
+
+
+def job_directory_link_refusal(project_root: Path, directory: Path) -> str | None:
+    """Return why ``directory`` is a link or reached through one, or ``None``.
+
+    Checked before resolving, which would look through it: a link is not the job's folder,
+    whatever it points at, and deleting one neither removes nor refuses.
+    """
+
+    if directory.is_symlink():
+        return f"its folder is a link to somewhere else ({directory.name!r})"
+    if (link := job_directory_link(project_root, directory)) is not None:
+        return f"its folder is reached through a link ({link.name!r})"
+    return None
+
+
 def job_directory_refusal(project_root: Path, job: Job | None, directory: Path) -> str | None:
     """Return why ``directory`` must not be deleted as a job's own folder, or ``None``.
 
     The last check before any job folder goes, on every route. A job's folder comes
     from names saved in the project: ``.`` or ``..`` resolves to a folder holding every
-    other job, and an absolute name to a folder that is not the project's at all. So
-    the place is checked once resolved, and a name alone is never enough.
+    other job, an absolute name to a folder that is not the project's at all, and a link
+    below ``files/`` to anywhere at all. So links are looked for before resolving, the
+    place is checked once resolved, and a name alone is never enough.
     """
 
     if ".." in directory.parts:
         return f"its folder name leads out of its own folder ({directory.name!r})"
-    # Before resolving, which would look through it: a link is not the job's folder,
-    # whatever it points at, and deleting one neither removes nor refuses.
-    if directory.is_symlink():
-        return f"its folder is a link to somewhere else ({directory.name!r})"
-    resolved = directory.resolve()
+    if (link_refusal := job_directory_link_refusal(project_root, directory)) is not None:
+        return link_refusal
+    resolved = resolved_path(directory)
     files_root = project_root.resolve() / "files"
     if not resolved.is_relative_to(files_root):
         return f"its folder is outside this project's job folders ({resolved})"
@@ -256,6 +318,51 @@ def job_directory_refusal(project_root: Path, job: Job | None, directory: Path) 
     ):
         return f"its folder is the one shared by a whole charge state ({resolved.name!r})"
     return None
+
+
+def job_directory_foreign(project_root: Path, job: Job | None, directory: Path) -> str | None:
+    """Return why ``directory`` is not where this muon relaxation's folder belongs, or ``None``.
+
+    A muon relaxation's folder is ``<workflow>/<its charge>/<name>``, or the
+    ``<workflow>/<name>`` the fallback for an unclaimed job finds. Its seed is saved in the
+    project, so it can name a folder elsewhere, which is then some other work's even when no
+    job record says so. Call after :func:`job_directory_refusal` has passed.
+    """
+
+    if job is None or not is_muon_relaxation_calc_type(job.calc_type):
+        return None
+    place = resolved_path(directory).relative_to(project_root.resolve() / "files").parts
+    charge_state = muon_relaxation_charge_state(job.calc_type)
+    charge_folder = muon_charge_state_prefix(charge_state) if charge_state else None
+    if place[0] != job.workflow_stage.value:
+        return f"its folder is in another workflow's job folders ({directory.name!r})"
+    if len(place) > 2 and (len(place) != 3 or place[1] != charge_folder):
+        return f"its folder is not inside its charge folder ({directory.name!r})"
+    return None
+
+
+def job_directory_misplaced(project_root: Path, job: Job | None, directory: Path) -> bool:
+    """Return whether a saved name leads ``directory`` out of the job's place, a link aside.
+
+    Nothing in the app can correct a saved name, so a removal leaves that folder alone and
+    lets the job's records go. A link can be removed, and is refused instead.
+    """
+
+    if job_directory_link_refusal(project_root, directory) is not None:
+        return False
+    return bool(
+        job_directory_refusal(project_root, job, directory)
+        or job_directory_foreign(project_root, job, directory)
+    )
+
+
+def job_directory_label(project_root: Path, directory: Path) -> str:
+    """Return ``directory`` relative to the project, enough to tell any two folders apart."""
+
+    try:
+        return Path(os.path.relpath(directory, project_root)).as_posix()
+    except ValueError:  # On another drive.
+        return str(directory)
 
 
 def job_seed_name(job: Job, output_directory: Callable[[Job], Path | None]) -> str:

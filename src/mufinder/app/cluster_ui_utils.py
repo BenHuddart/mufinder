@@ -31,8 +31,13 @@ def show_detailed_warning(
     message: str,
     *,
     informative_text: str = "Open Details to inspect the full error message.",
+    details: str | None = None,
 ) -> None:
-    """Show a compact warning with expandable details for long messages."""
+    """Show a compact warning with expandable details for long messages.
+
+    ``details`` fills Details instead of the message, so a one-line message need not
+    repeat itself there.
+    """
 
     text = message.strip()
     lines = [line.strip() for line in text.replace("\r", "\n").splitlines() if line.strip()]
@@ -40,7 +45,7 @@ def show_detailed_warning(
     if len(summary) > 240:
         summary = f"{summary[:239]}…"
 
-    if len(lines) <= 1 and len(text) <= 240:
+    if details is None and len(lines) <= 1 and len(text) <= 240:
         QMessageBox.warning(parent, title, summary)
         return
 
@@ -49,7 +54,7 @@ def show_detailed_warning(
     box.setWindowTitle(title)
     box.setText(summary)
     box.setInformativeText(informative_text)
-    box.setDetailedText(text)
+    box.setDetailedText(text if details is None else details)
     box.exec()
 
 

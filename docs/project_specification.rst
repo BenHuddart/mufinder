@@ -592,8 +592,8 @@ Energy barriers
 - One page holds path generation, the barriers of each path and one inspector,
   and fits the default window. The inspector follows the table selection: a path
   without a finished band shows its hop in the pristine supercell; a finished one
-  shows image-by-image geometry in the shared structure viewer and a plotted
-  reaction-coordinate profile synchronized with the image stepper and viewer (see
+  shows image-by-image geometry in the shared structure viewer and a reaction profile
+  against distance along the band in Å, synchronized with the image stepper and viewer (see
   :doc:`/user_guide/energy_barriers`).
 
 Structure import and MCIF magnetic extraction

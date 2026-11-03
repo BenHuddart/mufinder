@@ -180,8 +180,18 @@ numbers in its summary line and in full on the expanded card.
        ``ΔE``, images and path length.
 
 ``ordering unchanged`` compares the sites of the same charge state and cell that
-have a zero-point energy so far: it says whether adding it reorders them. With
-one such site the phrase is left out, so the first site of a batch never has it.
+are ranked in the Quantum Corrections table so far: it says whether adding the
+zero-point energy reorders them. With one such site, or about a site that is not
+ranked, the phrase is left out, so the first site of a batch never has it.
+
+The table follows the same ranking as Quantum Corrections, as it stood when the job
+completed. A zero-point energy that cannot be tied to the site's current relaxation
+is left out: on its own entry it reads ``(earlier)`` or ``(unconfirmed)`` with a line
+saying why, and other entries list it under ``Not ranked``. A site with a non-positive
+muon mode cannot set the zero, so it can read below it, and a ``⚠`` marks any site
+stored with a warning. ``ΔE`` is relative to the lowest of the sites in the table.
+An entry keeps what it was written with: when a relaxation runs again later, the
+Quantum Corrections table shows the ranking as it now stands.
 
 A relaxed site is named by its label on the Muon Sites summary when it is pinned
 (``8g · cluster 1``), and otherwise by its own label. A field or simulation

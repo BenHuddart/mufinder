@@ -14,9 +14,12 @@ from PySide6.QtGui import QKeySequence
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import (
     QApplication,
+    QDialog,
     QHeaderView,
+    QLineEdit,
     QTableWidgetItem,
     QTreeWidgetItem,
+    QVBoxLayout,
     QWidget,
 )
 
@@ -1491,6 +1494,10 @@ def _shown_dashboard(window, tmp_path, statuses):
     return jobs
 
 
+def _selected_rows(window) -> list[int]:
+    return sorted(index.row() for index in window._jobs_table.selectionModel().selectedRows())
+
+
 def _focus_cell(window, row, column) -> None:
     table = window._jobs_table
     table.setCurrentCell(row, column)
@@ -1498,62 +1505,640 @@ def _focus_cell(window, row, column) -> None:
     QApplication.processEvents()
 
 
-def test_dashboard_tab_reaches_the_action_button_and_the_menu_button(main_window, tmp_path):
+def _focus(window):
+    QApplication.processEvents()
+    return QApplication.focusWidget()
+
+
+def test_dashboard_tab_goes_through_the_current_row_and_out_of_the_table(main_window, tmp_path):
+    """The table is one stop on the way round the window, however many rows it has."""
+
     window = main_window
-    _shown_dashboard(window, tmp_path, [JobStatus.FAILED, JobStatus.FAILED])
+    _shown_dashboard(window, tmp_path, [JobStatus.FAILED] * 20)
     table = window._jobs_table
     try:
-        _focus_cell(window, 0, window._JOB_CORES_COLUMN)
+        _focus_cell(window, 3, window._JOB_CORES_COLUMN)
 
         _press(Qt.Key.Key_Tab)
-        assert QApplication.focusWidget() is action_button(window, 0)
+        assert _focus(window) is action_button(window, 3)
 
         _press(Qt.Key.Key_Tab)
-        assert QApplication.focusWidget() is more_button(window, 0)
+        assert _focus(window) is more_button(window, 3)
 
-        # Past the row's last control, focus goes back to the table's next cell.
         _press(Qt.Key.Key_Tab)
-        assert QApplication.focusWidget() is table
-        assert (table.currentRow(), table.currentColumn()) == (1, window._JOB_LABEL_COLUMN)
+        assert _focus(window) is not table
+        assert not table.isAncestorOf(_focus(window))
+
+        # Round the window and back, with no stop on any other row.
+        stops = []
+        for _press_number in range(60):
+            _press(Qt.Key.Key_Tab)
+            stops.append(_focus(window))
+            if stops[-1] is table:
+                break
+        assert stops[-1] is table
+        assert not any(table.isAncestorOf(stop) for stop in stops[:-1])
+        assert table.currentRow() == 3
     finally:
         window.hide()
 
 
-def test_dashboard_shift_tab_comes_back_through_the_menu_button_first(main_window, tmp_path):
+def test_dashboard_shift_tab_comes_back_through_the_row_and_out_of_the_table(main_window, tmp_path):
     window = main_window
     _shown_dashboard(window, tmp_path, [JobStatus.FAILED, JobStatus.FAILED])
     table = window._jobs_table
     try:
         _focus_cell(window, 1, window._JOB_LABEL_COLUMN)
+        _press(Qt.Key.Key_Tab)
+        _press(Qt.Key.Key_Tab)
+        assert _focus(window) is more_button(window, 1)
 
         _press(Qt.Key.Key_Tab, Qt.KeyboardModifier.ShiftModifier)
-        assert QApplication.focusWidget() is more_button(window, 0)
+        assert _focus(window) is action_button(window, 1)
 
         _press(Qt.Key.Key_Tab, Qt.KeyboardModifier.ShiftModifier)
-        assert QApplication.focusWidget() is action_button(window, 0)
+        assert _focus(window) is table
+        assert table.currentRow() == 1
 
         _press(Qt.Key.Key_Tab, Qt.KeyboardModifier.ShiftModifier)
-        assert QApplication.focusWidget() is table
-        assert (table.currentRow(), table.currentColumn()) == (0, window._JOB_CORES_COLUMN)
+        assert not table.isAncestorOf(_focus(window))
+        assert _focus(window) is not table
     finally:
         window.hide()
 
 
-def test_dashboard_tab_leaves_a_clicked_control_from_its_own_row(main_window, tmp_path):
-    """A click focuses a button without moving the table's current cell."""
+def test_dashboard_shift_tab_from_after_the_table_lands_on_the_table(main_window, tmp_path):
+    window = main_window
+    _shown_dashboard(window, tmp_path, [JobStatus.FAILED, JobStatus.FAILED])
+    table = window._jobs_table
+    try:
+        _focus_cell(window, 1, window._JOB_LABEL_COLUMN)
+        for _control_or_out in range(3):
+            _press(Qt.Key.Key_Tab)
+
+        _press(Qt.Key.Key_Tab, Qt.KeyboardModifier.ShiftModifier)
+
+        assert _focus(window) is table
+    finally:
+        window.hide()
+
+
+def test_dashboard_tab_leaves_an_empty_table(main_window, tmp_path):
+    window = main_window
+    _shown_dashboard(window, tmp_path, [])
+    table = window._jobs_table
+    try:
+        table.setFocus(Qt.FocusReason.OtherFocusReason)
+        assert _focus(window) is table
+
+        _press(Qt.Key.Key_Tab)
+
+        assert _focus(window) is not table
+    finally:
+        window.hide()
+
+
+def test_dashboard_tab_leaves_a_clicked_control_from_its_own_row(
+    main_window, tmp_path, monkeypatch
+):
+    """A click inside a selection focuses a button without moving the table's current cell."""
 
     window = main_window
     _shown_dashboard(window, tmp_path, [JobStatus.FAILED, JobStatus.FAILED, JobStatus.FAILED])
     table = window._jobs_table
+    monkeypatch.setattr(window, "_dispatch_dashboard_action", lambda *_args, **_kwargs: None)
     try:
         _focus_cell(window, 0, window._JOB_LABEL_COLUMN)
-        more_button(window, 1).setFocus(Qt.FocusReason.MouseFocusReason)
-        QApplication.processEvents()
+        for row in (0, 1):
+            table.selectionModel().select(
+                table.model().index(row, 0),
+                QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows,
+            )
+        QTest.mouseClick(action_button(window, 1), Qt.MouseButton.LeftButton)
+        assert _focus(window) is action_button(window, 1)
+        assert table.currentRow() == 0
+
+        _press(Qt.Key.Key_Tab)
+        assert _focus(window) is more_button(window, 1)
+
+        _press(Qt.Key.Key_Tab)
+        assert not table.isAncestorOf(_focus(window))
+        assert table.currentRow() == 1
+    finally:
+        window.hide()
+
+
+def test_dashboard_tab_through_a_row_keeps_a_multi_row_selection(main_window, tmp_path):
+    window = main_window
+    _shown_dashboard(window, tmp_path, [JobStatus.FAILED] * 3)
+    table = window._jobs_table
+    try:
+        _focus_cell(window, 1, window._JOB_LABEL_COLUMN)
+        for row in (1, 2):
+            table.selectionModel().select(
+                table.model().index(row, 0),
+                QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows,
+            )
+
+        for _stop in range(3):
+            _press(Qt.Key.Key_Tab)
+            assert _selected_rows(window) == [1, 2]
+    finally:
+        window.hide()
+
+
+def test_dashboard_tab_past_a_row_outside_the_selection_leaves_the_selection(
+    main_window, tmp_path, monkeypatch
+):
+    """Passing through changes nothing; pressing the button moves the highlight as a click does."""
+
+    window = main_window
+    (_first, _second, third) = _shown_dashboard(window, tmp_path, [JobStatus.FAILED] * 3)
+    table = window._jobs_table
+    inspected: list[list[object]] = []
+    monkeypatch.setattr(
+        window, "_on_inspect_from_dashboard", lambda ids: inspected.append(list(ids))
+    )
+    try:
+        _focus_cell(window, 2, window._JOB_LABEL_COLUMN)
+        table.selectRow(0)
+        table.setCurrentCell(
+            2, window._JOB_LABEL_COLUMN, QItemSelectionModel.SelectionFlag.NoUpdate
+        )
+
+        _press(Qt.Key.Key_Tab)
+        assert _focus(window) is action_button(window, 2)
+        assert _selected_rows(window) == [0]
+
+        _press(Qt.Key.Key_Return)
+        assert inspected == [[third.id]]
+        assert _selected_rows(window) == [2]
+    finally:
+        window.hide()
+
+
+@pytest.mark.parametrize(
+    "key",
+    [Qt.Key.Key_PageDown, Qt.Key.Key_PageUp, Qt.Key.Key_Home, Qt.Key.Key_End, Qt.Key.Key_A],
+)
+def test_dashboard_other_keys_on_a_button_do_not_move_the_table(main_window, tmp_path, key):
+    window = main_window
+    _shown_dashboard(window, tmp_path, [JobStatus.FAILED] * 20)
+    table = window._jobs_table
+    try:
+        _focus_cell(window, 5, window._JOB_LABEL_COLUMN)
+        _press(Qt.Key.Key_Tab)
+        assert _focus(window) is action_button(window, 5)
+
+        _press(key)
+
+        assert _focus(window) is action_button(window, 5)
+        assert table.currentRow() == 5
+        assert _selected_rows(window) == [5]
+    finally:
+        window.hide()
+
+
+@pytest.mark.parametrize("key", [Qt.Key.Key_Up, Qt.Key.Key_Down, Qt.Key.Key_Left, Qt.Key.Key_Right])
+def test_dashboard_shift_arrow_on_a_button_does_nothing(main_window, tmp_path, key):
+    window = main_window
+    _shown_dashboard(window, tmp_path, [JobStatus.FAILED] * 3)
+    try:
+        _focus_cell(window, 1, window._JOB_LABEL_COLUMN)
+        _press(Qt.Key.Key_Tab)
+
+        _press(key, Qt.KeyboardModifier.ShiftModifier)
+
+        assert _focus(window) is action_button(window, 1)
+        assert _selected_rows(window) == [1]
+    finally:
+        window.hide()
+
+
+def test_dashboard_arrow_onto_the_action_cell_stays_in_the_table(main_window, tmp_path):
+    window = main_window
+    _shown_dashboard(window, tmp_path, [JobStatus.FAILED])
+    table = window._jobs_table
+    try:
+        _focus_cell(window, 0, window._JOB_CORES_COLUMN)
+
+        _press(Qt.Key.Key_Right)
+
+        assert table.currentColumn() == window._JOB_ACTION_COLUMN
+        assert _focus(window) is table
+    finally:
+        window.hide()
+
+
+def test_dashboard_up_and_down_on_a_button_move_between_rows(main_window, tmp_path):
+    window = main_window
+    _shown_dashboard(window, tmp_path, [JobStatus.FAILED] * 3)
+    table = window._jobs_table
+    try:
+        _focus_cell(window, 0, window._JOB_LABEL_COLUMN)
+        _press(Qt.Key.Key_Tab)
+        assert _focus(window) is action_button(window, 0)
+
+        _press(Qt.Key.Key_Up)
+        assert _focus(window) is action_button(window, 0)
+
+        _press(Qt.Key.Key_Down)
+        assert _focus(window) is action_button(window, 1)
+        assert table.currentRow() == 1
+        assert _selected_rows(window) == [1]
+
+        _press(Qt.Key.Key_Tab)
+        assert _focus(window) is more_button(window, 1)
+
+        _press(Qt.Key.Key_Down)
+        assert _focus(window) is more_button(window, 2)
+
+        _press(Qt.Key.Key_Down)
+        assert _focus(window) is more_button(window, 2)
+
+        _press(Qt.Key.Key_Up)
+        assert _focus(window) is more_button(window, 1)
+        assert _selected_rows(window) == [1]
+    finally:
+        window.hide()
+
+
+def test_dashboard_down_inside_a_multi_row_selection_keeps_it(main_window, tmp_path):
+    window = main_window
+    _shown_dashboard(window, tmp_path, [JobStatus.FAILED] * 3)
+    table = window._jobs_table
+    try:
+        _focus_cell(window, 0, window._JOB_LABEL_COLUMN)
+        _press(Qt.Key.Key_Tab)
+        for row in (0, 1):
+            table.selectionModel().select(
+                table.model().index(row, 0),
+                QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows,
+            )
+
+        _press(Qt.Key.Key_Down)
+        assert _focus(window) is action_button(window, 1)
+        assert _selected_rows(window) == [0, 1]
+
+        _press(Qt.Key.Key_Down)
+        assert _focus(window) is action_button(window, 2)
+        assert _selected_rows(window) == [2]
+    finally:
+        window.hide()
+
+
+def test_dashboard_left_and_right_stay_on_the_row(main_window, tmp_path):
+    window = main_window
+    _shown_dashboard(window, tmp_path, [JobStatus.FAILED] * 2)
+    try:
+        _focus_cell(window, 0, window._JOB_LABEL_COLUMN)
+        _press(Qt.Key.Key_Tab)
+
+        _press(Qt.Key.Key_Left)
+        assert _focus(window) is action_button(window, 0)
+
+        _press(Qt.Key.Key_Right)
+        assert _focus(window) is more_button(window, 0)
+
+        _press(Qt.Key.Key_Right)
+        assert _focus(window) is more_button(window, 0)
+
+        _press(Qt.Key.Key_Left)
+        assert _focus(window) is action_button(window, 0)
+    finally:
+        window.hide()
+
+
+def _put_out_of_reach(control, hide: bool) -> None:
+    if hide:
+        control.setVisible(False)
+    else:
+        control.setEnabled(False)
+
+
+@pytest.mark.parametrize("hide", [False, True], ids=["disabled", "hidden"])
+def test_dashboard_tab_skips_a_control_that_cannot_take_focus(main_window, tmp_path, hide):
+    window = main_window
+    _shown_dashboard(window, tmp_path, [JobStatus.FAILED] * 2)
+    table = window._jobs_table
+    try:
+        _put_out_of_reach(action_button(window, 0), hide)
+        _focus_cell(window, 0, window._JOB_LABEL_COLUMN)
+
+        _press(Qt.Key.Key_Tab)
+        assert _focus(window) is more_button(window, 0)
+
+        # Shift+Tab goes past it too, rather than sticking in the cell.
+        _press(Qt.Key.Key_Tab, Qt.KeyboardModifier.ShiftModifier)
+        assert _focus(window) is table
+
+        _put_out_of_reach(more_button(window, 1), hide)
+        table.setCurrentCell(1, window._JOB_LABEL_COLUMN)
+        _press(Qt.Key.Key_Tab)
+        assert _focus(window) is action_button(window, 1)
+
+        _press(Qt.Key.Key_Tab)
+        assert not table.isAncestorOf(_focus(window))
+        assert _focus(window) is not table
+    finally:
+        window.hide()
+
+
+@pytest.mark.parametrize("hide", [False, True], ids=["disabled", "hidden"])
+def test_dashboard_tab_goes_past_a_row_with_no_control_to_take_focus(main_window, tmp_path, hide):
+    window = main_window
+    _shown_dashboard(window, tmp_path, [JobStatus.FAILED])
+    table = window._jobs_table
+    try:
+        for control in (action_button(window, 0), more_button(window, 0)):
+            _put_out_of_reach(control, hide)
+        _focus_cell(window, 0, window._JOB_LABEL_COLUMN)
 
         _press(Qt.Key.Key_Tab)
 
-        assert QApplication.focusWidget() is table
-        assert (table.currentRow(), table.currentColumn()) == (2, window._JOB_LABEL_COLUMN)
+        assert _focus(window) is not table
+        assert not table.isAncestorOf(_focus(window))
+    finally:
+        window.hide()
+
+
+def test_dashboard_control_disabled_while_focused_passes_focus_along_the_row(main_window, tmp_path):
+    window = main_window
+    _shown_dashboard(window, tmp_path, [JobStatus.FAILED])
+    try:
+        _focus_cell(window, 0, window._JOB_LABEL_COLUMN)
+        _press(Qt.Key.Key_Tab)
+
+        action_button(window, 0).setEnabled(False)
+
+        assert _focus(window) is more_button(window, 0)
+    finally:
+        window.hide()
+
+
+def test_dashboard_last_control_disabled_while_focused_stays_on_the_row(main_window, tmp_path):
+    window = main_window
+    _shown_dashboard(window, tmp_path, [JobStatus.FAILED])
+    try:
+        _focus_cell(window, 0, window._JOB_LABEL_COLUMN)
+        _press(Qt.Key.Key_Tab)
+        _press(Qt.Key.Key_Tab)
+        assert _focus(window) is more_button(window, 0)
+
+        more_button(window, 0).setEnabled(False)
+
+        assert _focus(window) is action_button(window, 0)
+    finally:
+        window.hide()
+
+
+def test_dashboard_down_goes_past_a_row_with_no_control_to_take_focus(main_window, tmp_path):
+    window = main_window
+    _shown_dashboard(window, tmp_path, [JobStatus.FAILED] * 3)
+    try:
+        for control in (action_button(window, 1), more_button(window, 1)):
+            control.setEnabled(False)
+        more_button(window, 2).setEnabled(False)
+        _focus_cell(window, 0, window._JOB_LABEL_COLUMN)
+        _press(Qt.Key.Key_Tab)
+        _press(Qt.Key.Key_Tab)
+        assert _focus(window) is more_button(window, 0)
+
+        _press(Qt.Key.Key_Down)
+
+        # Row 2's own ⋯ is disabled, so its other control takes focus.
+        assert _focus(window) is action_button(window, 2)
+    finally:
+        window.hide()
+
+
+def _host_structure_field(window):
+    window._refresh_ui_after_project_change()
+    window.show_page("host_structure")
+    QApplication.processEvents()
+    return next(field for field in window.findChildren(QLineEdit) if field.isVisible())
+
+
+def _leave(window, *jobs) -> None:
+    for job in jobs:
+        job.dismissed_at = utc_now_for_test()
+    window._refresh_jobs_table()
+    QApplication.processEvents()
+
+
+def test_dashboard_field_keeps_focus_when_a_job_leaves(main_window, tmp_path):
+    """Focus on a row's button, then in a field: the table's current cell is still that row."""
+
+    window = main_window
+    jobs = _shown_dashboard(window, tmp_path, [JobStatus.RUNNING] * 3)
+    table = window._jobs_table
+    field = _host_structure_field(window)
+    try:
+        _focus_cell(window, 1, window._JOB_LABEL_COLUMN)
+        _press(Qt.Key.Key_Tab)
+        assert _focus(window) is action_button(window, 1)
+        QTest.mouseClick(field, Qt.MouseButton.LeftButton)
+        assert _focus(window) is field
+
+        _leave(window, jobs[1])
+
+        assert table.rowCount() == 2
+        assert _focus(window) is field
+    finally:
+        window.hide()
+
+
+def test_dashboard_table_keeps_focus_when_a_job_leaves(main_window, tmp_path):
+    window = main_window
+    jobs = _shown_dashboard(window, tmp_path, [JobStatus.RUNNING] * 3)
+    table = window._jobs_table
+    try:
+        _focus_cell(window, 1, window._JOB_LABEL_COLUMN)
+
+        _leave(window, jobs[1])
+
+        assert table.rowCount() == 2
+        assert _focus(window) is table
+    finally:
+        window.hide()
+
+
+def test_dashboard_clicked_button_passes_focus_to_the_next_row_when_its_row_leaves(
+    main_window, tmp_path, monkeypatch
+):
+    window = main_window
+    jobs = _shown_dashboard(window, tmp_path, [JobStatus.RUNNING] * 3)
+    table = window._jobs_table
+    monkeypatch.setattr(window, "_dispatch_dashboard_action", lambda *_args, **_kwargs: None)
+    try:
+        # The current cell is on another row, so nothing but the hand-over moves focus.
+        _focus_cell(window, 2, window._JOB_LABEL_COLUMN)
+        QTest.mouseClick(action_button(window, 0), Qt.MouseButton.LeftButton)
+        assert _focus(window) is action_button(window, 0)
+
+        _leave(window, jobs[0])
+
+        assert table.rowCount() == 2
+        assert _focus(window) is action_button(window, 0)
+        assert job_row(window, jobs[1].id) == 0
+        assert table.currentRow() == 0
+        assert _visible_rings(action_button(window, 0)) == []
+    finally:
+        window.hide()
+
+
+def test_dashboard_tabbed_menu_button_passes_focus_to_the_same_control_with_one_ring(
+    main_window, tmp_path
+):
+    window = main_window
+    apply_theme(QApplication.instance(), "light")
+    jobs = _shown_dashboard(window, tmp_path, [JobStatus.RUNNING] * 3)
+    try:
+        _focus_cell(window, 1, window._JOB_LABEL_COLUMN)
+        _press(Qt.Key.Key_Tab)
+        _press(Qt.Key.Key_Tab)
+        assert _focus(window) is more_button(window, 1)
+
+        _leave(window, jobs[1])
+
+        assert job_row(window, jobs[2].id) == 1
+        assert _focus(window) is more_button(window, 1)
+        assert len(_visible_rings(more_button(window, 1))) == 1
+    finally:
+        window.hide()
+
+
+def test_dashboard_last_row_passes_focus_up_when_it_leaves(main_window, tmp_path):
+    window = main_window
+    jobs = _shown_dashboard(window, tmp_path, [JobStatus.RUNNING] * 3)
+    try:
+        _focus_cell(window, 2, window._JOB_LABEL_COLUMN)
+        _press(Qt.Key.Key_Tab)
+
+        _leave(window, jobs[2])
+
+        assert _focus(window) is action_button(window, 1)
+    finally:
+        window.hide()
+
+
+def test_dashboard_focus_passes_over_rows_leaving_at_the_same_time(main_window, tmp_path):
+    window = main_window
+    jobs = _shown_dashboard(window, tmp_path, [JobStatus.RUNNING] * 4)
+    try:
+        _focus_cell(window, 1, window._JOB_LABEL_COLUMN)
+        _press(Qt.Key.Key_Tab)
+
+        _leave(window, jobs[1], jobs[2])
+
+        assert job_row(window, jobs[3].id) == 1
+        assert _focus(window) is action_button(window, 1)
+    finally:
+        window.hide()
+
+
+def test_dashboard_focus_skips_a_neighbour_with_no_control_to_take_it(main_window, tmp_path):
+    window = main_window
+    jobs = _shown_dashboard(window, tmp_path, [JobStatus.RUNNING] * 3)
+    try:
+        for control in (action_button(window, 2), more_button(window, 2)):
+            control.setEnabled(False)
+        _focus_cell(window, 1, window._JOB_LABEL_COLUMN)
+        _press(Qt.Key.Key_Tab)
+
+        _leave(window, jobs[1])
+
+        assert _focus(window) is action_button(window, 0)
+    finally:
+        window.hide()
+
+
+def test_dashboard_focus_stays_in_the_table_when_the_last_job_leaves(main_window, tmp_path):
+    window = main_window
+    jobs = _shown_dashboard(window, tmp_path, [JobStatus.RUNNING])
+    try:
+        _focus_cell(window, 0, window._JOB_LABEL_COLUMN)
+        _press(Qt.Key.Key_Tab)
+
+        _leave(window, jobs[0])
+
+        assert window._jobs_table.rowCount() == 0
+        assert _focus(window) is window._jobs_table
+    finally:
+        window.hide()
+
+
+def test_dashboard_hand_over_leaves_the_selection_alone(main_window, tmp_path):
+    """A job leaving in the background does not replace what the user selected."""
+
+    window = main_window
+    jobs = _shown_dashboard(window, tmp_path, [JobStatus.RUNNING] * 4)
+    table = window._jobs_table
+    try:
+        _focus_cell(window, 0, window._JOB_LABEL_COLUMN)
+        _press(Qt.Key.Key_Tab)
+        table.clearSelection()
+        for row in (2, 3):
+            table.selectionModel().select(
+                table.model().index(row, 0),
+                QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows,
+            )
+
+        _leave(window, jobs[0])
+
+        assert _focus(window) is action_button(window, 0)
+        assert _selected_rows(window) == [1, 2]
+        assert {job_row(window, jobs[2].id), job_row(window, jobs[3].id)} == {1, 2}
+    finally:
+        window.hide()
+
+
+def test_dashboard_row_leaving_under_another_window_hands_over_on_return(main_window, tmp_path):
+    """A prompt has the application's focus; the window's own focus still has to move."""
+
+    window = main_window
+    jobs = _shown_dashboard(window, tmp_path, [JobStatus.RUNNING] * 2)
+    other = QDialog(window)
+    other.setLayout(QVBoxLayout())
+    other.layout().addWidget(QLineEdit())
+    try:
+        _focus_cell(window, 0, window._JOB_LABEL_COLUMN)
+        _press(Qt.Key.Key_Tab)
+        other.show()
+        other.activateWindow()
+        QTest.qWaitForWindowActive(other)
+        assert window.focusWidget() is action_button(window, 0)
+
+        _leave(window, jobs[0])
+
+        assert window.focusWidget() is action_button(window, 0)
+        assert job_row(window, jobs[1].id) == 0
+
+        other.close()
+        window.activateWindow()
+        QTest.qWaitForWindowActive(window)
+        assert _focus(window) is action_button(window, 0)
+    finally:
+        window.hide()
+
+
+def test_dashboard_focus_survives_the_project_closing(main_window, tmp_path):
+    window = main_window
+    _shown_dashboard(window, tmp_path, [JobStatus.RUNNING] * 2)
+    table = window._jobs_table
+    try:
+        _focus_cell(window, 0, window._JOB_LABEL_COLUMN)
+        _press(Qt.Key.Key_Tab)
+        assert _focus(window) is action_button(window, 0)
+
+        window._document = None
+        window._refresh_jobs_table()
+        window._sync_project_panels()
+
+        assert table.rowCount() == 0
+        focused = _focus(window)
+        assert focused is not None
+        assert focused.isVisible()
     finally:
         window.hide()
 
@@ -1585,7 +2170,11 @@ def test_dashboard_keyboard_runs_the_action_button_and_the_menu_button(
         window.hide()
 
 
-def test_dashboard_focus_ring_shows_on_both_controls(main_window, tmp_path):
+def _visible_rings(control) -> list[QWidget]:
+    return [child for child in control.findChildren(QWidget, _FOCUS_RING_NAME) if child.isVisible()]
+
+
+def test_dashboard_focus_ring_shows_once_on_both_controls(main_window, tmp_path):
     window = main_window
     apply_theme(QApplication.instance(), "light")
     _shown_dashboard(window, tmp_path, [JobStatus.FAILED])
@@ -1593,12 +2182,25 @@ def test_dashboard_focus_ring_shows_on_both_controls(main_window, tmp_path):
         _focus_cell(window, 0, window._JOB_CORES_COLUMN)
         for button_at in (action_button, more_button):
             _press(Qt.Key.Key_Tab)
-            rings = [
-                child
-                for child in button_at(window, 0).findChildren(QWidget, _FOCUS_RING_NAME)
-                if child.isVisible()
-            ]
-            assert rings, f"no focus ring on {button_at.__name__}"
+            assert len(_visible_rings(button_at(window, 0))) == 1, button_at.__name__
+    finally:
+        window.hide()
+
+
+def test_dashboard_down_after_a_click_shows_the_focus_ring(main_window, tmp_path, monkeypatch):
+    """The arrow is keyboard use even though it moves focus from a handler."""
+
+    window = main_window
+    apply_theme(QApplication.instance(), "light")
+    _shown_dashboard(window, tmp_path, [JobStatus.FAILED] * 2)
+    monkeypatch.setattr(window, "_dispatch_dashboard_action", lambda *_args, **_kwargs: None)
+    try:
+        QTest.mouseClick(action_button(window, 0), Qt.MouseButton.LeftButton)
+
+        _press(Qt.Key.Key_Down)
+
+        assert _focus(window) is action_button(window, 1)
+        assert len(_visible_rings(action_button(window, 1))) == 1
     finally:
         window.hide()
 
@@ -2587,6 +3189,38 @@ def test_dashboard_open_shows_the_page_and_says_when_the_job_has_no_row(
     assert window._active_route() == job_stage_key(stage)
     name = job_stage_name(stage)
     assert window.statusBar().currentMessage() == f"orphan has no row on {name} now"
+
+
+def test_dashboard_open_clears_an_earlier_no_row_message(main_window, tmp_path: Path) -> None:
+    window = main_window
+    service, doc, _host = open_project_with_host(window, tmp_path)
+    window._convergence_view.configure_requested.emit(
+        ConvergenceConfig(
+            sweep_values=(300.0, 400.0),
+            shared_params={"task": "SINGLEPOINT"},
+            overrides={},
+            name_prefix="cleared",
+        )
+    )
+    with_row = _add_dashboard_job(service, doc, "cleared_ecut_400", JobStatus.FAILED)
+    definition = window._convergence_controller.active_definition()
+    definition.parameters["job_ids_by_cutoff"]["400"] = str(with_row.id)
+    orphan = service.add_job(
+        doc,
+        label="orphan",
+        workflow_stage=main_window_module.WorkflowStage.MAGNETIC_FIELD,
+        calc_type="castep",
+    )
+    orphan.status = JobStatus.FAILED
+    window._refresh_ui_after_project_change()
+
+    window._on_open_in_stage_from_dashboard([orphan.id])
+    assert "orphan has no row" in window.statusBar().currentMessage()
+
+    window._on_open_in_stage_from_dashboard([with_row.id])
+
+    assert window._convergence_view._selected_keys() == (400.0,)
+    assert window.statusBar().currentMessage() == ""
 
 
 def test_every_workflow_page_can_select_a_job_row(main_window, tmp_path: Path) -> None:

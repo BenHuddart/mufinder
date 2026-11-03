@@ -23,10 +23,11 @@ from mufinder.domain.models import (
     ProvenanceRecord,
 )
 from mufinder.domain.routes import comparison_route, magnetic_field_workspace_route
-from mufinder.domain.text import execution_target_text, plural
+from mufinder.domain.text import execution_target_text, folder_phrase, plural
 from mufinder.services.failure_diagnosis import FAILURE_REASON_SUMMARIES
 from mufinder.services.magnetic_field_results import MAGNETIC_FIELD_PAGE_OWNER
 from mufinder.services.magnetic_field_settings import phase_sampling_label
+from mufinder.services.quantum_results import WARNING_MARK
 from mufinder.services.generation_runs import (
     generation_run_from_provenance,
     run_journal_line,
@@ -540,6 +541,14 @@ def _import_castep_relaxations_entry(record: ProvenanceRecord) -> JournalEntry:
     )
 
 
+def _folder_names(paths: object) -> list[str]:
+    """Return the folder names in a record's list of paths."""
+
+    if not isinstance(paths, list):
+        return []
+    return [Path(str(path)).name for path in paths]
+
+
 def _remove_imported_relaxations_entry(record: ProvenanceRecord) -> JournalEntry:
     """Describe one removal of imported relaxations.
 
@@ -551,10 +560,40 @@ def _remove_imported_relaxations_entry(record: ProvenanceRecord) -> JournalEntry
     labels = record.parameters.get("labels")
     count = len(labels) if isinstance(labels, list) else 0
     body = f"Removed {plural(count, 'imported muon relaxation')} from the project."
-    if record.parameters.get("kept_directories") and not record.parameters.get("directories"):
-        body += " Their files stay, because another import uses the same folder."
-    elif record.parameters.get("deleted_files"):
-        body += " Their job directories were deleted, including the archived original input files."
+    deleted_files = record.parameters.get("deleted_files")
+    deleted = _folder_names(record.parameters.get("directories")) if deleted_files else []
+    kept = _folder_names(record.parameters.get("kept_directories"))
+    undeleted = _folder_names(record.parameters.get("undeleted_directories"))
+    # Already relative to the project: a name alone reads the same for every ``..``.
+    misplaced = [str(path) for path in record.parameters.get("misplaced_directories") or []]
+    if misplaced and not deleted and not kept and not undeleted:
+        whose = "Its saved location is" if count == 1 else "Their saved locations are"
+        body += (
+            f" {whose} not {'its' if count == 1 else 'their'} own, so nothing there was touched."
+        )
+    elif kept and not deleted and not undeleted and not misplaced:
+        whose = "Its" if count == 1 else "Their"
+        body += f" {whose} files stay, because another import uses the same folder."
+    elif kept or undeleted or misplaced:
+        if deleted:
+            phrase = folder_phrase("Deleted", deleted)
+            body += f" {phrase}, including the archived original input files."
+        if undeleted:
+            body += f" {folder_phrase('Could not delete', undeleted)}."
+        if kept:
+            reason = "another import uses it" if len(kept) == 1 else "other imports use them"
+            body += f" {folder_phrase('Kept', kept)}, because {reason}."
+        if misplaced:
+            reason = (
+                "its saved location is not its own"
+                if len(misplaced) == 1
+                else "their saved locations are not their own"
+            )
+            body += f" {folder_phrase('Left', misplaced)} untouched, because {reason}."
+    elif deleted or (deleted_files and "directories" not in record.parameters):
+        # A record from before folders were listed says only that they went.
+        went = "Its job directory was" if count == 1 else "Their job directories were"
+        body += f" {went} deleted, including the archived original input files."
     return _entry(
         record,
         stamp_kind="warning",
@@ -1207,12 +1246,21 @@ def _polarisation_simulated_entry(record: ProvenanceRecord) -> JournalEntry:
     )
 
 
+def _marked_eV_text(row: Mapping[str, Any], key: str) -> str:
+    """A comparison row's number, with the mark when its phonon result carries a warning."""
+
+    text = _eV_text(row.get(key))
+    return f"{text} {WARNING_MARK}" if row.get("warned") else text
+
+
 def _quantum_corrected_entry(record: ProvenanceRecord) -> JournalEntry:
     """``ZPE at 4c: 0.680 eV; ordering unchanged``."""
 
     site = _text_param(record, "site_label") or "the muon site"
     zpe = _eV_text(record.parameters.get("muon_zpe_total_eV"))
     body = f"ZPE at {site}: {zpe} eV"
+    if mark := _text_param(record, "zpe_mark"):
+        body += f" ({mark})"
     changed = record.parameters.get("ordering_changed")
     if isinstance(changed, bool):
         body += "; ordering changed" if changed else "; ordering unchanged"
@@ -1238,12 +1286,16 @@ def _quantum_corrected_entry(record: ProvenanceRecord) -> JournalEntry:
         lines.append(f"w1 {w1:.3f}")
     warnings = [str(item) for item in record.parameters.get("warnings") or () if item]
     lines.extend(warnings)
+    lines.extend(str(item) for item in record.parameters.get("ranking_notes") or () if item)
+    not_ranked = [str(item) for item in record.parameters.get("not_ranked") or () if item]
+    if not_ranked:
+        lines.append("Not ranked: " + ", ".join(not_ranked))
     rows = tuple(
         (
             str(row.get("site_label") or ""),
             _eV_text(row.get("relative_energy_eV")),
-            _eV_text(row.get("zpe_eV")),
-            _eV_text(row.get("corrected_energy_eV")),
+            _marked_eV_text(row, "zpe_eV"),
+            _marked_eV_text(row, "corrected_energy_eV"),
         )
         for row in _mapping_rows(record, "comparison")
     )

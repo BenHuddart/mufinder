@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 from mufinder.app import selection_snapshot
 from mufinder.app.selection_snapshot import (
     RowControlsCell,
+    RowControlsTable,
     SelectionScope,
     SelectionSnapshotCheckBox,
     SelectionSnapshotComboBox,
@@ -668,7 +669,8 @@ def test_snapshot_combo_ends_text_too_wide_for_it_in_an_ellipsis(qapp):
 
 
 def test_controls_in_a_cell_follow_the_row_rule(qapp):
-    table = _make_table_with_rows(3)
+    table = RowControlsTable(3, 1)
+    table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
     first = SelectionSnapshotPushButton("first")
     second = SelectionSnapshotPushButton("second")
     table.setCellWidget(1, 0, RowControlsCell(first, second))

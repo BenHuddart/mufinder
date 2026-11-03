@@ -60,7 +60,7 @@ from mufinder.services.definition_mappings import (
     remove_source_keys_from_definition,
 )
 from mufinder.services.job_artifacts import ParsedJobArtifacts
-from mufinder.services.job_file_cleanup import JobCleanupItem
+from mufinder.services.job_file_cleanup import JobCleanupItem, JobCleanupOutcome
 from mufinder.services.muon_sites_summary import (
     ENERGY_BARRIERS_SCOPE,
     DownstreamSiteScope,
@@ -103,6 +103,7 @@ from mufinder.services.source_candidates import (
 from mufinder.domain.charge_states import muon_charge_state_label
 from mufinder.science.energy_barriers import (
     EnergyBarrierError,
+    band_distances_ang,
     hop_cartesian_vector,
     hop_direction_label,
     idpp_intermediate_structure,
@@ -220,7 +221,8 @@ class EnergyBarriersDeps:
     handle_site_host_mismatch: Callable[[object], bool]
     show_warning: Callable[[str, str], None]
     dialog_parent: Callable[[], QWidget | None]
-    clean_up_removed_jobs: Callable[..., bool]
+    clean_up_removed_jobs: Callable[..., JobCleanupOutcome]
+    report_cleanup_outcome: Callable[[str, JobCleanupOutcome], None]
     paths_removed: Callable[[], None]
 
 
@@ -546,6 +548,7 @@ class EnergyBarriersController(WorkflowJobController):
         """Show a finished band, each image's energy relative to the initial image.
 
         Absolute CASTEP energies are ~10⁵ eV, so differences vanish in the display.
+        Each image also gets its distance along the band.
         """
 
         document = self._context.document()
@@ -560,6 +563,11 @@ class EnergyBarriersController(WorkflowJobController):
         except TransitionStateParseError:
             view.clear_neb_preview(title=f"{hop}: the band file could not be read")
             return
+        try:
+            distances = band_distances_ang(transition_state.images)
+        except EnergyBarrierError as exc:
+            view.clear_neb_preview(title=f"{hop}: {exc}")
+            return
         initial_energy = transition_state.images[0].energy
         length_ang = float_from_source(source, "path_length_ang") if source is not None else None
         parts = [hop] if length_ang is None else [hop, f"{length_ang:.4g} Å"]
@@ -569,12 +577,14 @@ class EnergyBarriersController(WorkflowJobController):
             image_rows=[
                 EnergyBarrierPreviewImageRow(
                     label=f"Image {number}",
-                    reaction_coordinate=f"{image.reaction_coordinate:.6g}",
-                    energy=f"{image.energy - initial_energy:+.4g} eV",
-                    reaction_coordinate_value=image.reaction_coordinate,
+                    distance=f"{distance:.3f} Å",
+                    energy=format_energy_mev(image.energy - initial_energy, signed=True),
+                    distance_value=distance,
                     energy_value=image.energy,
                 )
-                for number, image in enumerate(transition_state.images, start=1)
+                for number, (image, distance) in enumerate(
+                    zip(transition_state.images, distances), start=1
+                )
             ],
             structures=[
                 self._image_structure(band.job.label, image) for image in transition_state.images
@@ -776,19 +786,21 @@ class EnergyBarriersController(WorkflowJobController):
         def describe(item: JobCleanupItem) -> str:
             return f"Energy-barrier job '{item.label}' has associated files.\n\n{item.directory}"
 
-        cleaned = self._deps.clean_up_removed_jobs(
+        outcome = self._deps.clean_up_removed_jobs(
             plan,
             title="Remove energy-barrier path with files",
             describe=describe,
             keep_text="or Cancel to keep the generated path.",
         )
-        if not cleaned:
+        if not outcome.completed:
             self.refresh_view()
             return
         self.remove_rows(removed)
         self.refresh_view()
         self._deps.paths_removed()
-        self._context.status_message(f"Removed {plural(len(removed), 'energy-barrier path')}")
+        self._deps.report_cleanup_outcome(
+            f"Removed {plural(len(removed), 'energy-barrier path')}", outcome
+        )
         self._context.persist_ui_state(
             failure_message="Energy Barriers paths were removed, but autosave failed."
         )

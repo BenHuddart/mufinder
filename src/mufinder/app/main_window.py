@@ -61,7 +61,6 @@ from PySide6.QtWidgets import (
     QSplitter,
     QStackedWidget,
     QStatusBar,
-    QTableWidget,
     QTableWidgetItem,
     QToolButton,
     QTreeWidget,
@@ -130,7 +129,13 @@ from mufinder.app.relaxation_import_dialog import (
     choose_import_batch,
     start_relaxation_scan,
 )
-from mufinder.domain.text import plain_error, plural
+from mufinder.domain.text import (
+    KeptFolder,
+    folder_outcome_status,
+    kept_folders_message,
+    plain_error,
+    plural,
+)
 from mufinder.services.relaxation_import import RelaxationFolderScan
 from mufinder.services.relaxation_import_commit import IMPORT_ACTIONS, commit_relaxation_import
 from mufinder.services.relaxation_import_removal import (
@@ -327,8 +332,15 @@ from mufinder.services.job_artifacts import (
     RetrievalFlags,
     collect_job_artifacts,
 )
-from mufinder.services.job_file_cleanup import JobCleanupItem, JobFileCleanup
+from mufinder.services.job_file_cleanup import (
+    KEPT_AS_NOT_ITS_OWN,
+    JobCleanupItem,
+    JobCleanupOutcome,
+    JobFileCleanup,
+    refusal_because,
+)
 from mufinder.services.job_paths import (
+    job_directory_label,
     definition_output_directory,
     job_output_directory,
     job_output_files,
@@ -346,6 +358,7 @@ from mufinder.services.local_runner import LocalJobRunner
 from mufinder.app import workflow_table_utils
 from mufinder.app.selection_snapshot import (
     RowControlsCell,
+    RowControlsTable,
     SelectionSnapshotPushButton,
     resolve_target_keys,
 )
@@ -499,6 +512,10 @@ def _set_item_foreground(item: QTableWidgetItem, brush: QBrush) -> None:
 
     if item.foreground() != brush:
         item.setForeground(brush)
+
+
+#: Why a batch's folder stays, for one folder and for several.
+_KEPT_FOR_ANOTHER_IMPORT = ("another import uses it", "other imports use them")
 
 
 class MainWindow(QMainWindow):
@@ -1131,7 +1148,7 @@ class MainWindow(QMainWindow):
         self._main_stack.addWidget(self._quantum_corrections_view)
         self._main_stack.addWidget(self._journal_view)
 
-        self._jobs_table = QTableWidget(0, 7)
+        self._jobs_table = RowControlsTable(0, 7)
         self._jobs_table.setHorizontalHeaderLabels(
             ["Job", "Stage", "Status", "Where", "Runtime", "Cores", "Action"]
         )
@@ -4146,6 +4163,9 @@ class MainWindow(QMainWindow):
                 else plural(len(jobs) - len(keys), "job has", "jobs have")
             )
             self.statusBar().showMessage(f"{subject} no row on {name} now")
+        else:
+            # An earlier "no row" message no longer describes what is on screen.
+            self.statusBar().clearMessage()
 
     def _on_continue_relaxation_from_dashboard(self, job_ids: list[UUID]) -> None:
         """Open "Continue relaxation…" for one job, through its workflow row."""
@@ -4444,9 +4464,10 @@ class MainWindow(QMainWindow):
             self._convergence_view.remove_cutoffs(removed_cutoffs)
             self._refresh_jobs_table()
             self._convergence_controller.refresh_view()
-            self.statusBar().showMessage(
-                f"Removed {len(removed_cutoffs)} convergence cutoff entr{('y' if len(removed_cutoffs) == 1 else 'ies')}"
+            removed_text = plural(
+                len(removed_cutoffs), "convergence cutoff entry", "convergence cutoff entries"
             )
+            self._report_cleanup_outcome(f"Removed {removed_text}", outcome)
 
     def _convergence_cutoff_cleanup_item(self, cutoff: float) -> JobCleanupItem:
         """Return the clean-up item for one convergence cutoff.
@@ -4481,12 +4502,26 @@ class MainWindow(QMainWindow):
             else None
         )
         job_dir = output_root / job_label if output_root is not None and job_label else None
+        # The cutoff leaves every equivalent definition with this item, so a job one of
+        # them still binds (a reconfigured sweep's earlier run) gives up the folder too.
+        releases = (
+            frozenset(
+                other.id
+                for equivalent in self._convergence_controller.definitions()
+                if sweep_definition_context_matches(self._document, equivalent, definition)
+                and (other := self._convergence_controller.job_for_cutoff(equivalent, cutoff))
+                is not None
+            )
+            if definition is not None
+            else frozenset()
+        )
         return JobCleanupItem(
             label=job_label or f"{cutoff:.8g} eV",
             jobs=(job,) if job is not None else (),
-            directory=job_dir if job_dir is not None and job_dir.exists() else None,
+            directory=job_dir if self._job_file_cleanup.directory_on_disk(job_dir) else None,
             archive_root=output_root,
             key=(cutoff, definition),
+            releases=releases,
         )
 
     def _remove_cutoff_from_equivalent_definitions(self, source_definition, cutoff: float) -> None:
@@ -5514,7 +5549,7 @@ class MainWindow(QMainWindow):
         if cleanup_choice is None:
             return
 
-        reset_count, cleanup_errors = self._apply_failed_job_reset(
+        reset_count, cleanup_errors, folders = self._apply_failed_job_reset(
             resettable_jobs,
             cleanup_choice=cleanup_choice,
             detach_convergence=True,
@@ -5522,23 +5557,19 @@ class MainWindow(QMainWindow):
 
         self._refresh_views_after_job_reset()
 
-        if cleanup_errors:
-            QMessageBox.warning(
-                self,
-                "Directory cleanup issues",
-                "Some job directories could not be fully cleaned:\n" + "\n".join(cleanup_errors),
-            )
-
+        cleaned, kept = folders
         if reset_count:
             self._persist_document_ui_state(
                 failure_message="Reset job state was recorded, but autosave failed.",
             )
-            if cleanup_choice:
-                self.statusBar().showMessage(
-                    f"Reset {plural(reset_count, 'failed job')} and cleaned directories"
+            self.statusBar().showMessage(
+                folder_outcome_status(
+                    f"Reset {plural(reset_count, 'failed job')}",
+                    cleaned=len(cleaned),
+                    kept=len(kept),
                 )
-            else:
-                self.statusBar().showMessage(f"Reset {plural(reset_count, 'failed job')}")
+            )
+        self._show_kept_folders(kept, title="Directory cleanup issues")
 
     def _refresh_views_after_job_reset(self) -> None:
         """Repaint every workflow table that can show a just-reset job.
@@ -5566,7 +5597,7 @@ class MainWindow(QMainWindow):
         *,
         cleanup_choice: bool,
         detach_convergence: bool,
-    ) -> tuple[int, list[str]]:
+    ) -> tuple[int, list[str], tuple[list[Path], list[KeptFolder]]]:
         """Clean, reset, and record provenance for already-vetted terminal jobs.
 
         Shared core of the dashboard/table "Reset failed jobs" action and of the
@@ -5574,7 +5605,8 @@ class MainWindow(QMainWindow):
         (:meth:`_prepare_jobs_for_resubmission`). Callers own the "nothing to
         reset" dialog, the cleanup prompt, the view refreshes, the autosave and
         the status-bar message; this helper only mutates job state and returns
-        ``(reset_count, cleanup_errors)``.
+        ``(reset_count, cleanup_errors, (cleaned, kept))``, the last two naming the
+        folders cleaned and those a refusal or an error kept.
 
         ``detach_convergence`` unbinds a reset cutoff-convergence job from its
         definition's ``job_ids_by_cutoff`` mapping. That is right for an explicit
@@ -5586,6 +5618,9 @@ class MainWindow(QMainWindow):
 
         cleanup_errors: list[str] = []
         reset_count = 0
+        # By place, since folders in different charge folders can share a name.
+        cleaned_folders: dict[Path, None] = {}
+        kept_folders: dict[Path | str, KeptFolder] = {}
         # Never clean a directory another job still depends on. Jobs reset
         # together may share one, and so may a job's directory companions (a
         # Quantum Corrections phonon job with the legacy singlepoint an older
@@ -5618,14 +5653,26 @@ class MainWindow(QMainWindow):
             cleaned_output_directory = False
             if cleanup_choice and job.id in cleanup_refusals:
                 cleanup_errors.append(f"{cleanup_refusals[job.id]}; its folder was kept")
+                refused_dir = self._job_output_directory(job)
+                name = (
+                    job_directory_label(self._document.project_root, refused_dir)
+                    if refused_dir is not None
+                    else job.label
+                )
+                refusal = cleanup_refusals[job.id].removeprefix(f"- {job.label}: ")
+                kept_folders[refused_dir or job.label] = KeptFolder(name, refusal_because(refusal))
             elif cleanup_choice:
                 output_dir = self._job_output_directory(job)
                 if output_dir is not None and output_dir.exists() and output_dir.is_dir():
                     try:
                         self._job_file_cleanup.clear_directory_contents(output_dir)
                         cleaned_output_directory = True
+                        cleaned_folders[output_dir] = None
                     except OSError as exc:
                         cleanup_errors.append(f"- {job.label}: {exc}")
+                        reason = plain_error(exc)
+                        name = job_directory_label(self._document.project_root, output_dir)
+                        kept_folders[output_dir] = KeptFolder(name, (reason, ""))
 
             try:
                 self._project_service.reset_failed_job(job)
@@ -5639,7 +5686,7 @@ class MainWindow(QMainWindow):
             self._record_job_reset(job=job, cleaned_output_directory=cleaned_output_directory)
             reset_count += 1
 
-        return reset_count, cleanup_errors
+        return reset_count, cleanup_errors, (list(cleaned_folders), list(kept_folders.values()))
 
     def _prepare_jobs_for_resubmission(self, jobs: Sequence[Job]) -> bool:
         """Reset dismissed terminal jobs so a workflow row can resubmit them.
@@ -5673,7 +5720,7 @@ class MainWindow(QMainWindow):
         if cleanup_choice is None:
             return False
 
-        reset_count, cleanup_errors = self._apply_failed_job_reset(
+        reset_count, _cleanup_errors, (_cleaned, kept) = self._apply_failed_job_reset(
             resettable_jobs,
             cleanup_choice=cleanup_choice,
             detach_convergence=False,
@@ -5681,12 +5728,7 @@ class MainWindow(QMainWindow):
 
         self._refresh_views_after_job_reset()
 
-        if cleanup_errors:
-            QMessageBox.warning(
-                self,
-                "Directory cleanup issues",
-                "Some job directories could not be fully cleaned:\n" + "\n".join(cleanup_errors),
-            )
+        self._show_kept_folders(kept, title="Directory cleanup issues")
 
         if reset_count:
             self._persist_document_ui_state(
@@ -6145,6 +6187,7 @@ class MainWindow(QMainWindow):
             clean_up_removed_jobs=lambda plan, **labels: self._clean_up_removed_jobs(
                 plan, **labels
             ),
+            report_cleanup_outcome=self._report_cleanup_outcome,
             paths_removed=self._on_energy_barrier_paths_removed,
         )
 
@@ -8648,7 +8691,7 @@ class MainWindow(QMainWindow):
                 self._relaxation_archive_root_for_job(job, job_dir) if job_dir is not None else None
             )
             plan.append(self._job_file_cleanup.plan_item([job], archive_root=archive_root))
-        return self._clean_up_removed_jobs(
+        outcome = self._clean_up_removed_jobs(
             plan,
             title="Remove relaxation job with files",
             describe=lambda item: (
@@ -8656,6 +8699,10 @@ class MainWindow(QMainWindow):
             ),
             keep_text="or Cancel to keep the relaxation row.",
         )
+        removed = sum(len(item.jobs) for item in outcome.cleaned)
+        if removed:
+            self._report_cleanup_outcome(f"Removed {plural(removed, 'job')}", outcome)
+        return outcome.completed
 
     def _clean_up_removed_jobs(
         self,
@@ -8664,11 +8711,11 @@ class MainWindow(QMainWindow):
         title: str,
         describe: Callable[[JobCleanupItem], str],
         keep_text: str,
-    ) -> bool:
+    ) -> JobCleanupOutcome:
         """Run a row-removal clean-up plan, asking per item what to do with its files.
 
-        Stops at the first file operation that fails and reports it. Returns
-        whether every item was cleaned.
+        Stops at the first file operation that fails and reports it. The caller says
+        what happened in the status bar, where its own message would replace this one.
         """
 
         multi = len(plan) > 1
@@ -8688,7 +8735,35 @@ class MainWindow(QMainWindow):
                 "File cleanup failed",
                 f"Could not update files for job '{failure.item.label}':\n{failure.reason}",
             )
-        return outcome.completed
+        return outcome
+
+    def _report_cleanup_outcome(self, done: str, outcome: JobCleanupOutcome) -> None:
+        """Put a clean-up's counts in the status bar and say why any folder stayed."""
+
+        self.statusBar().showMessage(
+            folder_outcome_status(
+                done,
+                deleted=len(outcome.deleted),
+                archived=len(outcome.archived),
+                kept=len(outcome.kept_folders),
+            )
+        )
+        self._show_kept_folders(outcome.kept_folders)
+
+    def _show_kept_folders(
+        self, kept: Sequence[KeptFolder], *, title: str = "Folders kept"
+    ) -> None:
+        """Say why folders stayed, however many, with their names under Details."""
+
+        if kept:
+            message = kept_folders_message(kept)
+            show_detailed_warning(
+                self,
+                title,
+                message.summary,
+                informative_text=message.instruction,
+                details=message.details,
+            )
 
     def _relaxation_archive_root_for_job(self, job: Job, job_dir: Path) -> Path | None:
         if self._document is None:
@@ -9025,17 +9100,25 @@ class MainWindow(QMainWindow):
         if errors:
             self._warn_with_lines("Removal issues", "Some files could not be deleted.", errors)
             self.statusBar().showMessage(
-                f"Removed {plural(removed, 'imported relaxation')}; "
-                "some of its files could not be deleted"
+                f"Removed {plural(removed, 'imported relaxation')}; some files could not be deleted"
             )
             return
-        if plan.kept_job_ids:
-            self.statusBar().showMessage(
-                f"Removed {plural(removed, 'imported relaxation')}; "
-                "the files stay because another import uses them"
+        kept = [
+            KeptFolder(job_directory_label(document.project_root, path), because)
+            for paths, because in (
+                (outcome.kept_directories, _KEPT_FOR_ANOTHER_IMPORT),
+                (outcome.misplaced_directories, KEPT_AS_NOT_ITS_OWN),
             )
-            return
-        self.statusBar().showMessage(f"Removed {plural(removed, 'imported relaxation')}")
+            for path in paths
+        ]
+        self.statusBar().showMessage(
+            folder_outcome_status(
+                f"Removed {plural(removed, 'imported relaxation')}",
+                deleted=len(outcome.deleted_directories),
+                kept=len(kept),
+            )
+        )
+        self._show_kept_folders(kept)
 
     def _warn_with_lines(self, title: str, summary: str, lines: Sequence[str]) -> None:
         """Warn with ``summary`` and one line per item, kept on screen however many there are."""
@@ -9059,15 +9142,39 @@ class MainWindow(QMainWindow):
             "another import uses the same folder. The folder is deleted when the last import "
             "using it is removed."
         )
-        if not plan.directories and plan.kept_job_ids:
-            return f"Remove {count} from the project? Their files stay, because {stays}"
-        question = (
-            f"Permanently remove {count} and delete their job directories, including the "
-            "archived original input files?"
+        elsewhere = (
+            "the location saved for {them} is not {their} own folder. Nothing there is touched."
         )
+        single = len(plan.targets) == 1
+        whose = "Its" if single else "Their"
+        if not plan.directories and plan.kept_job_ids and not plan.misplaced_job_ids:
+            return f"Remove {count} from the project? {whose} files stay, because {stays}"
+        if not plan.directories and plan.misplaced_job_ids and not plan.kept_job_ids:
+            why = (
+                elsewhere.format(them="it", their="its")
+                if single
+                else (elsewhere.format(them="them", their="their"))
+            )
+            return f"Remove {count} from the project? {whose} files stay, because {why}"
+        if plan.directories:
+            directories = "its job directory" if single else "their job directories"
+            question = (
+                f"Permanently remove {count} and delete {directories}, including the "
+                "archived original input files?"
+            )
+        else:
+            question = f"Remove {count} from the project?"
         if plan.kept_job_ids:
             kept = plural(len(plan.kept_job_ids), "relaxation")
             question += f"\n\nThe files of {kept} stay, because {stays}"
+        if plan.misplaced_job_ids:
+            misplaced = plural(len(plan.misplaced_job_ids), "relaxation")
+            why = (
+                elsewhere.format(them="it", their="its")
+                if len(plan.misplaced_job_ids) == 1
+                else elsewhere.format(them="them", their="their")
+            )
+            question += f"\n\nThe files of {misplaced} stay, because {why}"
         return question
 
     def _muon_relaxation_form_state_without(self, targets) -> dict[str, object]:

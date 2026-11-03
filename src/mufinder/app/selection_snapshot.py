@@ -48,7 +48,7 @@ from PySide6.QtWidgets import (
 )
 
 from mufinder.app.eliding_label import ElidingComboBox
-from mufinder.app.theme import SPACING
+from mufinder.app.theme import SPACING, track_item_view_corners
 
 KeyT = TypeVar("KeyT")
 
@@ -141,13 +141,8 @@ class _SnapshotMixin:
 
     def _own_table_row(self, table: QTableWidget) -> int | None:
         """Return the row of *table* this widget is in, directly or inside a controls cell."""
-        parent = self.parent()  # type: ignore[attr-defined]
-        for row in range(table.rowCount()):
-            for column in range(table.columnCount()):
-                cell = table.cellWidget(row, column)
-                if cell is not None and (cell is self or cell is parent):
-                    return row
-        return None
+        position = _cell_position(table, self, self.parent())  # type: ignore[attr-defined]
+        return position[0] if position is not None else None
 
     def _owning_table(self) -> QTableWidget | None:
         # Cell widgets are reparented under the viewport, so parent() is the
@@ -160,6 +155,17 @@ class _SnapshotMixin:
                 return parent
             parent = parent.parent()
         return None
+
+
+def _cell_position(table: QTableWidget, *widgets: QWidget | None) -> tuple[int, int] | None:
+    """Return the ``(row, column)`` of the cell whose widget is one of ``widgets``."""
+
+    for row in range(table.rowCount()):
+        for column in range(table.columnCount()):
+            cell = table.cellWidget(row, column)
+            if cell is not None and any(cell is widget for widget in widgets):
+                return row, column
+    return None
 
 
 def _selected_rows(table: QTableWidget) -> tuple[int, ...]:
@@ -237,65 +243,210 @@ class SelectionSnapshotToolButton(_SnapshotMixin, QToolButton):
 
 
 class RowControlsCell(QWidget):
-    """A table cell holding several snapshot controls side by side.
+    """A cell of a ``RowControlsTable`` holding several snapshot controls side by side.
 
     Each control keeps the targeting rule of a control installed directly in the
     cell. ``row_controls`` is what ``SelectionFeedback`` marks as multi-row
     targets. Focus on a control in here is not focus on the cell widget, so it
     does not collapse a multi-row selection.
 
-    Tab moves through the controls like cells of the table. The view hands focus
-    to a cell widget only when that widget takes focus, and takes it back only
-    from the cell widget itself, so this cell does both for its controls.
+    The cell never takes focus itself. The view calls ``setFocus`` on the cell
+    widget of whichever cell becomes current, including when a row removed from
+    the table moves the current cell, wherever focus is at the time; it skips a
+    cell widget that has no focus policy. The controls take focus from a click,
+    and from the keys handled here and in ``RowControlsTable``. They are not on
+    the window's own Tab path, which would visit every row.
     """
 
     def __init__(self, *controls: QWidget, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.row_controls: tuple[QWidget, ...] = controls
-        self.setFocusPolicy(Qt.FocusPolicy.TabFocus)
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(SPACING.xs)
         for control in controls:
+            control.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
+            control.installEventFilter(self)
             layout.addWidget(control)
 
-    def focusInEvent(self, event) -> None:  # noqa: N802 - Qt API naming.
-        # The view moved its current cell here. Shift+Tab arrives at the last control.
-        backward = bool(QApplication.keyboardModifiers() & Qt.KeyboardModifier.ShiftModifier)
-        if backward:
-            self.row_controls[-1].setFocus(Qt.FocusReason.BacktabFocusReason)
-        else:
-            self.row_controls[0].setFocus(Qt.FocusReason.TabFocusReason)
+    def reachable_controls(self) -> tuple[QWidget, ...]:
+        """The controls that can take focus now: enabled and not hidden."""
+
+        return tuple(
+            control
+            for control in self.row_controls
+            if control.isEnabled() and control.isVisibleTo(self)
+        )
+
+    def eventFilter(self, watched, event) -> bool:  # noqa: N802 - Qt API naming.
+        # A button left alone treats the arrow keys as Tab and Shift+Tab.
+        if event.type() == QEvent.Type.KeyPress and watched in self.row_controls:
+            key = event.key()
+            plain = not event.modifiers() & ~Qt.KeyboardModifier.KeypadModifier
+            if key in (Qt.Key.Key_Up, Qt.Key.Key_Down):
+                table = self._controls_table()
+                if plain and table is not None:
+                    table.move_focus_across_rows(self, watched, -1 if key == Qt.Key.Key_Up else 1)
+                return True
+            if key in (Qt.Key.Key_Left, Qt.Key.Key_Right):
+                neighbour = self._next_reachable_control(watched, key == Qt.Key.Key_Right)
+                if plain and neighbour is not None:
+                    neighbour.setFocus(Qt.FocusReason.ShortcutFocusReason)
+                return True
+        return super().eventFilter(watched, event)
+
+    def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802 - Qt API naming.
+        # A key a control has no use for stops here. In the table, Page Down and the
+        # like would move the highlight away from the row that has focus.
+        event.accept()
 
     def focusNextPrevChild(self, next: bool) -> bool:  # noqa: A002, N802 - Qt API naming.
         focused = QApplication.focusWidget()
         if focused in self.row_controls:
-            target = self.row_controls.index(focused) + (1 if next else -1)
-            if 0 <= target < len(self.row_controls):
-                self.row_controls[target].setFocus(
+            neighbour = self._next_reachable_control(focused, next)
+            if neighbour is None and focused not in self.reachable_controls():
+                # Qt is moving focus off a control just disabled or hidden, not the user.
+                neighbour = self._next_reachable_control(focused, not next)
+            if neighbour is not None:
+                neighbour.setFocus(
                     Qt.FocusReason.TabFocusReason if next else Qt.FocusReason.BacktabFocusReason
                 )
                 return True
-        table = self._owning_table()
+        table = self._controls_table()
         if table is not None:
-            # A click focuses a control without moving the view's current cell.
-            for row in range(table.rowCount()):
-                for column in range(table.columnCount()):
-                    if table.cellWidget(row, column) is self:
-                        table.selectionModel().setCurrentIndex(
-                            table.model().index(row, column),
-                            QItemSelectionModel.SelectionFlag.NoUpdate,
-                        )
-            table.setFocus(
-                Qt.FocusReason.TabFocusReason if next else Qt.FocusReason.BacktabFocusReason
-            )
+            return table.tab_out_of_row(self, next)
         return super().focusNextPrevChild(next)
 
-    def _owning_table(self) -> QTableWidget | None:
+    def _next_reachable_control(self, control: QWidget, forward: bool) -> QWidget | None:
+        position = self.row_controls.index(control)
+        candidates = (
+            self.row_controls[position + 1 :] if forward else reversed(self.row_controls[:position])
+        )
+        reachable = self.reachable_controls()
+        return next((other for other in candidates if other in reachable), None)
+
+    def _controls_table(self) -> RowControlsTable | None:
         parent = self.parentWidget()
-        while parent is not None and not isinstance(parent, QTableWidget):
+        while parent is not None and not isinstance(parent, RowControlsTable):
             parent = parent.parentWidget()
         return parent
+
+
+class RowControlsTable(QTableWidget):
+    """A table with a ``RowControlsCell`` in each row, and one Tab stop for all of them.
+
+    Tab goes from the table to the current row's controls and then on to the next
+    widget in the window; Shift+Tab comes back the same way. Up and Down on a control
+    move to the same control on the next row, so a table of any length costs the
+    keyboard the same few presses to pass. Tab on a plain ``QTableWidget`` walks its
+    cells and wraps round, so it never leaves.
+
+    When a row is removed with focus on one of its controls, focus moves to the same
+    control on the row below, or above when none below can take it, and to the table
+    when no row can. Focus anywhere else is not touched, and nor is the selection,
+    since a row can leave without the user doing anything.
+    """
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.setTabKeyNavigation(False)
+        track_item_view_corners(self)
+
+    def focusNextPrevChild(self, next: bool) -> bool:  # noqa: A002, N802 - Qt API naming.
+        if next and self.isVisible() and QApplication.focusWidget() is self:
+            row = self.currentRow()
+            cell = self._controls_cell_in_row(row)
+            reachable = cell.reachable_controls() if cell is not None else ()
+            if reachable:
+                self.scrollTo(self.currentIndex())
+                reachable[0].setFocus(Qt.FocusReason.TabFocusReason)
+                return True
+        return super().focusNextPrevChild(next)
+
+    def tab_out_of_row(self, cell: RowControlsCell, forward: bool) -> bool:
+        """Leave ``cell``'s row: Shift+Tab to the table, Tab on past it."""
+
+        # A click focuses a control without moving the view's current cell.
+        position = _cell_position(self, cell)
+        if position is not None:
+            self._set_current_cell_keeping_selection(*position)
+        if forward:
+            # The window's Tab path runs on from the widget that has focus.
+            self.setFocus(Qt.FocusReason.TabFocusReason)
+            return super().focusNextPrevChild(True)
+        self.setFocus(Qt.FocusReason.BacktabFocusReason)
+        return True
+
+    def move_focus_across_rows(self, cell: RowControlsCell, control: QWidget, step: int) -> None:
+        """Move focus to ``control``'s counterpart ``step`` rows on, past rows with none.
+
+        This is the arrow keys in the table for a row's controls: a row outside the
+        selection becomes the selection.
+        """
+
+        position = _cell_position(self, cell)
+        if position is None:
+            return
+        slot = cell.row_controls.index(control)
+        row = position[0] + step
+        while 0 <= row < self.rowCount():
+            counterpart = self._counterpart(row, slot)
+            if counterpart is not None:
+                if row not in _selected_rows(self):
+                    _select_table_rows(self, (row,))
+                self._set_current_cell_keeping_selection(row, position[1])
+                self.scrollTo(self.currentIndex())
+                # Focus moved by a handler is keyboard use only with this reason.
+                counterpart.setFocus(Qt.FocusReason.ShortcutFocusReason)
+                return
+            row += step
+
+    def rowsAboutToBeRemoved(self, parent, start: int, end: int) -> None:  # noqa: N802 - Qt API.
+        self._pass_focus_from_rows(start, end)
+        super().rowsAboutToBeRemoved(parent, start, end)
+
+    def _pass_focus_from_rows(self, start: int, end: int) -> None:
+        # The window's focus widget, not the application's: a dialog or menu can be open
+        # over the window, and focus comes back to whatever the window holds.
+        focused = self.window().focusWidget()
+        cell = focused.parentWidget() if focused is not None else None
+        if not isinstance(cell, RowControlsCell):
+            return
+        position = _cell_position(self, cell)
+        if position is None or not start <= position[0] <= end:
+            return
+        slot = cell.row_controls.index(focused)
+        for row in (*range(end + 1, self.rowCount()), *range(start - 1, -1, -1)):
+            counterpart = self._counterpart(row, slot)
+            if counterpart is not None:
+                self._set_current_cell_keeping_selection(row, position[1])
+                counterpart.setFocus(Qt.FocusReason.OtherFocusReason)
+                return
+        self.setFocus(Qt.FocusReason.OtherFocusReason)
+
+    def _counterpart(self, row: int, slot: int) -> QWidget | None:
+        """The control at ``slot`` on ``row``, or its first that can take focus."""
+
+        cell = self._controls_cell_in_row(row)
+        if cell is None:
+            return None
+        reachable = cell.reachable_controls()
+        if cell.row_controls[slot] in reachable:
+            return cell.row_controls[slot]
+        return reachable[0] if reachable else None
+
+    def _set_current_cell_keeping_selection(self, row: int, column: int) -> None:
+        self.selectionModel().setCurrentIndex(
+            self.model().index(row, column), QItemSelectionModel.SelectionFlag.NoUpdate
+        )
+
+    def _controls_cell_in_row(self, row: int) -> RowControlsCell | None:
+        for column in range(self.columnCount()):
+            cell = self.cellWidget(row, column)
+            if isinstance(cell, RowControlsCell):
+                return cell
+        return None
 
 
 class SelectionSnapshotComboBox(_SnapshotMixin, ElidingComboBox):

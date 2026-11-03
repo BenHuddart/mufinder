@@ -209,8 +209,9 @@ keeps its place in the ranking.
 ``ZPE`` reads ``(earlier)`` when the phonon job read an earlier relaxation of the site
 than the one it now points at, for example after ``Continue relaxation…``. The sum
 would add a new energy to a ZPE from another geometry, so the row shows ``–`` under
-``dE + ZPE`` and takes no part in this table's ranking until its phonon job runs
-again. MuFinder records the run each phonon job's inputs were written from. A job
+``dE + ZPE`` and takes no part in the ranking until its phonon job runs
+again. The Journal's comparison and the project survey follow the same ranking.
+MuFinder records the run each phonon job's inputs were written from. A job
 without that record is settled by its timestamps only where they prove the answer: a
 relaxation that finished before the job was created is the one it read, and one that
 finished after its last submission cannot be. Otherwise ``ZPE`` reads
