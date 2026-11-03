@@ -154,6 +154,12 @@ different folders share a seed or a folder is imported twice, the new job's seed
 gets a numeric suffix (``<seed>_2``) and its files are named to match, so no run
 overwrites another. ``original_inputs/`` keeps the input files' own names.
 
+The same holds the other way round. A native row whose folder name matches an
+imported run's, such as ``Site 1`` beside an imported ``positivemuon_Site_1``, gets
+a folder of its own when it is submitted (``positivemuon_Site_1_2``) and the
+imported run's files are untouched. :doc:`/getting_started/running_jobs` says what
+happens in a project that already holds both in one folder.
+
 The ``.cell`` and ``.param`` files are rendered from the ``.castep`` record:
 they describe the same atoms, with the k-point grid and cutoff that actually
 ran. The rendered ``.cell`` contains the **initial** structure, not the relaxed

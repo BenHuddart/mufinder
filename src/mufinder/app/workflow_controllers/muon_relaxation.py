@@ -46,6 +46,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, replace
+from pathlib import Path
 from uuid import UUID
 
 from mufinder.castep_io.output_parser import CastepResult
@@ -67,7 +68,8 @@ from mufinder.services.project_service import CONTINUABLE_JOB_STATUSES, SiteHost
 from mufinder.services.site_relaxations import record_site_relaxation
 from mufinder.science.lattice import lattice_frac_to_cart, wrap_fractional
 from mufinder.science.relaxation_analysis import muon_fractional_position_from_cell
-from mufinder.workflow import StructureBridgeError, render_job, write_job_directory
+from mufinder.services.relaxation_import import seed_is_usable
+from mufinder.workflow import StructureBridgeError, render_job
 from mufinder.workflow.muon_site import (
     ACTIVE_MUON_RELAXATION_DEFINITION_KEY,
     MUON_RELAXATION_DEFINITION_CALC_TYPE,
@@ -148,6 +150,16 @@ def _fold_supercell_fractional_to_host(
     # A supercell fractional row vector times the supercell matrix is the host position.
     host_position = position if matrix is None else lattice_frac_to_cart(position, matrix)
     return tuple(wrap_fractional(host_position))  # type: ignore[return-value]
+
+
+def _names_a_folder_here(seed: object) -> bool:
+    """Return whether a saved seed names a folder inside the charge folder it is read from.
+
+    A saved seed can hold anything, including ``..`` or an absolute path, and inputs are never
+    written where such a name leads.
+    """
+
+    return isinstance(seed, str) and seed_is_usable(seed) and Path(seed).name == seed
 
 
 @dataclass(frozen=True)
@@ -272,9 +284,11 @@ class MuonRelaxationController(WorkflowJobController):
 
         Rows are keyed ``"{prefix}:{label}"``; a source's bare-label key, from
         before rows were charge-qualified, is read as its row's qualified key.
-        A row carries over when its signature is unchanged and its job exists,
-        fits the key's charge state (:meth:`job_for_mapping_value`) and has left
-        ``defined``; candidates rank by
+        A row carries over when its signature is unchanged and its job exists and
+        fits the key's charge state (:meth:`job_for_mapping_value`), whatever its
+        status: the page's Run configures a new definition before it submits, so
+        a ``defined`` row keeps its job and folder rather than gaining another.
+        Candidates rank by
         :func:`~mufinder.services.definition_mappings.relaxation_mapping_job_priority`,
         and a winner's ``job_seed_names_by_label`` entry travels with it.
         """
@@ -285,8 +299,7 @@ class MuonRelaxationController(WorkflowJobController):
         row_key = self._deps.muon_relaxation_row_key
 
         def accept_job(key: str, raw_job_id: str) -> bool:
-            job = self.job_for_mapping_value(key, raw_job_id)
-            return job is not None and job.status != JobStatus.DEFINED
+            return self.job_for_mapping_value(key, raw_job_id) is not None
 
         sync_equivalent_mappings(
             document,
@@ -589,19 +602,26 @@ class MuonRelaxationController(WorkflowJobController):
         for row in rows_by_label:
             key = f"{muon_charge_state_prefix(row.charge_state)}:{row.label}"
             spec = spec_by_key.get(key)
+            charge_root = output_root / muon_charge_state_prefix(row.charge_state)
             existing_job = self.job_for_label(definition, row.label, row.charge_state)
             if existing_job is not None:
                 if existing_job.status == JobStatus.DEFINED and spec is not None:
-                    seed_mapping[key] = spec.name
-                    write_job_directory(
-                        spec, output_root / muon_charge_state_prefix(row.charge_state)
+                    saved_seed = seed_mapping.get(key, seed_mapping.get(row.label))
+                    if isinstance(saved_seed, str):
+                        saved_seed = saved_seed.strip()
+                    own_spec = self.rewrite_defined_job(
+                        spec,
+                        charge_root,
+                        existing_job,
+                        name=saved_seed if _names_a_folder_here(saved_seed) else spec.name,
                     )
+                    if own_spec is not None:
+                        seed_mapping[key] = own_spec.name
                 created.append(existing_job)
                 continue
             if spec is None:
                 continue
-            charge_root = output_root / muon_charge_state_prefix(row.charge_state)
-            write_job_directory(spec, charge_root)
+            spec = self.write_new_job(spec, charge_root, key)
             job = self._context.project_service.add_job(
                 document,
                 label=row.label,

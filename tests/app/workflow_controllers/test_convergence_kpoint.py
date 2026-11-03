@@ -17,6 +17,7 @@ from mufinder.services.convergence_defaults import (
     CONVERGENCE_OVERVIEW_SNAPSHOTS_KEY,
     KPOINT_EXAMINER_STATE_KEY,
 )
+from mufinder.services.job_file_cleanup import JobFileCleanup
 from mufinder.services.project_service import ProjectDocument, ProjectService
 
 from mufinder.app.convergence_types import ConvergenceConfig, SweepPointRunState
@@ -116,12 +117,17 @@ def _kpoint_context_and_deps(
         persist_ui_state=lambda **_: None,
         status_message=lambda _m: None,
         set_submitted_rows=lambda _keys: None,
+        jobs_free_to_start=lambda jobs: jobs,
         definition_output_directory=lambda d: (
             document.project_root / "files" / "convergence_kpoint"
         ),
         job_output_directory=lambda _job: None,
         job_seed_name=lambda job: job.label,
-        job_file_cleanup=None,  # type: ignore[arg-type]
+        job_file_cleanup=JobFileCleanup(
+            document_getter=lambda: document,
+            job_output_directory=lambda _job: None,
+            job_seed_name=lambda job: job.label,
+        ),
         run_for_job=lambda _job_id: None,
         total_energy_for_job=lambda _job_id: None,
         max_force_for_job=lambda _job_id: None,

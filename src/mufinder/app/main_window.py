@@ -3659,6 +3659,12 @@ class MainWindow(QMainWindow):
             )
             return
 
+        # A job in a folder another job uses is refused as a submit refuses it, before
+        # anything is reset or cleared.
+        selected = self._without_jobs_in_another_jobs_folder(selected)
+        if not selected:
+            return
+
         refusals = self._fresh_start_refusals(
             [job for job in selected if self._job_resumes_from_checkpoint(job)]
         )
@@ -4632,6 +4638,45 @@ class MainWindow(QMainWindow):
                 counts[job.label] = int(num_farms)
         return counts
 
+    def _without_jobs_in_another_jobs_folder(self, jobs: list[Job]) -> list[Job]:
+        """Return ``jobs`` less those that would write into a folder another job uses.
+
+        Only a project that already holds two jobs in one folder has any: a new job gets a
+        folder of its own when its inputs are written. Nothing saved changes, so the user
+        decides what happens to the job.
+        """
+
+        def sharers(job: Job) -> set[UUID]:
+            controller = owning_controller(self._workflow_controllers, job)
+            return controller.folder_sharers(job) if controller is not None else set()
+
+        refused = self._job_file_cleanup.jobs_in_another_jobs_folder(jobs, together=sharers)
+        if not refused:
+            return jobs
+        project_root = self._document.project_root
+        text = (
+            f"'{refused[0].label}' was not started because another job uses its folder."
+            if len(refused) == 1
+            else f"{plural(len(refused), 'job')} were not started because other jobs "
+            "use their folders."
+        )
+        show_detailed_warning(
+            self,
+            "Jobs not started",
+            text,
+            informative_text=(
+                "No files were changed. Remove the row and add it again to give the job a folder "
+                "of its own."
+            ),
+            details="\n".join(
+                f"{job.label}: {job_directory_label(project_root, directory)}"
+                for job in refused
+                if (directory := self._job_output_directory(job)) is not None
+            ),
+        )
+        refused_ids = {job.id for job in refused}
+        return [job for job in jobs if job.id not in refused_ids]
+
     def _submit_jobs_locally(
         self,
         jobs: list[Job],
@@ -4659,6 +4704,9 @@ class MainWindow(QMainWindow):
                 "No eligible jobs",
                 no_eligible_message,
             )
+            return
+        eligible_jobs = self._without_jobs_in_another_jobs_folder(eligible_jobs)
+        if not eligible_jobs:
             return
 
         if not self._castep_executable_ready():
@@ -4772,6 +4820,9 @@ class MainWindow(QMainWindow):
         eligible_jobs = [job for job in self._dedupe_jobs(jobs) if job.status in allowed_statuses]
         if not eligible_jobs:
             QMessageBox.information(self, "No eligible jobs", no_eligible_message)
+            return
+        eligible_jobs = self._without_jobs_in_another_jobs_folder(eligible_jobs)
+        if not eligible_jobs:
             return
 
         chosen = self._choose_cluster_submission(eligible_jobs, default_cluster_name)
@@ -5889,6 +5940,8 @@ class MainWindow(QMainWindow):
         job = jobs[0]
         if job.status not in CONTINUABLE_JOB_STATUSES:
             return
+        if not self._without_jobs_in_another_jobs_folder([job]):
+            return
 
         seed = view.continue_relaxation_dialog_seed(key)
         if seed is None:
@@ -5992,6 +6045,7 @@ class MainWindow(QMainWindow):
             request_dashboard_flush=lambda **kwargs: self._request_dashboard_flush(**kwargs),
             persist_ui_state=lambda **kwargs: self._persist_document_ui_state(**kwargs),
             status_message=lambda message: self.statusBar().showMessage(message),
+            jobs_free_to_start=lambda jobs: self._without_jobs_in_another_jobs_folder(jobs),
             set_submitted_rows=lambda keys: self._set_submitted_rows(keys),
             definition_output_directory=lambda definition: definition_output_directory(
                 self._document, definition

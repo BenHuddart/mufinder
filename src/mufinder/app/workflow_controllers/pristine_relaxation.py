@@ -44,7 +44,7 @@ from mufinder.services.source_candidates import (
     CompletedPristineJob,
     completed_pristine_relaxation_jobs,
 )
-from mufinder.workflow import StructureBridgeError, render_job, write_job_directory
+from mufinder.workflow import StructureBridgeError, render_job
 
 from mufinder.app.adapter_common import AdapterExpansion
 from mufinder.app.relaxation_adapter import expand_pristine_relaxation_jobs
@@ -356,14 +356,14 @@ class PristineRelaxationController(WorkflowJobController):
             existing_job = self.job_for_key(definition, label)
             if existing_job is not None:
                 if existing_job.status == JobStatus.DEFINED and spec is not None:
-                    write_job_directory(spec, output_root)
+                    self.rewrite_defined_job(spec, output_root, existing_job)
                 created.append(existing_job)
                 continue
 
             if spec is None:
                 continue
 
-            write_job_directory(spec, output_root)
+            spec = self.write_new_job(spec, output_root, label)
             job = self._context.project_service.add_job(
                 document,
                 label=spec.name,

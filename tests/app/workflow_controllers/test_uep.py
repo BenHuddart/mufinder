@@ -396,3 +396,49 @@ def test_uep_controller_remove_rows_drops_the_row_binding(tmp_path: Path) -> Non
 
     assert controller.remove_rows(["row_1"]) == (definition.id,)
     assert definition.id not in document.calculations
+
+
+def test_uep_controller_materialize_gives_a_row_its_own_folder_when_another_job_has_that_name(
+    tmp_path: Path,
+) -> None:
+    from mufinder.domain.models import Structure
+
+    service = ProjectService()
+    document = service.create_project(tmp_path / "p.mufinder", "P")
+    host = Structure(
+        label="Host",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si"],
+        fractional_positions=[[0.0, 0.0, 0.0]],
+    )
+    service.add_structure(document, host)
+    document.project.host_structure_id = host.id
+    output_root = document.project_root / "files" / "uep"
+    service.register_uep_definition(
+        document,
+        host_structure_id=host.id,
+        parameters={"name_prefix": "uep", "rows": [{"label": "row1"}]},
+        output_directory=output_root,
+    )
+    other = _uep_job(service, document, "uep_row1")
+    taken = output_root / other.label
+    taken.mkdir(parents=True)
+    (taken / "uep_row1.cell").write_text("another job's cell", encoding="utf-8")
+    context = make_context(
+        document=document,
+        project_service=service,
+        definition_output_directory=lambda _defn: output_root,
+        job_output_directory=lambda job: output_root / job.label,
+    )
+    deps = _stub_uep_deps(
+        deserialize_uep_config=lambda _payload: UepConfig(
+            name_prefix="uep", rows=(UepSourceRow(label="row1"),)
+        ),
+    )
+    controller = UepController(context, deps, _FakeUepView())
+
+    (job,) = controller.materialize(["row1"])
+
+    assert job.label == "uep_row1_2"
+    assert (output_root / job.label / f"{job.label}.cell").is_file()
+    assert (taken / "uep_row1.cell").read_text(encoding="utf-8") == "another job's cell"

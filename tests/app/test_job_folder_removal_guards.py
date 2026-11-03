@@ -188,9 +188,7 @@ class TestNativeRowInASharedFolder:
         assert item.job_id in project.document.jobs
         assert project.status() == "Removed 1 job; kept 1 folder"
 
-    def test_a_normal_submit_landing_in_an_imports_folder_keeps_the_folder(
-        self, project: _Project
-    ) -> None:
+    def test_a_normal_submit_never_lands_in_an_imports_folder(self, project: _Project) -> None:
         """A native row whose default seed is an import's seed, through the real submit code."""
 
         item = project.import_batch("runs", (1,), seed="positivemuon_Site_native").imported[0]
@@ -207,12 +205,14 @@ class TestNativeRowInASharedFolder:
             }
         )
         job = controller.materialize(["positivemuon:Site_native"])[0]
-        assert project.window._job_output_directory(job) == item.job_directory
-        before = _tree(project.files)
+        own_folder = project.window._job_output_directory(job)
+        assert own_folder == project.charge / "positivemuon_Site_native_2"
+        before = _tree(item.job_directory)
 
         project.remove_row("Site_native")
 
-        assert _tree(project.files) == before
+        assert _tree(item.job_directory) == before
+        assert not own_folder.exists()
         assert job.id not in project.document.jobs
         assert item.job_id in project.document.jobs
 

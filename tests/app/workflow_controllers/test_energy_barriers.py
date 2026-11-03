@@ -1252,3 +1252,39 @@ def test_energy_barriers_controller_validate_artifacts_checks_ts(
         == "Failed to parse CASTEP path output: truncated band"
     )
     assert controller.validate_artifacts(job, parsed, run, no_artifacts()) is None
+
+
+def test_energy_barriers_controller_materialize_gives_a_path_its_own_folder(
+    tmp_path: Path,
+) -> None:
+    """A path whose job name another job has gets a free one, and keeps it when written again."""
+
+    service = ProjectService()
+    document, _definition, _source, output_root = _seed_energy_barriers_document(service, tmp_path)
+    (first,) = _neb_controller(service, document, output_root).materialize(["source-key"])
+    name = first.label
+    document.jobs.pop(first.id)
+    _definition.parameters["job_ids_by_label"].clear()
+    other = service.add_job(
+        document,
+        label=name,
+        workflow_stage=WorkflowStage.ENERGY_BARRIERS,
+        calc_type=NUDGED_ELASTIC_BAND_CALC_TYPE,
+    )
+    cell = output_root / name / f"{name}.cell"
+    before = cell.read_text(encoding="utf-8")
+    cell.write_text("another job's cell", encoding="utf-8")
+    controller = _neb_controller(
+        service,
+        document,
+        output_root,
+        job_output_directory=lambda job: output_root / job.label,
+    )
+
+    (job,) = controller.materialize(["source-key"])
+    (again,) = controller.materialize(["source-key"])
+
+    assert other.id != job.id == again.id
+    assert job.label == f"{name}_2"
+    assert (output_root / job.label / f"{job.label}.cell").read_text(encoding="utf-8") == before
+    assert cell.read_text(encoding="utf-8") == "another job's cell"

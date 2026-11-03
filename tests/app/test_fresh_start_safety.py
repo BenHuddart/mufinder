@@ -215,6 +215,12 @@ def test_dashboard_start_again_never_touches_a_running_replacements_directory(
         "warning",
         lambda _parent, _title, text: warnings.append(text),
     )
+    boxes: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        main_window_module,
+        "show_detailed_warning",
+        lambda _parent, title, text, **_kwargs: boxes.append((title, text)),
+    )
     submissions: list = []
     monkeypatch.setattr(
         window, "_submit_jobs_on_cluster", lambda jobs, **kwargs: submissions.append(jobs)
@@ -222,9 +228,13 @@ def test_dashboard_start_again_never_touches_a_running_replacements_directory(
 
     window._on_resubmit_from_dashboard([old.id])
 
-    # Neither started again nor continued in the replacement's directory.
+    # Neither started again nor continued in the replacement's directory: refused as a
+    # submit refuses a job in a folder another job uses, before anything is cleared.
     assert submissions == []
-    assert f"- {SEED}: another job uses the same output folder" in warnings[0]
+    assert warnings == []
+    assert boxes == [
+        ("Jobs not started", f"'{old.label}' was not started because another job uses its folder.")
+    ]
     assert sorted(path.name for path in directory.iterdir()) == ALL_FILES
     window.close()
 
@@ -267,8 +277,9 @@ def test_a_fresh_start_into_a_protected_directory_is_dropped(
     continuing = _pristine_job(service, doc, JobStatus.DEFINED, row_key="other")
     continuing.execution_target = "alpha"
     continuing.remote_directory = fresh.remote_directory
-    # Bypass the ownership check, which would refuse these two first.
+    # Bypass the ownership checks, which would refuse these two first.
     monkeypatch.setattr(window, "_fresh_start_refusals", lambda _jobs: {})
+    monkeypatch.setattr(window, "_without_jobs_in_another_jobs_folder", lambda jobs: jobs)
 
     patch_continuation_cluster_dialog(monkeypatch)
     recorded = patch_continuation_cluster_runner(monkeypatch, window, directory_exists=True)

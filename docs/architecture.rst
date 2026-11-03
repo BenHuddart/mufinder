@@ -543,7 +543,8 @@ defined by two of these modules, and a pinned count may only fall.
        the guard on a job's folder: ``job_directory_refusal`` (a link anywhere
        below ``files/``, found by ``job_directory_link``, or a place outside the
        job folders), ``job_directory_foreign`` (a muon relaxation's folder not in
-       its workflow and charge folder) and ``job_directory_on_disk``.
+       its workflow and charge folder) and ``job_directory_on_disk``, and
+       ``free_job_seed``, the name a job takes when the one it would have had is in use.
    * - ``mufinder.services.job_file_cleanup``
      - Cleaning up jobs' files and records when rows are removed or reset
        (``JobFileCleanup``): ``plan_item`` turns jobs into a
@@ -561,8 +562,15 @@ defined by two of these modules, and a pinned count may only fall.
        says why with names for Details. It never shows a dialog: the
        window asks and reports. ``clear_directory_contents`` empties a
        directory but keeps its inputs, for the failed-job reset and fresh
-       start. Every workflow controller reaches it as
-       ``WorkflowControllerContext.job_file_cleanup``.
+       start. ``folder_used_by_another_job`` is the one check that a job uses a folder,
+       the same folder or one holding or inside it, for a removal and a submission
+       alike. Every workflow controller reaches it as
+       ``WorkflowControllerContext.job_file_cleanup``: ``materialize`` writes through
+       ``WorkflowJobController.write_new_job``, which gives a new job a free name when
+       another job uses its folder, and ``rewrite_defined_job``, which leaves the files
+       alone. A submission refuses a job left that way before any reset
+       (``jobs_in_another_jobs_folder``). A row's earlier jobs, unless still running, and
+       its ``directory_companions`` do not count (``folder_sharers``).
    * - ``mufinder.services.job_progress``
      - The geometry-optimisation progress of running jobs: which jobs report it
        (``job_reports_geometry_progress``), where their ``.castep`` is

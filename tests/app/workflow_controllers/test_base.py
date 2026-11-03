@@ -10,13 +10,23 @@ proven independently of any concrete workflow. The module-level helpers in
 
 from __future__ import annotations
 
+import dataclasses
 from pathlib import Path
 
 from mufinder.castep_io.output_parser import CastepResult
 from mufinder.domain.enums import JobStatus, WorkflowStage
-from mufinder.domain.models import CalculationRun, Job
+from mufinder.domain.models import (
+    CalculationDefinition,
+    CalculationRun,
+    Job,
+    Structure,
+    utc_now,
+)
 from mufinder.services.job_artifacts import ParsedJobArtifacts
 from mufinder.services.project_service import ProjectService
+from mufinder.workflow.merge import resolve_job
+from mufinder.workflow.types import JobPatch, JobSpec
+from mufinder.workflow import structure_to_spec
 
 from mufinder.app.workflow_controllers.base import (
     ControllerResult,
@@ -763,3 +773,133 @@ def test_apply_row_parameters_to_form_state_updates_one_row_and_its_alias() -> N
             )
             is None
         )
+
+
+def _folder_job(document, service, label: str) -> Job:
+    return service.add_job(
+        document, label=label, workflow_stage=WorkflowStage.UEP, calc_type="castep_uep"
+    )
+
+
+def _spec(name: str) -> JobSpec:
+    structure = structure_to_spec(
+        Structure(
+            label="Host",
+            lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+            species=["Si"],
+            fractional_positions=[[0.0, 0.0, 0.0]],
+        )
+    )
+    return resolve_job(
+        name=name,
+        base_structure=structure,
+        workflow_stage=WorkflowStage.UEP,
+        patch=JobPatch(label_suffix=name, structure=structure),
+    )
+
+
+def _folder_controller(tmp_path: Path, *jobs: str):
+    service = ProjectService()
+    document = service.create_project(tmp_path / "p.mufinder", "P")
+    root = document.project_root / "files" / "uep"
+    made = {label: _folder_job(document, service, label) for label in jobs}
+    for label in jobs:
+        (root / label).mkdir(parents=True)
+    context = make_context(
+        document=document,
+        project_service=service,
+        job_output_directory=lambda job: root / job.label,
+    )
+    return _FakeController(context, states={}), document, root, made
+
+
+def test_a_new_job_keeps_its_name_when_nothing_is_in_its_folder(tmp_path: Path) -> None:
+    controller, _document, root, _jobs = _folder_controller(tmp_path)
+    assert controller.write_new_job(_spec("x"), root, "x").name == "x"
+    assert (root / "x" / "x.cell").is_file()
+
+
+def test_a_new_job_keeps_its_name_when_no_job_uses_the_folder(tmp_path: Path) -> None:
+    controller, _document, root, _jobs = _folder_controller(tmp_path)
+    (root / "x").mkdir(parents=True)
+    assert controller.write_new_job(_spec("x"), root, "x").name == "x"
+    assert (root / "x" / "x.cell").is_file()
+
+
+def test_a_new_job_takes_the_next_free_name_when_another_job_uses_the_folder(
+    tmp_path: Path,
+) -> None:
+    controller, _document, root, _jobs = _folder_controller(tmp_path, "x", "x_2")
+    assert controller.write_new_job(_spec("x"), root, "x").name == "x_3"
+    assert (root / "x_3" / "x_3.cell").is_file()
+    assert not (root / "x" / "x.cell").exists()
+
+
+def test_a_defined_job_is_named_for_its_own_folder(tmp_path: Path) -> None:
+    controller, _document, root, jobs = _folder_controller(tmp_path, "x_2")
+    assert controller.rewrite_defined_job(_spec("x"), root, jobs["x_2"]).name == "x_2"
+    assert (root / "x_2" / "x_2.cell").is_file()
+
+
+def test_a_defined_job_in_another_jobs_folder_is_not_rewritten(tmp_path: Path) -> None:
+    controller, _document, root, jobs = _folder_controller(tmp_path, "x", "y")
+    assert controller.rewrite_defined_job(_spec("y"), root, jobs["y"], name="x") is None
+    assert not (root / "x" / "x.cell").exists()
+
+
+def test_a_rows_earlier_job_shares_its_folder_in_every_definition(tmp_path: Path) -> None:
+    controller, document, _root, jobs = _folder_controller(tmp_path, "x", "y", "z")
+    for label, row in (("x", "row"), ("y", "row"), ("z", "other")):
+        definition = CalculationDefinition(
+            workflow_stage=WorkflowStage.UEP,
+            calc_type="uep",
+            parameters={"job_ids_by_label": {row: str(jobs[label].id)}},
+        )
+        document.calculations[definition.id] = definition
+    controller.stage = WorkflowStage.UEP
+    assert controller.folder_sharers(jobs["x"]) == {jobs["x"].id, jobs["y"].id}
+
+
+def test_a_rows_earlier_job_still_running_does_not_share_its_folder(tmp_path: Path) -> None:
+    controller, document, root, jobs = _folder_controller(tmp_path, "x")
+    jobs["x"].status = JobStatus.RUNNING
+    definition = CalculationDefinition(
+        workflow_stage=WorkflowStage.UEP,
+        calc_type="uep",
+        parameters={"job_ids_by_label": {"row": str(jobs["x"].id)}},
+    )
+    document.calculations[definition.id] = definition
+    controller.stage = WorkflowStage.UEP
+
+    assert controller.write_new_job(_spec("x"), root, "row").name == "x_2"
+
+
+def test_submit_starts_only_the_jobs_free_to_start_and_resets_none_of_the_others(
+    tmp_path: Path,
+) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "p.mufinder", "P")
+    defined = make_job(status=JobStatus.DEFINED, label="defined")
+    refused = make_job(status=JobStatus.FAILED, label="refused", dismissed_at=utc_now())
+    local = RecordingBackend()
+    prepared: list[list[Job]] = []
+    context = dataclasses.replace(
+        make_context(
+            document=document,
+            project_service=service,
+            local_backend=local,
+            prepare_jobs_for_resubmission=lambda jobs: prepared.append(list(jobs)) or True,
+        ),
+        jobs_free_to_start=lambda jobs: [job for job in jobs if job is not refused],
+    )
+    controller = _FakeController(
+        context,
+        states={"a": FakeRowState("ready"), "b": FakeRowState("ready")},
+        existing={"a": defined, "b": refused},
+    )
+
+    controller.submit(["a", "b"], target="local")
+
+    assert prepared == []
+    assert [jobs for jobs, _extras in local.calls] == [[defined]]
+    assert refused.status == JobStatus.FAILED

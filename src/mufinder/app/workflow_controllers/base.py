@@ -29,7 +29,7 @@ See ``docs/architecture.rst`` (Workflow controllers) for the layer contract.
 from __future__ import annotations
 
 from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
@@ -37,6 +37,7 @@ from uuid import UUID
 
 from mufinder.castep_io.cell_parser import ParsedCell
 from mufinder.castep_io.output_parser import CastepResult
+from mufinder.domain.constants import IMPORTED_JOB_TAG
 from mufinder.domain.enums import ACTIVE_JOB_STATUSES, JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationDefinition, CalculationRun, Job, Structure
 from mufinder.domain.text import plural
@@ -44,6 +45,7 @@ from mufinder.services.job_artifacts import ParsedJobArtifacts
 from mufinder.services.job_execution_controller import JobExecutionController
 from mufinder.services.job_file_cleanup import JobFileCleanup
 from mufinder.services.job_file_export import JobFilesExport, job_files_export
+from mufinder.services.job_paths import free_job_seed
 from mufinder.services.job_results import find_job_derived_structure
 from mufinder.services.relaxed_structure_spins import apply_relaxed_cell_spins
 from mufinder.services.structure_export import (
@@ -57,6 +59,8 @@ from mufinder.services.project_service import (
     definitions_for_stage,
     job_for_mapping_key,
 )
+from mufinder.workflow import write_job_directory
+from mufinder.workflow.types import JobSpec
 
 from mufinder.app.workflow_table_utils import RESET_FAILED_ACTION_TEXT
 from mufinder.app.workflow_submission import (
@@ -97,6 +101,8 @@ class WorkflowControllerContext:
     #: Names the rows the submission in progress covers, ``()`` once it is over,
     #: so the backends' status message can report what applies to those rows.
     set_submitted_rows: Callable[[Sequence[object]], None]
+    #: Returns the jobs given less those in a folder another job uses, telling the user why.
+    jobs_free_to_start: Callable[[list[Job]], list[Job]]
 
     # Cross-workflow job/definition readers. These belong here (not in any Deps
     # class) because they read durable job/definition state the same way for
@@ -165,6 +171,8 @@ class WorkflowJobController:
     #: ``ui_state`` key holding the id of the definition the user last
     #: configured. ``None`` means the newest matching definition is active.
     active_key: str | None = None
+    #: The definition mapping that binds this workflow's rows to their jobs.
+    mapping_name: str = "job_ids_by_label"
 
     def __init__(self, context: WorkflowControllerContext) -> None:
         self._context = context
@@ -216,6 +224,84 @@ class WorkflowJobController:
             document, definition, key, mapping_name=mapping_name, calc_type=calc_type
         )
 
+    def folder_sharers(self, job: Job) -> set[UUID]:
+        """Return the jobs that may use ``job``'s folder without it being another job's.
+
+        ``job`` itself, the jobs earlier definitions bind to its row (a reconfigured row runs
+        in the same folder), and its :meth:`directory_companions`.
+        """
+
+        keys = {
+            str(key)
+            for definition in self.definitions()
+            if isinstance(mapping := definition.parameters.get(self.mapping_name, {}), dict)
+            for key, value in mapping.items()
+            if str(value) == str(job.id)
+        }
+        return {
+            job.id,
+            *self._row_job_ids(keys),
+            *(companion.id for companion in self.directory_companions(job)),
+        }
+
+    def _row_job_ids(self, keys: Collection[str]) -> set[UUID]:
+        """Return the native jobs any definition binds to the rows ``keys`` name.
+
+        A job still running counts as another job, since a second run in its folder would
+        overwrite it, and so does an import.
+        """
+
+        return {
+            job.id
+            for job in self.jobs_for_removed_rows(keys)
+            if IMPORTED_JOB_TAG not in (job.tags or ()) and job.status not in ACTIVE_JOB_STATUSES
+        }
+
+    def _folder_taken(self, directory: Path, together: Collection[UUID]) -> bool:
+        """Return whether writing into ``directory`` would touch another job's files.
+
+        A folder not on disk holds nothing to overwrite, and most rows have none yet.
+        """
+
+        return directory.exists() and self._context.job_file_cleanup.folder_used_by_another_job(
+            directory, together=together
+        )
+
+    def write_new_job(self, spec: JobSpec, output_root: Path, key: object) -> JobSpec:
+        """Write a new job's inputs and return the spec they went under.
+
+        Its own name, or a free one when another job uses the folder of that name. The row
+        ``key`` names keeps a folder its earlier jobs used. A folder no job's records use is
+        taken as it stands, as it is for a row removed and added again.
+        """
+
+        if self._folder_taken(output_root / spec.name, self._row_job_ids({str(key)})):
+            spec = replace(spec, name=free_job_seed(spec.name, output_root))
+        write_job_directory(spec, output_root)
+        return spec
+
+    def job_may_write_folder(self, job: Job, directory: Path) -> bool:
+        """Return whether ``job``'s inputs may be rewritten in ``directory``."""
+
+        return not self._folder_taken(directory, self.folder_sharers(job))
+
+    def rewrite_defined_job(
+        self, spec: JobSpec, output_root: Path, job: Job, *, name: str | None = None
+    ) -> JobSpec | None:
+        """Rewrite ``job``'s inputs in its own folder and return the spec they went under.
+
+        ``name`` defaults to the job's label, which names its folder in every workflow that
+        records no seed. ``None`` when another job uses that folder: its files stay as they
+        are, and the submit backends refuse to start the job.
+        """
+
+        name = job.label if name is None else name
+        if not self.job_may_write_folder(job, output_root / name):
+            return None
+        spec = replace(spec, name=name)
+        write_job_directory(spec, output_root)
+        return spec
+
     def directory_companions(self, job: Job) -> list[Job]:
         """Return the jobs that share ``job``'s output directory by design.
 
@@ -246,7 +332,7 @@ class WorkflowJobController:
     def jobs_for_removed_rows(self, labels: Collection[str]) -> list[Job]:
         """Return the jobs the rows ``labels`` name are bound to, in every definition.
 
-        Walks each of :meth:`definitions`' ``job_ids_by_label`` mappings for the
+        Walks each of :meth:`definitions`' :attr:`mapping_name` mappings for the
         keys :meth:`row_key_matcher` picks, in definition and mapping order,
         once per job. These are the jobs whose files and records a row removal
         cleans up.
@@ -259,7 +345,7 @@ class WorkflowJobController:
         jobs: list[Job] = []
         seen: set[UUID] = set()
         for definition in self.definitions():
-            mapping = definition.parameters.get("job_ids_by_label", {})
+            mapping = definition.parameters.get(self.mapping_name, {})
             if not isinstance(mapping, dict):
                 continue
             for key, raw_job_id in mapping.items():
@@ -422,6 +508,19 @@ class WorkflowJobController:
         if not plan.has_jobs:
             self._context.show_info("No ready jobs", self.no_ready_message)
             return
+
+        # Before any reset: a job left in another job's folder keeps its record as it is.
+        startable = [
+            job
+            for job in plan.jobs
+            if job.status == JobStatus.DEFINED or job_is_resubmittable_after_dismissal(job)
+        ]
+        free = {job.id for job in self._context.jobs_free_to_start(startable)}
+        refused = {job.id for job in startable} - free
+        if refused:
+            plan = replace(plan, jobs=tuple(job for job in plan.jobs if job.id not in refused))
+            if not plan.has_jobs:
+                return
 
         dismissed_jobs = [job for job in plan.jobs if job_is_resubmittable_after_dismissal(job)]
         if dismissed_jobs:

@@ -365,6 +365,21 @@ def job_directory_label(project_root: Path, directory: Path) -> str:
         return str(directory)
 
 
+def free_job_seed(seed: str, parent: Path) -> str:
+    """Return ``seed``, suffixed until nothing in ``parent`` has its name.
+
+    A job's folder is named for its seed, so this is the name a job takes when the one it
+    would have had is in use.
+    """
+
+    if not os.path.lexists(parent / seed):
+        return seed
+    index = 2
+    while os.path.lexists(parent / f"{seed}_{index}"):
+        index += 1
+    return f"{seed}_{index}"
+
+
 def job_seed_name(job: Job, output_directory: Callable[[Job], Path | None]) -> str:
     """Return the CASTEP seed name ``job`` runs under.
 

@@ -458,6 +458,26 @@ job's row: it goes to the same button on the next row, or on the previous row if
 that was the last, and to the table when no rows are left. Focus in a form
 field or anywhere else stays where it is, and the selection does not change.
 
+A job's own folder
+~~~~~~~~~~~~~~~~~~
+
+Every job writes in a folder of its own, under ``files/`` and named after its seed. A
+new row whose folder another job already uses, an imported run's for example, gets
+the next free name when it is submitted (``positivemuon_Site_1_2``), and its CASTEP
+files are named to match. A row whose job has not run yet keeps that job when its
+page's ``Run`` submits it again, so it stays in the folder it has and no second job is
+made for it. A reconfigured row gets a new job
+in its earlier job's folder. A folder that no job uses is written into as it stands.
+
+An older project can hold two jobs in one folder. Opening it changes nothing, and
+neither job's files or records change until you act. Finished jobs stay as they are,
+and their results still read. A job waiting to run in such a folder is not started:
+``Jobs not started`` names it and its folder under ``Details``, and the other jobs of
+the submission go ahead. The page's ``Run``, the dashboard's ``Resubmit…`` and
+``Continue relaxation…`` all refuse it this way, before anything is reset or cleared.
+Remove its row and add it again, and the new job gets a folder of its own. The folder stays,
+because the other job uses it.
+
 Reset and its clean-up
 ~~~~~~~~~~~~~~~~~~~~~~
 
@@ -684,7 +704,10 @@ Starting again deletes only what belongs to the job:
   this check, starting the old job again would delete the replacement's
   output, and continuing it would run in the replacement's directory and
   overwrite its checkpoint. Two jobs in one selection sharing a directory are
-  both refused. The same check runs again just before anything is deleted.
+  both refused. A job whose local folder another job's records use gets the
+  ``Jobs not started`` box described under `A job's own folder`_; the other
+  reasons are listed in ``Some jobs were not resubmitted``. The same check runs
+  again just before anything is deleted.
 - **The previous run must have finished.** A stopped job may still be running:
   a job MuFinder lost track of is marked ``stopped · orphaned`` without being
   cancelled. Before deleting a remote directory, MuFinder asks the scheduler

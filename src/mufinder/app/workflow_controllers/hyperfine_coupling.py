@@ -60,7 +60,7 @@ from mufinder.services.source_candidates import (
     serialize_quantum_sources,
     source_relaxation_parameter_values,
 )
-from mufinder.workflow import StructureBridgeError, structure_to_spec, write_job_directory
+from mufinder.workflow import StructureBridgeError, structure_to_spec
 from mufinder.workflow.hyperfine import (
     HYPERFINE_CALC_TYPE,
     HYPERFINE_CONTROLLED_PARAM_KEYWORDS,
@@ -487,11 +487,16 @@ class HyperfineCouplingController(WorkflowJobController):
             existing = self.row_job(definition, key)
             if existing is not None:
                 if existing.status == JobStatus.DEFINED:
-                    existing.label = spec.name
-                    write_job_directory(spec, output_root)
+                    # A source's label can change as others come and go; the job follows
+                    # it unless another job has that name, and then stays where it is.
+                    own_spec = self.rewrite_defined_job(
+                        spec, output_root, existing, name=spec.name
+                    ) or self.rewrite_defined_job(spec, output_root, existing)
+                    if own_spec is not None:
+                        existing.label = own_spec.name
                 created.append(existing)
                 continue
-            write_job_directory(spec, output_root)
+            spec = self.write_new_job(spec, output_root, key)
             job = self._context.project_service.add_job(
                 document,
                 label=spec.name,

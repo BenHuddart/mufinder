@@ -21,6 +21,7 @@ from mufinder.services.convergence_defaults import (
     CONVERGENCE_OVERVIEW_SNAPSHOTS_KEY,
     CUTOFF_EXAMINER_STATE_KEY,
 )
+from mufinder.services.job_file_cleanup import JobFileCleanup
 from mufinder.services.project_service import ProjectDocument, ProjectService
 
 from mufinder.app.convergence_types import ConvergenceConfig, SweepPointRunState
@@ -106,12 +107,17 @@ def _cutoff_context_and_deps(
         persist_ui_state=lambda **_: None,
         status_message=lambda _m: None,
         set_submitted_rows=lambda _keys: None,
+        jobs_free_to_start=lambda jobs: jobs,
         definition_output_directory=lambda d: (
             document.project_root / "files" / "convergence_cutoff"
         ),
         job_output_directory=lambda _job: None,
         job_seed_name=lambda job: job.label,
-        job_file_cleanup=None,  # type: ignore[arg-type]
+        job_file_cleanup=JobFileCleanup(
+            document_getter=lambda: document,
+            job_output_directory=lambda _job: None,
+            job_seed_name=lambda job: job.label,
+        ),
         run_for_job=lambda _job_id: None,
         total_energy_for_job=lambda _job_id: None,
         max_force_for_job=lambda _job_id: None,
@@ -1073,3 +1079,25 @@ def test_configure_registers_a_new_definition_for_a_changed_configuration(
     ]
     assert document.ui_state[controller.active_key] == str(second.id)
     assert second.parameters["configuration"]["sweep_values"] == [300.0, 400.0]
+
+
+def test_convergence_controller_materialize_leaves_a_folder_a_detached_reset_job_finds(
+    tmp_path: Path,
+) -> None:
+    """A reset leaves a cutoff's job unbound and ``defined``, with nothing of its own there."""
+
+    service = ProjectService()
+    document = service.create_project(tmp_path / "conv.mufinder", "Conv")
+    _seed_convergence_document(service, document)
+    view = _FakeConvergenceView(form_state={"name_prefix": "conv", "cutoff_energies": [300.0]})
+    context, deps = _cutoff_context_and_deps(
+        service, document, local_backend=RecordingBackend(), cluster_backend=RecordingBackend()
+    )
+    controller = ConvergenceCutoffController(context, deps, view)
+    (detached,) = controller.materialize([300.0])
+    next(iter(document.calculations.values())).parameters["job_ids_by_cutoff"].clear()
+
+    (job,) = controller.materialize([300.0])
+
+    assert job.id != detached.id
+    assert job.label == detached.label

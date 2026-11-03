@@ -14,7 +14,7 @@ from uuid import UUID
 
 import pytest
 
-from mufinder.domain.enums import JobStatus
+from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationRun
 from mufinder.services.hyperfine_results import NO_MULLIKEN_SPINS_WARNING
 from mufinder.services.job_artifacts import ParsedJobArtifacts, collect_job_artifacts
@@ -70,7 +70,7 @@ def _setup(tmp_path: Path, *, mulliken: bool = True):
     relaxation_dir.mkdir()
     if mulliken:
         (relaxation_dir / f"{relaxation.label}.castep").write_text(_MULLIKEN, encoding="utf-8")
-    output_root = tmp_path / "files" / "hyperfine_coupling"
+    output_root = document.project_root / "files" / "hyperfine_coupling"
 
     def job_output_directory(job):
         return relaxation_dir if job.id == relaxation.id else output_root / job.label
@@ -342,3 +342,28 @@ def test_build_result_ignores_a_density_left_by_an_earlier_run(tmp_path: Path) -
     assert contribution.payload["pseudo_spin_density_bohr3"] is None
     assert contribution.payload["pseudo_contact_field_T"] is None
     assert any("predates this run" in warning for warning in contribution.warnings)
+
+
+def test_materialize_gives_a_row_its_own_folder_when_another_job_has_that_name(
+    tmp_path: Path,
+) -> None:
+    """A source's label is numbered among the others, so a new row can get a finished job's name."""
+
+    document, controller, _view, key, output_root = _setup(tmp_path)
+    taken = output_root / "hyperfine_siteA"
+    taken.mkdir(parents=True)
+    (taken / "hyperfine_siteA.magres").write_text("another job's result", encoding="utf-8")
+    ProjectService().add_job(
+        document,
+        label="hyperfine_siteA",
+        workflow_stage=WorkflowStage.HYPERFINE_COUPLING,
+        calc_type=HYPERFINE_CALC_TYPE,
+    )
+
+    (job,) = controller.materialize([key])
+    (again,) = controller.materialize([key])
+
+    assert job.id == again.id
+    assert job.label == "hyperfine_siteA_2"
+    assert (output_root / job.label / f"{job.label}.param").is_file()
+    assert sorted(path.name for path in taken.iterdir()) == ["hyperfine_siteA.magres"]
