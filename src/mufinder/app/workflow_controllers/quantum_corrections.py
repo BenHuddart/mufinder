@@ -404,7 +404,7 @@ class QuantumCorrectionsController(WorkflowJobController):
                         return definition, str(key)
         return None, None
 
-    mapping_name = _PHONON_JOB_MAPPING
+    mapping_name = PHONON_JOB_MAPPING
 
     def directory_companions(self, job: Job) -> list[Job]:
         """Return the legacy singlepoint that shares a phonon job's directory.
