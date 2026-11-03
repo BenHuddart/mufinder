@@ -945,7 +945,7 @@ def test_main_window_muon_relaxation_sync_prefers_defined_job_over_cancelled_his
     window.close()
 
 
-def test_main_window_muon_relaxation_sync_ignores_historical_defined_jobs(
+def test_main_window_muon_relaxation_sync_keeps_a_rows_defined_job_and_seed(
     main_window, tmp_path: Path
 ) -> None:
     window = main_window
@@ -997,9 +997,10 @@ def test_main_window_muon_relaxation_sync_ignores_historical_defined_jobs(
 
     window._refresh_ui_after_project_change()
 
-    table = window._muon_relaxation_view._tables_by_charge_state["positive_muon"]
-    assert active_definition.parameters.get("job_ids_by_label", {}) == {}
-    assert table.item(0, window._muon_relaxation_view._STATUS_COLUMN).text() == "ready"
+    # The page's Run configures a new definition each time, so the row keeps its job.
+    assert active_definition.parameters["job_ids_by_label"] == {key: str(defined_job.id)}
+    assert active_definition.parameters["job_seed_names_by_label"] == {key: "positivemuon_Site_1"}
+    assert window._muon_relaxation_controller.jobs_for_keys([key]) == [defined_job]
     window.close()
 
 

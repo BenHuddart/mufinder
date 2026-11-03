@@ -215,6 +215,12 @@ def test_dashboard_start_again_never_touches_a_running_replacements_directory(
         "warning",
         lambda _parent, _title, text: warnings.append(text),
     )
+    boxes: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        main_window_module,
+        "show_detailed_warning",
+        lambda _parent, title, text, **_kwargs: boxes.append((title, text)),
+    )
     submissions: list = []
     monkeypatch.setattr(
         window, "_submit_jobs_on_cluster", lambda jobs, **kwargs: submissions.append(jobs)
@@ -222,9 +228,13 @@ def test_dashboard_start_again_never_touches_a_running_replacements_directory(
 
     window._on_resubmit_from_dashboard([old.id])
 
-    # Neither started again nor continued in the replacement's directory.
+    # Neither started again nor continued in the replacement's directory: refused as a
+    # submit refuses a job in a folder another job uses, before anything is cleared.
     assert submissions == []
-    assert f"- {SEED}: another job uses the same output folder" in warnings[0]
+    assert warnings == []
+    assert boxes == [
+        ("Jobs not started", f"'{old.label}' was not started because another job uses its folder.")
+    ]
     assert sorted(path.name for path in directory.iterdir()) == ALL_FILES
     window.close()
 

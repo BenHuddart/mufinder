@@ -3659,6 +3659,12 @@ class MainWindow(QMainWindow):
             )
             return
 
+        # A job in a folder another job uses is refused as a submit refuses it, before
+        # anything is reset or cleared.
+        selected = self._without_jobs_in_another_jobs_folder(selected)
+        if not selected:
+            return
+
         refusals = self._fresh_start_refusals(
             [job for job in selected if self._job_resumes_from_checkpoint(job)]
         )

@@ -949,8 +949,10 @@ Definition mappings and row removal). An in-flight job (``submitting``,
 ``queued``, ``running``, ``retrieving``) beats a ``completed`` one, which beats
 a ``failed``, ``stopped`` or ``cancelled`` one, which beats a ``defined`` one;
 the two relaxation workflows instead rank a ``defined`` job above a failed,
-stopped or cancelled one, so a re-staged row keeps its fresh job. A muon
-relaxation binding is copied only once its job has left ``defined``. A tie
+stopped or cancelled one, so a re-staged row keeps its fresh job. A ``defined``
+job is copied like any other: a row's page ``Run`` registers a new definition
+before it submits, so a row that has not run yet keeps its job, seed and folder
+instead of gaining another job each time. A tie
 keeps the binding the active definition already holds, and dismissal does not
 change a job's rank.
 

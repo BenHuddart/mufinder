@@ -1382,14 +1382,21 @@ def test_muon_controller_sync_mappings_reads_legacy_keys_and_carries_seed_names(
         # A job of the other charge state is not carried over...
         "muonium:Site 2": wrong_charge,
     }
-    # ...nor is a job that never left ``defined``.
+    # ...but a job still ``defined`` is, with its seed: a row run again keeps its job.
     other_source.parameters["job_ids_by_label"] = {"muonium:Site 2": defined}
+    other_source.parameters["job_seed_names_by_label"] = {"muonium:Site 2": "site2_seed_2"}
     source.parameters["job_seed_names_by_label"] = {"Site 1": "  site1_seed  "}
 
     _muon_sync_controller(document).sync_mappings(target)
 
-    assert target.parameters["job_ids_by_label"] == {"positivemuon:Site 1": completed}
-    assert target.parameters["job_seed_names_by_label"] == {"positivemuon:Site 1": "site1_seed"}
+    assert target.parameters["job_ids_by_label"] == {
+        "positivemuon:Site 1": completed,
+        "muonium:Site 2": defined,
+    }
+    assert target.parameters["job_seed_names_by_label"] == {
+        "positivemuon:Site 1": "site1_seed",
+        "muonium:Site 2": "site2_seed_2",
+    }
 
 
 def test_muon_controller_row_key_matcher_crosses_key_spellings() -> None:

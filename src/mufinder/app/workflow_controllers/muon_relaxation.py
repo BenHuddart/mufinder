@@ -284,9 +284,11 @@ class MuonRelaxationController(WorkflowJobController):
 
         Rows are keyed ``"{prefix}:{label}"``; a source's bare-label key, from
         before rows were charge-qualified, is read as its row's qualified key.
-        A row carries over when its signature is unchanged and its job exists,
-        fits the key's charge state (:meth:`job_for_mapping_value`) and has left
-        ``defined``; candidates rank by
+        A row carries over when its signature is unchanged and its job exists and
+        fits the key's charge state (:meth:`job_for_mapping_value`), whatever its
+        status: the page's Run configures a new definition before it submits, so
+        a ``defined`` row keeps its job and folder rather than gaining another.
+        Candidates rank by
         :func:`~mufinder.services.definition_mappings.relaxation_mapping_job_priority`,
         and a winner's ``job_seed_names_by_label`` entry travels with it.
         """
@@ -297,8 +299,7 @@ class MuonRelaxationController(WorkflowJobController):
         row_key = self._deps.muon_relaxation_row_key
 
         def accept_job(key: str, raw_job_id: str) -> bool:
-            job = self.job_for_mapping_value(key, raw_job_id)
-            return job is not None and job.status != JobStatus.DEFINED
+            return self.job_for_mapping_value(key, raw_job_id) is not None
 
         sync_equivalent_mappings(
             document,

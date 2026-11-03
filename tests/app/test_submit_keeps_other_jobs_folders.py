@@ -8,6 +8,7 @@ The local submission dialog is cancelled, which is where a job would start runni
 from __future__ import annotations
 
 import hashlib
+from dataclasses import replace
 from pathlib import Path
 from uuid import UUID, uuid4
 
@@ -16,6 +17,7 @@ import pytest
 from mufinder.app.main_window import MainWindow
 from mufinder.app.relaxation_types import PristineRelaxationConfig, PristineRelaxationRow
 from mufinder.app.workflow_config_codecs import serialize_pristine_relaxation_config
+from mufinder.domain.constants import IMPORTED_JOB_TAG
 from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.domain.models import Job, utc_now
 
@@ -87,6 +89,19 @@ class _Submission(_Project):
 
     def submit(self, *keys: str) -> None:
         self.controller.submit(list(keys or (ROW_KEY,)), target="local")
+
+    def run_from_page(self, *keys: str) -> None:
+        """Submit as the page's Run does: the form's configuration first, then the rows."""
+
+        self.window._on_muon_relaxation_configured(self.window._muon_relaxation_form_config())
+        self.submit(*keys)
+
+    def native_jobs(self, label: str = "Site_native") -> list[Job]:
+        return [
+            job
+            for job in self.document.jobs.values()
+            if job.label == label and IMPORTED_JOB_TAG not in (job.tags or ())
+        ]
 
 
 @pytest.fixture()
@@ -179,6 +194,100 @@ class TestAnImportsFolder:
         assert item.job_directory.parent == project.charge
 
 
+class TestRunFromThePage:
+    """The page's Run configures the form again before it submits, as a new definition."""
+
+    def test_a_defined_row_run_again_keeps_its_job_and_free_folder(
+        self, project: _Submission
+    ) -> None:
+        item = project.import_batch("runs", (1,), seed=SEED).imported[0]
+        project.add_row()
+        before = _hashes(item.job_directory)
+        project.run_from_page()
+        (job,) = project.native_jobs()
+
+        project.run_from_page()
+        project.run_from_page()
+
+        assert project.native_jobs() == [job]
+        assert project.job().id == job.id
+        assert project.seed() == f"{SEED}_2"
+        assert sorted(path.name for path in project.charge.iterdir()) == [SEED, f"{SEED}_2"]
+        assert _hashes(item.job_directory) == before
+        assert project.started == ["Site_native"] * 3
+
+    def test_a_row_with_no_clash_keeps_its_job_and_plain_folder(self, project: _Submission) -> None:
+        project.import_batch("runs", (1,), seed="first")
+        project.add_row()
+        project.run_from_page()
+        (job,) = project.native_jobs()
+
+        project.run_from_page()
+
+        assert project.native_jobs() == [job]
+        assert project.seed() == SEED
+        assert not (project.charge / f"{SEED}_2").exists()
+
+    def test_removing_a_row_run_twice_asks_about_one_job(self, project: _Submission) -> None:
+        project.import_batch("runs", (1,), seed=SEED)
+        project.add_row()
+        project.run_from_page()
+        project.run_from_page()
+
+        project.remove_row("Site_native")
+
+        assert len(project.asked) == 1
+        assert project.native_jobs() == []
+        assert not (project.charge / f"{SEED}_2").exists()
+
+    def test_the_page_runs_its_rows_through_the_same_job(self, project: _Submission) -> None:
+        project.import_batch("runs", (1,), seed=SEED)
+        project.add_row()
+        view = project.window._muon_relaxation_view
+
+        view._run_local_selected_rows()
+        view._run_local_selected_rows()
+
+        assert len(project.native_jobs()) == 1
+        assert project.seed() == f"{SEED}_2"
+        assert not (project.charge / f"{SEED}_3").exists()
+
+    def test_a_defined_row_in_an_imports_folder_is_refused(self, project: _Submission) -> None:
+        item = project.import_batch("runs", (1,), seed=SEED).imported[0]
+        project.add_row()
+        job = project.native(label="Site_native", seed=SEED)
+        job.status = JobStatus.DEFINED
+        before = _hashes(project.files)
+
+        project.run_from_page()
+
+        assert _hashes(project.files) == before
+        assert project.native_jobs() == [job]
+        assert project.job().id == job.id
+        assert project.started == []
+        assert job.status == JobStatus.DEFINED
+        assert project.window._job_output_directory(job) == item.job_directory
+        assert len(project.warned) == 1
+        assert (
+            "'Site_native' was not started because another job uses its folder."
+            in (project.warned[0])
+        )
+
+    def test_only_the_row_in_an_imports_folder_is_refused(self, project: _Submission) -> None:
+        project.import_batch("runs", (1,), seed=SEED)
+        project.add_row()
+        job = project.native(label="Site_native", seed=SEED)
+        job.status = JobStatus.DEFINED
+        project.add_row("Site_other")
+
+        project.run_from_page(ROW_KEY, "positivemuon:Site_other")
+
+        assert project.started == ["Site_other"]
+        assert len(project.warned) == 1
+        assert "'Site_native'" in project.warned[0]
+        assert project.native_jobs() == [job]
+
+
 class TestTwoNativeRows:
     def test_a_row_whose_seed_another_row_just_took_as_its_free_name_gets_the_next(
         self, project: _Submission
@@ -201,6 +310,15 @@ class TestTwoNativeRows:
         project.submit()
         old = project.job()
         config = project.window._muon_relaxation_form_config()
+        config = replace(
+            config,
+            rows=tuple(
+                replace(row, initial_fractional_position=(0.3, 0.3, 0.3))
+                if row.label == "Site_native"
+                else row
+                for row in config.rows
+            ),
+        )
 
         project.window._on_muon_relaxation_configured(config)
         project.submit()
@@ -302,6 +420,22 @@ class TestAProjectAlreadyHoldingBothInOneFolder:
         assert _hashes(project.files) == before
         assert asked == []
         assert project.warned
+
+    def test_dashboard_resubmit_refuses_it_with_the_same_box(self, project: _Submission) -> None:
+        _item, job = self._shared(project, JobStatus.CANCELLED)
+        job.execution_target = "local"
+        before = _hashes(project.files)
+
+        project.window._on_resubmit_from_dashboard([job.id])
+
+        assert _hashes(project.files) == before
+        assert project.started == []
+        assert job.status == JobStatus.CANCELLED
+        assert len(project.warned) == 1
+        assert (
+            "'Site_native' was not started because another job uses its folder."
+            in (project.warned[0])
+        )
 
     def test_the_dashboard_refuses_it_too(self, project: _Submission) -> None:
         _item, job = self._shared(project)
