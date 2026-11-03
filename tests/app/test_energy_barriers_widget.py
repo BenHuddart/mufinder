@@ -1,22 +1,35 @@
 from __future__ import annotations
 
 from functools import partial
+from io import BytesIO
+from pathlib import Path
 
+from matplotlib.colors import to_hex
+import numpy as np
 import pytest
-from PySide6.QtCore import QEvent, QSize, Qt
+from PySide6.QtCore import QEvent, QPoint, QSize, Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QTabWidget
 
 from mufinder.app import energy_barriers_widget as energy_barriers_widget_module
 from mufinder.app import workflow_table_utils
 from mufinder.app.atomic_structure_viewer import AtomicStructureViewer
-from mufinder.app.theme import status_brush
+from mufinder.app.theme import (
+    THEME_DARK,
+    THEME_LIGHT,
+    apply_theme,
+    current_palette,
+    status_brush,
+)
 from mufinder.app.energy_barriers_widget import (
+    _BandProfilePlot,
     EnergyBarrierEndpointRow,
     EnergyBarrierPreviewImageRow,
     EnergyBarrierSourceRow,
     EnergyBarriersWidget,
 )
+from mufinder.castep_io.ts_parser import parse_transition_state_file
+from mufinder.science.energy_barriers import band_distances_ang
 from tests.support.reset_menu import install_fake_menu, open_reset_menu
 from tests.support.structures import host_structure
 
@@ -401,9 +414,9 @@ def test_energy_barriers_empty_viewer_says_something_true(qapp) -> None:
 
 def _sample_preview_rows() -> list[EnergyBarrierPreviewImageRow]:
     return [
-        EnergyBarrierPreviewImageRow("Image 1", "0", "-1 eV", 0.0, -1.0),
-        EnergyBarrierPreviewImageRow("Image 2", "0.5", "-0.8 eV", 0.5, -0.8),
-        EnergyBarrierPreviewImageRow("Image 3", "1", "-0.9 eV", 1.0, -0.9),
+        EnergyBarrierPreviewImageRow("Image 1", "0.000 Å", "0 meV", 0.0, -1.0),
+        EnergyBarrierPreviewImageRow("Image 2", "0.500 Å", "+200 meV", 0.5, -0.8),
+        EnergyBarrierPreviewImageRow("Image 3", "1.250 Å", "+100 meV", 1.25, -0.9),
     ]
 
 
@@ -423,16 +436,20 @@ def test_energy_barriers_widget_stepper_and_plot_navigate_neb_preview(qapp) -> N
 
     widget._preview_next_button.click()
 
-    assert "Reaction coordinate 0.5" in widget._preview_summary.text()
+    assert widget._preview_summary.text() == "0.500 Å along the band  ·  E − E₀ +200 meV"
     assert widget._preview_position_label.text() == "Image 2 / 3"
-    assert widget._profile_plot._selected_index == 1
+    assert widget._profile_plot.selected_index() == 1
 
-    QTest.keyClick(widget._profile_plot, Qt.Key.Key_Right)
+    QTest.keyClick(widget._profile_plot._canvas, Qt.Key.Key_Right)
 
     assert widget._preview_position_label.text() == "Image 3 / 3"
     assert not widget._preview_next_button.isEnabled()
 
-    QTest.keyClick(widget._profile_plot, Qt.Key.Key_Left)
+    QTest.keyClick(widget._profile_plot._canvas, Qt.Key.Key_Right)
+
+    assert widget._preview_position_label.text() == "Image 3 / 3"
+
+    QTest.keyClick(widget._profile_plot._canvas, Qt.Key.Key_Left)
 
     assert widget._preview_position_label.text() == "Image 2 / 3"
     widget.close()
@@ -456,7 +473,7 @@ def test_energy_barriers_widget_preserves_viewer_camera_while_scrubbing(qapp) ->
 
     widget._preview_next_button.click()
 
-    assert "Reaction coordinate 0.5" in widget._preview_summary.text()
+    assert "0.500 Å" in widget._preview_summary.text()
     assert viewer._camera_state == _CameraState(17.0, 38.0, 9.0)
     widget.close()
 
@@ -484,11 +501,11 @@ def test_energy_barriers_widget_viewer_popout_and_restore(qapp) -> None:
     assert widget._popout_viewer_button.text() == "Restore Viewer"
 
     widget._preview_next_button.click()
-    assert "Reaction coordinate 0.5" in widget._preview_summary.text()
+    assert "0.500 Å" in widget._preview_summary.text()
     assert window._position_label.text() == "Image 2 / 3"
 
     window._next_button.click()
-    assert "Reaction coordinate 1" in widget._preview_summary.text()
+    assert "1.250 Å" in widget._preview_summary.text()
     assert widget._preview_position_label.text() == "Image 3 / 3"
     assert not window._next_button.isEnabled()
 
@@ -569,56 +586,395 @@ def test_energy_barriers_popout_stepper_shows_only_for_a_band(qapp) -> None:
     widget.close()
 
 
-def test_reaction_coordinate_profile_renders_ticks_and_barrier_annotation(qapp) -> None:
-    from PySide6.QtGui import QPixmap
+def _profile_plot(qapp, rows: list[EnergyBarrierPreviewImageRow]) -> _BandProfilePlot:
+    """A shown and fully drawn profile plot of ``rows``."""
 
-    from mufinder.app.energy_barriers_widget import _ReactionCoordinateProfile, _nice_ticks
-
-    assert _nice_ticks(0.0, 1.0, 5) == [0.0, 0.2, 0.4, 0.6, 0.8, 1.0]
-    assert _nice_ticks(0.0, 0.0, 4) == [0.0]
-
-    plot = _ReactionCoordinateProfile()
-    plot.resize(480, 240)
-    plot.set_profile(_sample_preview_rows(), selected_index=1)
-    pixmap = QPixmap(plot.size())
-    plot.render(pixmap)
-
-    geometry = plot._plot_geometry()
-    assert geometry is not None
-    bounds, points, x_ticks, y_ticks = geometry
-    assert len(points) == 3
-    assert len(y_ticks) >= 2
-    # The y-axis title and tick labels must fit inside the left margin.
-    assert bounds.left() > 30.0
-
-    empty = _ReactionCoordinateProfile()
-    empty.resize(300, 200)
-    empty.render(QPixmap(empty.size()))
+    plot = _BandProfilePlot()
+    plot.resize(480, 300)
+    plot.set_profile(rows)
+    plot.show()
+    plot._canvas.draw()
+    qapp.processEvents()
+    return plot
 
 
-def test_reaction_coordinate_profile_plots_energies_relative_to_first_image(qapp) -> None:
-    from mufinder.app.energy_barriers_widget import _ReactionCoordinateProfile
+def _image_pixel(plot: _BandProfilePlot, index: int) -> QPoint:
+    """Where image ``index`` is on the canvas, in the logical pixels Qt's events use."""
 
-    plot = _ReactionCoordinateProfile()
-    plot.resize(480, 240)
-    # Absolute CASTEP energies (~1.8e5 eV) must not leak into the axis ticks.
-    plot.set_profile(
+    canvas = plot._canvas
+    x, y = plot._axes.transData.transform(
+        (plot._rows[index].distance_value, plot._energies_mev[index])
+    )
+    ratio = canvas.device_pixel_ratio
+    return QPoint(round(x / ratio), round(canvas.height() - y / ratio))
+
+
+def _annotations(plot: _BandProfilePlot) -> list[str]:
+    return [text.get_text() for text in plot._axes.texts]
+
+
+def test_band_profile_plots_energy_in_mev_against_distance_in_angstrom(qapp) -> None:
+    # Absolute CASTEP energies (~1.8e5 eV) must not leak into the axis.
+    plot = _profile_plot(
+        qapp,
         [
-            EnergyBarrierPreviewImageRow("REA", "0", "+0 eV", 0.0, -181556.5),
-            EnergyBarrierPreviewImageRow("TST", "0.5", "+0.6 eV", 0.5, -181555.9),
-            EnergyBarrierPreviewImageRow("PRO", "1", "+0.2 eV", 1.0, -181556.3),
-        ]
+            EnergyBarrierPreviewImageRow("Image 1", "0.000 Å", "0 meV", 0.0, -181556.5),
+            EnergyBarrierPreviewImageRow("Image 2", "0.700 Å", "+600 meV", 0.7, -181555.9),
+            EnergyBarrierPreviewImageRow("Image 3", "1.900 Å", "+200 meV", 1.9, -181556.3),
+        ],
     )
 
-    geometry = plot._plot_geometry()
-    assert geometry is not None
-    _bounds, _points, _x_ticks, y_ticks = geometry
-    assert max(abs(tick) for tick in y_ticks) < 10.0
+    series = plot._axes.lines[0]
+    assert list(series.get_xdata()) == [0.0, 0.7, 1.9]
+    assert series.get_ydata() == pytest.approx([0.0, 600.0, 200.0], abs=1e-6)
+    assert plot._axes.get_xlabel() == "Distance along band (Å)"
+    assert plot._axes.get_ylabel() == "E − E₀ (meV)"
+    plot.close()
+
+
+def test_band_profile_marks_the_transition_state_with_the_forward_barrier(qapp) -> None:
+    plot = _profile_plot(qapp, _sample_preview_rows())
+
+    assert _annotations(plot) == ["Forward 200 meV"]
+    transition_state = next(line for line in plot._axes.lines if line.get_marker() == "D")
+    assert list(transition_state.get_xdata()) == [0.5]
+    assert transition_state.get_ydata()[0] == pytest.approx(200.0)
+    plot.close()
+
+
+def _assert_label_inside_axes_and_clear_of_curve(plot: _BandProfilePlot) -> None:
+    label = plot._axes.texts[0].get_window_extent(plot._canvas.get_renderer())
+    box = plot._axes.bbox
+    assert box.x0 <= label.x0 and label.x1 <= box.x1
+    assert box.y0 <= label.y0 and label.y1 <= box.y1
+    series = plot._axes.lines[0]
+    points = plot._axes.transData.transform(
+        np.column_stack((series.get_xdata(), series.get_ydata()))
+    )
+    # Densified, so a segment crossing the label between two images counts too.
+    along = np.linspace(0.0, len(points) - 1.0, 2000)
+    curve_x = np.interp(along, np.arange(len(points)), points[:, 0])
+    curve_y = np.interp(along, np.arange(len(points)), points[:, 1])
+    assert not np.any(
+        (label.x0 <= curve_x)
+        & (curve_x <= label.x1)
+        & (label.y0 <= curve_y)
+        & (curve_y <= label.y1)
+    )
+
+
+@pytest.mark.parametrize(
+    "energies_mev",
+    [
+        (0.0, 1.0, 0.0, 0.0, 0.0),  # Peak early.
+        (0.0, 0.0, 1.0, 0.0, 0.0),  # Peak central.
+        (0.0, 0.0, 0.0, 1.0, 0.0),  # Peak late.
+        (0.0, 20.0, -100.0, -400.0, -800.0),  # A small rise before a deep drop.
+        (0.0, 5.0, -500.0, -1000.0, -1000.0),
+        (0.0, 100.0, 200.0, 300.0, 400.0),  # Uphill to the last image.
+    ],
+)
+def test_band_profile_keeps_the_barrier_label_readable(qapp, energies_mev) -> None:
+    plot = _profile_plot(
+        qapp,
+        [
+            EnergyBarrierPreviewImageRow(f"Image {n}", "", "", 0.25 * n, energy / 1000.0)
+            for n, energy in enumerate(energies_mev)
+        ],
+    )
+
+    _assert_label_inside_axes_and_clear_of_curve(plot)
+
+    # The smallest the inspector's splitter can make the plot.
+    plot.resize(plot._canvas.minimumSize())
+    qapp.processEvents()
+    plot._canvas.draw()
+    assert plot._canvas.width() == plot._canvas.minimumWidth()
+    _assert_label_inside_axes_and_clear_of_curve(plot)
+    plot.close()
+
+
+@pytest.mark.parametrize("peak", [0.76, 0.74, 0.5, 0.26, 0.24])
+def test_band_profile_barrier_label_fits_the_minimum_width_wherever_the_peak_is(
+    qapp, peak: float
+) -> None:
+    plot = _profile_plot(
+        qapp,
+        [
+            EnergyBarrierPreviewImageRow("Image 1", "", "", 0.0, 0.0),
+            EnergyBarrierPreviewImageRow("Image 2", "", "", peak, 0.495),
+            EnergyBarrierPreviewImageRow("Image 3", "", "", 1.0, 0.283),
+        ],
+    )
+    plot.resize(plot._canvas.minimumSize())
+    qapp.processEvents()
+    plot._canvas.draw()
+
+    label = plot._axes.texts[0].get_window_extent(plot._canvas.get_renderer())
+    assert plot._axes.bbox.x0 <= label.x0 and label.x1 <= plot._axes.bbox.x1
+    plot.close()
+
+
+@pytest.mark.parametrize("file_format", ["png", "svg", "pdf"])
+def test_band_profile_saves_and_keeps_stepping_afterwards(qapp, file_format: str) -> None:
+    plot = _profile_plot(qapp, _sample_preview_rows())
+    background = plot._background
+
+    saved = BytesIO()
+    plot._figure.savefig(saved, format=file_format)
+
+    assert saved.getvalue()
+    assert plot._background is background
+    plot.set_selected_index(2)
+    qapp.processEvents()
+    assert list(plot._selected_marker.get_xdata()) == [1.25]
+    plot.close()
+
+
+def test_band_profile_barrier_label_stays_clear_of_the_real_band(qapp) -> None:
+    fixture = Path(__file__).resolve().parents[1] / "fixtures" / "gdru2si2" / "GdRu2Si2_12_neb.ts"
+    images = parse_transition_state_file(fixture).images
+    plot = _profile_plot(
+        qapp,
+        [
+            EnergyBarrierPreviewImageRow(f"Image {number}", "", "", distance, image.energy)
+            for number, (distance, image) in enumerate(
+                zip(band_distances_ang(images), images), start=1
+            )
+        ],
+    )
+
+    assert _annotations(plot) == ["Forward 495 meV"]
+    _assert_label_inside_axes_and_clear_of_curve(plot)
+    plot.close()
+
+
+def test_band_profile_marks_no_transition_state_on_a_band_that_only_falls(qapp) -> None:
+    plot = _profile_plot(
+        qapp,
+        [
+            EnergyBarrierPreviewImageRow("Image 1", "0 Å", "0 meV", 0.0, -1.0),
+            EnergyBarrierPreviewImageRow("Image 2", "1 Å", "-200 meV", 1.0, -1.2),
+        ],
+    )
+
+    assert _annotations(plot) == []
+    assert all(line.get_marker() != "D" for line in plot._axes.lines)
+    plot.close()
+
+
+def test_band_profile_shows_a_band_with_a_diverged_image(qapp) -> None:
+    plot = _profile_plot(
+        qapp,
+        [
+            EnergyBarrierPreviewImageRow("Image 1", "0 Å", "0 meV", 0.0, -1.0),
+            EnergyBarrierPreviewImageRow("Image 2", "1 Å", "–", 1.0, float("nan")),
+            EnergyBarrierPreviewImageRow("Image 3", "2 Å", "+100 meV", 2.0, -0.9),
+        ],
+    )
+    selected: list[int] = []
+    plot.point_selected.connect(selected.append)
+
+    assert _annotations(plot) == ["Forward 100 meV"]
+    QTest.mouseClick(plot._canvas, Qt.MouseButton.LeftButton, pos=_image_pixel(plot, 2))
+
+    assert selected == [2]
+    plot.close()
+
+
+def test_band_profile_click_selects_the_nearest_image(qapp) -> None:
+    plot = _profile_plot(qapp, _sample_preview_rows())
+    selected: list[int] = []
+    plot.point_selected.connect(selected.append)
+
+    QTest.mouseClick(
+        plot._canvas, Qt.MouseButton.LeftButton, pos=_image_pixel(plot, 2) + QPoint(-4, 3)
+    )
+
+    assert selected == [2]
+    plot.close()
+
+
+def test_band_profile_ignores_other_mouse_buttons(qapp) -> None:
+    plot = _profile_plot(qapp, _sample_preview_rows())
+    selected: list[int] = []
+    plot.point_selected.connect(selected.append)
+
+    QTest.mouseClick(plot._canvas, Qt.MouseButton.RightButton, pos=_image_pixel(plot, 2))
+
+    assert selected == []
+    plot.close()
+
+
+def test_band_profile_drag_follows_the_pointer_along_the_band(qapp) -> None:
+    plot = _profile_plot(qapp, _sample_preview_rows())
+    plot.point_selected.connect(plot.set_selected_index)
+    canvas = plot._canvas
+
+    QTest.mousePress(canvas, Qt.MouseButton.LeftButton, pos=_image_pixel(plot, 0))
+    # A drag goes by the distance alone: this point is far below image 2.
+    QTest.mouseMove(canvas, QPoint(_image_pixel(plot, 1).x(), canvas.height() - 2))
+    qapp.processEvents()
+    assert plot.selected_index() == 1
+    QTest.mouseRelease(canvas, Qt.MouseButton.LeftButton, pos=_image_pixel(plot, 1))
+
+    # Released: the pointer moving on selects nothing.
+    QTest.mouseMove(canvas, _image_pixel(plot, 2))
+    qapp.processEvents()
+    assert plot.selected_index() == 1
+    plot.close()
+
+
+def test_band_profile_hover_points_at_an_image_only_close_to_it(qapp) -> None:
+    plot = _profile_plot(qapp, _sample_preview_rows())
+    canvas = plot._canvas
+
+    QTest.mouseMove(canvas, _image_pixel(plot, 1))
+    qapp.processEvents()
+    assert canvas.cursor().shape() == Qt.CursorShape.PointingHandCursor
+
+    QTest.mouseMove(canvas, QPoint(canvas.width() // 2, canvas.height() - 1))
+    qapp.processEvents()
+    assert canvas.cursor().shape() != Qt.CursorShape.PointingHandCursor
+    plot.close()
+
+
+def test_band_profile_stepping_repaints_only_the_selected_marker(qapp) -> None:
+    plot = _profile_plot(qapp, _sample_preview_rows())
+    canvas = plot._canvas
+    full_draws: list[object] = []
+    canvas.mpl_connect("draw_event", full_draws.append)
+    before = np.array(canvas.buffer_rgba())
+
+    plot.set_selected_index(2)
+    qapp.processEvents()
+
+    assert full_draws == []
+    assert list(plot._selected_marker.get_xdata()) == [1.25]
+    after = np.array(canvas.buffer_rgba())
+    changed_rows, changed_columns = np.nonzero(np.any(before != after, axis=2))
+    assert changed_rows.size
+    # The change is two marker-sized spots, inside the plot area and nowhere else.
+    box = plot._axes.bbox
+    height = canvas.get_renderer().height
+    assert changed_columns.min() >= box.x0 - 1 and changed_columns.max() <= box.x1 + 1
+    assert height - changed_rows.max() >= box.y0 - 1 and height - changed_rows.min() <= box.y1 + 1
+
+    # The same rows again, as a repeated selection sends them, draw nothing either.
+    plot.set_profile(_sample_preview_rows(), selected_index=1)
+    qapp.processEvents()
+    assert full_draws == []
+    assert plot.selected_index() == 1
+
+    # A full draw keeps the marker where the steps left it.
+    canvas.draw()
+    assert len(full_draws) == 1
+    assert list(plot._selected_marker.get_xdata()) == [0.5]
+    plot.close()
+
+
+def test_band_page_stepping_does_not_redraw_the_plot(qapp) -> None:
+    widget = EnergyBarriersWidget()
+    widget.set_neb_preview(
+        title="NEB preview",
+        image_rows=_sample_preview_rows(),
+        structures=[_sample_structure(), _sample_structure(), _sample_structure()],
+    )
+    canvas = widget._profile_plot._canvas
+    # The draw the new band asked for.
+    qapp.processEvents()
+    full_draws: list[object] = []
+    canvas.mpl_connect("draw_event", full_draws.append)
+
+    widget._preview_next_button.click()
+    QTest.keyClick(canvas, Qt.Key.Key_Right)
+    qapp.processEvents()
+
+    assert widget._profile_plot.selected_index() == 2
+    assert full_draws == []
+    widget.close()
+
+
+def test_band_profile_click_on_the_page_moves_the_stepper(qapp) -> None:
+    widget = EnergyBarriersWidget()
+    widget.set_neb_preview(
+        title="NEB preview",
+        image_rows=_sample_preview_rows(),
+        structures=[_sample_structure(), _sample_structure(), _sample_structure()],
+    )
+    widget.resize(1100, 800)
+    widget.show()
+    qapp.processEvents()
+    plot = widget._profile_plot
+    plot._canvas.draw()
+
+    QTest.mouseClick(plot._canvas, Qt.MouseButton.LeftButton, pos=_image_pixel(plot, 2))
+
+    assert widget._preview_position_label.text() == "Image 3 / 3"
+    assert plot.selected_index() == 2
+    widget.close()
+
+
+def test_band_profile_popped_out_steps_and_leaves_the_mouse_to_its_tools(qapp) -> None:
+    widget = EnergyBarriersWidget()
+    widget.set_neb_preview(
+        title="NEB preview",
+        image_rows=_sample_preview_rows(),
+        structures=[_sample_structure(), _sample_structure(), _sample_structure()],
+    )
+    widget.resize(1100, 800)
+    widget.show()
+    qapp.processEvents()
+    plot = widget._profile_plot
+    plot._frame.pop_out()
+    window = plot._frame.popped_out_window
+    assert window is not None
+    plot._canvas.draw()
+    qapp.processEvents()
+
+    QTest.keyClick(plot._canvas, Qt.Key.Key_Right)
+    assert widget._preview_position_label.text() == "Image 2 / 3"
+
+    window.toolbar.zoom()
+    QTest.mouseClick(plot._canvas, Qt.MouseButton.LeftButton, pos=_image_pixel(plot, 2))
+    assert widget._preview_position_label.text() == "Image 2 / 3"
+    # Moving the pointer leaves the zoom tool's cursor alone.
+    zoom_cursor = plot._canvas.cursor().shape()
+    QTest.mouseMove(plot._canvas, _image_pixel(plot, 2))
+    qapp.processEvents()
+    assert plot._canvas.cursor().shape() == zoom_cursor
+    window.toolbar.zoom()
+
+    # A drag cut short by the plot going home scrubs nothing afterwards.
+    QTest.mousePress(plot._canvas, Qt.MouseButton.LeftButton, pos=_image_pixel(plot, 1))
+    plot._frame.show_here()
+    QTest.mouseMove(plot._canvas, _image_pixel(plot, 2))
+    qapp.processEvents()
+    assert widget._preview_position_label.text() == "Image 2 / 3"
+
+    # A path without a band brings the plot home rather than leaving an empty window.
+    widget.clear_neb_preview()
+    assert not plot._frame.is_popped_out()
+    widget.close()
+
+
+def test_band_profile_follows_the_theme(qapp) -> None:
+    plot = _profile_plot(qapp, _sample_preview_rows())
+    previous_mode = current_palette().mode
+    other_mode = THEME_LIGHT if previous_mode == THEME_DARK else THEME_DARK
+    try:
+        apply_theme(qapp, other_mode)
+        qapp.processEvents()
+        palette = current_palette()
+        assert to_hex(plot._figure.get_facecolor()) == palette.bg_primary.lower()
+        assert to_hex(plot._selected_marker.get_markeredgecolor()) == palette.bg_primary.lower()
+        assert plot.point_count() == 3
+    finally:
+        apply_theme(qapp, previous_mode)
+        plot.close()
 
 
 def test_energy_barriers_widget_stepper_stays_below_plot_in_short_panes(qapp) -> None:
-    from PySide6.QtCore import QPoint
-
     widget = EnergyBarriersWidget()
     widget.set_neb_preview(
         title="NEB preview",
@@ -635,30 +991,6 @@ def test_energy_barriers_widget_stepper_stays_below_plot_in_short_panes(qapp) ->
     # (1px adjacency is tolerated when the layout is in deficit).
     assert stepper_top >= plot_bottom - 1
     widget.close()
-
-
-def test_reaction_coordinate_profile_click_selects_nearest_point(qapp) -> None:
-    from PySide6.QtCore import QPoint
-
-    from mufinder.app.energy_barriers_widget import _ReactionCoordinateProfile
-
-    plot = _ReactionCoordinateProfile()
-    plot.resize(480, 240)
-    plot.set_profile(_sample_preview_rows(), selected_index=0)
-
-    selected: list[int] = []
-    plot.point_selected.connect(selected.append)
-    geometry = plot._plot_geometry()
-    assert geometry is not None
-    target = geometry[1][2]
-
-    QTest.mouseClick(
-        plot,
-        Qt.MouseButton.LeftButton,
-        pos=QPoint(int(target[0]), int(target[1])),
-    )
-
-    assert selected == [2]
 
 
 def test_energy_barriers_widget_shows_task_farm_column(qapp) -> None:

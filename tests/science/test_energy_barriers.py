@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -8,6 +9,7 @@ import pytest
 from scipy.sparse import coo_matrix
 from scipy.sparse.csgraph import connected_components
 
+from mufinder.castep_io.ts_parser import TransitionStateImage, parse_transition_state_file
 from mufinder.domain.models import Structure
 from mufinder.science import energy_barriers as eb
 from mufinder.science.energy_barriers import (
@@ -578,3 +580,100 @@ def test_hop_cartesian_vector_takes_the_nearest_image_of_the_end() -> None:
     lattice = np.diag([4.0, 4.0, 4.0])
     vector = eb.hop_cartesian_vector((0.9, 0.0, 0.0), (0.1, 0.0, 0.0), lattice)
     assert vector == pytest.approx([0.8, 0.0, 0.0])
+
+
+_FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
+_CUBIC_CELL = ((4.0, 0.0, 0.0), (0.0, 4.0, 0.0), (0.0, 0.0, 4.0))
+
+
+def _band_image(
+    positions: tuple[tuple[float, float, float], ...],
+    *,
+    species: tuple[str, ...] | None = None,
+    cell: tuple[tuple[float, float, float], ...] = _CUBIC_CELL,
+) -> TransitionStateImage:
+    return TransitionStateImage(
+        label="TST",
+        iteration=1,
+        reaction_coordinate=0.0,
+        energy=0.0,
+        lattice_vectors=cell,
+        species=species or tuple("H" for _ in positions),
+        cartesian_positions=positions,
+        forces=tuple((0.0, 0.0, 0.0) for _ in positions),
+    )
+
+
+def test_band_distances_of_a_two_image_band_take_the_norm_over_all_atoms() -> None:
+    images = [
+        _band_image(((0.0, 0.0, 0.0), (1.0, 1.0, 1.0))),
+        _band_image(((0.3, 0.0, 0.0), (1.0, 1.4, 1.0))),
+    ]
+
+    # sqrt(0.3^2 + 0.4^2): neither the sum over the atoms (0.7) nor one atom's move.
+    assert eb.band_distances_ang(images) == pytest.approx([0.0, 0.5])
+
+
+def test_band_distances_accumulate_along_the_band_rather_than_measuring_from_its_start() -> None:
+    images = [
+        _band_image(((0.0, 0.0, 0.0),)),
+        _band_image(((1.0, 0.0, 0.0),)),
+        _band_image(((1.0, 1.0, 0.0),)),
+    ]
+
+    assert eb.band_distances_ang(images) == pytest.approx([0.0, 1.0, 2.0])
+
+
+def test_band_distances_take_the_nearest_image_of_an_atom_crossing_the_cell() -> None:
+    images = [_band_image(((3.9, 0.0, 0.0),)), _band_image(((0.1, 0.0, 0.0),))]
+
+    assert eb.band_distances_ang(images) == pytest.approx([0.0, 0.2])
+
+
+def test_band_distances_take_the_nearest_image_in_a_skewed_cell() -> None:
+    skewed = ((4.0, 0.0, 0.0), (-3.6, 2.0, 0.0), (0.0, 0.0, 4.0))
+    images = [
+        _band_image(((0.0, 0.0, 0.0),), cell=skewed),
+        _band_image(((3.42, -0.9, 0.0),), cell=skewed),
+    ]
+
+    # Folding each fractional component alone keeps (0.45, -0.45, 0), 3.54 Å long.
+    assert eb.band_distances_ang(images) == pytest.approx([0.0, np.hypot(0.58, 0.9)])
+
+
+def test_band_distances_of_one_image_and_of_none() -> None:
+    assert eb.band_distances_ang([_band_image(((0.0, 0.0, 0.0),))]) == [0.0]
+    assert eb.band_distances_ang([]) == []
+
+
+def test_band_distances_refuse_images_with_other_atoms_or_another_cell() -> None:
+    first = _band_image(((0.0, 0.0, 0.0),), species=("H",))
+
+    with pytest.raises(EnergyBarrierError, match="same atoms"):
+        eb.band_distances_ang([first, _band_image(((0.0, 0.0, 0.0),), species=("Si",))])
+    flat = ((4.0, 0.0, 0.0), (8.0, 0.0, 0.0), (0.0, 0.0, 4.0))
+    with pytest.raises(EnergyBarrierError):
+        eb.band_distances_ang([_band_image(((0.0, 0.0, 0.0),), cell=flat)] * 2)
+    # 5e-5 Å on one component is a different cell however large the component is.
+    drifted = ((4.00005, 0.0, 0.0), (0.0, 4.0, 0.0), (0.0, 0.0, 4.0))
+    with pytest.raises(EnergyBarrierError, match="same simulation cell"):
+        eb.band_distances_ang([first, _band_image(((0.0, 0.0, 0.0),), cell=drifted)])
+    with pytest.raises(EnergyBarrierError, match="same simulation cell"):
+        eb.band_distances_ang([first, _band_image(((0.0, 0.0, 0.0),), cell=tuple(np.eye(3) * 4.1))])
+
+
+@pytest.mark.parametrize(
+    ("fixture", "total_ang"),
+    [("gdru2si2/GdRu2Si2_12_neb.ts", 2.01508), ("neb_path.ts", 1.56810)],
+)
+def test_band_distances_normalise_to_castep_reaction_coordinate(
+    fixture: str, total_ang: float
+) -> None:
+    images = parse_transition_state_file(_FIXTURES / fixture).images
+
+    distances = np.array(eb.band_distances_ang(images))
+
+    assert distances[-1] == pytest.approx(total_ang, abs=5e-5)
+    assert distances / distances[-1] == pytest.approx(
+        [image.reaction_coordinate for image in images], abs=1e-7
+    )

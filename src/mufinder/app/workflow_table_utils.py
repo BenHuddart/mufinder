@@ -106,6 +106,21 @@ def format_table_number(
     return f"{number + 0.0:.6g}"
 
 
+def format_three_figures(value: float, *, scale: float = 0.0) -> str:
+    """Format a number to three significant figures, keeping trailing zeros.
+
+    Rounding noise shows as ``0``, judged as in :func:`format_table_number`.
+    """
+
+    number = float(value)
+    threshold = max(
+        DISPLAY_ZERO_ABSOLUTE_TOLERANCE, DISPLAY_ZERO_RELATIVE_TOLERANCE * abs(float(scale))
+    )
+    if abs(number) <= threshold:
+        return "0"
+    return f"{number:#.3g}".rstrip(".")
+
+
 def format_vector_components(values: Sequence[float], *, scale: float = 0.0) -> tuple[str, ...]:
     """Format each component of a vector with :func:`format_table_number`.
 

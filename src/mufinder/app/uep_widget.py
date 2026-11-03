@@ -265,12 +265,9 @@ class UEPWidget(RowTableWidget):
             formatter=".6f",
             table=table,
         )
-        if runtime is not None and runtime.potential_grid_available is True:
-            potential_text = "Saved"
-        elif status == "completed":
-            potential_text = "Not calculated"
-        else:
-            potential_text = ""
+        potential_text = (
+            "Saved" if runtime is not None and runtime.potential_grid_available is True else ""
+        )
         set_workflow_table_item(table, row, self._POTENTIAL_GRID_COLUMN, potential_text)
 
         wizard_button = table.cellWidget(row, self._WIZARD_COLUMN)

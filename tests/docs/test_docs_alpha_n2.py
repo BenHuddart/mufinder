@@ -21,6 +21,7 @@ from mufinder.castep_io.output_parser import parse_castep_output
 from mufinder.domain.models import Structure
 from mufinder.science.quantum_phonons import (
     muon_mass_warning,
+    muon_nearest_atoms,
     muon_zpe,
     parse_phonon_path,
     w1_entanglement_witness,
@@ -223,6 +224,52 @@ def test_the_muon_correlates_with_its_nearest_nitrogens(nitrogen: int, w2: float
     calculation = parse_phonon_path(PHONON)
 
     assert w2_entanglement_witness(calculation, MUON, nitrogen) == pytest.approx(w2, abs=5e-5)
+
+
+def test_the_correlation_falls_off_with_distance_but_not_evenly() -> None:
+    """The figures of *Coupling to the nitrogens*."""
+
+    calculation = parse_phonon_path(PHONON)
+    neighbours = muon_nearest_atoms(calculation, 64)
+
+    # The twelve nearest atoms, in the order the tab lists them.
+    assert [neighbour.atom_index for neighbour in neighbours[:12]] == [
+        57,
+        1,
+        29,
+        40,
+        22,
+        11,
+        45,
+        49,
+        58,
+        31,
+        38,
+        39,
+    ]
+    for neighbour in neighbours:
+        assert neighbour.correlation == -w2_entanglement_witness(
+            calculation, MUON, neighbour.atom_index
+        )
+    assert [neighbour.correlation for neighbour in neighbours[:2]] == pytest.approx(
+        (0.3105, 0.2984), abs=5e-5
+    )
+    # 2.4 Å: 0.10 and 0.08. 2.9 Å: 0.05 to 0.06. 3.8 to 3.9 Å: 0.01 to 0.02.
+    assert [neighbour.distance_ang for neighbour in neighbours[2:4]] == pytest.approx(
+        (2.367, 2.387), abs=5e-4
+    )
+    assert [neighbour.correlation for neighbour in neighbours[2:4]] == pytest.approx(
+        (0.104, 0.082), abs=5e-4
+    )
+    assert all(2.89 < neighbour.distance_ang < 2.92 for neighbour in neighbours[4:8])
+    assert all(0.053 < neighbour.correlation < 0.060 for neighbour in neighbours[4:8])
+    assert all(3.82 < neighbour.distance_ang < 3.93 for neighbour in neighbours[8:12])
+    assert all(0.011 < neighbour.correlation < 0.025 for neighbour in neighbours[8:12])
+    # Atom 17, 24th by distance at 4.70 Å, reaches 0.032, more than any from the ninth on.
+    assert neighbours[23].atom_index == 17
+    assert neighbours[23].distance_ang == pytest.approx(4.704, abs=5e-4)
+    assert neighbours[23].correlation == pytest.approx(0.0317, abs=5e-5)
+    assert max(neighbour.correlation for neighbour in neighbours[8:]) == neighbours[23].correlation
 
 
 @pytest.mark.parametrize(("nitrogen", "correlation"), [(57, 0.263), (1, 0.244)])

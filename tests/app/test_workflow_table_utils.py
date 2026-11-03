@@ -43,6 +43,7 @@ from mufinder.app.workflow_table_utils import (
     bind_reset_failed_context_menu,
     create_workflow_table,
     format_table_number,
+    format_three_figures,
     format_vector_components,
     name_row_control,
     style_workflow_configure_button,
@@ -1234,6 +1235,17 @@ def test_format_table_number_shows_numerical_noise_and_negative_zero_as_zero() -
     assert format_table_number(2e-12, scale=0.5) == "0"
     assert format_table_number(1e-6, scale=0.5) == "1e-06"
     assert format_table_number(1e-14, absolute_tolerance=0.0, relative_tolerance=0.0) == "1e-14"
+
+
+def test_format_three_figures_keeps_trailing_zeros_and_shows_noise_as_zero() -> None:
+    assert format_three_figures(0.3105) == "0.310"
+    assert format_three_figures(1.0) == "1.00"
+    assert format_three_figures(-0.0297712) == "-0.0298"
+    assert format_three_figures(2.33e-05) == "2.33e-05"
+    assert format_three_figures(123.4) == "123"
+    assert format_three_figures(-0.0) == "0"
+    assert format_three_figures(1e-13) == "0"
+    assert format_three_figures(2e-12, scale=0.5) == "0"
 
 
 def test_format_vector_components_judges_each_component_against_the_row_scale() -> None:

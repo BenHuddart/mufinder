@@ -349,7 +349,7 @@ optional maximum length), and builds a climbing-image NEB job for each chosen
 path from the two relaxed endpoints. Paths can be previewed in the pristine
 supercell, configured per row (including CASTEP task farming), and inspected
 once complete: a results table lists forward and reverse barriers and ``ΔE``,
-and an inspector scrubs the reaction-coordinate profile with a linked
+and an inspector scrubs the reaction profile with a linked
 structure viewer.
 
 See :doc:`/user_guide/energy_barriers`. :doc:`/user_guide/examples/gdru2si2`

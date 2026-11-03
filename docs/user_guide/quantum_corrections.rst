@@ -489,25 +489,35 @@ the first time it is shown. Each muon mode's width ``Δx`` is in the page's
    full-amplitude mode vectors as fixed reference arrows.
 
 ``Muon Coupling``
-   Pick ``Atom A`` and ``Atom B`` by their one-based CASTEP index (Atom A
-   defaults to the muon) and click ``Calculate``. MuFinder shows the zero-point
-   displacement covariance tensor ``C_ab`` (Å²) and the normalized correlation
-   tensor ``rho_ab``, built from the stable Gamma-point modes at zero
-   temperature (modes with imaginary frequencies are left out), and
-   the pairwise witness ``w2 = -|Tr C_ab| / sqrt(Tr C_aa Tr C_bb)``. ``w2`` lies
-   between ``-1`` and ``0``; values closer to ``-1`` mean the two atoms'
-   zero-point motions are more strongly correlated. It complements the
-   result table's ``w1``. ``w2`` is the harmonic (phonon-covariance) estimate
-   of the positional entanglement witness ``w2 = -|c|`` of Gomilšek *et al.*,
-   where ``c`` is the Pearson correlation of the muon and nuclear
-   displacements.
+   Lists the atoms nearest the muon, closest first: each atom's one-based CASTEP
+   index, species, distance from the muon in Å (to the nearest periodic image)
+   and ``|c|``. Atoms within 0.001 Å of each other in distance go in index order.
+   ``Atoms shown`` (default 12) sets how many are listed, up to every atom in the
+   cell. The list is ordered by distance, and a farther atom can have a larger
+   ``|c|`` than a nearer one, including an atom beyond the end of the list.
+
+   ``|c| = -w2`` is the size of the pairwise witness
+   ``w2 = -|Tr C_ab| / sqrt(Tr C_aa Tr C_bb)``. It lies between ``0`` and ``1``;
+   values closer to ``1`` mean the two atoms' zero-point motions are more strongly
+   correlated. It complements the result table's ``w1``. ``w2`` is the harmonic
+   (phonon-covariance) estimate of the positional entanglement witness
+   ``w2 = -|c|`` of Gomilšek *et al.*, where ``c`` is the Pearson correlation of
+   the muon and nuclear displacements.
+
+   Selecting a row shows that atom's zero-point displacement covariance tensor
+   ``C_ab`` (Å²) and normalized correlation tensor ``rho_ab`` with the muon, to
+   three significant figures, built from the stable Gamma-point modes at zero
+   temperature (modes with imaginary frequencies are left out). The nearest atom
+   is selected first. ``Other pair…`` opens a window that shows ``|c|`` and the
+   two tensors for any two atoms, picked as ``Atom A`` and ``Atom B``.
 
    .. figure:: ../_generated/screenshots/n2_muon_coupling.webp
-      :alt: The Muon Coupling tab with Atom A 65: H:mu and Atom B 57: N, w2 =
-            -0.310498, and the covariance tensor in square angstrom and the
-            correlation tensor.
+      :alt: The Muon Coupling tab listing the twelve nitrogens nearest the muon,
+            from atom 57 at 1.268 Å with |c| 0.310 and atom 1 at 1.288 Å with |c|
+            0.298, with the covariance tensor in square angstrom and the
+            correlation tensor of atom 57.
 
-      The muon of the α-N₂ site and its nearest nitrogen.
+      The nearest atoms of the α-N₂ site's muon, with the nearest selected.
 
 The ``?`` button in the ``Muon Coupling`` tab shows the equations used.
 

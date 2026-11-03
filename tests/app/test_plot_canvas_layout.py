@@ -23,6 +23,10 @@ import pytest
 
 from mufinder.app.convergence_examiner import ConvergenceExaminerDialog
 from mufinder.app.convergence_types import SweepPointRunState
+from mufinder.app.energy_barriers_widget import (
+    EnergyBarrierPreviewImageRow,
+    EnergyBarriersWidget,
+)
 from mufinder.app.geometry_progress_dialog import GeometryProgressDialog
 from mufinder.app.magnetic_field_distribution_dialog import MagneticFieldDistributionDialog
 from mufinder.app.magnetic_texture_dialog import MagneticTextureDialog
@@ -35,9 +39,16 @@ from mufinder.app.relaxation_analysis_widget import (
     RelaxationClusteringDialog,
 )
 from mufinder.castep_io.geometry_progress import parse_geometry_progress
+from mufinder.castep_io.ts_parser import parse_transition_state_file
 from mufinder.domain.models import Structure
+from mufinder.science.energy_barriers import band_distances_ang
 from mufinder.science.relaxation_analysis import RelaxedMuonSite
-from mufinder.science.uep import StationaryPointClassification, UepOptimizationResult
+from mufinder.app.uep_wizard import UepAnalysisDialog
+from mufinder.science.uep import (
+    StationaryPointClassification,
+    UepOptimizationResult,
+    potential_grid,
+)
 
 # Window sizes the dialogs get on small screens, beyond each dialog's own minimum:
 # a 1080p Windows laptop at 150 % scaling (1280x720 logical, minus the taskbar)
@@ -253,7 +264,59 @@ def _polarisation_page() -> QDialog:
     return dialog
 
 
+def _uep_potential() -> QDialog:
+    fixtures = Path("tests/fixtures/uep")
+    dialog = UepAnalysisDialog(
+        source_job_label="uep_source",
+        source_structure_id="11111111-1111-1111-1111-111111111111",
+        den_fmt_path=fixtures / "Si2.den_fmt",
+        castep_path=fixtures / "Si2.castep",
+        cell_path=fixtures / "Si2.cell",
+    )
+    dialog._apply_potential_grid_cache(potential_grid(dialog._field))
+    dialog._tabs.setCurrentWidget(dialog._potential_tab)
+    return dialog
+
+
+def _energy_barriers_page(
+    distances: list[float], energies_ev: list[float], structure: Structure | None = None
+) -> QDialog:
+    """The Energy Barriers page, in a dialog, showing a band in its inspector."""
+
+    rows = [
+        EnergyBarrierPreviewImageRow(
+            f"Image {number}", f"{distance:.3f} Å", "", distance, energy_ev
+        )
+        for number, (distance, energy_ev) in enumerate(zip(distances, energies_ev), start=1)
+    ]
+    dialog = QDialog()
+    page = EnergyBarriersWidget(dialog)
+    QVBoxLayout(dialog).addWidget(page)
+    page.set_neb_preview(
+        title="Site 1 → site 2",
+        image_rows=rows,
+        structures=[structure or _cubic_host()] * len(rows),
+    )
+    return dialog
+
+
+def _energy_barriers_real_band() -> QDialog:
+    fixture = Path(__file__).resolve().parents[1] / "fixtures" / "gdru2si2" / "GdRu2Si2_12_neb.ts"
+    images = parse_transition_state_file(fixture).images
+    return _energy_barriers_page(band_distances_ang(images), [image.energy for image in images])
+
+
+def _energy_barriers_wide_ticks() -> QDialog:
+    """A short band with a small barrier, whose sub-unit values make the widest tick labels."""
+
+    return _energy_barriers_page(
+        [0.0, 0.00125, 0.0025, 0.00375], [-1000.0, -1000.0000125, -999.9999875, -1000.00000625]
+    )
+
+
 PLOT_DIALOGS: dict[str, Callable[[], QDialog]] = {
+    "energy-barriers-real-band": _energy_barriers_real_band,
+    "energy-barriers-wide-ticks": _energy_barriers_wide_ticks,
     "relaxation-clustering-connected": lambda: _relaxation_clustering(0),
     "relaxation-clustering-hierarchical": lambda: _relaxation_clustering(1),
     "relaxation-clustering-kmeans": lambda: _relaxation_clustering(2),
@@ -263,6 +326,7 @@ PLOT_DIALOGS: dict[str, Callable[[], QDialog]] = {
     "convergence-examiner": _convergence_examiner,
     "geometry-progress": _geometry_progress,
     "polarisation-page": _polarisation_page,
+    "uep-potential": _uep_potential,
 }
 
 

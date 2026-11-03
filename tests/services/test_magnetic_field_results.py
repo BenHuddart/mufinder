@@ -157,6 +157,8 @@ def test_a_result_with_no_plate_version_is_decided_by_its_saved_sample(form, old
         (PLATE_METHOD_VERSION, False),
         (PLATE_METHOD_VERSION + 1, False),
         (PLATE_METHOD_VERSION - 1, True),
+        # What the plate from a photo recorded at a padding of 2.5.
+        (2, True),
         ("2", True),
         (True, True),
     ],

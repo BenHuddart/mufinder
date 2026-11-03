@@ -564,8 +564,9 @@ Quantum corrections
   ``Phonon Modes`` tab (all Gamma-point modes, the muon-dominated subset
   highlighted, one selected mode synchronized to a muonated-structure viewer
   with amplitude-controlled playback) and a ``Muon Coupling`` tab
-  (covariance/correlation tensors plus pairwise ``w2`` witnesses). Path-integral
-  molecular dynamics is out of scope.
+  (the muon's nearest atoms with distance and ``|c| = -w2``, covariance and
+  correlation tensors for the selected atom, and any other pair on request).
+  Path-integral molecular dynamics is out of scope.
 
 Energy barriers
 ~~~~~~~~~~~~~~~
@@ -591,8 +592,8 @@ Energy barriers
 - One page holds path generation, the barriers of each path and one inspector,
   and fits the default window. The inspector follows the table selection: a path
   without a finished band shows its hop in the pristine supercell; a finished one
-  shows image-by-image geometry in the shared structure viewer and a plotted
-  reaction-coordinate profile synchronized with the image stepper and viewer (see
+  shows image-by-image geometry in the shared structure viewer and a reaction profile
+  against distance along the band in Å, synchronized with the image stepper and viewer (see
   :doc:`/user_guide/energy_barriers`).
 
 Structure import and MCIF magnetic extraction
