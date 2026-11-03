@@ -710,25 +710,57 @@ def _model_json(*q_vectors: tuple[float, float, float]) -> dict[str, object]:
     return collinear_waves_model(*q_vectors).to_json()
 
 
+_MNSI_Q = (0.0147, 0.0147, 0.0147)
+_INCOMMENSURATE_Q = (0.123456, 0.0, 0.0)
+
+
 @pytest.mark.parametrize(
-    ("model", "older"),
+    ("max_period", "model", "older"),
     [
-        # Before the key, a short period beside an incommensurate helix stayed at T = 0.
-        (_model_json((0.22, 0.0, 0.0), (0.25, 0.0, 0.0)), True),
-        (_model_json((0.22, 0.0, 0.0), (0.0, 0.0, 0.5)), True),
-        # A helix alone, or with a uniform part, sampled every phase already.
-        (_model_json((0.22, 0.0, 0.0)), False),
-        (_model_json((0.22, 0.0, 0.0), (1.0, 0.0, 0.0)), False),
+        # Saved at period 12 or less listed: a short period beside the helix stayed at T = 0.
+        (12, _model_json((0.22, 0.0, 0.0), (0.25, 0.0, 0.0)), True),
+        (12, _model_json((0.22, 0.0, 0.0), (0.0, 0.0, 0.5)), True),
+        # Period 13 and up was already sampled there, as was a helix alone or a uniform part.
+        (12, _model_json((0.22, 0.0, 0.0)), False),
+        (12, _model_json((0.22, 0.0, 0.0), (1.0 / 13.0, 0.0, 0.0)), False),
+        (12, _model_json((0.22, 0.0, 0.0), (1.0, 0.0, 0.0)), False),
+        # Saved when periods up to 64 counted as commensurate: those stayed at T = 0 too.
+        (64, _model_json(_INCOMMENSURATE_Q, (0.22, 0.0, 0.0)), True),
+        (64, _model_json(_INCOMMENSURATE_Q, (1.0 / 13.0, 0.0, 0.0)), True),
+        (64, _model_json(_INCOMMENSURATE_Q, (0.0, 0.0, 0.5)), True),
+        (64, _model_json(_MNSI_Q), False),
+        (64, _model_json(_INCOMMENSURATE_Q), False),
+        # Saved before the period was recorded: the limit was 64.
+        (None, _model_json(_INCOMMENSURATE_Q, (0.22, 0.0, 0.0)), True),
+        (None, _model_json(_MNSI_Q), False),
         # No model to read: not marked.
-        (None, False),
-        ({"components": "malformed"}, False),
+        (64, None, False),
+        (64, {"components": "malformed"}, False),
     ],
-    ids=["quarter", "half", "helix", "uniform", "no-model", "malformed"],
+    ids=[
+        "12-quarter",
+        "12-half",
+        "12-helix",
+        "12-thirteen",
+        "12-uniform",
+        "64-fifty",
+        "64-thirteen",
+        "64-half",
+        "64-mnsi",
+        "64-helix",
+        "unrecorded-fifty",
+        "unrecorded-mnsi",
+        "no-model",
+        "malformed",
+    ],
 )
 def test_a_distribution_with_no_translation_version_is_decided_by_its_owners_model(
-    model, older
+    max_period, model, older
 ) -> None:
-    result = _current_field_result("distribution", _field_rows(_HOME))
+    rows = _field_rows(_HOME)
+    if max_period is not None:
+        rows[0]["calculation_parameters"]["commensurate_max_period"] = max_period
+    result = _current_field_result("distribution", rows)
 
     assert field_result_uses_older_method(result, None, model) is older
     assert recorded_translation_method_version(result, model) == (

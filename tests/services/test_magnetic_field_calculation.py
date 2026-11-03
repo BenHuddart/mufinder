@@ -173,6 +173,11 @@ def test_a_non_finite_field_is_refused_with_its_site(monkeypatch) -> None:
     assert non_finite_field_label([{"site_label": "saved", "total_T": [0.0, np.inf, 0.0]}]) == (
         "saved"
     )
+    factored = {
+        "site_label": "factored",
+        "fields_T_factors": {"continuous_T": [[0.0, 0.0, 1.0]], "listed_T": [[np.nan, 0.0, 0.0]]},
+    }
+    assert non_finite_field_label([factored]) == "factored"
 
 
 def test_a_prepared_calculation_does_not_see_later_changes_to_the_host() -> None:
@@ -406,3 +411,41 @@ def test_more_phase_sets_than_a_list_holds_are_a_distribution_over_every_set(rea
     (distribution,) = calculation.results
     assert np.asarray(distribution.fields_T).shape == (729, 3)
     assert distribution.calculation_parameters["resolved_phase_sampling"] == "grid"
+
+
+def test_an_approximant_of_too_many_phase_sets_is_sampled_instead(real_muesr) -> None:
+    # With finite fields asked for near-commensurate q, the 729 phase sets are still a distribution.
+    q = 1.0 / 9.0
+    components = tuple(
+        build_magnetic_preset_component(
+            "helix",
+            lattice_vectors=_fe().lattice_vectors,
+            q_rlu=tuple(q if axis == index else 0.0 for axis in range(3)),
+            q_coeff=tuple(1.0 if axis == index else 0.0 for axis in range(3)),
+            moment=1.0,
+            reference_axis="abc"[(index + 1) % 3],
+            selector=AtomSelector.all(),
+        )
+        for index in range(3)
+    )
+    model = MagneticStructureModel(
+        q_basis_rlu=((q, 0.0, 0.0), (0.0, q, 0.0), (0.0, 0.0, q)), components=components
+    )
+
+    calculation = run_magnetic_field_calculation(
+        None,
+        _fe(),
+        model,
+        _site((0.1, 0.2, 0.3)),
+        MagneticFieldOptions(supercell=(8, 8, 8)),
+        use_approximants=True,
+    )
+
+    assert calculation.kind == DISTRIBUTION_RESULTS
+    (distribution,) = calculation.results
+    assert np.asarray(distribution.fields_T).shape == (729, 3)
+    assert calculation.status.startswith("Results: sampled 1 incommensurate field distribution.")
+    assert calculation.status.endswith(
+        "gives more than 512 sets of phases, too many to list as finite fields, so it is sampled."
+    )
+    assert "turn on commensurate approximants" not in calculation.status

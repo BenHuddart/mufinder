@@ -75,6 +75,7 @@ from mufinder.science.magnetic_fields import (
     MagneticFieldError,
     MagneticFieldOptions,
     classify_magnetic_model,
+    distribution_fields_from_json,
     contact_coupling_to_angstrom_minus3,
     contact_shell_tie_checker,
     muon_site_clearance_error,
@@ -1845,7 +1846,10 @@ class MagneticFieldWidget(QWidget):
                 self._distribution_result_from_payload(result) for result in result_payloads
             ]
             for index, result in enumerate(result_payloads):
-                fields = np.asarray(result.get("fields_T", []), dtype=float)
+                try:
+                    fields = distribution_fields_from_json(result)
+                except (TypeError, ValueError):
+                    fields = np.zeros((0, 3), dtype=float)
                 if fields.ndim == 2 and fields.shape[1] == 3 and fields.size:
                     mean = np.mean(fields, axis=0)
                     magnitude = float(np.mean(np.linalg.norm(fields, axis=1)))

@@ -56,6 +56,7 @@ from uuid import uuid4
 from mufinder.domain.enums import WorkflowStage
 from mufinder.domain.models import ProvenanceRecord, Result, Structure
 from mufinder.science.magnetic_fields import (
+    distribution_fields_from_json,
     MagneticFieldDistributionResult,
     MagneticFieldResult,
 )
@@ -105,7 +106,7 @@ _FIELD_KEYS = {
     "commensurate": frozenset(
         {"muon_position", "dipolar_T", "lorentz_T", "contact_T", "demag_T", "applied_T"}
     ),
-    "distribution": frozenset({"fields_T"}),
+    "distribution": frozenset(),
 }
 # How each kind of field record decodes its entries.
 _FIELD_KINDS = {
@@ -592,6 +593,21 @@ def _source_translation_method_version(
     )
 
 
+def _has_samples(payload: Mapping[str, object]) -> bool:
+    """Return whether a saved distribution entry holds samples, sample by sample or as factors."""
+
+    if "fields_T" not in payload and "fields_T_factors" not in payload:
+        return False
+    if "fields_T" in payload and not (
+        isinstance(payload["fields_T"], list) and payload["fields_T"]
+    ):
+        return False
+    try:
+        return distribution_fields_from_json(payload).shape[0] > 0
+    except (TypeError, ValueError):
+        return False
+
+
 def _field_source(document: ProjectDocument, owner: str, title: str) -> FieldSource | None:
     """Describe ``owner``'s field record from its payload, without decoding the samples."""
 
@@ -611,9 +627,7 @@ def _field_source(document: ProjectDocument, owner: str, title: str) -> FieldSou
         )
     ):
         return None
-    if kind == "distribution" and not all(
-        isinstance(payload["fields_T"], list) and payload["fields_T"] for payload in payloads
-    ):
+    if kind == "distribution" and not all(_has_samples(payload) for payload in payloads):
         return None
     try:
         applied = {_payload_applied(payload) for payload in payloads}

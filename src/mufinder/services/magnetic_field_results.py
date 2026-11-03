@@ -48,8 +48,8 @@ A commensurate record without the key decides from its own rows: one that gave o
 is older (:func:`lists_only_one_translation`), while a ``q = 0`` result and the translated rows
 of an approximant had nothing to change. A distribution without the key decides from the
 magnetic structure its owner keeps, which calculating with a new one replaces: one with a
-``q != 0`` term of period up to its ``commensurate_max_period`` held that term at ``T = 0`` and
-is older (:func:`distribution_held_a_short_period_at_zero`).
+``q != 0`` term of period up to its recorded ``commensurate_max_period`` (64 when it records
+none) held that term at ``T = 0`` and is older (:func:`distribution_held_a_short_period_at_zero`).
 
 A muon-polarisation record (:data:`MUON_POLARISATION_RESULT_TYPE`) holds a
 :class:`~mufinder.science.polarisation.PolarisationResult` in
@@ -70,7 +70,6 @@ from mufinder.domain.models import ProvenanceRecord, Result
 from mufinder.persistence.codec import to_jsonable
 from mufinder.science.demagnetization import FOURIER_PADDING
 from mufinder.science.magnetic_fields import (
-    MAX_LISTED_TRANSLATION_PERIOD,
     MagneticFieldError,
     has_short_period_modulation,
 )
@@ -150,6 +149,9 @@ TRANSLATION_METHOD_VERSION = 2
 #: Where a stored field result keeps the :data:`TRANSLATION_METHOD_VERSION` it was calculated with.
 TRANSLATION_METHOD_VERSION_KEY = "translation_method_version"
 _UNRECORDED_TRANSLATION_METHOD_VERSION = 1
+#: The longest commensurate period of a distribution saved before ``commensurate_max_period`` was
+#: recorded: components up to it were held at ``T = 0``.
+_UNRECORDED_COMMENSURATE_MAX_PERIOD = 64
 #: What a simulation keeps for a source this method does not apply to, so it never reads as older.
 TRANSLATION_METHOD_NOT_USED = 0
 #: Where a stored result keeps the :data:`CALCULATION_METHOD_VERSION` it was calculated with.
@@ -254,8 +256,8 @@ def distribution_held_a_short_period_at_zero(
 ) -> bool:
     """Return whether a distribution saved without the key took a short-period term at ``T = 0`` alone.
 
-    That is what a distribution did for a ``q != 0`` term of period up to
-    ``commensurate_max_period`` before :data:`TRANSLATION_METHOD_VERSION` was recorded.
+    That is what a distribution did for a ``q != 0`` term of period up to its recorded
+    ``commensurate_max_period``, 64 when it records none, before :data:`TRANSLATION_METHOD_VERSION` was recorded.
     ``magnetic_structure`` is the model its owner keeps, as JSON or a model; it is the one the
     distribution was calculated from, since giving the owner another model clears its results.
     ``None`` or a model that does not read counts as not older.
@@ -277,7 +279,7 @@ def distribution_held_a_short_period_at_zero(
             model,
             tolerance=float(parameters.get("commensurate_tolerance", 1e-8)),
             max_period=int(
-                parameters.get("commensurate_max_period", MAX_LISTED_TRANSLATION_PERIOD)
+                parameters.get("commensurate_max_period", _UNRECORDED_COMMENSURATE_MAX_PERIOD)
             ),
         )
     except (MagneticFieldError, MagneticStructureError, TypeError, ValueError):

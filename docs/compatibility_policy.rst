@@ -259,8 +259,8 @@ Compatibility ledger
        is older. A distribution without it reads the magnetic structure its owner keeps
        (the project's for the page, the workspace's own for a workspace), which is the
        one it was calculated from because a new structure clears the results: one with
-       a ``q ≠ 0`` term of period up to the recorded ``commensurate_max_period`` is
-       older. A simulation source without it reads the record named by its
+       a ``q ≠ 0`` term of period up to the ``commensurate_max_period`` in its
+       ``calculation_parameters``, or 64 when none is recorded, is older. A simulation source without it reads the record named by its
        ``record_id`` and that owner's structure, and is not marked once that record is
        gone, when the simulation is stale instead. Additive, so no migration.
      - Current project data, not deprecated. It may not be dropped without a schema
@@ -773,6 +773,18 @@ Compatibility ledger
      - Read-side repair. Current behaviour for any entry without the keys;
        keep until a saved-project schema version bump includes a migration
        that drops such entries or the page stops reading them.
+   * - ``fields_T_factors`` of a ``magnetic_field`` distribution entry
+     - ``mufinder.science.magnetic_fields`` (``MagneticFieldDistributionResult``,
+       ``distribution_fields_from_json``), read by the Magnetic Fields results
+       table, Polarisation sources and the non-finite field check
+     - A grid distribution with exact phase sets stores ``continuous_T`` and
+       ``listed_T`` under ``fields_T_factors`` in place of ``fields_T``; every
+       sample is ``continuous_T[i] + listed_T[k]``, the sets varying fastest, and is
+       rebuilt bit for bit. Every other entry, and every entry an older project
+       holds, stores ``fields_T`` and loads unchanged. Readers take either through
+       ``distribution_fields_from_json``.
+     - Current project data, not deprecated. Additive, so no migration; it may not
+       be dropped without a migration that expands the factors into ``fields_T``.
    * - ``magnetic_field`` commensurate entries without
        ``calculation_parameters``, and Magnetic Fields form state without
        ``contact_nnn`` or ``contact_rcont``

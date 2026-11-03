@@ -55,6 +55,7 @@ from mufinder.science.magnetic_fields import (
     is_commensurate_propagation_vector,
     muon_site_clearance_error,
     nearest_host_atom,
+    distribution_fields_from_json,
     regenerate_phase_samples,
 )
 from mufinder.science.magnetic_structure import (
@@ -2554,6 +2555,109 @@ def _phase_recording_locfield(sample, mode, *_args, **_kwargs):
         _Field(Dipolar=component, Lorentz=(0.0, 0.0, 1.0), Contact=(0.0, 0.0, 0.0))
         for _ in sample.muons
     ]
+
+
+def _ramp_lookup_locfield(sample, mode, *_args, **kwargs):
+    """A fake ``locfield``: a ramp of ``nangles`` rows for 'i', the component's real part for 's'."""
+
+    if mode == "i":
+        rows = np.arange(int(kwargs["nangles"]), dtype=float)
+        values = np.column_stack([rows, 0.5 * rows, np.zeros_like(rows)])
+        return [_Field(Dipolar=values) for _ in sample.muons]
+    component = np.asarray(sample.mm.fc, dtype=complex)[0].real
+    return [_Field(Dipolar=component) for _ in sample.muons]
+
+
+def test_a_listed_distribution_stores_its_two_factors_and_restores_every_sample(
+    monkeypatch,
+) -> None:
+    # Three helix phases with each of the period 4 wave's four: 12 samples from 3 + 4 rows.
+    _install_fake_muesr(monkeypatch, locfield=_ramp_lookup_locfield)
+    (result,) = calculate_incommensurate_field_distributions(
+        _structure(),
+        _helix_beside_a_listed_wave(),
+        [_SITE_A],
+        options=MagneticFieldOptions(
+            supercell=(1, 1, 1),
+            nangles=4,
+            phase_sample_count=12,
+            phase_sampling="grid",
+            histogram_bins=4,
+        ),
+    )
+
+    payload = json.loads(json.dumps(result.to_json()))
+
+    assert "fields_T" not in payload
+    factors = payload["fields_T_factors"]
+    assert np.asarray(factors["continuous_T"]).shape == (3, 3)
+    assert np.asarray(factors["listed_T"]).shape == (4, 3)
+    np.testing.assert_array_equal(distribution_fields_from_json(payload), result.fields_T)
+    restored = MagneticFieldDistributionResult.from_json(payload)
+    np.testing.assert_array_equal(restored.fields_T, result.fields_T)
+    assert restored.to_json() == payload
+    # The listed wave reverses at half its period, as its translations do.
+    np.testing.assert_allclose(result.fields_T[0] - result.fields_T[2], [0.0, 0.0, 2.0])
+
+
+def test_a_monte_carlo_listed_distribution_stores_every_sample(monkeypatch) -> None:
+    _install_fake_muesr(monkeypatch, locfield=_ramp_lookup_locfield)
+    (result,) = calculate_incommensurate_field_distributions(
+        _structure(),
+        _helix_beside_a_listed_wave(),
+        [_SITE_A],
+        options=MagneticFieldOptions(
+            supercell=(1, 1, 1),
+            nangles=4,
+            phase_sample_count=9,
+            phase_sampling="montecarlo",
+            random_seed=3,
+            histogram_bins=4,
+        ),
+    )
+
+    payload = result.to_json()
+
+    assert "fields_T_factors" not in payload
+    np.testing.assert_array_equal(payload["fields_T"], result.fields_T)
+
+
+@pytest.mark.parametrize(
+    "factors",
+    [
+        {"continuous_T": [[0.0, 0.0]], "listed_T": [[0.0, 0.0, 1.0]]},
+        {"continuous_T": [[0.0, 0.0, 1.0]]},
+        "neither",
+    ],
+    ids=["shape", "missing", "type"],
+)
+def test_malformed_field_factors_are_refused(factors) -> None:
+    with pytest.raises(ValueError, match="fields_T_factors"):
+        distribution_fields_from_json({"fields_T_factors": factors})
+
+
+def test_an_exact_enumeration_says_so_instead_of_asking_for_samples(monkeypatch) -> None:
+    # Two helices of period 9 along a and b and one along c: 729 sets, every one a sample.
+    _install_fake_muesr(monkeypatch, locfield=_phase_recording_locfield)
+    q = 1.0 / 9.0
+    model = MagneticStructureModel(
+        q_basis_rlu=((q, 0.0, 0.0), (0.0, q, 0.0), (0.0, 0.0, q)),
+        components=(
+            _helix("q1", (1.0, 0.0, 0.0)),
+            _helix("q2", (0.0, 1.0, 0.0)),
+            _helix("q3", (0.0, 0.0, 1.0)),
+        ),
+    )
+
+    (result,) = calculate_incommensurate_field_distributions(
+        _structure(), model, [_SITE_A], options=MagneticFieldOptions(supercell=(1, 1, 1))
+    )
+
+    (check,) = result.convergence
+    assert result.fields_T.shape == (729, 3)
+    assert check.setting == "histogram_bins"
+    assert check.converged
+    assert check.message == "Exact: every one of the 729 sets of phases is a sample."
 
 
 def test_find_commensurate_approximant_rounds_each_axis_to_a_short_period() -> None:

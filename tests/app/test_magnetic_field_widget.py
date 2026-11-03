@@ -1494,6 +1494,47 @@ def test_fresh_q_results_record_the_translation_method_and_q_zero_results_do_not
     page.close()
 
 
+def test_a_distribution_stored_as_factors_restores_its_row(qapp, tmp_path) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "factors.mufinder", "Factors")
+    service.add_structure(document, feo_host_structure())
+    page = MagneticFieldWidget()
+    page.set_document(document)
+    page.set_form_state(
+        {
+            "magnetic_field_results": {
+                "kind": "distribution",
+                "results": [
+                    {
+                        "site_label": "site 1",
+                        "muon_position": [0.1, 0.2, 0.3],
+                        "fields_T_factors": {
+                            "continuous_T": [[0.0, 0.0, 1.0], [0.0, 0.0, 3.0]],
+                            "listed_T": [[0.0, 0.0, 0.5], [0.0, 0.0, -0.5]],
+                        },
+                        "histogram_centres_T": [1.0, 3.0],
+                        "histogram_counts": [2.0, 2.0],
+                    }
+                ],
+                "site_source": "custom",
+                CALCULATION_VERSION_KEY: CALCULATION_METHOD_VERSION,
+            }
+        }
+    )
+
+    assert page._result_table.rowCount() == 1
+    np.testing.assert_allclose(
+        page._distribution_results[0].fields_T,
+        [[0.0, 0.0, 1.5], [0.0, 0.0, 0.5], [0.0, 0.0, 3.5], [0.0, 0.0, 2.5]],
+    )
+    # The row shows the mean of every sample, as for a distribution stored sample by sample.
+    cells = [
+        page._result_table.item(0, column) for column in range(page._result_table.columnCount())
+    ]
+    assert [cell.text() for cell in cells[1:5]] == ["0", "0", "2", "2"]
+    page.close()
+
+
 def test_a_stored_distribution_reads_as_older_when_its_model_has_a_short_period(
     qapp, tmp_path, monkeypatch
 ) -> None:
@@ -1509,6 +1550,7 @@ def test_a_stored_distribution_reads_as_older_when_its_model_has_a_short_period(
                 "fields_T": [[0.0, 0.0, 1.0], [0.0, 0.0, 3.0]],
                 "histogram_centres_T": [1.0, 3.0],
                 "histogram_counts": [4.0, 2.0],
+                "calculation_parameters": {"commensurate_max_period": 12},
             }
         ],
         "site_source": "custom",

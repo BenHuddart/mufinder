@@ -348,6 +348,11 @@ class MagneticFieldDistributionResult:
     modulated structure (``calculation_parameters["modulated"]``) only that sum
     is independent of the sphere radius. A result saved before the breakdown
     existed has empty ``terms`` and ``None`` for the rest.
+
+    ``fields_T_factors`` is set for a grid with listed phase sets: its
+    ``(continuous, listed)`` rows give every sample as
+    ``continuous[i] + listed[k]``, the sets varying fastest, which is how the
+    samples were summed. It is stored in their place (:func:`distribution_fields_from_json`).
     """
 
     site_label: str
@@ -362,6 +367,7 @@ class MagneticFieldDistributionResult:
     applied_T: tuple[float, float, float] | None = None
     demag_T: tuple[float, float, float] | None = None
     dipolar_lorentz: FieldTermStatistics | None = None
+    fields_T_factors: tuple[np.ndarray, np.ndarray] | None = None
 
     @property
     def magnitudes_T(self) -> np.ndarray:
@@ -371,7 +377,7 @@ class MagneticFieldDistributionResult:
         payload: dict[str, object] = {
             "site_label": self.site_label,
             "muon_position": list(self.muon_position),
-            "fields_T": np.asarray(self.fields_T, dtype=float).tolist(),
+            **_fields_payload(self.fields_T, self.fields_T_factors),
             "histogram_centres_T": np.asarray(self.histogram_centres_T, dtype=float).tolist(),
             "histogram_counts": np.asarray(self.histogram_counts, dtype=float).tolist(),
             "mean_T": np.mean(self.fields_T, axis=0).tolist(),
@@ -395,11 +401,8 @@ class MagneticFieldDistributionResult:
     def from_json(cls, payload: Mapping[str, Any]) -> MagneticFieldDistributionResult:
         """Rebuild a result from :meth:`to_json` output, including one saved without a breakdown."""
 
-        fields = np.asarray(payload.get("fields_T", []), dtype=float)
-        if fields.size == 0:
-            fields = np.zeros((0, 3), dtype=float)
-        elif fields.ndim != 2 or fields.shape[1] != 3:
-            raise ValueError(f"fields_T must have shape (n, 3), got {fields.shape}")
+        factors = _field_factors_from_json(payload)
+        fields = distribution_fields_from_json(payload)
         terms = _terms_from_json(payload.get("terms"))
         raw_parameters = payload.get("calculation_parameters")
         raw_checks = payload.get("convergence")
@@ -424,7 +427,63 @@ class MagneticFieldDistributionResult:
             applied_T=None if payload.get("applied_T") is None else _tuple3(payload["applied_T"]),
             demag_T=None if payload.get("demag_T") is None else _tuple3(payload["demag_T"]),
             dipolar_lorentz=_optional_term_from_json(payload.get("dipolar_lorentz")),
+            fields_T_factors=factors,
         )
+
+
+def _fields_payload(
+    fields: np.ndarray, factors: tuple[np.ndarray, np.ndarray] | None
+) -> dict[str, object]:
+    if factors is None:
+        return {"fields_T": np.asarray(fields, dtype=float).tolist()}
+    continuous, listed = factors
+    return {
+        "fields_T_factors": {
+            "continuous_T": np.asarray(continuous, dtype=float).tolist(),
+            "listed_T": np.asarray(listed, dtype=float).tolist(),
+        }
+    }
+
+
+def _field_factors_from_json(payload: Mapping[str, Any]) -> tuple[np.ndarray, np.ndarray] | None:
+    raw = payload.get("fields_T_factors")
+    if raw is None:
+        return None
+    if not isinstance(raw, Mapping) or "continuous_T" not in raw or "listed_T" not in raw:
+        raise ValueError("fields_T_factors must hold continuous_T and listed_T")
+    continuous = np.asarray(raw["continuous_T"], dtype=float)
+    listed = np.asarray(raw["listed_T"], dtype=float)
+    for name, rows in (("continuous_T", continuous), ("listed_T", listed)):
+        if rows.ndim != 2 or rows.shape[1] != 3 or rows.shape[0] == 0:
+            raise ValueError(f"fields_T_factors {name} must have shape (n, 3), got {rows.shape}")
+    return continuous, listed
+
+
+def _expand_field_factors(continuous: np.ndarray, listed: np.ndarray) -> np.ndarray:
+    """Return ``continuous[i] + listed[k]`` for every pair, the listed rows varying fastest."""
+
+    return np.repeat(continuous, listed.shape[0], axis=0) + np.tile(
+        listed, (continuous.shape[0], 1)
+    )
+
+
+def distribution_fields_from_json(payload: Mapping[str, Any]) -> np.ndarray:
+    """Return the sampled fields, shape ``(n, 3)``, of a saved distribution entry.
+
+    An entry stores ``fields_T``, or, for a grid with listed phase sets, ``fields_T_factors``
+    (:class:`MagneticFieldDistributionResult`), from which every sample is rebuilt bit for bit.
+    Raises :class:`ValueError` for a malformed entry.
+    """
+
+    factors = _field_factors_from_json(payload)
+    if factors is not None:
+        return _expand_field_factors(*factors)
+    fields = np.asarray(payload.get("fields_T", []), dtype=float)
+    if fields.size == 0:
+        return np.zeros((0, 3), dtype=float)
+    if fields.ndim != 2 or fields.shape[1] != 3:
+        raise ValueError(f"fields_T must have shape (n, 3), got {fields.shape}")
+    return fields
 
 
 def _optional_term_from_json(raw_term: object) -> FieldTermStatistics | None:
@@ -691,6 +750,30 @@ def has_short_period_modulation(
             ):
                 return True
     return False
+
+
+def approximant_lists_its_fields(
+    structure: Structure,
+    model: MagneticStructureModel,
+    *,
+    tolerance: float = 1e-3,
+    max_period: int = 12,
+    max_fields: int = MAX_LISTED_TRANSLATIONS,
+) -> bool:
+    """Return whether the approximant of ``model`` has at most ``max_fields`` sets of phases.
+
+    :func:`calculate_commensurate_approximant_fields` lists one row per set, and refuses more.
+    A model with no approximant within ``tolerance`` and ``max_period`` gives ``False``.
+    """
+
+    models = get_muesr_model_data(structure, model, merge_equivalent_k=True)
+    rationals = [
+        _rational_propagation_vector(m.k_rlu, tolerance=tolerance, max_period=max_period)
+        for m in models
+    ]
+    if not models or any(rational is None for rational in rationals):
+        return False
+    return _distinct_phase_translations(rationals, limit=int(max_fields)) is not None
 
 
 def find_commensurate_approximant(
@@ -2084,12 +2167,23 @@ def calculate_incommensurate_field_distributions(
     for index, (label, position) in enumerate(muons):
         listed_terms = listed_terms_by_site[index]
         listed_total = listed_terms["dipolar"] + listed_terms["lorentz"] + listed_terms["contact"]
-        term_fields = {
+        lookup_fields = {
             name: _sum_component_lookups(tables, full_indices, sample_count=sample_count)
-            + listed_terms[name]
             for name, tables in component_terms_by_site[index].items()
         }
-        fields = sum(term_fields.values()) + offset[np.newaxis, :]
+        factors = None
+        if not phase_basis.listed:
+            term_fields = lookup_fields
+            fields = sum(term_fields.values()) + offset[np.newaxis, :]
+        else:
+            term_fields = {name: lookup_fields[name] + listed_terms[name] for name in lookup_fields}
+            continuous_total = sum(lookup_fields.values()) + offset[np.newaxis, :]
+            fields = continuous_total + listed_total
+            if resolved_sampling == "grid":
+                # Every continuous point repeats with each listed set, so two factors hold it all.
+                sets = samples.listed_set_count
+                factors = (continuous_total[::sets].copy(), listed_total[:sets].copy())
+                fields = _expand_field_factors(*factors)
         magnitudes = np.linalg.norm(fields, axis=1)
         terms = {name: _sampled_term_statistics(values) for name, values in term_fields.items()}
         terms["demag"] = _constant_term_statistics(demag)
@@ -2129,6 +2223,11 @@ def calculate_incommensurate_field_distributions(
             ),
             nangles=int(opts.nangles),
             lookup_limited=samples.lookup_limited,
+            exact_sets=(
+                samples.listed_set_count
+                if resolved_sampling == "grid" and n_dim == 0 and phase_basis.listed
+                else None
+            ),
         )
         results.append(
             MagneticFieldDistributionResult(
@@ -2152,6 +2251,7 @@ def calculate_incommensurate_field_distributions(
                 dipolar_lorentz=_sampled_term_statistics(
                     term_fields["dipolar"] + term_fields["lorentz"]
                 ),
+                fields_T_factors=factors,
             )
         )
     return tuple(results)
@@ -2204,12 +2304,15 @@ def _distribution_convergence_checks(
     half_sample_magnitudes: np.ndarray | None,
     nangles: int,
     lookup_limited: bool,
+    exact_sets: int | None = None,
 ) -> tuple[DistributionConvergenceCheck, ...]:
     """Check a p(|B|) distribution against half the lookup angles, half the samples and its bin filling.
 
     ``half_lookup_magnitudes`` is ``None`` for a single phase or an odd lookup
     count, which has no uniform half-resolution lookup. ``lookup_limited`` marks a grid whose axes already use every lookup angle, so
-    more samples need more lookup angles.
+    more samples need more lookup angles. ``exact_sets`` is the number of phase sets of a
+    distribution that takes each of them once, which no further samples change: its histogram
+    check passes and says it is exact.
     """
 
     checks: list[DistributionConvergenceCheck] = []
@@ -2256,6 +2359,17 @@ def _distribution_convergence_checks(
         )
     occupied = int(np.count_nonzero(counts))
     per_bin = float(np.asarray(magnitudes).size) / float(max(occupied, 1))
+    if exact_sets is not None:
+        checks.append(
+            DistributionConvergenceCheck(
+                setting="histogram_bins",
+                label="Histogram bins",
+                converged=True,
+                metric=per_bin,
+                message=f"Exact: every one of the {exact_sets} sets of phases is a sample.",
+            )
+        )
+        return tuple(checks)
     converged = per_bin >= MIN_SAMPLES_PER_OCCUPIED_BIN or occupied <= 1
     checks.append(
         DistributionConvergenceCheck(

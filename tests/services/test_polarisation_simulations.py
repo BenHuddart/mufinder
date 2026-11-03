@@ -255,7 +255,11 @@ def test_a_distribution_from_before_the_translation_method_reads_its_owners_mode
         histogram_counts=np.array([2.0]),
         applied_T=ZERO,
     )
-    keyless = {"kind": "distribution", "results": [distribution.to_json()]}
+    entry = {
+        **distribution.to_json(),
+        "calculation_parameters": {"commensurate_max_period": 12},
+    }
+    keyless = {"kind": "distribution", "results": [entry]}
     _store_fields(document, MAGNETIC_FIELD_PAGE_OWNER, {**_current_fields(), **keyless})
 
     # A helix alone sampled every phase before the key existed.
@@ -351,6 +355,34 @@ def test_a_distribution_source_decodes_to_distribution_results(document) -> None
     (result,) = field_results_for_source(document, MAGNETIC_FIELD_PAGE_OWNER)
 
     assert isinstance(result, MagneticFieldDistributionResult)
+    assert field_sources(document)[0].label == "Magnetic Fields · 1 distribution at helix"
+
+
+def test_a_distribution_stored_as_factors_is_offered_and_decodes_every_sample(document) -> None:
+    distribution = MagneticFieldDistributionResult(
+        site_label="helix",
+        muon_position=(0.5, 0.5, 0.5),
+        fields_T=np.zeros((4, 3)),
+        histogram_centres_T=np.array([0.01]),
+        histogram_counts=np.array([4.0]),
+        applied_T=ZERO,
+        fields_T_factors=(
+            np.array([[0.0, 0.0, 0.01], [0.0, 0.0, 0.02]]),
+            np.array([[0.001, 0.0, 0.0], [-0.001, 0.0, 0.0]]),
+        ),
+    )
+    _store_fields(
+        document,
+        MAGNETIC_FIELD_PAGE_OWNER,
+        {"kind": "distribution", "results": [distribution.to_json()]},
+    )
+
+    (result,) = field_results_for_source(document, MAGNETIC_FIELD_PAGE_OWNER)
+
+    np.testing.assert_allclose(
+        result.fields_T,
+        [[0.001, 0.0, 0.01], [-0.001, 0.0, 0.01], [0.001, 0.0, 0.02], [-0.001, 0.0, 0.02]],
+    )
     assert field_sources(document)[0].label == "Magnetic Fields · 1 distribution at helix"
 
 

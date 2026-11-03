@@ -1621,9 +1621,10 @@ The list of translations of an order with ``q ≠ 0`` has its own version too. A
 commensurate result for such an order that lists only the field at
 :math:`\mathbf{T} = 0` is older, and so is the single row of a wavevector of period
 13 or more, which MuFinder samples as a distribution. A distribution is older when its
-structure has a component at ``q ≠ 0`` of period 12 or less, which it held at
-:math:`\mathbf{T} = 0`; the page reads that from the structure it keeps, since choosing
-another structure clears the results. A result at ``q = 0``, any other distribution and
+structure has a component at ``q ≠ 0`` with a period up to the
+``commensurate_max_period`` recorded in its calculation parameters (64 when none is
+recorded), which it held at :math:`\mathbf{T} = 0`; the page reads that from the
+structure it keeps, since choosing another structure clears the results. A result at ``q = 0``, any other distribution and
 the list of an approximant are not marked by it.
 MuFinder never rewrites or recalculates them on its own, so they stay exactly as
 calculated, and saving, reopening or saving a workspace keeps them and the line.
@@ -1649,7 +1650,9 @@ field terms (the correction is stored as ``distortion_T`` beside the uncorrected
 ``dipolar_T``), and ``calculation_parameters`` with the ``contact_coupling`` in
 ``Å⁻³``, ``nnn`` and ``rcont`` of the contact shell it used, and
 ``contact_shell_warnings``, the tie warnings of its site, when there are any;
-a distribution entry stores ``fields_T``, the histogram,
+a distribution entry stores ``fields_T``, or for a grid with exact phase sets
+``fields_T_factors`` (see :ref:`Multi-q Incommensurate Sampling
+<magnetic-fields-incommensurate-sampling>`), the histogram,
 ``calculation_parameters`` (with ``contact_shell_warnings`` as for a
 commensurate entry), its ``convergence`` checks, ``terms`` (each of
 ``dipolar``, ``lorentz``, ``contact``, ``demag`` and ``applied`` with its

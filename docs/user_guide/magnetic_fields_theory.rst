@@ -221,6 +221,13 @@ is one sample per set. With the defaults, a wave of period 4 beside the
 ``(0.22, 0, 0)`` helix gives 131,072 samples: each of 32,768 helix phases with each of
 the wave's four phases.
 
+Each such grid sample is the sum of a continuous part, the same for every set at one
+continuous point, and a listed part, the same for one set at every point. The result is
+stored as those two parts, ``fields_T_factors`` with ``continuous_T`` and ``listed_T``,
+instead of every sample in ``fields_T``, and every sample is rebuilt from them exactly as
+it was summed. The helix and wave above store 32,772 rows, about 2.1 MB, the size of the
+helix alone. A Monte Carlo distribution stores every sample.
+
 The user-facing sampling controls are:
 
 ``Lookup angles per q``
@@ -295,7 +302,10 @@ calls:
 ``Histogram bins``
    The mean number of samples per occupied histogram bin, which must be at
    least 20. A failing check advises fewer bins, or more samples (more lookup
-   angles for a grid limited by them). A single-valued distribution passes.
+   angles for a grid limited by them). A single-valued distribution passes. A grid
+   that takes each set of exact phases once, with no continuous phase, is exact:
+   more samples would only repeat them, so the check passes and says, for example,
+   ``Exact: every one of the 729 sets of phases is a sample.``
 
 A structure whose sampled phase space collapses to a single phase reports only
 the histogram check, and an odd ``Lookup angles per q`` omits the lookup-angle
@@ -336,8 +346,9 @@ takes these phases in units of :math:`2\pi`, adding them to ``q . R`` of each
 cell. A structure without an approximant within the
 limits keeps its sampled distribution. MuFinder finds the distinct phase sets
 by stepping one unit translation at a time from the origin, so it never walks
-the whole magnetic supercell, and it stops with an error as soon as it finds
-more than 512.
+the whole magnetic supercell. An approximant with more than 512 sets is sampled as a
+distribution, as it is with the option off, and the status line says it had too many
+sets of phases to list.
 
 Beyond the dipolar sum, the field calculation includes:
 
