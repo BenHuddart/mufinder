@@ -26,6 +26,7 @@ from uuid import UUID
 from mufinder.domain.charge_states import muon_charge_state_label
 from mufinder.domain.enums import WorkflowStage
 from mufinder.domain.models import CalculationDefinition, Job, Structure
+from mufinder.domain.text import plural
 from mufinder.science.lattice import (
     LatticeError,
     lattice_cart_to_frac,
@@ -53,20 +54,22 @@ from mufinder.services.project_summary import (
     muon_relaxation_row_jobs,
     relaxation_analysis_workspaces,
 )
+from mufinder.services.quantum_results import WARNING_MARK
 from mufinder.services.uep_grouping import UEP_ANALYSIS_STATES_KEY, uep_source_structure_id
 from mufinder.services.source_candidates import (
     coerce_fractional_triplet,
     completed_muon_relaxation_sources,
+    eligible_quantum_source_candidates,
     energy_barrier_generated_sources,
     energy_barrier_neb_sources_by_job_id,
 )
+from mufinder.services.zpe_ranking import zpe_ranking
 from mufinder.workflow.energy_barriers import (
     NUDGED_ELASTIC_BAND_SET_CALC_TYPE,
     TRANSITION_STATE_SEARCH_SET_CALC_TYPE,
 )
 from mufinder.workflow.muon_site import MUON_RELAXATION_DEFINITION_CALC_TYPE
 from mufinder.workflow.hyperfine import HYPERFINE_SET_CALC_TYPE
-from mufinder.workflow.quantum import QUANTUM_PHONON_SET_CALC_TYPE
 
 
 Fractional = tuple[float, float, float]
@@ -304,34 +307,44 @@ def _analysis_layers(document: ProjectDocument, host: Structure) -> list[SurveyL
 
 
 def _quantum_layers(document: ProjectDocument, host: Structure) -> list[SurveyLayer]:
+    candidates = eligible_quantum_source_candidates(document)
+    ranking = zpe_ranking(document, candidates)
     markers = []
-    for definition in definitions_for_stage(
-        document,
-        WorkflowStage.QUANTUM_CORRECTIONS,
-        calc_type=QUANTUM_PHONON_SET_CALC_TYPE,
-    ):
-        for site_key, job in _mapped_jobs(
-            document, definition, "phonon_job_ids_by_label", "job_ids_by_label"
-        ):
-            site = document.sites.get(_uuid(site_key)) if _uuid(site_key) else None
-            result = latest_result_for_job(document, job.id)
-            if site is None or result is None or not isinstance(result.data, Mapping):
-                continue
-            zpe = _float(result.data.get("muon_zpe_total_eV"))
-            position = _wrap(site.current_fractional_position())
-            if zpe is None:
-                continue
-            markers.append(
-                SurveyMarker(
-                    position,
-                    SurveyMarkerKind.SITE,
-                    f"ZPE {zpe:.2f} eV",
-                    f"{site.label or 'Site'} · zero-point energy {zpe:.3f} eV",
-                )
+    for candidate in candidates:
+        site = candidate.site
+        zpe = ranking.zpe_eV(candidate.key)
+        # The site's position is its own charge state's; a site's other relaxation is elsewhere.
+        if zpe is None or candidate.key != str(site.id):
+            continue
+        label, detail = (
+            f"ZPE {zpe:.2f} eV",
+            f"{site.label or 'Site'} · zero-point energy {zpe:.3f} eV",
+        )
+        if mark := ranking.mark(candidate.key):
+            label += f" ({mark})"
+            detail += f" ({mark}) · not ranked"
+        corrected = ranking.corrected_eV(candidate.key)
+        if corrected is not None:
+            text = "0.000" if round(corrected, 3) == 0 else f"{corrected:+.3f}"
+            detail += f" · dE + ZPE {text} eV"
+        if ranking.warned(candidate.key):
+            label += f" {WARNING_MARK}"
+            detail += "".join(
+                f"\n{WARNING_MARK} {warning}" for warning in ranking.warnings(candidate.key)
             )
+        markers.append(
+            SurveyMarker(
+                _wrap(site.current_fractional_position()),
+                SurveyMarkerKind.SITE,
+                label,
+                detail,
+            )
+        )
     return [
         SurveyLayer(
-            "quantum_corrections", f"{len(markers)} sites with zero-point energies", tuple(markers)
+            "quantum_corrections",
+            f"{plural(len(markers), 'site')} with zero-point energies",
+            tuple(markers),
         )
     ]
 

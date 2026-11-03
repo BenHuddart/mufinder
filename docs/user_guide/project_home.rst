@@ -142,7 +142,11 @@ The survey follows the selected waypoint and shows that stage's results:
        relaxations they gather and labelled with their Wyckoff label. The
        workspace pinned to the Muon Sites page is marked ``(pinned)``.
    * - Quantum Corrections
-     - The sites with a zero-point energy, labelled with it.
+     - The eligible relaxed sites whose phonon job is completed, labelled with their zero-point
+       energy, with ``dE + ZPE`` in the tooltip. These are the same numbers as the Quantum
+       Corrections table: ``(earlier)`` or ``(unconfirmed)`` marks a value outside the ranking,
+       and ``⚠`` one stored with a warning, which the tooltip gives. A site's relaxation in
+       its other charge state has no marker.
    * - Energy Barriers
      - The diffusion paths, labelled with their barrier height once computed.
    * - Magnetic Fields

@@ -61,14 +61,12 @@ from mufinder.domain.models import (
     CalculationRun,
     Job,
     Result,
-    as_aware_utc,
 )
 from mufinder.domain.text import natural_sort_key
 from mufinder.services.job_artifacts import ParsedJobArtifacts
 from mufinder.services.job_results import parse_numeric
 from mufinder.services.quantum_results import (
     W1_DEFINITION,
-    has_non_positive_muon_mode,
     mode_widths_from_result_data,
     phonon_warnings_from_result_data,
     w1_from_result_data,
@@ -83,19 +81,22 @@ from mufinder.services.muon_sites_summary import (
     set_show_every_relaxed_site,
 )
 from mufinder.services.source_candidates import (
-    PhononZpeSource,
     QuantumSourceCandidate,
     charge_state_for_job,
     charge_state_label_for_job,
     eligible_quantum_source_candidates,
-    phonon_zpe_source_state,
     quantum_seed_name_for_key,
     quantum_source_candidate_by_key,
-    quantum_source_corrected_relative_energies,
     quantum_source_label,
     quantum_source_relative_energies,
     serialize_quantum_sources,
     source_relaxation_parameter_values,
+)
+from mufinder.services.zpe_ranking import (
+    PHONON_JOB_MAPPING,
+    PHONON_SOURCE_RUN_MAPPING,
+    phonon_job_for_row,
+    zpe_ranking,
 )
 from mufinder.castep_io.param_parser import ParamParseError, parse_param_assignments
 from mufinder.science.quantum_phonons import (
@@ -167,10 +168,7 @@ _LEGACY_METHOD_TO_CASTEP = {
     "linear_response": "LINEARRESPONSE",
 }
 _DEFAULT_ELEC_ENERGY_TOL = ValueWithUnit(1e-9, "eV")
-_PHONON_JOB_MAPPING = "phonon_job_ids_by_label"
 _SEED_MAPPING = "job_seed_names_by_label"
-#: The relaxation run each row's phonon inputs were last written from.
-_SOURCE_RUN_MAPPING = "phonon_source_run_ids_by_label"
 
 
 def _legacy_method_value(value: object) -> str:
@@ -237,27 +235,6 @@ def _muon_mode_texts(data: Mapping[str, object]) -> tuple[str, str]:
         ", ".join(f"{frequency:.1f}" for frequency, _width in pairs),
         " ".join(f"{width:.2f}" for _frequency, width in pairs),
     )
-
-
-def _ranking_notes(source: PhononZpeSource, zero_from_flagged: bool) -> tuple[str, ...]:
-    """Return the row tooltip's lines on why its ``dE + ZPE`` reads as it does."""
-
-    notes: list[str] = []
-    if source is PhononZpeSource.EARLIER:
-        notes.append(
-            "This ZPE is from an earlier geometry: the site's relaxation has run again since, "
-            "so it is not ranked."
-        )
-    elif source is PhononZpeSource.UNCONFIRMED:
-        notes.append(
-            "This project does not record which relaxation this ZPE came from, so it is not ranked."
-        )
-    elif zero_from_flagged:
-        notes.append(
-            "Every ranked site in this group has a non-positive muon mode, so the zero is the "
-            "lowest of them."
-        )
-    return tuple(notes)
 
 
 def _result_cells(result: Result) -> dict[str, object]:
@@ -377,15 +354,8 @@ class QuantumCorrectionsController(WorkflowJobController):
     def phonon_job_for_key(self, definition: CalculationDefinition | None, key: str) -> Job | None:
         """Return the row's phonon job, falling back to the ``job_ids_by_label`` alias."""
 
-        job = self.job_for_key(
-            definition,
-            key,
-            mapping_name=_PHONON_JOB_MAPPING,
-            calc_type=QUANTUM_PHONON_CALC_TYPE,
-        )
-        if job is not None:
-            return job
-        return self.job_for_key(definition, key, calc_type=QUANTUM_PHONON_CALC_TYPE)
+        document = self._context.document()
+        return None if document is None else phonon_job_for_row(document, definition, key)
 
     def legacy_singlepoint_job_for_key(
         self, definition: CalculationDefinition | None, key: str
@@ -423,7 +393,7 @@ class QuantumCorrectionsController(WorkflowJobController):
         for definition in self.definitions():
             for mapping_name in (
                 QUANTUM_SINGLEPOINT_JOB_MAPPING,
-                _PHONON_JOB_MAPPING,
+                PHONON_JOB_MAPPING,
                 "job_ids_by_label",
             ):
                 mapping = definition.parameters.get(mapping_name, {})
@@ -1050,9 +1020,9 @@ class QuantumCorrectionsController(WorkflowJobController):
         except (ValueError, StructureBridgeError):
             return []
 
-        phonon_mapping = _definition_mapping(definition, _PHONON_JOB_MAPPING)
+        phonon_mapping = _definition_mapping(definition, PHONON_JOB_MAPPING)
         seed_mapping = _definition_mapping(definition, _SEED_MAPPING)
-        source_runs = _definition_mapping(definition, _SOURCE_RUN_MAPPING)
+        source_runs = _definition_mapping(definition, PHONON_SOURCE_RUN_MAPPING)
         # Load-bearing: ``phonon_job_for_key`` falls back to reading
         # ``job_ids_by_label``, so keep the phonon mapping aliased there.
         definition.parameters["job_ids_by_label"] = phonon_mapping
@@ -1244,21 +1214,8 @@ class QuantumCorrectionsController(WorkflowJobController):
         quantum_states = self.build_states()
         candidates = self.candidates()
         definition = self.active_definition()
-        newest = self._newest_phonon_results()
-        results = self._site_results(definition, candidates, newest)
+        ranking = zpe_ranking(document, candidates)
         relative_energies = quantum_source_relative_energies(candidates)
-        sources = self._zpe_sources(definition, candidates, results)
-        corrected = quantum_source_corrected_relative_energies(
-            candidates,
-            {
-                key: parse_numeric(result.data.get("muon_zpe_total_eV"))
-                for key, result in results.items()
-                if sources[key] is PhononZpeSource.CURRENT
-            },
-            flagged_keys={
-                key for key, result in results.items() if has_non_positive_muon_mode(result.data)
-            },
-        )
         # The pinned list keeps every row this workflow already tracks, so a
         # configured or submitted site never drops out of the table.
         tracked_keys = [
@@ -1286,92 +1243,24 @@ class QuantumCorrectionsController(WorkflowJobController):
                 status=getattr(state, "status", "ready") or "ready",
                 pinned_label=scope.pinned_label(candidate.key),
             )
-            result = results.get(candidate.key)
+            result = ranking.results.get(candidate.key)
             if result is not None:
-                source = sources[candidate.key]
                 row = replace(
                     row,
                     corrected_energy=_format_three_decimals(
-                        corrected.values.get(candidate.key), signed=True
+                        ranking.corrected_eV(candidate.key), signed=True
                     ),
-                    zpe_mark="" if source is PhononZpeSource.CURRENT else source.value,
-                    notes=_ranking_notes(source, candidate.key in corrected.zero_from_flagged),
+                    zpe_mark=ranking.mark(candidate.key),
+                    notes=ranking.notes(candidate.key),
                     **_result_cells(result),
                 )
             source_rows.append(row)
             job = self.phonon_job_for_key(definition, candidate.key)
             if job is not None:
                 listed_job_ids.add(job.id)
-        self._view.set_sources(source_rows + self._rows_without_a_site(newest, listed_job_ids))
-
-    def _newest_phonon_results(self) -> dict[UUID, Result]:
-        """Return the newest phonon result of each job, or a result with no job under its own id.
-
-        A result with no payload has nothing to show. A naive ``created_at`` from an
-        older project is read as UTC.
-        """
-
-        document = self._context.document()
-        if document is None:
-            return {}
-        newest: dict[UUID, Result] = {}
-        for result in document.results.values():
-            if result.result_type != QUANTUM_PHONON_CALC_TYPE or not isinstance(result.data, dict):
-                continue
-            run = (
-                document.runs.get(result.calculation_run_id)
-                if result.calculation_run_id is not None
-                else None
-            )
-            owner = run.job_id if run is not None and run.job_id is not None else result.id
-            current = newest.get(owner)
-            if current is None or as_aware_utc(result.created_at) > as_aware_utc(
-                current.created_at
-            ):
-                newest[owner] = result
-        return newest
-
-    def _site_results(
-        self,
-        definition: CalculationDefinition | None,
-        candidates: Sequence[QuantumSourceCandidate],
-        newest: Mapping[UUID, Result],
-    ) -> dict[str, Result]:
-        """Return each site's phonon result: the newest of its job, while that job is completed.
-
-        A job that is running again or has been reset no longer stands behind the
-        numbers of an earlier run.
-        """
-
-        results: dict[str, Result] = {}
-        for candidate in candidates:
-            job = self.phonon_job_for_key(definition, candidate.key)
-            if job is None or job.status != JobStatus.COMPLETED or job.id not in newest:
-                continue
-            results[candidate.key] = newest[job.id]
-        return results
-
-    def _zpe_sources(
-        self,
-        definition: CalculationDefinition | None,
-        candidates: Sequence[QuantumSourceCandidate],
-        results: Mapping[str, Result],
-    ) -> dict[str, PhononZpeSource]:
-        """Return which relaxation of its site each result's phonon job read."""
-
-        recorded = (
-            definition.parameters.get(_SOURCE_RUN_MAPPING) if definition is not None else None
+        self._view.set_sources(
+            source_rows + self._rows_without_a_site(ranking.newest_results, listed_job_ids)
         )
-        sources: dict[str, PhononZpeSource] = {}
-        for candidate in candidates:
-            job = self.phonon_job_for_key(definition, candidate.key)
-            if candidate.key in results and job is not None:
-                sources[candidate.key] = phonon_zpe_source_state(
-                    candidate,
-                    job,
-                    recorded.get(candidate.key) if isinstance(recorded, dict) else None,
-                )
-        return sources
 
     def _rows_without_a_site(
         self, newest: Mapping[UUID, Result], listed_job_ids: set[UUID]
