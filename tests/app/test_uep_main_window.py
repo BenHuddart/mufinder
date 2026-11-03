@@ -7,7 +7,6 @@ import json
 from pathlib import Path
 from uuid import UUID
 
-import numpy as np
 import pytest
 from PySide6.QtWidgets import QDialog
 
@@ -157,7 +156,6 @@ def test_main_window_open_uep_analysis_launches_dialog(
         def __init__(self, **kwargs) -> None:
             captured.update(kwargs)
             self.state_changed = _SignalStub()
-            self.potential_grid_ready = _SignalStub()
             self.destroyed = _SignalStub()
             captured["instance"] = self
 
@@ -187,7 +185,7 @@ def test_main_window_open_uep_analysis_launches_dialog(
     assert captured["source_structure_id"] == host.id
     assert captured["source_structure"] is host
     assert captured["initial_state"] == {"current_tab": 2}
-    assert captured["initial_potential_grid"] is None
+    assert "initial_potential_grid" not in captured
     assert captured["modal"] is False
     assert captured["shown"] is True
     assert captured["raised"] is True
@@ -252,7 +250,6 @@ def _capture_uep_analysis_dialog(monkeypatch: pytest.MonkeyPatch) -> dict[str, o
         def __init__(self, **kwargs) -> None:
             captured.update(kwargs)
             self.state_changed = _SignalStub()
-            self.potential_grid_ready = _SignalStub()
             self.destroyed = _SignalStub()
 
         def setModal(self, _modal: bool) -> None:
@@ -277,7 +274,7 @@ def _capture_uep_analysis_dialog(monkeypatch: pytest.MonkeyPatch) -> dict[str, o
     return captured
 
 
-def test_main_window_open_uep_analysis_loads_persisted_potential_grid(
+def test_main_window_open_uep_analysis_does_not_read_a_stored_potential_grid(
     main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     window = main_window
@@ -292,7 +289,7 @@ def test_main_window_open_uep_analysis_loads_persisted_potential_grid(
 
     window._on_open_uep_analysis_requested("row_1")
 
-    assert captured["initial_potential_grid"] is not None
+    assert "initial_potential_grid" not in captured
 
 
 @pytest.mark.parametrize("has_grid_result", [False, True])
@@ -325,9 +322,7 @@ def test_main_window_open_uep_analysis_moves_legacy_state_grid_into_result(
     ]
     assert len(grid_results) == 1
     assert grid_results[0].calculation_run_id == run.id
-    loaded = captured["initial_potential_grid"]
-    assert loaded is not None
-    assert np.allclose(loaded.potential_total_ev, grid.potential_total_ev)
+    assert "initial_potential_grid" not in captured
     assert captured["initial_state"] == {"gw_factor": 5.0}
     assert doc.ui_state[window._UEP_ANALYSIS_STATES_KEY][str(job.id)] == {"gw_factor": 5.0}
 
@@ -376,7 +371,6 @@ def test_main_window_open_uep_analysis_does_not_request_snapshot_after_dialog_sh
     class _FakeDialog:
         def __init__(self, **_kwargs) -> None:
             self.state_changed = _SignalStub()
-            self.potential_grid_ready = _SignalStub()
             self.destroyed = _SignalStub()
 
         def setModal(self, _modal: bool) -> None:
@@ -445,7 +439,6 @@ def test_main_window_open_uep_analysis_reuses_existing_window(
         def __init__(self, **_kwargs) -> None:
             captured["constructed"] += 1
             self.state_changed = _SignalStub()
-            self.potential_grid_ready = _SignalStub()
             self.destroyed = _SignalStub()
 
         def setModal(self, _modal: bool) -> None:
@@ -519,7 +512,6 @@ def test_main_window_open_uep_analysis_recreates_closed_window(
         def __init__(self, **kwargs) -> None:
             super().__init__(kwargs.get("parent"))
             self.state_changed = _SignalStub()
-            self.potential_grid_ready = _SignalStub()
             constructed.append(self)
 
         def state_snapshot(self) -> dict[str, object]:
