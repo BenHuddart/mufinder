@@ -58,7 +58,9 @@ A typical pass through the page is:
 
    - A commensurate result row also lists its field terms (see
      :ref:`Field Terms <magnetic-fields-field-terms>`): select the row to see
-     them under the table.
+     them under the table. An order with ``q ≠ 0`` gives one row per translation
+     of the site with a distinct phase, up to period 12 (see :ref:`What a
+     commensurate result lists <magnetic-fields-translations>`).
    - An incommensurate result row lists the mean and RMS magnitude of each
      field term over the sampled phases, with its convergence checks: select
      the row to see them under the table. Click ``Open Distribution Plot`` to
@@ -93,9 +95,11 @@ A typical pass through the page is:
    the muon polarisation and its spectrum.
 
 ``Calculate Dipolar Field`` sends the selected magnetic structure and muon site
-to the magnetic-field calculation helpers. Commensurate magnetic structures
-produce finite vector field results. Incommensurate structures produce sampled
-field-distribution summaries, or the finite field list of their commensurate
+to the magnetic-field calculation helpers. Commensurate magnetic structures,
+those whose wavevectors have a period of 12 or less and give at most 512 sets of
+phases, produce finite vector field results. Incommensurate structures, including a
+fraction of longer period such as ``q = (0.22, 0, 0)`` and more sets of phases than
+that, produce sampled field-distribution summaries, or the finite field list of their commensurate
 approximant when that option is on. ``muesr``/``muLFC`` environment errors are
 reported in the page status area rather than during application startup.
 
@@ -1340,9 +1344,9 @@ of its pristine site. Shifting the component's order by a phase
 field by :math:`\operatorname{Re}[e^{-2\pi i \theta_c}\,\Delta\mathbf{B}_c]`.
 MuFinder adds that change at the phase each lookup angle of the distribution
 samples, so the convergence checks run on the corrected distribution. A
-commensurate approximant row at :math:`\mathbf{r} + \mathbf{T}` takes the phase
-:math:`\theta_c = \mathbf{q}_c \cdot \mathbf{T}`, and a commensurate field
-takes :math:`\theta_c = 0`.
+commensurate row at :math:`\mathbf{r} + \mathbf{T}`, whether of an exact
+wavevector or of an approximant, takes the phase
+:math:`\theta_c = \mathbf{q}_c \cdot \mathbf{T}`.
 
 When a ``Hyperfine coupling`` :math:`A` is set, the contact term is corrected
 too. The correction is the contact field (see :ref:`Choose the contact
@@ -1613,6 +1617,15 @@ change to it. A field result from before that version was recorded reads the
 sample saved with it: a ``Plate from photo``, or a voxel grid saved with another
 padding or with smoothing, is older, and anything else is not. Dipolar tensor and
 nuclear relaxation results do not use the sample.
+The list of translations of an order with ``q ≠ 0`` has its own version too. A
+commensurate result for such an order that lists only the field at
+:math:`\mathbf{T} = 0` is older, and so is the single row of a wavevector of period
+13 or more, which MuFinder samples as a distribution. A distribution is older when its
+structure has a component at ``q ≠ 0`` with a period up to the
+``commensurate_max_period`` recorded in its calculation parameters (64 when none is
+recorded), which it held at :math:`\mathbf{T} = 0`; the page reads that from the
+structure it keeps, since choosing another structure clears the results. A result at ``q = 0``, any other distribution and
+the list of an approximant are not marked by it.
 MuFinder never rewrites or recalculates them on its own, so they stay exactly as
 calculated, and saving, reopening or saving a workspace keeps them and the line.
 The calculation's ``Calculate`` button replaces them with new numbers and clears
@@ -1637,13 +1650,17 @@ field terms (the correction is stored as ``distortion_T`` beside the uncorrected
 ``dipolar_T``), and ``calculation_parameters`` with the ``contact_coupling`` in
 ``Å⁻³``, ``nnn`` and ``rcont`` of the contact shell it used, and
 ``contact_shell_warnings``, the tie warnings of its site, when there are any;
-a distribution entry stores ``fields_T``, the histogram,
+a distribution entry stores ``fields_T``, or for a grid with exact phase sets
+``fields_T_factors`` (see :ref:`Multi-q Incommensurate Sampling
+<magnetic-fields-incommensurate-sampling>`), the histogram,
 ``calculation_parameters`` (with ``contact_shell_warnings`` as for a
 commensurate entry), its ``convergence`` checks, ``terms`` (each of
 ``dipolar``, ``lorentz``, ``contact``, ``demag`` and ``applied`` with its
 ``mean_T`` and ``rms_T``), ``total_rms_T``, and the constant ``applied_T`` and
 ``demag_T`` vectors; the finite field
-list of a commensurate approximant is stored as ``commensurate`` entries. A
+list of a commensurate approximant is stored as ``commensurate`` entries, one per
+translation as for any commensurate result. Such a result with ``q ≠ 0``, and every
+distribution, records ``translation_method_version``. A
 ``magnetic_dipolar_tensor`` record holds ``results`` and a
 ``nuclear_relaxation`` record holds ``result``. The form state saves the
 measured magnetisation as ``use_measured_magnetization`` and

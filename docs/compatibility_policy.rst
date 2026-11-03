@@ -248,6 +248,23 @@ Compatibility ledger
        with smoothing, is older. Additive, so no migration.
      - Current project data, not deprecated. It may not be dropped without a
        schema migration that first records which results used a plate.
+   * - ``translation_method_version`` key of a field result and a simulation source
+     - ``data`` of a ``magnetic_field`` result, ``magnetic_field_results`` in a
+       form, and each source of a polarisation simulation
+       (``mufinder.services.magnetic_field_results``, ``TRANSLATION_METHOD_VERSION``)
+     - Written for a commensurate field result with a component at ``q ≠ 0``, for every
+       distribution, and for every source of a simulation, where 0 means the method
+       does not apply. A commensurate record without it reads its own rows: one whose
+       rows have ``modulated`` in ``calculation_parameters`` and all lie in the home cell
+       is older. A distribution without it reads the magnetic structure its owner keeps
+       (the project's for the page, the workspace's own for a workspace), which is the
+       one it was calculated from because a new structure clears the results: one with
+       a ``q ≠ 0`` term of period up to the ``commensurate_max_period`` in its
+       ``calculation_parameters``, or 64 when none is recorded, is older. A simulation source without it reads the record named by its
+       ``record_id`` and that owner's structure, and is not marked once that record is
+       gone, when the simulation is stale instead. Additive, so no migration.
+     - Current project data, not deprecated. It may not be dropped without a schema
+       migration that first records which results list their translations.
    * - ``generate_random_sites_by_distance``
      - ``mufinder.science.site_generation``, also exported from
        ``mufinder.science``
@@ -745,15 +762,29 @@ Compatibility ledger
        table
      - A distribution entry stores ``terms``, ``total_rms_T``, ``applied_T``
        and ``demag_T``, and its ``calculation_parameters`` hold
-       ``phase_sampling_seed`` and ``component_phase_coefficients``. An entry
-       saved before these keys existed loads with empty ``terms`` and ``None``
-       for the rest; selecting its row shows its convergence checks and asks
-       for a recalculation instead of a breakdown, and
-       ``regenerate_phase_samples`` refuses it. The next calculation writes
-       the keys. Nothing is recomputed on load.
+       ``phase_sampling_seed``, ``component_phase_coefficients`` and
+       ``listed_phase_q_rlu``. An entry saved before the first of these keys
+       existed loads with empty ``terms`` and ``None`` for the rest; selecting its
+       row shows its convergence checks and asks for a recalculation instead of a
+       breakdown, and ``regenerate_phase_samples`` refuses it. One without
+       ``listed_phase_q_rlu`` sampled no exact phases, and
+       ``regenerate_phase_samples`` rebuilds it with none. The next calculation
+       writes the keys. Nothing is recomputed on load.
      - Read-side repair. Current behaviour for any entry without the keys;
        keep until a saved-project schema version bump includes a migration
        that drops such entries or the page stops reading them.
+   * - ``fields_T_factors`` of a ``magnetic_field`` distribution entry
+     - ``mufinder.science.magnetic_fields`` (``MagneticFieldDistributionResult``,
+       ``distribution_fields_from_json``), read by the Magnetic Fields results
+       table, Polarisation sources and the non-finite field check
+     - A grid distribution with exact phase sets stores ``continuous_T`` and
+       ``listed_T`` under ``fields_T_factors`` in place of ``fields_T``; every
+       sample is ``continuous_T[i] + listed_T[k]``, the sets varying fastest, and is
+       rebuilt bit for bit. Every other entry, and every entry an older project
+       holds, stores ``fields_T`` and loads unchanged. Readers take either through
+       ``distribution_fields_from_json``.
+     - Current project data, not deprecated. Additive, so no migration; it may not
+       be dropped without a migration that expands the factors into ``fields_T``.
    * - ``magnetic_field`` commensurate entries without
        ``calculation_parameters``, and Magnetic Fields form state without
        ``contact_nnn`` or ``contact_rcont``

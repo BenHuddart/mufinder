@@ -15,8 +15,13 @@ from mufinder.science.polarisation import PolarisationError, calculate_polarisat
 from mufinder.science.polarisation_simulation import PolarisationSettings, simulate_polarisation
 from mufinder.services.magnetic_field_results import (
     CALCULATION_METHOD_VERSION,
+    MAGNETIC_FIELD_RESULT_TYPE,
     PLATE_METHOD_NOT_USED,
     PLATE_METHOD_VERSION,
+    TRANSLATION_METHOD_NOT_USED,
+    TRANSLATION_METHOD_VERSION,
+    TRANSLATION_METHOD_VERSION_KEY,
+    magnetic_field_result,
     PLATE_METHOD_VERSION_KEY,
     CALCULATION_VERSION_KEY,
     MAGNETIC_FIELD_PAGE_OWNER,
@@ -46,6 +51,7 @@ from mufinder.services.project_service import ProjectService
 from mufinder.services.project_summary import MAGNETIC_FIELD_WORKSPACES_KEY
 from tests.support.controllers import muon_host_document
 from tests.support.field_results import field_result
+from tests.support.magnetic_fields import collinear_waves_model
 
 ZERO = (0.0, 0.0, 0.0)
 SETTINGS = PolarisationSettings(end_time_us=4.0, time_points=401)
@@ -177,6 +183,100 @@ def test_a_simulation_saved_before_the_plate_method_decides_from_the_saved_form(
     assert older_method_sources(record, document) == list(record.sources)
 
 
+def _modulated_fields(*translations: int, **extra) -> dict[str, object]:
+    return {
+        **_current_fields(),
+        "results": [
+            {
+                **_field((0.0, 0.0, 0.01), position=(0.25 + n, 0.25, 0.25)).to_json(),
+                "calculation_parameters": {"modulated": True},
+            }
+            for n in translations
+        ],
+        **extra,
+    }
+
+
+def test_a_simulation_of_one_translation_is_marked_and_one_of_all_of_them_is_not(document) -> None:
+    _store_fields(document, MAGNETIC_FIELD_PAGE_OWNER, _current_fields())
+    uniform = _simulate_page(document)
+    assert uniform.sources[0].translation_method_version == TRANSLATION_METHOD_NOT_USED
+    assert older_method_sources(uniform, document) == []
+
+    _store_fields(document, MAGNETIC_FIELD_PAGE_OWNER, _modulated_fields(0))
+    one_row = _simulate_page(document)
+    assert one_row.sources[0].translation_method_version == 1
+    assert older_method_sources(one_row, document) == list(one_row.sources)
+
+    # Recalculating the fields leaves the stored traces old, and still older.
+    listed = _modulated_fields(0, 1, **{TRANSLATION_METHOD_VERSION_KEY: TRANSLATION_METHOD_VERSION})
+    _store_fields(document, MAGNETIC_FIELD_PAGE_OWNER, listed)
+    stored = polarisation_simulation(document, one_row.simulation_id)
+    assert older_method_sources(stored, document) == list(stored.sources)
+
+    fresh = _simulate_page(document)
+    assert fresh.sources[0].translation_method_version == TRANSLATION_METHOD_VERSION
+    assert older_method_sources(fresh, document) == []
+
+
+def test_a_simulation_saved_before_the_translation_method_reads_the_record_it_ran_from(
+    document,
+) -> None:
+    _store_fields(document, MAGNETIC_FIELD_PAGE_OWNER, _modulated_fields(0))
+    record_id = magnetic_field_result(
+        document, MAGNETIC_FIELD_PAGE_OWNER, MAGNETIC_FIELD_RESULT_TYPE
+    ).id
+    record = SimpleNamespace(
+        sources=[
+            SimulationSource(
+                MAGNETIC_FIELD_PAGE_OWNER,
+                record_id,
+                "Page",
+                calculation_version=CALCULATION_METHOD_VERSION,
+            )
+        ]
+    )
+
+    assert older_method_sources(record, document) == list(record.sources)
+    # Once that record is replaced nothing says what it held, and the simulation is stale instead.
+    _store_fields(document, MAGNETIC_FIELD_PAGE_OWNER, _current_fields())
+    assert older_method_sources(record, document) == []
+    assert stale_sources(document, record) == list(record.sources)
+
+
+def test_a_distribution_from_before_the_translation_method_reads_its_owners_model(
+    document,
+) -> None:
+    distribution = MagneticFieldDistributionResult(
+        site_label="helix",
+        muon_position=(0.5, 0.5, 0.5),
+        fields_T=np.array([[0.0, 0.0, 0.01], [0.0, 0.01, 0.0]]),
+        histogram_centres_T=np.array([0.01]),
+        histogram_counts=np.array([2.0]),
+        applied_T=ZERO,
+    )
+    entry = {
+        **distribution.to_json(),
+        "calculation_parameters": {"commensurate_max_period": 12},
+    }
+    keyless = {"kind": "distribution", "results": [entry]}
+    _store_fields(document, MAGNETIC_FIELD_PAGE_OWNER, {**_current_fields(), **keyless})
+
+    # A helix alone sampled every phase before the key existed.
+    document.project.magnetic_structure = collinear_waves_model((0.22, 0.0, 0.0)).to_json()
+    helix = _simulate_page(document)
+    assert helix.sources[0].translation_method_version == TRANSLATION_METHOD_NOT_USED
+    assert older_method_sources(helix, document) == []
+
+    # Beside a period 4 wave, that wave stayed at T = 0.
+    document.project.magnetic_structure = collinear_waves_model(
+        (0.22, 0.0, 0.0), (0.25, 0.0, 0.0)
+    ).to_json()
+    frozen = _simulate_page(document)
+    assert frozen.sources[0].translation_method_version == 1
+    assert older_method_sources(frozen, document) == list(frozen.sources)
+
+
 def test_removed_sources_are_those_with_no_fields_left(document) -> None:
     record = run_polarisation_simulation(
         document,
@@ -255,6 +355,34 @@ def test_a_distribution_source_decodes_to_distribution_results(document) -> None
     (result,) = field_results_for_source(document, MAGNETIC_FIELD_PAGE_OWNER)
 
     assert isinstance(result, MagneticFieldDistributionResult)
+    assert field_sources(document)[0].label == "Magnetic Fields · 1 distribution at helix"
+
+
+def test_a_distribution_stored_as_factors_is_offered_and_decodes_every_sample(document) -> None:
+    distribution = MagneticFieldDistributionResult(
+        site_label="helix",
+        muon_position=(0.5, 0.5, 0.5),
+        fields_T=np.zeros((4, 3)),
+        histogram_centres_T=np.array([0.01]),
+        histogram_counts=np.array([4.0]),
+        applied_T=ZERO,
+        fields_T_factors=(
+            np.array([[0.0, 0.0, 0.01], [0.0, 0.0, 0.02]]),
+            np.array([[0.001, 0.0, 0.0], [-0.001, 0.0, 0.0]]),
+        ),
+    )
+    _store_fields(
+        document,
+        MAGNETIC_FIELD_PAGE_OWNER,
+        {"kind": "distribution", "results": [distribution.to_json()]},
+    )
+
+    (result,) = field_results_for_source(document, MAGNETIC_FIELD_PAGE_OWNER)
+
+    np.testing.assert_allclose(
+        result.fields_T,
+        [[0.001, 0.0, 0.01], [-0.001, 0.0, 0.01], [0.001, 0.0, 0.02], [-0.001, 0.0, 0.02]],
+    )
     assert field_sources(document)[0].label == "Magnetic Fields · 1 distribution at helix"
 
 
@@ -450,7 +578,10 @@ def test_nuclear_widths_are_summed_once_per_muon_position(tmp_path: Path, monkey
     from mufinder.services import polarisation_simulations as module
 
     document, _host = muon_host_document(ProjectService(), tmp_path)
-    translations = [_field((0.0, 0.0, 0.01 * (n + 1)), label=f"t{n}") for n in range(5)]
+    translations = [
+        _field((0.0, 0.0, 0.01 * (n + 1)), label=f"t{n}", position=(0.25 + n, 0.25, 0.25))
+        for n in range(5)
+    ]
     _store_fields(document, MAGNETIC_FIELD_PAGE_OWNER, _commensurate(*translations))
     calls: list[tuple[float, ...]] = []
     real = module.calculate_nuclear_width_tensors

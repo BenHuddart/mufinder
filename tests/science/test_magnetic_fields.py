@@ -55,6 +55,7 @@ from mufinder.science.magnetic_fields import (
     is_commensurate_propagation_vector,
     muon_site_clearance_error,
     nearest_host_atom,
+    distribution_fields_from_json,
     regenerate_phase_samples,
 )
 from mufinder.science.magnetic_structure import (
@@ -64,6 +65,7 @@ from mufinder.science.magnetic_structure import (
     MagneticComponent,
     MagneticStructureModel,
     moments_at_atoms,
+    moments_in_supercell,
 )
 from mufinder.science.muon_distortion import map_muon_distortion
 from tests.support.codata import BOHR_MAGNETON_J_PER_T, MU0_OVER_4PI_T_M_PER_A, MU0_T_M_PER_A
@@ -635,6 +637,7 @@ def test_commensurate_field_calculation_merges_equivalent_k_calls(monkeypatch) -
         options=MagneticFieldOptions(supercell=(1, 1, 1)),
     )
 
+    # One component; the phases of q = 1/2 never read the sum at a quarter turn.
     assert len(calls) == 1
     np.testing.assert_allclose(calls[0][0].real, [1.0, 0.0, 1.0])
 
@@ -644,7 +647,7 @@ def test_commensurate_fields_label_and_wrap_muon_positions(monkeypatch) -> None:
 
     results = calculate_commensurate_fields(
         _structure(),
-        _model([0.0, 0.0, 0.5]),
+        _model([0.0, 0.0, 0.0]),
         [
             MuonSite(label="", initial_fractional_position=[1.5, -0.25, -1e-12]),
             [0.5, 0.5, 0.5],
@@ -665,7 +668,7 @@ def test_commensurate_fields_expand_symmetry_equivalent_sites(monkeypatch) -> No
 
     results = calculate_commensurate_fields(
         _structure(),
-        _model([0.0, 0.0, 0.5]),
+        _model([0.0, 0.0, 0.0]),
         [MuonSite(label="Mu", initial_fractional_position=[0.25, 0.25, 0.25])],
         options=MagneticFieldOptions(supercell=(1, 1, 1), find_equivalent_sites=True),
     )
@@ -690,7 +693,7 @@ def test_commensurate_fields_read_each_muesr_field_layout(
 ) -> None:
     _install_fake_muesr(monkeypatch, locfield=_fields_per_muon(**values))
 
-    (result,) = calculate_commensurate_fields(
+    result, *_ = calculate_commensurate_fields(
         _structure(),
         _model([0.0, 0.0, 0.5]),
         [_SITE_A],
@@ -785,7 +788,7 @@ def test_commensurate_lorentz_term_includes_the_continuum_along_q(
         ),
     )
 
-    (result,) = calculate_commensurate_fields(
+    result, *_ = calculate_commensurate_fields(
         _structure(), _model(q), [_SITE_A], options=MagneticFieldOptions(supercell=(1, 1, 1))
     )
 
@@ -819,7 +822,7 @@ def test_commensurate_continuum_term_uses_the_shortest_equivalent_wavevector(
         ),
     )
 
-    (result,) = calculate_commensurate_fields(
+    result, *_ = calculate_commensurate_fields(
         _structure(lattice=lattice),
         _model(q),
         [_SITE_A],
@@ -837,7 +840,7 @@ def test_commensurate_continuum_term_is_left_out_with_the_lorentz_field(monkeypa
         ),
     )
 
-    (result,) = calculate_commensurate_fields(
+    result, *_ = calculate_commensurate_fields(
         _structure(),
         _model((0.0, 0.0, 0.25)),
         [_SITE_A],
@@ -960,7 +963,7 @@ def test_commensurate_fields_add_the_distortion_correction(monkeypatch) -> None:
         _structure(), (3, 3, 3), _MU_X, {(1.0, 0.0, 0.0): (0.1, 0.0, 0.0)}
     )
 
-    corrected, plain = calculate_commensurate_fields(
+    corrected, _, plain, _ = calculate_commensurate_fields(
         _structure(),
         _antiferromagnet(),
         [_MU_X, _MU_X],
@@ -994,7 +997,9 @@ def test_distortion_correction_follows_each_symmetry_equivalent_site(monkeypatch
     )
 
     by_position = {
-        tuple(np.round(result.muon_position, 6)): result.distortion for result in results
+        tuple(np.round(result.muon_position, 6)): result.distortion
+        for result in results
+        if result.site_label.endswith("+ (0, 0, 0)")
     }
     assert set(by_position) == {(0.5, 0.0, 0.0), (0.0, 0.5, 0.0), (0.0, 0.0, 0.5)}
     for position in ((0.0, 0.5, 0.0), (0.0, 0.0, 0.5)):
@@ -1062,7 +1067,7 @@ def test_commensurate_distortion_corrects_the_contact_term(monkeypatch, shift, a
     )
     options = MagneticFieldOptions(supercell=(1, 1, 1), contact_coupling=0.1, nnn=2, rcont=2.0)
 
-    (result,) = calculate_commensurate_fields(
+    result, *_ = calculate_commensurate_fields(
         _structure(), _antiferromagnet(), [_MU_X], options=options, distorted_structures=[relaxed]
     )
 
@@ -1079,7 +1084,7 @@ def test_distortion_without_a_contact_coupling_leaves_the_contact_term(monkeypat
         _structure(), (3, 3, 3), _MU_X, {(1.0, 0.0, 0.0): (0.6, 0.0, 0.0)}
     )
 
-    (result,) = calculate_commensurate_fields(
+    result, *_ = calculate_commensurate_fields(
         _structure(),
         _antiferromagnet(),
         [_MU_X],
@@ -1135,7 +1140,7 @@ def test_contact_distortion_tie_is_resolved_by_including_the_whole_tied_set(monk
     relaxed = relaxed_muon_supercell(_structure(), (3, 3, 3), _MU_X)
     options = MagneticFieldOptions(supercell=(1, 1, 1), contact_coupling=0.1, nnn=2, rcont=2.0)
 
-    (result,) = calculate_commensurate_fields(
+    result, *_ = calculate_commensurate_fields(
         _structure(), _antiferromagnet(), [_MU_X], options=options, distorted_structures=[relaxed]
     )
 
@@ -1253,7 +1258,7 @@ def _bulk_field(moment=_UNIFORM_MOMENT) -> np.ndarray:
 def _commensurate_demag(monkeypatch, model=None, **options) -> tuple[float, float, float]:
     # The fake Lorentz field is deliberately unrelated to the model's magnetisation.
     _install_fake_muesr(monkeypatch, locfield=_fields_per_muon(Lorentz=(5, 6, 7)))
-    (result,) = calculate_commensurate_fields(
+    result, *_ = calculate_commensurate_fields(
         _structure(),
         model or _single_q_model((0.0, 0.0, 0.0), _UNIFORM_MOMENT),
         [_SITE_A],
@@ -1856,9 +1861,10 @@ def test_incommensurate_distribution_collapses_dependent_physical_q_rows(monkeyp
     assert result.calculation_parameters["phase_sample_count"] == 4
 
 
-def test_incommensurate_distribution_holds_commensurate_components_at_zero_phase(
+def test_incommensurate_distribution_samples_a_commensurate_component_at_each_translation(
     monkeypatch,
 ) -> None:
+    # The q = 1/2 wave takes both its phases at every phase of the helix, not only T = 0.
     model = MagneticStructureModel(
         q_basis_rlu=((0.12345, 0.0, 0.0), (0.0, 0.0, 0.5), (0.0, 0.0, 0.0)),
         components=(
@@ -1892,11 +1898,14 @@ def test_incommensurate_distribution_holds_commensurate_components_at_zero_phase
     np.testing.assert_allclose(
         result.calculation_parameters["phase_basis_rlu"], [[0.12345, 0.0, 0.0]]
     )
-    np.testing.assert_allclose(result.fields_T[:, 0], np.arange(4.0))
-    np.testing.assert_allclose(result.fields_T[:, 2], 7.0)
+    assert result.calculation_parameters["listed_phase_q_rlu"] == [[0.0, 0.0, 0.5]]
+    np.testing.assert_allclose(result.fields_T[:, 0], np.repeat(np.arange(4.0), 2))
+    np.testing.assert_allclose(result.fields_T[:, 2], np.tile([7.0, -7.0], 4))
 
 
-def test_incommensurate_distribution_of_commensurate_model_has_a_single_phase(monkeypatch) -> None:
+def test_incommensurate_distribution_of_commensurate_model_takes_each_translation(
+    monkeypatch,
+) -> None:
     _install_fake_muesr(monkeypatch, locfield=_fields_per_muon(Dipolar=(0.0, 0.0, 2.0)))
 
     (result,) = calculate_incommensurate_field_distributions(
@@ -1907,8 +1916,8 @@ def test_incommensurate_distribution_of_commensurate_model_has_a_single_phase(mo
     )
 
     assert result.calculation_parameters["phase_basis_rlu"] == []
-    assert result.calculation_parameters["phase_sample_count"] == 1
-    np.testing.assert_allclose(result.fields_T, [[0.0, 0.0, 2.0]])
+    assert result.calculation_parameters["phase_sample_count"] == 2
+    np.testing.assert_allclose(result.fields_T, [[0.0, 0.0, 2.0], [0.0, 0.0, -2.0]])
 
 
 @pytest.mark.parametrize("sampling", ["montecarlo", "random"])
@@ -2198,7 +2207,7 @@ def test_regenerate_phase_samples_of_a_single_phase_is_one_empty_row(monkeypatch
     _install_fake_muesr(monkeypatch, locfield=_fields_per_muon(Dipolar=(0.0, 0.0, 2.0)))
     (result,) = calculate_incommensurate_field_distributions(
         _structure(),
-        _model([0.0, 0.0, 0.5]),
+        _model([0.0, 0.0, 0.0]),
         [_SITE_A],
         options=MagneticFieldOptions(supercell=(1, 1, 1), nangles=4, histogram_bins=4),
     )
@@ -2207,6 +2216,56 @@ def test_regenerate_phase_samples_of_a_single_phase_is_one_empty_row(monkeypatch
 
     assert regenerated.phases_turns.shape == (1, 0)
     assert regenerated.component_phase_coefficients.shape == (1, 0)
+    assert regenerated.listed_phases_turns.shape == (1, 0)
+
+
+def _helix_beside_a_listed_wave() -> MagneticStructureModel:
+    return MagneticStructureModel(
+        q_basis_rlu=((0.12345, 0.0, 0.0), (0.0, 0.0, 0.25), (0.0, 0.0, 0.0)),
+        components=(
+            _helix("incommensurate", (1.0, 0.0, 0.0)),
+            MagneticComponent(
+                component_id="listed",
+                label="listed",
+                kind="custom",
+                selector=AtomSelector.all(),
+                terms=(FourierTerm((0.0, 1.0, 0.0), ComplexVector.from_vector([0.0, 0.0, 1.0])),),
+            ),
+        ),
+    )
+
+
+@pytest.mark.parametrize(("sampling", "sample_count"), [("grid", 12), ("montecarlo", 9)])
+def test_regenerate_phase_samples_rebuilds_the_listed_phases(
+    monkeypatch, sampling: str, sample_count: int
+) -> None:
+    _install_fake_muesr(monkeypatch, locfield=_fields_per_muon(Dipolar=_LOOKUP))
+    (result,) = calculate_incommensurate_field_distributions(
+        _structure(),
+        _helix_beside_a_listed_wave(),
+        [_SITE_A],
+        options=MagneticFieldOptions(
+            supercell=(1, 1, 1),
+            nangles=4,
+            phase_sample_count=sample_count,
+            phase_sampling=sampling,
+            random_seed=5,
+            histogram_bins=4,
+        ),
+    )
+    saved = MagneticFieldDistributionResult.from_json(json.loads(json.dumps(result.to_json())))
+
+    regenerated = regenerate_phase_samples(saved)
+
+    listed = regenerated.listed_phases_turns
+    assert listed.shape == (sample_count, 1)
+    assert set(np.round(listed[:, 0] * 4).astype(int)) == {0, 1, 2, 3}
+    if sampling == "grid":
+        # Three helix phases, each with all four phases of the period-4 wave.
+        np.testing.assert_allclose(regenerated.phases_turns[:, 0], np.repeat([0, 1, 2], 4) / 3)
+        np.testing.assert_allclose(listed[:, 0], np.tile([0, 1, 2, 3], 3) / 4)
+    regenerated_again = regenerate_phase_samples(saved)
+    np.testing.assert_array_equal(regenerated_again.listed_phases_turns, listed)
 
 
 def test_auto_two_q_sampling_is_bounded_by_phase_sample_count() -> None:
@@ -2488,14 +2547,117 @@ def test_component_sample_combination_guards_array_shapes() -> None:
 
 
 def _phase_recording_locfield(sample, mode, *_args, **_kwargs):
-    """A fake commensurate ``locfield`` reporting the phase and wavevector it was given."""
+    """A fake commensurate ``locfield``: the real part of the first ion's Fourier component."""
 
     assert mode == "s"
-    record = (float(sample.mm.phi[0]), float(sample.mm.k[0]), float(sample.mm.k[1]))
+    component = np.asarray(sample.mm.fc, dtype=complex)[0].real
     return [
-        _Field(Dipolar=record, Lorentz=(0.0, 0.0, 1.0), Contact=(0.0, 0.0, 0.0))
+        _Field(Dipolar=component, Lorentz=(0.0, 0.0, 1.0), Contact=(0.0, 0.0, 0.0))
         for _ in sample.muons
     ]
+
+
+def _ramp_lookup_locfield(sample, mode, *_args, **kwargs):
+    """A fake ``locfield``: a ramp of ``nangles`` rows for 'i', the component's real part for 's'."""
+
+    if mode == "i":
+        rows = np.arange(int(kwargs["nangles"]), dtype=float)
+        values = np.column_stack([rows, 0.5 * rows, np.zeros_like(rows)])
+        return [_Field(Dipolar=values) for _ in sample.muons]
+    component = np.asarray(sample.mm.fc, dtype=complex)[0].real
+    return [_Field(Dipolar=component) for _ in sample.muons]
+
+
+def test_a_listed_distribution_stores_its_two_factors_and_restores_every_sample(
+    monkeypatch,
+) -> None:
+    # Three helix phases with each of the period 4 wave's four: 12 samples from 3 + 4 rows.
+    _install_fake_muesr(monkeypatch, locfield=_ramp_lookup_locfield)
+    (result,) = calculate_incommensurate_field_distributions(
+        _structure(),
+        _helix_beside_a_listed_wave(),
+        [_SITE_A],
+        options=MagneticFieldOptions(
+            supercell=(1, 1, 1),
+            nangles=4,
+            phase_sample_count=12,
+            phase_sampling="grid",
+            histogram_bins=4,
+        ),
+    )
+
+    payload = json.loads(json.dumps(result.to_json()))
+
+    assert "fields_T" not in payload
+    factors = payload["fields_T_factors"]
+    assert np.asarray(factors["continuous_T"]).shape == (3, 3)
+    assert np.asarray(factors["listed_T"]).shape == (4, 3)
+    np.testing.assert_array_equal(distribution_fields_from_json(payload), result.fields_T)
+    restored = MagneticFieldDistributionResult.from_json(payload)
+    np.testing.assert_array_equal(restored.fields_T, result.fields_T)
+    assert restored.to_json() == payload
+    # The listed wave reverses at half its period, as its translations do.
+    np.testing.assert_allclose(result.fields_T[0] - result.fields_T[2], [0.0, 0.0, 2.0])
+
+
+def test_a_monte_carlo_listed_distribution_stores_every_sample(monkeypatch) -> None:
+    _install_fake_muesr(monkeypatch, locfield=_ramp_lookup_locfield)
+    (result,) = calculate_incommensurate_field_distributions(
+        _structure(),
+        _helix_beside_a_listed_wave(),
+        [_SITE_A],
+        options=MagneticFieldOptions(
+            supercell=(1, 1, 1),
+            nangles=4,
+            phase_sample_count=9,
+            phase_sampling="montecarlo",
+            random_seed=3,
+            histogram_bins=4,
+        ),
+    )
+
+    payload = result.to_json()
+
+    assert "fields_T_factors" not in payload
+    np.testing.assert_array_equal(payload["fields_T"], result.fields_T)
+
+
+@pytest.mark.parametrize(
+    "factors",
+    [
+        {"continuous_T": [[0.0, 0.0]], "listed_T": [[0.0, 0.0, 1.0]]},
+        {"continuous_T": [[0.0, 0.0, 1.0]]},
+        "neither",
+    ],
+    ids=["shape", "missing", "type"],
+)
+def test_malformed_field_factors_are_refused(factors) -> None:
+    with pytest.raises(ValueError, match="fields_T_factors"):
+        distribution_fields_from_json({"fields_T_factors": factors})
+
+
+def test_an_exact_enumeration_says_so_instead_of_asking_for_samples(monkeypatch) -> None:
+    # Two helices of period 9 along a and b and one along c: 729 sets, every one a sample.
+    _install_fake_muesr(monkeypatch, locfield=_phase_recording_locfield)
+    q = 1.0 / 9.0
+    model = MagneticStructureModel(
+        q_basis_rlu=((q, 0.0, 0.0), (0.0, q, 0.0), (0.0, 0.0, q)),
+        components=(
+            _helix("q1", (1.0, 0.0, 0.0)),
+            _helix("q2", (0.0, 1.0, 0.0)),
+            _helix("q3", (0.0, 0.0, 1.0)),
+        ),
+    )
+
+    (result,) = calculate_incommensurate_field_distributions(
+        _structure(), model, [_SITE_A], options=MagneticFieldOptions(supercell=(1, 1, 1))
+    )
+
+    (check,) = result.convergence
+    assert result.fields_T.shape == (729, 3)
+    assert check.setting == "histogram_bins"
+    assert check.converged
+    assert check.message == "Exact: every one of the 729 sets of phases is a sample."
 
 
 def test_find_commensurate_approximant_rounds_each_axis_to_a_short_period() -> None:
@@ -2576,12 +2738,16 @@ def test_approximant_fields_list_each_translation_with_advanced_phases(monkeypat
         [result.muon_position for result in results],
         [(0.25, 0.25, 0.25), (1.25, 0.25, 0.25), (2.25, 0.25, 0.25)],
     )
-    # The backend receives the rational q = 1/3 and a phase advanced by q . T (in turns).
+    # The phase advances by q . T for the rational q = 1/3.
+    turns = 2.0 * np.pi * np.array([0.0, 1.0, 2.0]) / 3.0
     np.testing.assert_allclose(
-        [result.dipolar[0] for result in results], [0.0, 1.0 / 3.0, 2.0 / 3.0]
+        [result.dipolar[:2] for result in results],
+        np.column_stack((np.cos(turns), np.sin(turns))),
+        atol=1e-12,
     )
-    np.testing.assert_allclose([result.dipolar[1] for result in results], [1.0 / 3.0] * 3)
-    assert all(result.lorentz == (0.0, 0.0, 1.0) for result in results)
+    np.testing.assert_allclose(
+        [result.lorentz[2] for result in results], np.cos(turns) + np.sin(turns)
+    )
     assert all(result.distortion is None for result in results)
 
 
@@ -2597,7 +2763,7 @@ def test_approximant_fields_keep_one_translation_per_distinct_phase(monkeypatch)
     )
 
     assert [result.site_label for result in results] == ["A + (0, 0, 0)", "A + (1, 0, 0)"]
-    np.testing.assert_allclose([result.dipolar[0] for result in results], [0.0, 0.5])
+    np.testing.assert_allclose([result.dipolar[0] for result in results], [1.0, -1.0])
 
 
 def test_distinct_phase_translations_walk_the_phase_group_not_the_supercell() -> None:
@@ -2658,7 +2824,10 @@ def test_approximant_fields_cap_the_number_of_translations(monkeypatch) -> None:
         )
 
 
-def test_approximant_correction_follows_each_translated_site(monkeypatch) -> None:
+@pytest.mark.parametrize(
+    "calculate", [calculate_commensurate_approximant_fields, calculate_commensurate_fields]
+)
+def test_correction_follows_each_translated_site(monkeypatch, calculate) -> None:
     # At r + T each ion carries the moment of its pristine site one translation along.
     _install_fake_muesr(monkeypatch, locfield=_fields_per_muon(Dipolar=(0, 0, 0)))
     model = _circular_helix_model((0.25, 0.0, 0.0))
@@ -2666,7 +2835,7 @@ def test_approximant_correction_follows_each_translated_site(monkeypatch) -> Non
         _structure(), (3, 3, 3), _MU_X, {(1.0, 0.0, 0.0): (0.1, 0.05, 0.0)}
     )
 
-    results = calculate_commensurate_approximant_fields(
+    results = calculate(
         _structure(),
         model,
         [_MU_X],
@@ -2829,11 +2998,23 @@ def test_half_resolution_grid_keeps_every_other_point_per_axis() -> None:
     axis = np.arange(4, dtype=float) / 4.0
     grid = np.stack([mesh.ravel() for mesh in np.meshgrid(axis, axis, indexing="ij")], axis=1)
 
-    half = module._half_resolution_phase_samples(grid, "grid")
+    def half(continuous, listed=None, sets=1):
+        listed = np.zeros((len(continuous), 0)) if listed is None else listed
+        selection = module._half_resolution_selection(
+            module._PhaseSamples(continuous, listed, "grid", sets, lookup_limited=False)
+        )
+        return None if selection is None else continuous[selection]
 
-    np.testing.assert_allclose(half, [(0.0, 0.0), (0.0, 0.5), (0.5, 0.0), (0.5, 0.5)])
-    assert module._half_resolution_phase_samples(grid[:15], "grid") is None
-    assert module._half_resolution_phase_samples(np.zeros((1, 0)), "grid") is None
+    np.testing.assert_allclose(half(grid), [(0.0, 0.0), (0.0, 0.5), (0.5, 0.0), (0.5, 0.5)])
+    assert half(grid[:15]) is None
+    assert half(np.zeros((1, 0))) is None
+    # Each kept point keeps every listed phase set beside it; the sets alone have no half.
+    paired, listed = module._grid_with_listed_sets(grid, np.array([[0.0], [0.5]]))
+    np.testing.assert_allclose(
+        half(paired, listed, sets=2),
+        np.repeat([(0.0, 0.0), (0.0, 0.5), (0.5, 0.0), (0.5, 0.5)], 2, axis=0),
+    )
+    assert half(np.zeros((2, 0)), np.array([[0.0], [0.5]]), sets=2) is None
 
 
 def test_cdf_distance_measures_the_largest_cumulative_difference() -> None:
@@ -2943,7 +3124,9 @@ def test_real_muesr_antiferromagnet_has_no_demagnetizing_field(real_muesr) -> No
     # site, but the A-type order has no bulk magnetisation to demagnetize.
     model = _single_q_model((0.0, 0.0, 0.5), (0.0, 0.0, 1.0))
     options = MagneticFieldOptions(demag_shape="sphere")
-    (result,) = calculate_commensurate_fields(_structure(), model, [_GENERAL_SITE], options=options)
+    result, *_ = calculate_commensurate_fields(
+        _structure(), model, [_GENERAL_SITE], options=options
+    )
 
     assert np.linalg.norm(result.lorentz) > 0.0
     assert result.demag == (0.0, 0.0, 0.0)
@@ -2958,7 +3141,7 @@ def test_real_muesr_antiferromagnet_has_no_demagnetizing_field(real_muesr) -> No
         (_structure, partial(_single_q_model, (0.0, 0.0, 0.25), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0))),
         (
             _structure,
-            partial(_single_q_model, (1 / 3, 0.2, 0.25), (0.0, 0.0, 1.0), (0.0, 0.5, 0.0)),
+            partial(_single_q_model, (1 / 3, 1 / 6, 0.25), (0.0, 0.0, 1.0), (0.0, 0.5, 0.0)),
         ),
         (_bcc_structure, partial(_single_q_model, (0.0, 0.0, 1 / 3), (1.0, 0.0, 0.0))),
     ],
@@ -2968,15 +3151,16 @@ def test_real_muesr_antiferromagnet_has_no_demagnetizing_field(real_muesr) -> No
 def test_real_muesr_commensurate_dipolar_field_matches_a_direct_lattice_sum(
     real_muesr, structure, model, supercell
 ) -> None:
-    (result,) = calculate_commensurate_fields(
+    results = calculate_commensurate_fields(
         structure(),
         model(),
         [_GENERAL_SITE],
         options=MagneticFieldOptions(supercell=supercell, radius=_RADIUS),
     )
 
-    expected = _direct_lattice_field(structure(), model(), _GENERAL_SITE, _RADIUS)
-    np.testing.assert_allclose(result.dipolar, expected, rtol=1e-6, atol=1e-9)
+    for result in results:
+        expected = _direct_lattice_field(structure(), model(), result.muon_position, _RADIUS)
+        np.testing.assert_allclose(result.dipolar, expected, rtol=1e-6, atol=1e-9)
 
 
 def test_real_muesr_commensurate_field_does_not_depend_on_the_supercell_size(real_muesr) -> None:
@@ -3020,7 +3204,9 @@ def _direct_contact_field(structure, model, muon_frac, coupling, nnn, rcont) -> 
     lattice = np.asarray(structure.lattice_vectors, dtype=float)
     fractional = np.asarray(structure.fractional_positions, dtype=float)
     steps = range(-3, 4)
-    offsets = np.array([(i, j, k) for i in steps for j in steps for k in steps], dtype=float)
+    offsets = np.floor(muon_frac) + np.array(
+        [(i, j, k) for i in steps for j in steps for k in steps], dtype=float
+    )
     indices = np.repeat(np.arange(len(fractional)), len(offsets))
     cells = np.tile(offsets, (len(fractional), 1))
     distances = np.linalg.norm(
@@ -3041,7 +3227,9 @@ def test_real_muesr_contact_field_follows_the_contact_shell(real_muesr, nnn, rco
         supercell=(15, 15, 15), radius=_RADIUS, contact_coupling=0.1, nnn=nnn, rcont=rcont
     )
 
-    (result,) = calculate_commensurate_fields(_structure(), model, [_GENERAL_SITE], options=options)
+    result, *_ = calculate_commensurate_fields(
+        _structure(), model, [_GENERAL_SITE], options=options
+    )
 
     expected = _direct_contact_field(_structure(), model, _GENERAL_SITE, 0.1, nnn, rcont)
     assert np.linalg.norm(expected) > 1e-3
@@ -3077,7 +3265,7 @@ def test_real_muesr_distortion_corrected_field_matches_the_distorted_lattice(rea
         _structure(), (3, 3, 3), _MU_X, {(1.0, 0.0, 0.0): (0.1, 0.0, 0.0)}
     )
 
-    (result,) = calculate_commensurate_fields(
+    result, *_ = calculate_commensurate_fields(
         _structure(),
         model,
         [_MU_X],
@@ -3157,7 +3345,9 @@ def test_real_muesr_contact_shell_matches_the_contact_field(real_muesr) -> None:
     options = MagneticFieldOptions(
         supercell=(15, 15, 15), radius=_RADIUS, contact_coupling=0.1, nnn=3, rcont=4.0
     )
-    (result,) = calculate_commensurate_fields(_structure(), model, [_GENERAL_SITE], options=options)
+    result, *_ = calculate_commensurate_fields(
+        _structure(), model, [_GENERAL_SITE], options=options
+    )
     distortion = map_muon_distortion(
         _structure(), relaxed_muon_supercell(_structure(), (4, 4, 4), _GENERAL_SITE), _GENERAL_SITE
     )
@@ -3395,8 +3585,11 @@ def test_real_muesr_commensurate_long_wavelength_field_matches_the_plane_sum(
 ) -> None:
     model = _single_q_model((0.0, 0.0, 1 / 64), moment)
 
-    (result,) = calculate_commensurate_fields(
-        _sc_structure(), model, [_SC_BODY_CENTRE], options=_sc_options(radius)
+    result, *_ = calculate_commensurate_fields(
+        _sc_structure(),
+        model,
+        [_SC_BODY_CENTRE],
+        options=_sc_options(radius, commensurate_max_period=64),
     )
 
     expected = _ab_plane_field(model, _SC_BODY_CENTRE)
@@ -3576,10 +3769,15 @@ def test_worked_example_a_type_antiferromagnet(real_muesr) -> None:
         _structure(), model, [(0.5, 0.5, 0.5), _FACE_CENTRE, _EDGE_CENTRE]
     )
 
-    for result, total in zip(results, (0.0, -0.5493, -0.8003), strict=True):
+    # Each site gives +B and, one cell along c, -B.
+    assert len(results) == 6
+    for (result, translated), total in zip(
+        zip(results[::2], results[1::2], strict=True), (0.0, -0.5493, -0.8003), strict=True
+    ):
         # The finite sphere's count of the alternating layers leaves under 0.1 mT.
         assert result.lorentz == pytest.approx((0.0, 0.0, 0.0), abs=1e-4)
         assert result.total == pytest.approx((0.0, 0.0, total), abs=_DOC_PRECISION)
+        assert translated.total == pytest.approx((0.0, 0.0, -total), abs=_DOC_PRECISION)
 
 
 # --- MnSi, the incommensurate helix worked example (tests/support/mnsi.py) ---------
@@ -3959,7 +4157,7 @@ def test_contact_distortion_warns_of_a_tie_across_the_shell_edge(
     relaxed = relaxed_muon_supercell(_structure(), (3, 3, 3), _MU_X)
     options = MagneticFieldOptions(supercell=(1, 1, 1), contact_coupling=0.1, nnn=1, rcont=2.0)
 
-    (result,) = calculate_commensurate_fields(
+    result, *_ = calculate_commensurate_fields(
         _structure(), model(), [_MU_X], options=options, distorted_structures=[relaxed]
     )
 
@@ -4082,3 +4280,538 @@ def test_the_tie_checker_of_a_commensurate_order_compares_the_summed_moments() -
     )
 
     assert check(2, 10.0) == ()
+
+
+# --- Translations of a commensurate q != 0 order ------------------------------------
+
+
+def _hand_helix_field(q_a: float, muon_frac) -> np.ndarray:
+    """The dipolar field, in T, of a helix along a in the 3 Å cubic cell, written out by hand.
+
+    One Fe per cell carries ``cos(2 pi q_a n_a) z + sin(2 pi q_a n_a) y`` mu_B, and the sum runs
+    over every Fe closer to the muon than ``_RADIUS``.
+    """
+
+    muon = 3.0 * np.asarray(muon_frac, dtype=float)
+    centre = np.floor(muon_frac).astype(int)
+    field = np.zeros(3)
+    span = range(-6, 7)
+    for i in span:
+        for j in span:
+            for k in span:
+                cell = centre + (i, j, k)
+                r = 3.0 * cell - muon
+                distance = np.linalg.norm(r)
+                if not distance < _RADIUS:
+                    continue
+                angle = 2.0 * np.pi * q_a * cell[0]
+                moment = np.array([0.0, np.sin(angle), np.cos(angle)])
+                field += (3.0 * (moment @ r) * r / distance**2 - moment) / distance**3
+    return DIPOLAR_TENSOR_T_PER_MUB_PER_ANGSTROM_MINUS3 * field
+
+
+@pytest.mark.parametrize("period", [3, 4])
+def test_real_muesr_helix_lists_one_hand_checked_field_per_translation(real_muesr, period) -> None:
+    model = _single_q_model((1.0 / period, 0.0, 0.0), (0.0, 0.0, 1.0), (0.0, 1.0, 0.0))
+
+    results = calculate_commensurate_fields(
+        _structure(),
+        model,
+        [_GENERAL_SITE],
+        options=MagneticFieldOptions(supercell=(15, 15, 15), radius=_RADIUS),
+    )
+
+    assert [result.site_label for result in results] == [
+        f"site 1 + ({n}, 0, 0)" for n in range(period)
+    ]
+    np.testing.assert_allclose(
+        [result.muon_position for result in results],
+        [np.add(_GENERAL_SITE, (n, 0, 0)) for n in range(period)],
+    )
+    dipolar = np.array([result.dipolar for result in results])
+    for row, n in zip(dipolar, range(period), strict=True):
+        expected = _hand_helix_field(1.0 / period, np.add(_GENERAL_SITE, (n, 0, 0)))
+        np.testing.assert_allclose(row, expected, rtol=1e-6, atol=1e-9)
+    assert len({round(float(np.linalg.norm(row)), 6) for row in dipolar}) > 1
+    if period == 3:
+        np.testing.assert_allclose(dipolar.sum(axis=0), 0.0, atol=1e-12)
+    else:
+        # Half a period along q reverses the moments, and so the field.
+        np.testing.assert_allclose(dipolar[2], -dipolar[0], atol=1e-12)
+        np.testing.assert_allclose(dipolar[3], -dipolar[1], atol=1e-12)
+
+
+def test_real_muesr_collinear_antiferromagnet_lists_plus_and_minus_the_field(real_muesr) -> None:
+    model = _single_q_model((0.0, 0.0, 0.5), (0.0, 0.0, 1.0))
+
+    plus, minus = calculate_commensurate_fields(
+        _structure(),
+        model,
+        [_GENERAL_SITE],
+        options=MagneticFieldOptions(supercell=(15, 15, 15), radius=_RADIUS),
+    )
+
+    assert plus.site_label == "site 1 + (0, 0, 0)"
+    assert minus.site_label == "site 1 + (0, 0, 1)"
+    assert np.linalg.norm(plus.total) > 0.1
+    np.testing.assert_allclose(minus.total, -np.asarray(plus.total), atol=1e-12)
+    assert minus.magnitude == pytest.approx(plus.magnitude)
+
+
+def test_real_muesr_period_twelve_is_listed_and_period_thirteen_is_a_distribution(
+    real_muesr,
+) -> None:
+    options = MagneticFieldOptions(supercell=(15, 15, 15), radius=_RADIUS, include_lorentz=False)
+    twelve = _single_q_model((1.0 / 12.0, 0.0, 0.0), (0.0, 0.0, 1.0), (0.0, 1.0, 0.0))
+    thirteen = _single_q_model((1.0 / 13.0, 0.0, 0.0), (0.0, 0.0, 1.0), (0.0, 1.0, 0.0))
+
+    assert classify_magnetic_model(_structure(), twelve) == "commensurate"
+    assert classify_magnetic_model(_structure(), thirteen) == "incommensurate"
+    results = calculate_commensurate_fields(_structure(), twelve, [_GENERAL_SITE], options=options)
+    assert len(results) == 12
+    for result in results:
+        expected = _direct_lattice_field(_structure(), twelve, result.muon_position, _RADIUS)
+        np.testing.assert_allclose(result.dipolar, expected, rtol=1e-6, atol=1e-9)
+    with pytest.raises(MagneticFieldError, match="received an incommensurate model"):
+        calculate_commensurate_fields(_structure(), thirteen, [_GENERAL_SITE], options=options)
+
+
+@pytest.mark.parametrize(
+    ("q", "commensurate"),
+    [
+        ((0.0, 0.0, 0.0), True),
+        ((1.0, 0.0, 0.0), True),
+        ((1.0 / 12.0, 1.0 / 12.0, 1.0 / 12.0), True),
+        # The period is the least common multiple across the axes.
+        ((1.0 / 3.0, 1.0 / 4.0, 0.0), True),
+        ((1.0 / 3.0, 1.0 / 5.0, 0.0), False),
+        ((1.0 / 13.0, 0.0, 0.0), False),
+        ((0.22, 0.0, 0.0), False),
+    ],
+    ids=["zero", "lattice-vector", "twelve", "twelve-across-axes", "fifteen", "thirteen", "fifty"],
+)
+def test_a_period_above_twelve_counts_as_incommensurate(q, commensurate) -> None:
+    assert is_commensurate_propagation_vector(q) is commensurate
+
+
+@pytest.mark.parametrize("q", [1.0 / 13.0, 0.22], ids=["period-13", "period-50"])
+def test_real_muesr_long_period_distribution_matches_the_sum_at_every_translation(
+    real_muesr, q
+) -> None:
+    model = _single_q_model((q, 0.0, 0.0), (0.0, 0.0, 1.0), (0.0, 1.0, 0.0))
+    period = 13 if q < 0.1 else 50
+
+    (result,) = calculate_incommensurate_field_distributions(
+        _structure(),
+        model,
+        [_GENERAL_SITE],
+        options=MagneticFieldOptions(supercell=(15, 15, 15), radius=_RADIUS, include_lorentz=False),
+    )
+
+    direct = np.linalg.norm(
+        [
+            _direct_lattice_field(_structure(), model, np.add(_GENERAL_SITE, (n, 0, 0)), _RADIUS)
+            for n in range(period)
+        ],
+        axis=1,
+    )
+    # |B|^2 of one q holds only the second harmonic, which equally spaced phases average exactly.
+    assert result.total_rms_T == pytest.approx(np.sqrt(np.mean(direct**2)), rel=1e-6)
+    sampled = np.linalg.norm(result.fields_T, axis=1)
+    assert sampled.min() <= direct.min() + 1e-6
+    assert sampled.max() >= direct.max() - 1e-6
+    # Every translation's field is on the sampled curve.
+    assert np.max(np.min(np.abs(direct[:, np.newaxis] - sampled[::16]), axis=1)) < 2e-3
+
+
+def _two_q_model(q_long, q_short) -> MagneticStructureModel:
+    """A helix at ``q_long`` and a collinear wave at ``q_short``, both along a, on every atom."""
+
+    return MagneticStructureModel(
+        q_basis_rlu=((q_long, 0.0, 0.0), (q_short, 0.0, 0.0), (0.0, 0.0, 0.0)),
+        components=(
+            MagneticComponent(
+                component_id="long",
+                label="Long",
+                kind="custom",
+                selector=AtomSelector.all(),
+                terms=(
+                    FourierTerm(
+                        (1.0, 0.0, 0.0),
+                        ComplexVector(real=(0.0, 0.0, 1.0), imaginary=(0.0, 1.0, 0.0)),
+                    ),
+                ),
+            ),
+            MagneticComponent(
+                component_id="short",
+                label="Short",
+                kind="custom",
+                selector=AtomSelector.all(),
+                terms=(FourierTerm((0.0, 1.0, 0.0), ComplexVector.from_vector([0.6, 0.0, 0.0])),),
+            ),
+        ),
+    )
+
+
+@pytest.mark.parametrize(
+    ("q_long", "q_short", "period"),
+    [(1.0 / 13.0, 0.25, 52), (1.0 / 24.0, 1.0 / 12.0, 24)],
+    ids=["independent", "harmonic"],
+)
+def test_real_muesr_a_short_period_beside_a_long_one_is_sampled_at_every_translation(
+    real_muesr, q_long, q_short, period
+) -> None:
+    # Period 13 with 4 meets every pair of phases over 52 cells; the harmonic at 1/12 keeps
+    # twice the phase of 1/24, so 24 cells give every field.
+    model = _two_q_model(q_long, q_short)
+    assert classify_magnetic_model(_structure(), model) == "incommensurate"
+
+    (result,) = calculate_incommensurate_field_distributions(
+        _structure(),
+        model,
+        [_GENERAL_SITE],
+        options=MagneticFieldOptions(supercell=(15, 15, 15), radius=_RADIUS, include_lorentz=False),
+    )
+
+    direct = np.array(
+        [
+            _direct_lattice_field(_structure(), model, np.add(_GENERAL_SITE, (n, 0, 0)), _RADIUS)
+            for n in range(period)
+        ]
+    )
+    sampled = np.asarray(result.fields_T)
+    # A harmonic rides on the continuous phase; any other short period has its own exact phases.
+    harmonic = period == 24
+    assert result.calculation_parameters["listed_phase_q_rlu"] == (
+        [] if harmonic else [[q_short, 0.0, 0.0]]
+    )
+    # The short wave averages to zero over its translations, as over the direct ones.
+    np.testing.assert_allclose(sampled.mean(axis=0), direct.mean(axis=0), atol=1e-6)
+    assert result.total_rms_T == pytest.approx(
+        np.sqrt(np.mean(np.sum(direct**2, axis=1))), rel=1e-6
+    )
+    # Every translation's field vector is one of the samples.
+    nearest = [np.min(np.linalg.norm(sampled - row, axis=1)) for row in direct]
+    assert max(nearest) < 2e-3
+
+
+def _three_q_helix_model(q: float) -> MagneticStructureModel:
+    return MagneticStructureModel(
+        q_basis_rlu=((q, 0.0, 0.0), (0.0, q, 0.0), (0.0, 0.0, q)),
+        components=(
+            _helix("q1", (1.0, 0.0, 0.0)),
+            _helix("q2", (0.0, 1.0, 0.0)),
+            _helix("q3", (0.0, 0.0, 1.0)),
+        ),
+    )
+
+
+def test_real_muesr_too_many_phase_sets_to_list_are_a_distribution_over_all_of_them(
+    real_muesr,
+) -> None:
+    # Three helices of period 9 give 729 phase sets, more than the 512 a list holds.
+    model = _three_q_helix_model(1.0 / 9.0)
+    options = MagneticFieldOptions(supercell=(15, 15, 15), radius=_RADIUS, include_lorentz=False)
+
+    assert classify_magnetic_model(_structure(), model) == "incommensurate"
+    (result,) = calculate_incommensurate_field_distributions(
+        _structure(), model, [_GENERAL_SITE], options=options
+    )
+
+    direct = np.array(
+        [
+            _direct_lattice_field(_structure(), model, np.add(_GENERAL_SITE, (a, b, c)), _RADIUS)
+            for a in range(9)
+            for b in range(9)
+            for c in range(9)
+        ]
+    )
+    sampled = np.asarray(result.fields_T)
+    # Every phase set once: the samples are the direct fields, in some order.
+    assert sampled.shape == direct.shape
+    np.testing.assert_allclose(
+        np.sort(np.linalg.norm(sampled, axis=1)),
+        np.sort(np.linalg.norm(direct, axis=1)),
+        rtol=1e-6,
+        atol=1e-9,
+    )
+    assert result.calculation_parameters["resolved_phase_sampling"] == "grid"
+
+
+def _explicit_magnetic_supercell(
+    structure, model, repeats
+) -> tuple[Structure, MagneticStructureModel]:
+    """The host repeated ``repeats`` times, each moment written out as its own q = 0 component."""
+
+    positions, moments, atoms = moments_in_supercell(structure, model, repeats)
+    lattice = np.diag(repeats) @ np.asarray(structure.lattice_vectors, dtype=float)
+    supercell = Structure(
+        label="explicit",
+        lattice_vectors=lattice.tolist(),
+        species=[structure.species[atom] for atom in atoms],
+        fractional_positions=(positions @ np.linalg.inv(lattice)).tolist(),
+    )
+    components = tuple(
+        MagneticComponent(
+            component_id=f"ion {index}",
+            label=f"Ion {index}",
+            kind="custom",
+            selector=AtomSelector.indices((index,)),
+            terms=(FourierTerm((0.0, 0.0, 0.0), ComplexVector.from_vector(moment.tolist())),),
+        )
+        for index, moment in enumerate(moments)
+        if np.any(moment)
+    )
+    return supercell, MagneticStructureModel(components=components)
+
+
+@pytest.mark.parametrize(
+    ("q", "repeats"),
+    [((0.25, 0.25, 0.25), (4, 4, 4)), ((0.5, 0.5, 0.5), (2, 2, 2))],
+    ids=["period-4", "period-2"],
+)
+def test_real_muesr_mnsi_helix_translations_match_its_explicit_magnetic_supercell(
+    real_muesr, q, repeats
+) -> None:
+    # The MnSi worked example's helix, contact shell and site, at a short period. The supercell has
+    # no wavevector and no translations: the backend sums every moment where it stands.
+    radius = 30.0
+    model = mnsi_helix(q=q)
+    results = calculate_commensurate_fields(
+        mnsi_structure(),
+        model,
+        [MNSI_SITE_II],
+        options=mnsi_options(find_equivalent_sites=False, radius=radius, supercell=(16, 16, 16)),
+    )
+    assert len(results) == repeats[0]
+    supercell, explicit = _explicit_magnetic_supercell(mnsi_structure(), model, repeats)
+
+    cells = int(2 * radius / (mnsi_structure().lattice_vectors[0][0] * repeats[0])) + 3
+    sites = [np.asarray(result.muon_position) / repeats for result in results]
+    references = calculate_commensurate_fields(
+        supercell,
+        explicit,
+        sites,
+        options=mnsi_options(find_equivalent_sites=False, radius=radius, supercell=(cells,) * 3),
+    )
+
+    assert len(references) == len(results)
+    for result, reference in zip(results, references, strict=True):
+        np.testing.assert_allclose(result.dipolar, reference.dipolar, rtol=1e-6, atol=1e-7)
+        np.testing.assert_allclose(result.contact, reference.contact, rtol=1e-6, atol=1e-7)
+        # The sphere's count of the ions leaves the Lorentz terms under 1 mT at this radius.
+        np.testing.assert_allclose(result.total, reference.total, atol=1e-3)
+        direct = _direct_lattice_field(mnsi_structure(), model, result.muon_position, radius)
+        np.testing.assert_allclose(result.dipolar, direct, rtol=1e-6, atol=1e-7)
+
+
+def test_real_muesr_mnsi_distribution_matches_the_direct_sum_over_translations(real_muesr) -> None:
+    # The worked example itself, q = 0.0147: translations along a sweep the helix's phase.
+    radius = 15.0
+    (result,) = calculate_incommensurate_field_distributions(
+        mnsi_structure(),
+        mnsi_helix(),
+        [MNSI_SITE_II],
+        options=MagneticFieldOptions(radius=radius, supercell=(10, 10, 10), include_lorentz=False),
+    )
+
+    direct = np.linalg.norm(
+        [
+            _direct_lattice_field(
+                mnsi_structure(), mnsi_helix(), np.add(MNSI_SITE_II, (n, 0, 0)), radius
+            )
+            for n in range(0, 68)
+        ],
+        axis=1,
+    )
+    sampled = np.linalg.norm(result.fields_T, axis=1)
+    assert sampled.mean() == pytest.approx(direct.mean(), abs=5e-4)
+    assert sampled.min() == pytest.approx(direct.min(), abs=5e-4)
+    assert sampled.max() == pytest.approx(direct.max(), abs=5e-4)
+
+
+_GD_SITE = (0.37, 0.12, 0.07)
+
+
+def _gdru2si2() -> Structure:
+    """The conventional I4/mmm cell of the GdRu2Si2 worked example."""
+
+    z = 0.3682
+    return Structure(
+        label="GdRu2Si2",
+        lattice_vectors=[[4.1634, 0.0, 0.0], [0.0, 4.1634, 0.0], [0.0, 0.0, 9.6102]],
+        species=["Gd", "Gd", "Ru", "Ru", "Ru", "Ru", "Si", "Si", "Si", "Si"],
+        fractional_positions=[
+            [0.0, 0.0, 0.0],
+            [0.5, 0.5, 0.5],
+            [0.0, 0.5, 0.25],
+            [0.5, 0.0, 0.25],
+            [0.0, 0.5, 0.75],
+            [0.5, 0.0, 0.75],
+            [0.0, 0.0, z],
+            [0.0, 0.0, 1.0 - z],
+            [0.5, 0.5, 0.5 + z],
+            [0.5, 0.5, 0.5 - z],
+        ],
+    )
+
+
+def _gd_double_q_model(q: float) -> MagneticStructureModel:
+    """Two perpendicular Gd helices at (q, 0, 0) and (0, q, 0), a double-q order."""
+
+    def helix(name, q_coeff, real, imaginary):
+        return MagneticComponent(
+            component_id=name,
+            label=name,
+            kind="custom",
+            selector=AtomSelector.species("Gd"),
+            terms=(
+                FourierTerm(q_coeff, ComplexVector(real=tuple(real), imaginary=tuple(imaginary))),
+            ),
+        )
+
+    return MagneticStructureModel(
+        q_basis_rlu=((q, 0.0, 0.0), (0.0, q, 0.0), (0.0, 0.0, 0.0)),
+        components=(
+            helix("q1", (1.0, 0.0, 0.0), (0.0, 0.0, 5.0), (0.0, 5.0, 0.0)),
+            helix("q2", (0.0, 1.0, 0.0), (0.0, 0.0, 5.0), (5.0, 0.0, 0.0)),
+        ),
+    )
+
+
+def test_real_muesr_double_q_lists_every_pair_of_phases_with_one_contact_shell(real_muesr) -> None:
+    model = _gd_double_q_model(0.25)
+    contact = {"contact_coupling": 0.1, "nnn": 3, "rcont": 10.0}
+
+    results = calculate_commensurate_fields(
+        _gdru2si2(),
+        model,
+        [_GD_SITE],
+        options=MagneticFieldOptions(supercell=(8, 8, 4), radius=_RADIUS, **contact),
+    )
+
+    assert len(results) == 16
+    assert {result.site_label for result in results} == {
+        f"site 1 + ({a}, {b}, 0)" for a in range(4) for b in range(4)
+    }
+    # The contact shell holds magnetic ions only, so the direct mean sees the Gd alone.
+    gd_only = Structure(
+        label="Gd",
+        lattice_vectors=_gdru2si2().lattice_vectors,
+        species=["Gd", "Gd"],
+        fractional_positions=_gdru2si2().fractional_positions[:2],
+    )
+    for result in results:
+        np.testing.assert_allclose(
+            result.dipolar,
+            _direct_lattice_field(_gdru2si2(), model, result.muon_position, _RADIUS),
+            rtol=1e-6,
+            atol=1e-8,
+        )
+        np.testing.assert_allclose(
+            result.contact,
+            _direct_contact_field(gd_only, model, result.muon_position, 0.1, 3, 10.0),
+            rtol=1e-6,
+            atol=1e-8,
+        )
+
+
+def test_real_muesr_long_period_double_q_samples_both_phases(real_muesr) -> None:
+    q = 1.0 / 13.0
+    model = _gd_double_q_model(q)
+
+    assert classify_magnetic_model(_gdru2si2(), model) == "incommensurate"
+    (result,) = calculate_incommensurate_field_distributions(
+        _gdru2si2(),
+        model,
+        [_GD_SITE],
+        options=MagneticFieldOptions(
+            supercell=(8, 8, 4), radius=_RADIUS, include_lorentz=False, phase_sample_count=40_000
+        ),
+    )
+
+    assert len(result.calculation_parameters["phase_basis_rlu"]) == 2
+    direct = np.array(
+        [
+            _direct_lattice_field(_gdru2si2(), model, np.add(_GD_SITE, (a, b, 0)), _RADIUS)
+            for a in range(13)
+            for b in range(13)
+        ]
+    )
+    assert result.total_rms_T == pytest.approx(
+        np.sqrt(np.mean(np.sum(direct**2, axis=1))), rel=1e-3
+    )
+
+
+def test_a_uniform_order_takes_one_lattice_sum_and_lists_one_row(monkeypatch) -> None:
+    calls: list[object] = []
+
+    def _locfield(sample, *_args, **_kwargs):
+        calls.append(sample.mm.k)
+        return [_Field(Dipolar=(0, 0, 1), Lorentz=(0, 0, 0), Contact=(0, 0, 0))]
+
+    _install_fake_muesr(monkeypatch, locfield=_locfield)
+
+    (result,) = calculate_commensurate_fields(
+        _structure(), _model(), [_SITE_A], options=MagneticFieldOptions(supercell=(1, 1, 1))
+    )
+
+    assert len(calls) == 1
+    assert result.site_label == "A"
+    assert result.dipolar == (0.0, 0.0, 1.0)
+
+
+@pytest.mark.parametrize(("q", "sums"), [(0.5, 1), (0.25, 2), (1.0 / 3.0, 2)])
+def test_a_modulated_order_needs_the_second_sum_only_when_a_phase_can_read_it(
+    monkeypatch, q, sums
+) -> None:
+    calls: list[object] = []
+
+    def _locfield(sample, *_args, **_kwargs):
+        calls.append(sample.mm.k)
+        return [_Field(Dipolar=(0, 0, 1), Lorentz=(0, 0, 0), Contact=(0, 0, 0))]
+
+    _install_fake_muesr(monkeypatch, locfield=_locfield)
+
+    calculate_commensurate_fields(
+        _structure(),
+        _model([q, 0.0, 0.0]),
+        [_SITE_A],
+        options=MagneticFieldOptions(supercell=(1, 1, 1)),
+    )
+
+    assert len(calls) == sums
+
+
+def test_equivalent_sites_and_translations_multiply(monkeypatch) -> None:
+    _install_fake_muesr(monkeypatch, locfield=_fields_per_muon(Dipolar=(0, 0, 1)))
+
+    results = calculate_commensurate_fields(
+        _structure(),
+        _model([0.0, 0.0, 0.5]),
+        [MuonSite(label="Mu", initial_fractional_position=[0.25, 0.25, 0.25])],
+        options=MagneticFieldOptions(supercell=(1, 1, 1), find_equivalent_sites=True),
+    )
+
+    assert len(results) == 16
+    assert results[0].site_label == "Mu equiv 1 + (0, 0, 0)"
+    assert results[1].site_label == "Mu equiv 1 + (0, 0, 1)"
+    assert len({result.site_label for result in results}) == 16
+
+
+def test_too_many_translations_are_refused_by_name(monkeypatch) -> None:
+    _install_fake_muesr(monkeypatch, locfield=_phase_recording_locfield)
+    q = 1.0 / 9.0
+    model = MagneticStructureModel(
+        q_basis_rlu=((q, 0.0, 0.0), (0.0, q, 0.0), (0.0, 0.0, q)),
+        components=(
+            _helix("q1", (1.0, 0.0, 0.0)),
+            _helix("q2", (0.0, 1.0, 0.0)),
+            _helix("q3", (0.0, 0.0, 1.0)),
+        ),
+    )
+
+    with pytest.raises(MagneticFieldError, match="more than 512 inequivalent translations"):
+        calculate_commensurate_fields(
+            _structure(), model, [_SITE_A], options=MagneticFieldOptions(supercell=(1, 1, 1))
+        )

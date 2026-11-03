@@ -56,6 +56,8 @@ from mufinder.services.magnetic_field_results import (
     OLDER_METHOD_RESULTS_NOTE,
     PLATE_METHOD_VERSION,
     PLATE_METHOD_VERSION_KEY,
+    TRANSLATION_METHOD_VERSION,
+    TRANSLATION_METHOD_VERSION_KEY,
     field_result_uses_older_method,
     attach_magnetic_field_results,
     magnetic_field_result,
@@ -85,6 +87,7 @@ from tests.support.magnetic_field_sites import (
     uep_search_document,
 )
 from tests.support.magnetic_fields import (
+    collinear_waves_model,
     coo_structure,
     custom_muon_site,
     photo_plate_sample,
@@ -1447,6 +1450,125 @@ def test_a_stored_result_with_no_plate_stays_current_and_a_fresh_one_records_no_
     assert page._older_method_note.isHidden()
     assert PLATE_METHOD_VERSION_KEY not in page.collect_state()["magnetic_field_results"]
     page.close()
+
+
+def test_a_stored_one_translation_result_reads_as_older_and_only_it(
+    qapp, tmp_path, monkeypatch
+) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "translations.mufinder", "Translations")
+    service.add_structure(document, feo_host_structure())
+    page = _calculating_widget(document, monkeypatch)
+    uniform = _stored_field_state()
+    page.set_form_state({"magnetic_field_results": uniform})
+    assert page._older_method_note.isHidden()
+
+    row = {
+        **uniform["results"][0],
+        "calculation_parameters": {"modulated": True},
+    }
+    page.set_form_state({"magnetic_field_results": {**uniform, "results": [row]}})
+    assert not page._older_method_note.isHidden()
+    assert page._older_method_note.text() == OLDER_METHOD_RESULTS_NOTE
+    page.close()
+
+
+def test_fresh_q_results_record_the_translation_method_and_q_zero_results_do_not(
+    qapp, tmp_path, monkeypatch
+) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "fresh.mufinder", "Fresh")
+    service.add_structure(document, feo_host_structure())
+    page = _calculating_widget(document, monkeypatch)
+    payload = {"site_label": "Mu", "calculation_parameters": {"modulated": True}}
+
+    state = page._field_results_to_state("commensurate", [payload], site_source="custom")
+    assert state[TRANSLATION_METHOD_VERSION_KEY] == TRANSLATION_METHOD_VERSION
+    plain = {"site_label": "Mu", "calculation_parameters": {"modulated": False}}
+    assert TRANSLATION_METHOD_VERSION_KEY not in page._field_results_to_state(
+        "commensurate", [plain], site_source="custom"
+    )
+    # Every distribution records it: a short-period component's phases are sampled since then.
+    distribution = page._field_results_to_state("distribution", [payload], site_source="custom")
+    assert distribution[TRANSLATION_METHOD_VERSION_KEY] == TRANSLATION_METHOD_VERSION
+    page.close()
+
+
+def test_a_distribution_stored_as_factors_restores_its_row(qapp, tmp_path) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "factors.mufinder", "Factors")
+    service.add_structure(document, feo_host_structure())
+    page = MagneticFieldWidget()
+    page.set_document(document)
+    page.set_form_state(
+        {
+            "magnetic_field_results": {
+                "kind": "distribution",
+                "results": [
+                    {
+                        "site_label": "site 1",
+                        "muon_position": [0.1, 0.2, 0.3],
+                        "fields_T_factors": {
+                            "continuous_T": [[0.0, 0.0, 1.0], [0.0, 0.0, 3.0]],
+                            "listed_T": [[0.0, 0.0, 0.5], [0.0, 0.0, -0.5]],
+                        },
+                        "histogram_centres_T": [1.0, 3.0],
+                        "histogram_counts": [2.0, 2.0],
+                    }
+                ],
+                "site_source": "custom",
+                CALCULATION_VERSION_KEY: CALCULATION_METHOD_VERSION,
+            }
+        }
+    )
+
+    assert page._result_table.rowCount() == 1
+    np.testing.assert_allclose(
+        page._distribution_results[0].fields_T,
+        [[0.0, 0.0, 1.5], [0.0, 0.0, 0.5], [0.0, 0.0, 3.5], [0.0, 0.0, 2.5]],
+    )
+    # The row shows the mean of every sample, as for a distribution stored sample by sample.
+    cells = [
+        page._result_table.item(0, column) for column in range(page._result_table.columnCount())
+    ]
+    assert [cell.text() for cell in cells[1:5]] == ["0", "0", "2", "2"]
+    page.close()
+
+
+def test_a_stored_distribution_reads_as_older_when_its_model_has_a_short_period(
+    qapp, tmp_path, monkeypatch
+) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "frozen.mufinder", "Frozen")
+    service.add_structure(document, feo_host_structure())
+    distribution = {
+        "kind": "distribution",
+        "results": [
+            {
+                "site_label": "site 1",
+                "muon_position": [0.1, 0.2, 0.3],
+                "fields_T": [[0.0, 0.0, 1.0], [0.0, 0.0, 3.0]],
+                "histogram_centres_T": [1.0, 3.0],
+                "histogram_counts": [4.0, 2.0],
+                "calculation_parameters": {"commensurate_max_period": 12},
+            }
+        ],
+        "site_source": "custom",
+        CALCULATION_VERSION_KEY: CALCULATION_METHOD_VERSION,
+    }
+    older = {}
+    for name, model in (
+        ("helix", collinear_waves_model((0.22, 0.0, 0.0))),
+        ("beside a quarter", collinear_waves_model((0.22, 0.0, 0.0), (0.25, 0.0, 0.0))),
+    ):
+        page = MagneticFieldWidget()
+        page.set_document(document)
+        page.set_model(model)
+        page.set_form_state({"magnetic_field_results": distribution})
+        older[name] = not page._older_method_note.isHidden()
+        page.close()
+
+    assert older == {"helix": False, "beside a quarter": True}
 
 
 def test_a_voxel_grid_result_stays_older_through_a_save_until_it_is_calculated(
