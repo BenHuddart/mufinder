@@ -403,6 +403,7 @@ def _phonon_rows(document: ProjectDocument) -> dict[str, Job]:
 
     jobs: dict[str, Job] = {}
     mapping: dict[str, str] = {}
+    source_runs: dict[str, str] = {}
     for candidate in eligible_quantum_source_candidates(document):
         job = Job(
             label=f"phonon_{candidate.site.label}",
@@ -412,10 +413,14 @@ def _phonon_rows(document: ProjectDocument) -> dict[str, Job]:
         document.jobs[job.id] = job
         jobs[candidate.site.label] = job
         mapping[candidate.key] = str(job.id)
+        source_runs[candidate.key] = str(candidate.run.id)
     definition = CalculationDefinition(
         workflow_stage=WorkflowStage.QUANTUM_CORRECTIONS,
         calc_type=QUANTUM_PHONON_SET_CALC_TYPE,
-        parameters={"phonon_job_ids_by_label": mapping},
+        parameters={
+            "phonon_job_ids_by_label": mapping,
+            "phonon_source_run_ids_by_label": source_runs,
+        },
     )
     document.calculations[definition.id] = definition
     return jobs
@@ -648,7 +653,10 @@ def test_a_row_run_in_a_newer_definition_replaces_its_older_zpe(document, servic
             "phonon_job_ids_by_label": {
                 key: (str(uuid4()) if job_id == str(jobs["B"].id) else job_id)
                 for key, job_id in definition.parameters["phonon_job_ids_by_label"].items()
-            }
+            },
+            "phonon_source_run_ids_by_label": definition.parameters[
+                "phonon_source_run_ids_by_label"
+            ],
         },
     )
     document.calculations[newer.id] = newer
@@ -658,3 +666,153 @@ def test_a_row_run_in_a_newer_definition_replaces_its_older_zpe(document, servic
     record = _actions(document, "quantum_corrected")[-1]
     assert [row["site_label"] for row in record.parameters["comparison"]] == ["A"]
     assert record.parameters["ordering_changed"] is None
+
+
+def _move_on_relaxation(document: ProjectDocument, label: str) -> None:
+    """Record that site ``label``'s phonon inputs were written from an earlier relaxation run."""
+
+    definition = max(document.calculations.values(), key=lambda item: item.created_at)
+    site = next(site for site in document.sites.values() if site.label == label)
+    definition.parameters["phonon_source_run_ids_by_label"][str(site.id)] = str(uuid4())
+
+
+def _sites_a_and_b(document: ProjectDocument) -> dict[str, Job]:
+    """Sites A and B at dE 0 and +0.257, the numbers the Quantum Corrections tests hand-check."""
+
+    add_relaxed_muon_site(document, label="A", total_energy=-100.0)
+    add_relaxed_muon_site(document, label="B", total_energy=-99.743)
+    return _phonon_rows(document)
+
+
+def test_a_zpe_from_an_earlier_relaxation_stays_out_of_the_comparison(document, service) -> None:
+    """Hand-checked: without A, B alone is compared, so it is the zero and nothing is ordered."""
+
+    jobs = _sites_a_and_b(document)
+    _move_on_relaxation(document, "A")
+
+    _finish_phonon(document, service, jobs["A"], 0.558)
+    _finish_phonon(document, service, jobs["B"], 0.654)
+
+    first, second = _actions(document, "quantum_corrected")
+    assert first.parameters["zpe_mark"] == "earlier"
+    assert "earlier geometry" in first.parameters["ranking_notes"][0]
+    assert first.parameters["comparison"] == []
+    assert first.parameters["ordering_changed"] is None
+    assert [row["site_label"] for row in second.parameters["comparison"]] == ["B"]
+    assert second.parameters["comparison"][0]["corrected_energy_eV"] == 0.0
+    assert second.parameters["not_ranked"] == ["A (earlier)"]
+    assert second.parameters["ordering_changed"] is None
+
+
+def test_a_site_outside_the_ranking_says_nothing_about_the_order_of_the_others(
+    document, service
+) -> None:
+    add_relaxed_muon_site(document, label="C", total_energy=-99.5)
+    jobs = _sites_a_and_b(document)
+    _finish_phonon(document, service, jobs["A"], 0.558)
+    _finish_phonon(document, service, jobs["B"], 0.654)
+    _move_on_relaxation(document, "C")
+
+    _finish_phonon(document, service, jobs["C"], 0.7)
+
+    record = _actions(document, "quantum_corrected")[-1]
+    assert [row["site_label"] for row in record.parameters["comparison"]] == ["A", "B"]
+    assert record.parameters["ordering_changed"] is None
+
+
+def test_a_zpe_with_no_record_of_its_relaxation_stays_out_of_the_comparison(
+    document, service
+) -> None:
+    jobs = _sites_a_and_b(document)
+    next(iter(document.calculations.values())).parameters["phonon_source_run_ids_by_label"] = {}
+
+    _finish_phonon(document, service, jobs["A"], 0.558)
+
+    record = _actions(document, "quantum_corrected")[-1]
+    assert record.parameters["zpe_mark"] == "unconfirmed"
+    assert record.parameters["comparison"] == []
+
+
+def test_a_saddle_cannot_set_the_zero_of_the_comparison(document, service) -> None:
+    """Hand-checked: A's sum -99.442 is the zero, so saddle B at -99.743 + 0.100 reads -0.201.
+
+    The saddle's total leaves a mode out, so before this rule B was the zero and A read +0.201.
+    """
+
+    jobs = _sites_a_and_b(document)
+    _finish_phonon(document, service, jobs["A"], 0.558)
+    _finish(
+        document,
+        service,
+        jobs["B"],
+        {
+            "muon_zpe_total_eV": 0.1,
+            "muon_zpe_modes": [{"frequency_cm": -300.0}],
+            "phonon_warnings": ["Selected muon-dominated modes include non-positive frequencies."],
+        },
+        QUANTUM_PHONON_CALC_TYPE,
+    )
+
+    record = _actions(document, "quantum_corrected")[-1]
+    by_label = {row["site_label"]: row for row in record.parameters["comparison"]}
+    assert by_label["A"]["corrected_energy_eV"] == 0.0
+    assert by_label["A"]["warned"] is False
+    assert by_label["B"]["corrected_energy_eV"] == pytest.approx(-0.201)
+    assert by_label["B"]["warned"] is True
+    assert by_label["B"]["relative_energy_eV"] == pytest.approx(0.257)
+    assert record.parameters["ordering_changed"] is True
+
+
+def test_a_comparison_of_only_saddles_takes_its_zero_from_them_and_says_so(
+    document, service
+) -> None:
+    jobs = _sites_a_and_b(document)
+    for label, zpe in (("A", 0.558), ("B", 0.654)):
+        _finish(
+            document,
+            service,
+            jobs[label],
+            {"muon_zpe_total_eV": zpe, "muon_zpe_modes": [{"frequency_cm": -300.0}]},
+            QUANTUM_PHONON_CALC_TYPE,
+        )
+
+    record = _actions(document, "quantum_corrected")[-1]
+    assert [row["corrected_energy_eV"] for row in record.parameters["comparison"]] == [
+        0.0,
+        pytest.approx(0.353),
+    ]
+    assert "zero is the lowest of them" in record.parameters["ranking_notes"][0]
+
+
+def test_a_finding_already_written_keeps_the_numbers_it_was_written_with(document, service) -> None:
+    jobs = _sites_a_and_b(document)
+    _finish_phonon(document, service, jobs["A"], 0.558)
+    _finish_phonon(document, service, jobs["B"], 0.654)
+    written = _actions(document, "quantum_corrected")[-1]
+    numbers = [row["corrected_energy_eV"] for row in written.parameters["comparison"]]
+
+    _move_on_relaxation(document, "A")
+    document_records = _actions(document, "quantum_corrected")
+
+    assert document_records[-1] is written
+    assert [row["corrected_energy_eV"] for row in written.parameters["comparison"]] == numbers
+    assert numbers == [0.0, pytest.approx(0.353)]
+
+
+def test_a_rerun_that_brings_the_zpe_into_the_ranking_is_a_new_finding_the_same_day(
+    document, service
+) -> None:
+    jobs = _sites_a_and_b(document)
+    definition = next(iter(document.calculations.values()))
+    site = next(site for site in document.sites.values() if site.label == "A")
+    current_run = definition.parameters["phonon_source_run_ids_by_label"][str(site.id)]
+    _move_on_relaxation(document, "A")
+    _finish_phonon(document, service, jobs["A"], 0.558)
+
+    definition.parameters["phonon_source_run_ids_by_label"][str(site.id)] = current_run
+    _finish_phonon(document, service, jobs["A"], 0.558)
+
+    first, second = _actions(document, "quantum_corrected")
+    assert first.parameters["zpe_mark"] == "earlier"
+    assert second.parameters["zpe_mark"] == ""
+    assert [row["site_label"] for row in second.parameters["comparison"]] == ["A"]

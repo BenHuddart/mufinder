@@ -22,8 +22,10 @@ from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationRun, Job, Result, Structure
 from mufinder.science.quantum_phonons import mode_width_angstrom
 from mufinder.services.job_artifacts import ParsedJobArtifacts, collect_job_artifacts
+from mufinder.services.job_findings import record_job_finding
 from mufinder.services.job_paths import job_output_directory
 from mufinder.services.project_service import ProjectDocument, ProjectService
+from mufinder.services.project_survey import survey_layers
 from mufinder.services.source_candidates import quantum_seed_name_for_key
 from mufinder.workflow.quantum import QUANTUM_PHONON_CALC_TYPE, QUANTUM_SINGLEPOINT_CALC_TYPE
 
@@ -411,6 +413,68 @@ def test_a_group_of_only_saddles_falls_back_to_them_and_says_so(tmp_path: Path) 
     assert rows[key_b].corrected_energy == "+0.353"
     for key in (key_a, key_b):
         assert any("zero is the lowest of them" in note for note in rows[key].notes)
+
+
+def _ranked_in_each_view(document, controller, job) -> tuple[dict, dict, dict]:
+    """Each site's ``dE + ZPE`` as the table, the Journal and the survey state it."""
+
+    table = {
+        row.label: float(row.corrected_energy)
+        for row in _rows_by_key(controller).values()
+        if row.corrected_energy != "–"
+    }
+    result = next(
+        result
+        for result in document.results.values()
+        if result.result_type == QUANTUM_PHONON_CALC_TYPE
+        and document.runs[result.calculation_run_id].job_id == job.id
+    )
+    assert record_job_finding(document, job, result)
+    record = next(r for r in reversed(document.provenance) if r.action == "quantum_corrected")
+    journal = {
+        row["site_label"]: round(row["corrected_energy_eV"], 3)
+        for row in record.parameters["comparison"]
+    }
+    (layer,) = survey_layers(document, "quantum_corrections")
+    survey = {
+        marker.detail.split(" · ")[0]: float(marker.detail.split("dE + ZPE ")[1].split(" eV")[0])
+        for marker in layer.markers
+        if "dE + ZPE" in marker.detail
+    }
+    return table, journal, survey
+
+
+def test_a_stale_zpe_gives_the_same_ranking_in_the_table_the_journal_and_the_survey(
+    tmp_path: Path,
+) -> None:
+    """Hand-checked: A's run moves on, so B alone is ranked, and is the zero."""
+
+    service = ProjectService()
+    document, definition, controller, key_a, _key_b, job_b = _two_sites_with_results(
+        service, tmp_path
+    )
+    definition.parameters["phonon_source_run_ids_by_label"][key_a] = str(uuid4())
+
+    table, journal, survey = _ranked_in_each_view(document, controller, job_b)
+
+    assert table == journal == survey == {"siteB": 0.0}
+
+
+def test_a_flagged_saddle_gives_the_same_ranking_in_the_table_the_journal_and_the_survey(
+    tmp_path: Path,
+) -> None:
+    """Hand-checked: A's sum -99.442 is the zero, so saddle B at -99.743 + 0.100 reads -0.201."""
+
+    service = ProjectService()
+    document, _definition, controller, _key_a, _key_b, job_b = _two_sites_with_results(
+        service,
+        tmp_path,
+        data_b={"muon_zpe_total_eV": 0.1, "muon_zpe_modes": [{"frequency_cm": -300.0}]},
+    )
+
+    table, journal, survey = _ranked_in_each_view(document, controller, job_b)
+
+    assert table == journal == survey == {"siteA": 0.0, "siteB": -0.201}
 
 
 def test_quantum_controller_keeps_a_row_for_a_result_whose_site_is_gone(tmp_path: Path) -> None:
