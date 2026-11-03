@@ -164,14 +164,15 @@ the final iteration between the two endpoints.
 .. figure:: ../../_generated/screenshots/gdru2si2_neb_analysis.webp
    :alt: The Energy Barriers page with the site 1 to site 2 path selected: a
          forward barrier of 495 meV, a reverse barrier of 213 meV and a Delta E
-         of +283 meV in its row, and the energy profile with image 23 of 42,
+         of +283 meV in its row, and the reaction profile with image 23 of 42,
          the transition state, in the viewer.
 
    The paper's NEB band, with its highest image, 23 of 42, in the viewer.
 
-The band rises 0.495 eV above site 1, at reaction coordinate 0.63, and falls to
-site 2, which it places 0.283 eV above site 1; the reverse barrier, from site 2
-back to site 1, is 0.213 eV. Site 2 is higher here than in Table SI (0.26 eV)
+The band rises 0.495 eV above site 1, 1.26 Å along its 2.02 Å (reaction coordinate
+0.63), and falls to site 2, which it places 0.283 eV above site 1; the reverse barrier,
+from site 2 back to site 1, is 0.213 eV. Those distances count every atom's movement;
+the hop itself is 1.72 Å. Site 2 is higher here than in Table SI (0.26 eV)
 because the band used the 3 × 3 × 3 grid. By symmetry the second half of the
 1 → 1′ path mirrors the first, so the whole profile is 1 → 2 → 1′: up 0.495 eV,
 down into the shallow well of site 2, and up and over the same barrier again.

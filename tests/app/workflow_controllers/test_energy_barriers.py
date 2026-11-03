@@ -27,6 +27,7 @@ from mufinder.castep_io.output_parser import CastepResult
 from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationRun, Job
 from mufinder.services.job_artifacts import ParsedJobArtifacts, collect_job_artifacts
+from mufinder.services.job_file_cleanup import JobCleanupOutcome
 from mufinder.services.project_service import ProjectDocument, ProjectService
 from mufinder.domain.models import CalculationDefinition as _CalculationDefinition
 from mufinder.domain.models import MuonSite as _MuonSite
@@ -105,7 +106,8 @@ def _stub_energy_barriers_deps(**overrides) -> EnergyBarriersDeps:
         handle_site_host_mismatch=lambda _mismatch: True,
         show_warning=lambda _title, _text: None,
         dialog_parent=lambda: None,
-        clean_up_removed_jobs=lambda _plan, **_labels: True,
+        clean_up_removed_jobs=lambda _plan, **_labels: JobCleanupOutcome(),
+        report_cleanup_outcome=lambda _done, _outcome: None,
         paths_removed=lambda: None,
     )
     base.update(overrides)
@@ -333,6 +335,11 @@ def test_energy_barriers_show_path_shows_the_hop_until_a_band_exists(tmp_path: P
     band = view.neb_previews[-1]
     assert band["title"] == "siteA → siteB  ·  2.5 Å  ·  7 images"
     assert band["image_rows"][1].label == "Image 2"
+    # The fixture's band moves one atom 1.568 Å in six equal steps.
+    assert band["image_rows"][1].distance == "0.261 Å"
+    assert band["image_rows"][-1].distance_value == pytest.approx(1.5681, abs=5e-5)
+    assert band["image_rows"][0].energy == "0 meV"
+    assert band["image_rows"][3].energy == "+121 meV"
 
     controller.show_path("")
     assert view.cleared_previews[-1] is None
@@ -358,6 +365,17 @@ def test_energy_barriers_show_path_says_why_it_cannot_show_a_path(tmp_path: Path
     (tmp_path / "gone.ts").write_text("not a band", encoding="utf-8")
     controller.show_path("source-key")
     assert view.cleared_previews[-1] == "siteA → siteB: the band file could not be read"
+
+    # The last image of the band has another cell, so no distance along the band exists.
+    lines = _NEB_TS_FIXTURE.read_text(encoding="utf-8").splitlines()
+    last_cell_line = max(index for index, line in enumerate(lines) if "<-- h" in line)
+    first_value = lines[last_cell_line].split()[0]
+    lines[last_cell_line] = lines[last_cell_line].replace(first_value, "9.00000000E+000", 1)
+    (tmp_path / "gone.ts").write_text("\n".join(lines), encoding="utf-8")
+    controller.show_path("source-key")
+    assert view.cleared_previews[-1] == (
+        "siteA → siteB: The band's images must share the same simulation cell."
+    )
 
 
 def test_energy_barriers_endpoints_sharing_a_label_name_their_job(tmp_path: Path) -> None:
@@ -471,9 +489,9 @@ def test_energy_barriers_remove_paths_stops_when_file_cleanup_is_cancelled(tmp_p
     plans: list[list] = []
     removed: list[bool] = []
 
-    def cancel(plan, **_labels) -> bool:
+    def cancel(plan, **_labels) -> JobCleanupOutcome:
         plans.append(list(plan))
-        return False
+        return JobCleanupOutcome(cancelled=True)
 
     statuses: list[str] = []
     controller = EnergyBarriersController(
@@ -490,12 +508,16 @@ def test_energy_barriers_remove_paths_stops_when_file_cleanup_is_cancelled(tmp_p
     assert [candidate.key for candidate in controller.neb_candidates()] == ["source-key"]
     assert removed == []
 
-    controller._deps = _stub_energy_barriers_deps(paths_removed=lambda: removed.append(True))
+    reported: list[str] = []
+    controller._deps = _stub_energy_barriers_deps(
+        paths_removed=lambda: removed.append(True),
+        report_cleanup_outcome=lambda done, _outcome: reported.append(done),
+    )
     controller.remove_paths(["source-key"])
 
     assert controller.neb_candidates() == []
     assert removed == [True]
-    assert statuses == ["Removed 1 energy-barrier path"]
+    assert reported == ["Removed 1 energy-barrier path"]
 
 
 @pytest.mark.parametrize(

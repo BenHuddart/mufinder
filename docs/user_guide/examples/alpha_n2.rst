@@ -206,18 +206,23 @@ the complex: the harmonic well holds the muon too tightly there.
 Coupling to the nitrogens
 -------------------------
 
-``Muon Coupling`` gives the harmonic correlation of the muon with any atom.
-With ``Atom A`` the muon (atom 65) and ``Atom B`` its nearest nitrogen:
+``Muon Coupling`` lists the muon's (atom 65) twelve nearest atoms with the
+harmonic correlation ``|c|`` of each, and shows the tensors of the nearest:
 
 .. figure:: ../../_generated/screenshots/n2_muon_coupling.webp
-   :alt: The Muon Coupling tab with Atom A 65: H:mu and Atom B 57: N, w2 =
-         -0.310498, and the covariance and correlation tensors.
+   :alt: The Muon Coupling tab listing the twelve nitrogens nearest the muon,
+         from atom 57 at 1.268 Å with |c| 0.310 and atom 1 at 1.288 Å with |c|
+         0.298, and the covariance and correlation tensors of atom 57.
 
-   The muon and its nearest nitrogen: w₂ = −0.31.
+   The muon's nearest atoms, with atom 57 selected: ``|c|`` = 0.310.
 
-``w2`` is −0.31 for the nearest nitrogen (atom 57) and −0.30 for the other
+``|c|`` is 0.31 for the nearest nitrogen (atom 57) and 0.30 for the other
 nitrogen of the complex (atom 1): the muon's zero-point motion and theirs are
-about 30 % correlated in the harmonic approximation. The paper quotes a
+about 30 % correlated in the harmonic approximation. It falls with distance,
+to 0.10 and 0.08 for the two nitrogens at 2.4 Å, 0.05 to 0.06 for the four at
+2.9 Å and 0.01 to 0.02 for the four at 3.8 to 3.9 Å, though not evenly: atom 17,
+24th by distance at 4.70 Å, reaches 0.03, so ``Atoms shown`` is worth raising
+when looking for what else moves with the muon. The paper quotes a
 harmonic value of about 26 % and a path-integral one of 30(4) %. Both use the
 same correlation (see :ref:`quantum-corrections-w2`); they differ in which
 modes the harmonic sum keeps. MuFinder sums every stable mode, while the
@@ -243,7 +248,7 @@ The three numbers from the page answer the questions of
 - **w1 = −0.14** and the hybridised L mode say the muon does not move on its
   own: its motion is entangled with the nitrogens', so the first rung, the
   harmonic weakly-bound answer, is not enough.
-- **w2 = −0.31** confirms it from the other side: the nearest nitrogens move
+- **|c| = 0.31** (``w2`` = −0.31) confirms it from the other side: the nearest nitrogens move
   with the muon.
 - **The widths** of a few tenths of an Å are a large fraction of the muon's
   bond, so the shape of the well over that range matters.

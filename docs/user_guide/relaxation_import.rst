@@ -175,12 +175,23 @@ files, and the confirmation says so; the folder is deleted when the last batch u
 it is removed.
 
 MuFinder refuses while anything still references an imported site, its run or
-its structure; the message lists what still uses them. It also refuses, and nothing
-goes, unless each folder is strictly inside its charge folder in this project, is a
-real folder rather than a link, is the one the import recorded writing to, and is
-used by no job other than another import of the same files. Otherwise it deletes the
+its structure; the message lists what still uses them. A relaxation whose saved
+location is not its own folder, because it leads out of its charge folder or out of the
+project, comes out with its records and leaves that location untouched, and the
+confirmation says its files stay. MuFinder also refuses, and nothing goes, unless each
+other folder is a real folder rather than a link, is the one the import recorded writing
+to, and is used by no job other than another import of the same files. Otherwise it deletes the
 rows, mapping entries, jobs, runs, results, structures, sites and copied files
-as one unit, and records the removal in the project provenance and Journal.
+as one unit, and records the removal in the project provenance and Journal. When some
+of a batch's folders go and others stay, the status bar counts them
+(``Removed 3 imported relaxations; deleted 2 folders; kept 1``), a box says why with
+the names under ``Details``, and the Journal names each one.
+
+A row of your own whose job folder is also used by an imported relaxation or another
+job, or whose saved location is not its own folder, comes out without touching that
+folder. MuFinder does not offer to delete or move it: the status bar counts it as kept,
+and a box says why with the name under ``Details``. A folder that is a link keeps the
+row until you remove the link.
 
 The reference check covers quantum-corrections and energy-barrier definitions,
 comparison tables, relaxation-analysis workspaces, and muon-sites summary

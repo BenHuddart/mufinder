@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 import math
 
 import numpy as np
@@ -15,6 +16,7 @@ from mufinder.science.quantum_phonons import (
     covariance_matrix,
     mode_width_angstrom,
     muon_mass_warning,
+    muon_nearest_atoms,
     muon_zpe,
     muon_mode_participations,
     parse_phonon_text,
@@ -26,8 +28,11 @@ from mufinder.science.quantum_phonons import (
     w2_entanglement_witness,
     zpe_from_frequency_cm,
 )
+from mufinder.science.lattice import nearest_image_distance
 from tests.support.phonon_fixtures import (
+    BOX_EDGE_ANG,
     MUON_ATOM_INDEX,
+    MUON_NITROGEN_DISTANCE_ANG,
     NEAREST_NITROGEN_INDEX,
     n2_mu_n2_phonon_text,
 )
@@ -644,3 +649,97 @@ def test_the_muon_self_covariance_is_in_square_angstrom() -> None:
     trace = np.trace(covariance_matrix(calculation, MUON_ATOM_INDEX, MUON_ATOM_INDEX))
     assert trace == pytest.approx(expected, rel=1e-6)
     assert 0.1 < trace < 0.2
+
+
+def test_the_nearest_atoms_are_ranked_by_distance_with_ties_in_index_order() -> None:
+    # The muon sits midway along the chain, so each shell holds two nitrogens.
+    calculation = _n2_mu_n2()
+
+    neighbours = muon_nearest_atoms(calculation, 12)
+
+    assert [neighbour.atom_index for neighbour in neighbours] == [2, 4, 1, 5]
+    assert {neighbour.species for neighbour in neighbours} == {"N"}
+    assert neighbours[0].distance_ang == pytest.approx(MUON_NITROGEN_DISTANCE_ANG, abs=1e-6)
+    assert neighbours[1].distance_ang == pytest.approx(MUON_NITROGEN_DISTANCE_ANG, abs=1e-6)
+    for neighbour in neighbours:
+        assert neighbour.correlation == -w2_entanglement_witness(
+            calculation, MUON_ATOM_INDEX, neighbour.atom_index
+        )
+
+
+def test_the_nearest_atom_list_stops_at_the_count_even_inside_a_shell() -> None:
+    neighbours = muon_nearest_atoms(_n2_mu_n2(), 3)
+
+    assert [neighbour.atom_index for neighbour in neighbours] == [2, 4, 1]
+
+
+def test_a_tie_is_judged_to_a_thousandth_of_an_angstrom() -> None:
+    calculation = _n2_mu_n2()
+    # Move atom 2 along the chain, 0.0003 Å further from the muon than atom 4 is.
+    shifted = []
+    for atom in calculation.atoms:
+        x, y, z = atom.fractional_coordinates
+        step = 0.0003 / BOX_EDGE_ANG if atom.index == 2 else 0.0
+        shifted.append(replace(atom, fractional_coordinates=(x - step, y, z)))
+
+    neighbours = muon_nearest_atoms(replace(calculation, atoms=tuple(shifted)), 2)
+
+    assert [neighbour.atom_index for neighbour in neighbours] == [2, 4]
+    assert neighbours[0].distance_ang > neighbours[1].distance_ang
+
+
+def test_a_tie_does_not_depend_on_where_the_distances_fall_against_a_rounding_edge() -> None:
+    calculation = _n2_mu_n2()
+    distance = {atom.index: atom for atom in calculation.atoms}
+    muon_x = distance[MUON_ATOM_INDEX].fractional_coordinates[0]
+    # Atoms 2 and 4 either side of 1.2905 Å, a hair apart, with atom 2 the further.
+    shifted = []
+    for atom in calculation.atoms:
+        x, y, z = atom.fractional_coordinates
+        if atom.index == 2:
+            x = muon_x - 1.29050001 / BOX_EDGE_ANG
+        elif atom.index == 4:
+            x = muon_x + 1.29049999 / BOX_EDGE_ANG
+        shifted.append(replace(atom, fractional_coordinates=(x, y, z)))
+
+    neighbours = muon_nearest_atoms(replace(calculation, atoms=tuple(shifted)), 2)
+
+    assert [neighbour.atom_index for neighbour in neighbours] == [2, 4]
+
+
+def test_atoms_more_than_the_tolerance_apart_are_not_tied() -> None:
+    calculation = _n2_mu_n2()
+    # Atom 2 moved 0.002 Å further from the muon than atom 4 is.
+    shifted = []
+    for atom in calculation.atoms:
+        x, y, z = atom.fractional_coordinates
+        step = 0.002 / BOX_EDGE_ANG if atom.index == 2 else 0.0
+        shifted.append(replace(atom, fractional_coordinates=(x - step, y, z)))
+
+    neighbours = muon_nearest_atoms(replace(calculation, atoms=tuple(shifted)), 2)
+
+    assert [neighbour.atom_index for neighbour in neighbours] == [4, 2]
+
+
+def test_the_nearest_atoms_measure_to_the_nearest_periodic_image() -> None:
+    # In this sheared cell the shortest image is (-a + b + c) / 2. Folding each
+    # fractional component separately finds (a + b + c) / 2, which is 1.18 Å long.
+    lattice = ((1.0, 0.0, 0.0), (0.9, 1.0, 0.0), (0.0, 0.0, 1.0))
+    sheared = PHONON_TEXT.replace(
+        "    0.000000    1.000000    0.000000", "    0.900000    1.000000    0.000000"
+    )
+    calculation = parse_phonon_text(sheared)
+    assert calculation.lattice_vectors == lattice
+
+    neighbour = muon_nearest_atoms(calculation, 1)[0]
+
+    atom, muon = calculation.atoms
+    assert neighbour.distance_ang == pytest.approx(
+        nearest_image_distance(muon.fractional_coordinates, atom.fractional_coordinates, lattice)
+    )
+    assert neighbour.distance_ang == pytest.approx(0.5 * math.sqrt(0.1**2 + 1.0 + 1.0))
+
+
+def test_the_nearest_atom_count_must_be_positive() -> None:
+    with pytest.raises(ValueError, match="count must be positive"):
+        muon_nearest_atoms(_n2_mu_n2(), 0)

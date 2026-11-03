@@ -441,8 +441,8 @@ LITERAL_STYLE_CALLS = ("setContentsMargins", "setSpacing", "setPixelSize")
 #: "none" and not a step on a scale, so a call whose literals are all zero is not
 #: counted. Pages move to the scales when they are next rebuilt: lower the count then.
 PINNED_LITERAL_STYLE_CALLS: dict[str, int] = {
-    "setContentsMargins": 79,
-    "setSpacing": 121,
+    "setContentsMargins": 77,
+    "setSpacing": 119,
     "setPixelSize": 12,
 }
 

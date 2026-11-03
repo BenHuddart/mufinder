@@ -7,8 +7,10 @@ the app.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 import errno
 import re
+from typing import NamedTuple
 
 
 def plural(n: int, singular: str, plural: str | None = None) -> str:
@@ -90,3 +92,72 @@ def natural_sort_key(label: str) -> tuple[tuple[int, object], ...]:
         else:
             parts.append((1, part.casefold()))
     return tuple(parts)
+
+
+def folder_phrase(verb: str, names: Sequence[str]) -> str:
+    """Return what happened to named folders, in order: ``deleted folders 'a' and 'b'``."""
+
+    quoted = [f"'{name}'" for name in sorted(names, key=natural_sort_key)]
+    listed = quoted[0] if len(quoted) == 1 else f"{', '.join(quoted[:-1])} and {quoted[-1]}"
+    return f"{verb} {'folder' if len(names) == 1 else 'folders'} {listed}"
+
+
+class KeptFolder(NamedTuple):
+    """A folder a clean-up left in place, and why: the words for one folder, and for several.
+
+    Empty words for several mean the reason only reads for one folder.
+    """
+
+    name: str
+    because: tuple[str, str]
+
+
+def folder_outcome_status(
+    done: str, *, deleted: int = 0, archived: int = 0, cleaned: int = 0, kept: int = 0
+) -> str:
+    """Return the status for a clean-up: ``Removed 10 jobs; deleted 7 folders; kept 3``.
+
+    Counts only, so it fits the status bar whatever the folders are called; the first count
+    names the noun for the rest. The names of kept folders go in :func:`kept_folders_message`.
+    """
+
+    parts = [done]
+    for verb, count in (
+        ("deleted", deleted),
+        ("archived", archived),
+        ("cleaned", cleaned),
+        ("kept", kept),
+    ):
+        if count:
+            parts.append(
+                f"{verb} {count}" if len(parts) > 1 else f"{verb} {plural(count, 'folder')}"
+            )
+    return "; ".join(parts)
+
+
+class KeptFoldersMessage(NamedTuple):
+    """Why folders were kept: the line to show, what to do next, and a line per folder."""
+
+    summary: str
+    instruction: str
+    details: str
+
+
+def kept_folders_message(kept: Sequence[KeptFolder]) -> KeptFoldersMessage:
+    """Return why folders were kept, saying each thing once.
+
+    Each entry is a folder of its own: two in different charge folders can share a name.
+    """
+
+    folders = sorted(kept, key=lambda folder: natural_sort_key(folder.name))
+    count = plural(len(folders), "folder")
+    reasons = {folder.because for folder in folders}
+    one, several = next(iter(reasons))
+    reason = one if len(folders) == 1 else several
+    lines = "\n".join(f"- '{folder.name}': {folder.because[0]}." for folder in folders)
+    if len(reasons) == 1 and reason:
+        which = "which one" if len(folders) == 1 else "which ones"
+        return KeptFoldersMessage(
+            f"MuFinder kept {count} because {reason}.", f"Open Details to see {which}.", lines
+        )
+    return KeptFoldersMessage(f"MuFinder kept {count}.", "Open Details to see why.", lines)

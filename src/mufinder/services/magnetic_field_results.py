@@ -119,7 +119,7 @@ CALCULATION_METHOD_VERSION = 1
 #: means the same plate gives a different tensor, such as a new resolution or sum. A field
 #: result calculated with a plate records it; results without a plate are never marked by it.
 #: Version 1 is every plate result from before the version was recorded.
-PLATE_METHOD_VERSION = 2
+PLATE_METHOD_VERSION = 3
 #: Where a stored field result keeps the :data:`PLATE_METHOD_VERSION` it was calculated with.
 PLATE_METHOD_VERSION_KEY = "plate_method_version"
 _UNRECORDED_PLATE_METHOD_VERSION = 1

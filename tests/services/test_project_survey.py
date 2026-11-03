@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 from pathlib import Path
 from uuid import uuid4
 
@@ -263,9 +264,16 @@ def test_barrier_paths_are_mapped_from_the_supercell_and_labelled_with_heights(
     assert len(layer.markers) == 2
 
 
-def test_quantum_layer_places_zero_point_energies_at_the_relaxed_position(tmp_path: Path) -> None:
+def _project_with_a_zpe(tmp_path: Path):
+    """A relaxed site whose phonon job read its current relaxation, with its stored result."""
+
     project = muon_project(tmp_path)
     document = project.document
+    relaxation = document.runs[project.relaxed_site.relaxation_run_id]
+    relaxed_cell_id = document.results[relaxation.result_id].derived_structure_ids[0]
+    document.structures[relaxed_cell_id].properties["source_workflow_stage"] = (
+        WorkflowStage.MUON_RELAXATION.value
+    )
     job = Job(
         workflow_stage=WorkflowStage.QUANTUM_CORRECTIONS,
         calc_type=QUANTUM_PHONON_CALC_TYPE,
@@ -280,15 +288,74 @@ def test_quantum_layer_places_zero_point_energies_at_the_relaxed_position(tmp_pa
     definition = CalculationDefinition(
         workflow_stage=WorkflowStage.QUANTUM_CORRECTIONS,
         calc_type=QUANTUM_PHONON_SET_CALC_TYPE,
-        parameters={"phonon_job_ids_by_label": {str(project.relaxed_site.id): str(job.id)}},
+        parameters={
+            "phonon_job_ids_by_label": {str(project.relaxed_site.id): str(job.id)},
+            "phonon_source_run_ids_by_label": {
+                str(project.relaxed_site.id): str(project.relaxed_site.relaxation_run_id)
+            },
+        },
     )
     document.calculations[definition.id] = definition
+    return project, definition, job, result
 
-    (layer,) = survey_layers(document, "quantum_corrections")
+
+def test_quantum_layer_places_zero_point_energies_at_the_relaxed_position(tmp_path: Path) -> None:
+    project, _definition, _job, _result = _project_with_a_zpe(tmp_path)
+
+    (layer,) = survey_layers(project.document, "quantum_corrections")
 
     (marker,) = layer.markers
     assert marker.position == pytest.approx((0.5, 0.25, 0.25))
     assert marker.label == "ZPE 0.71 eV"
+    assert marker.detail == "mu1 · zero-point energy 0.712 eV · dE + ZPE 0.000 eV"
+
+
+def test_quantum_layer_marks_a_zpe_from_an_earlier_relaxation(tmp_path: Path) -> None:
+    project, definition, _job, _result = _project_with_a_zpe(tmp_path)
+    key = str(project.relaxed_site.id)
+    definition.parameters["phonon_source_run_ids_by_label"][key] = str(uuid4())
+
+    (layer,) = survey_layers(project.document, "quantum_corrections")
+
+    (marker,) = layer.markers
+    assert marker.label == "ZPE 0.71 eV (earlier)"
+    assert marker.detail == "mu1 · zero-point energy 0.712 eV (earlier) · not ranked"
+
+
+def test_quantum_layer_marks_a_saddle(tmp_path: Path) -> None:
+    project, _definition, _job, result = _project_with_a_zpe(tmp_path)
+    result.data["phonon_warnings"] = ["Check the muon mass.", "A selected mode is negative."]
+
+    (layer,) = survey_layers(project.document, "quantum_corrections")
+
+    (marker,) = layer.markers
+    assert marker.label == "ZPE 0.71 eV ⚠"
+    assert marker.detail.endswith("\n⚠ Check the muon mass.\n⚠ A selected mode is negative.")
+    assert layer.title == "1 site with zero-point energies"
+
+
+def test_quantum_layer_shows_nothing_for_a_job_that_no_longer_stands_behind_its_result(
+    tmp_path: Path,
+) -> None:
+    project, _definition, job, _result = _project_with_a_zpe(tmp_path)
+    job.status = JobStatus.RUNNING
+
+    assert survey_layers(project.document, "quantum_corrections") == ()
+
+
+def test_quantum_layer_reads_only_the_current_definition(tmp_path: Path) -> None:
+    project, definition, _job, _result = _project_with_a_zpe(tmp_path)
+    newer = CalculationDefinition(
+        workflow_stage=WorkflowStage.QUANTUM_CORRECTIONS,
+        calc_type=QUANTUM_PHONON_SET_CALC_TYPE,
+        created_at=definition.created_at + timedelta(seconds=1),
+        parameters=dict(definition.parameters),
+    )
+    project.document.calculations[newer.id] = newer
+
+    (layer,) = survey_layers(project.document, "quantum_corrections")
+
+    assert len(layer.markers) == 1
 
 
 def test_magnetic_layer_shows_commensurate_field_magnitudes(tmp_path: Path) -> None:

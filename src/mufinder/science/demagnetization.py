@@ -33,8 +33,10 @@ from mufinder.science.sample_image import extrude_plate, fit_mask, resample_mask
 _ROTATION_TOL = 1e-8
 _PARALLEL_TOL = 1e-8
 _ORTHOGONAL_TOL_DEG = 1e-6
-#: Edge of the FFT box along every axis, in units of the longest sample edge.
+#: Edge of the FFT box along every axis, in units of the longest sample edge, for a voxel grid.
 FOURIER_PADDING = 2.5
+#: The same for a plate outlined in a photograph, whose sum holds only the box's 2-D plane.
+PLATE_FOURIER_PADDING = 4.0
 #: Voxels along the longest edge, thickness included, of a plate outlined in a photograph.
 PLATE_FOURIER_GRID = 256
 # How far a factor can be off for an outline this many voxels across; 8 and more go unwarned.
@@ -51,8 +53,8 @@ _THINNEST_PLATE_RATIO = 10_000
 # again as the box of a square plate at _THINNEST_PLATE_RATIO, so that rounding an in-plane edge
 # to whole voxels does not refuse a plate at that ratio. It is what refuses a long needle.
 _MAX_PLATE_BOX_VOXELS = 3 * (
-    int(FOURIER_PADDING * PLATE_FOURIER_GRID) ** 2
-    * int(FOURIER_PADDING * _THINNEST_PLATE_RATIO)
+    int(PLATE_FOURIER_PADDING * PLATE_FOURIER_GRID) ** 2
+    * int(PLATE_FOURIER_PADDING * _THINNEST_PLATE_RATIO)
     // 2
 )
 # An in-plane edge this many thicknesses long makes an infinite plate a fair description.
@@ -222,8 +224,9 @@ class DemagnetizingSample:
     extruded through ``plate_thickness``; ``photo`` records where the outline
     came from. ``PLATE_FOURIER_GRID`` voxels span its longest edge, thickness
     included, and the other edges follow, so its voxels are close to cubes.
-    Both use the Fourier method with the FFT box ``FOURIER_PADDING`` times the
-    longest sample edge along every axis.
+    Both use the Fourier method with the FFT box a multiple of the longest sample
+    edge along every axis: ``FOURIER_PADDING`` for a voxel grid and
+    ``PLATE_FOURIER_PADDING`` for a plate.
     """
 
     shape: str = "none"
@@ -937,7 +940,7 @@ def _plate_box(
     edges = (*sample.plate_size, float(sample.plate_thickness))
     if max(edges) > _THINNEST_PLATE_RATIO * min(edges):
         raise DemagnetizationError(_plate_refusal(sample))
-    box = fourier_box_shape((*outline.shape, layers), step, FOURIER_PADDING)
+    box = fourier_box_shape((*outline.shape, layers), step, PLATE_FOURIER_PADDING)
     if math.prod(box) > _MAX_PLATE_BOX_VOXELS:
         raise DemagnetizationError(_plate_refusal(sample))
     return outline, layers, step, box
