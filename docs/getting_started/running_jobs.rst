@@ -464,19 +464,18 @@ A job's own folder
 Every job writes in a folder of its own, under ``files/`` and named after its seed. A
 new row whose folder another job already uses, an imported run's for example, gets
 the next free name when it is submitted (``positivemuon_Site_1_2``), and its CASTEP
-files are named to match. A row whose job has not run yet keeps that job when it is
-submitted again, whether from its page's ``Run`` or from the dashboard, so it stays in
-the folder it has and no second job is made for it. A reconfigured row gets a new job
+files are named to match. A row whose job has not run yet keeps that job when its
+page's ``Run`` submits it again, so it stays in the folder it has and no second job is
+made for it. A reconfigured row gets a new job
 in its earlier job's folder. A folder that no job uses is written into as it stands.
 
 An older project can hold two jobs in one folder. Opening it changes nothing, and
 neither job's files or records change until you act. Finished jobs stay as they are,
 and their results still read. A job waiting to run in such a folder is not started:
 ``Jobs not started`` names it and its folder under ``Details``, and the other jobs of
-the submission go ahead. The page's ``Run``, the dashboard's ``Submit`` and
-``Resubmit…`` and ``Continue relaxation…`` all refuse it this way, before anything is
-reset or cleared. Remove its
-row and add it again, and the new job gets a folder of its own. The folder stays,
+the submission go ahead. The page's ``Run``, the dashboard's ``Resubmit…`` and
+``Continue relaxation…`` all refuse it this way, before anything is reset or cleared.
+Remove its row and add it again, and the new job gets a folder of its own. The folder stays,
 because the other job uses it.
 
 Reset and its clean-up
