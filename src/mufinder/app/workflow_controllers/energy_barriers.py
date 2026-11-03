@@ -60,7 +60,7 @@ from mufinder.services.definition_mappings import (
     remove_source_keys_from_definition,
 )
 from mufinder.services.job_artifacts import ParsedJobArtifacts
-from mufinder.services.job_file_cleanup import JobCleanupItem
+from mufinder.services.job_file_cleanup import JobCleanupItem, JobCleanupOutcome
 from mufinder.services.muon_sites_summary import (
     ENERGY_BARRIERS_SCOPE,
     DownstreamSiteScope,
@@ -221,7 +221,8 @@ class EnergyBarriersDeps:
     handle_site_host_mismatch: Callable[[object], bool]
     show_warning: Callable[[str, str], None]
     dialog_parent: Callable[[], QWidget | None]
-    clean_up_removed_jobs: Callable[..., bool]
+    clean_up_removed_jobs: Callable[..., JobCleanupOutcome]
+    report_cleanup_outcome: Callable[[str, JobCleanupOutcome], None]
     paths_removed: Callable[[], None]
 
 
@@ -785,19 +786,21 @@ class EnergyBarriersController(WorkflowJobController):
         def describe(item: JobCleanupItem) -> str:
             return f"Energy-barrier job '{item.label}' has associated files.\n\n{item.directory}"
 
-        cleaned = self._deps.clean_up_removed_jobs(
+        outcome = self._deps.clean_up_removed_jobs(
             plan,
             title="Remove energy-barrier path with files",
             describe=describe,
             keep_text="or Cancel to keep the generated path.",
         )
-        if not cleaned:
+        if not outcome.completed:
             self.refresh_view()
             return
         self.remove_rows(removed)
         self.refresh_view()
         self._deps.paths_removed()
-        self._context.status_message(f"Removed {plural(len(removed), 'energy-barrier path')}")
+        self._deps.report_cleanup_outcome(
+            f"Removed {plural(len(removed), 'energy-barrier path')}", outcome
+        )
         self._context.persist_ui_state(
             failure_message="Energy Barriers paths were removed, but autosave failed."
         )

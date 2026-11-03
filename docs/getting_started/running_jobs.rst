@@ -306,8 +306,8 @@ Each row has these columns:
 
 ``Action``
    One button for what the job most likely needs, and a ``⋯`` menu with the
-   rest (see `Acting on jobs`_). Tab and Shift+Tab reach both, and Return, Enter
-   or Space press them.
+   rest (see `Acting on jobs`_). Return, Enter or Space press them; see
+   `Using the dashboard from the keyboard`_ for how to reach them.
 
 Double-click a row to show its stage's page with the job's row selected. The
 dashboard has no filter controls; select rows to act on them, as in `Working
@@ -438,6 +438,26 @@ A ``Cancel`` or ``Dismiss`` on a single row asks for confirmation; on a
 multi-row selection the "all selected jobs / this job only / cancel" prompt
 serves as that confirmation.
 
+Using the dashboard from the keyboard
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The table is one stop on the way round the window, however many rows it has. Tab
+goes from the table to the current row's action button, then its ``⋯`` button, and
+then on to the next control in the window; Shift+Tab comes back the same way. Tab
+skips a button that is disabled or hidden. Shift+Tab from outside lands on the
+table, and Tab from there goes to the row's buttons. Passing through leaves the
+selection as it is.
+
+- With focus on the table, the arrow keys move the current row.
+- With focus on a button, Up and Down move to the same button on the row above or
+  below, and Left and Right move between the row's two buttons. Up and Down select
+  a row outside the selection, and leave the selection alone on a row inside it.
+
+A job can leave the dashboard at any moment. Focus moves only if it was on that
+job's row: it goes to the same button on the next row, or on the previous row if
+that was the last, and to the table when no rows are left. Focus in a form
+field or anywhere else stays where it is, and the selection does not change.
+
 Reset and its clean-up
 ~~~~~~~~~~~~~~~~~~~~~~
 
@@ -447,11 +467,14 @@ except its ``.cell``/``.param`` inputs, and applies the same ownership check as
 :ref:`starting a relaxation again <resubmit-continue-or-start-again>`, limited
 to the local folder (Reset never touches the cluster). The folder is kept, and
 the job reset without cleaning, when it is outside ``<project>/files/<stage>/``,
-is not named after the job, or is used by another job that is not being reset
-in the same action. A Quantum Corrections phonon job is the one exception: the
+is a link or is reached through one, is not in its own workflow and charge folder
+(a muon relaxation), is not named after the job, or is used by another job that is
+not being reset in the same action. A Quantum Corrections phonon job is the one exception: the
 singlepoint an older project ran in the same seed directory does not keep the
 folder, so cleaning it lets the row rerun as a fresh phonon job. The kept
-folders are listed in the "Directory cleanup issues" message.
+folders are listed under ``Details`` in the "Directory cleanup issues" message, and
+the status bar counts the folders cleaned and kept
+(``Reset 3 failed jobs; cleaned 2 folders; kept 1``).
 
 The pristine- and muon-relaxation tables additionally offer a per-row
 ``Continue relaxation…`` action for ``completed``, ``failed``, ``stopped``, or

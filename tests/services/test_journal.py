@@ -2127,6 +2127,48 @@ def test_a_quantum_entry_with_a_warning_asks_for_attention_and_one_site_has_no_t
     assert details.job_table is None
 
 
+def test_a_quantum_entry_marks_a_zpe_outside_the_ranking_and_a_flagged_row() -> None:
+    entry = _finding_entry(
+        "quantum_corrected",
+        WorkflowStage.QUANTUM_CORRECTIONS,
+        site_label="4c",
+        muon_zpe_total_eV=0.68,
+        zpe_mark="earlier",
+        ranking_notes=["This ZPE is from an earlier geometry."],
+        not_ranked=["T_B (unconfirmed)"],
+        warnings=[],
+        comparison=[
+            {
+                "site_label": "T_A",
+                "relative_energy_eV": 0.257,
+                "zpe_eV": 0.1,
+                "corrected_energy_eV": -0.201,
+                "warned": True,
+            },
+            {
+                "site_label": "O",
+                "relative_energy_eV": 0.0,
+                "zpe_eV": 0.558,
+                "corrected_energy_eV": 0.0,
+                "warned": False,
+            },
+        ],
+    )
+
+    assert entry.body == "ZPE at 4c: 0.680 eV (earlier)"
+    # Being outside the ranking is not a warning about the calculation.
+    assert entry.stamp_kind == "success"
+    details = entry_details(entry)
+    assert details.lines == (
+        "This ZPE is from an earlier geometry.",
+        "Not ranked: T_B (unconfirmed)",
+    )
+    assert details.job_table.rows == (
+        ("T_A", "0.257", "0.100 ⚠", "-0.201 ⚠"),
+        ("O", "0.000", "0.558", "0.000"),
+    )
+
+
 def test_a_barrier_entry_gives_the_path_and_its_numbers() -> None:
     entry = _finding_entry(
         "barrier_calculated",
@@ -2194,3 +2236,106 @@ def test_a_saved_record_of_zero_muon_relaxations_shows_no_entry() -> None:
     )
 
     assert not build_journal("Test", [record]).days
+
+
+def _imported_removal_body(**parameters: object) -> str:
+    record = ProvenanceRecord(
+        action="remove_imported_relaxations",
+        workflow_stage=WorkflowStage.MUON_RELAXATION,
+        actor="user",
+        description="Removed imported relaxations",
+        parameters={"labels": ["a", "b", "c"], "deleted_files": True, **parameters},
+    )
+    return build_journal("Test", [record]).days[0].entries[0].body
+
+
+def test_a_removal_that_deleted_every_folder_says_so() -> None:
+    body = _imported_removal_body(directories=["/p/a", "/p/b"], kept_directories=[])
+
+    assert "Their job directories were deleted" in body
+
+
+def test_a_removal_that_kept_every_folder_says_the_files_stay() -> None:
+    body = _imported_removal_body(directories=[], kept_directories=["/p/a"])
+
+    assert "Their files stay" in body
+    assert "deleted" not in body
+
+
+def test_a_partly_shared_removal_names_each_folder() -> None:
+    body = _imported_removal_body(directories=["/p/a", "/p/b"], kept_directories=["/p/c"])
+
+    assert "Deleted folders 'a' and 'b'" in body
+    assert "Kept folder 'c', because another import uses it." in body
+    assert "Their" not in body
+
+
+def test_a_removal_that_could_not_delete_a_folder_does_not_claim_it_went() -> None:
+    body = _imported_removal_body(
+        directories=["/p/a"], kept_directories=[], undeleted_directories=["/p/b"]
+    )
+
+    assert "Deleted folder 'a'" in body
+    assert "Could not delete folder 'b'." in body
+    assert "Their job directories were deleted" not in body
+
+
+def test_a_removal_that_found_no_folder_claims_nothing_about_one() -> None:
+    assert _imported_removal_body(directories=[], kept_directories=[]).endswith("the project.")
+
+
+def test_a_removal_keeping_its_files_claims_none_went() -> None:
+    body = _imported_removal_body(deleted_files=False, directories=["/p/a"], kept_directories=[])
+
+    assert body.endswith("the project.")
+
+
+def test_a_record_from_before_folders_were_listed_still_says_they_went() -> None:
+    assert "Their job directories were deleted" in _imported_removal_body()
+
+
+def _one_imported_removal_body(**parameters: object) -> str:
+    record = ProvenanceRecord(
+        action="remove_imported_relaxations",
+        workflow_stage=WorkflowStage.MUON_RELAXATION,
+        actor="user",
+        description="Removed an imported relaxation",
+        parameters={"labels": ["a"], "deleted_files": True, **parameters},
+    )
+    return build_journal("Test", [record]).days[0].entries[0].body
+
+
+def test_a_removal_of_one_relaxation_is_singular() -> None:
+    went = _one_imported_removal_body(directories=["/p/a"], kept_directories=[])
+    stays = _one_imported_removal_body(directories=[], kept_directories=["/p/a"])
+
+    assert "Its job directory was deleted" in went
+    assert "Its files stay" in stays
+
+
+def test_a_removal_lists_its_folders_in_order() -> None:
+    body = _imported_removal_body(directories=["/p/b", "/p/a"], kept_directories=["/p/c"])
+
+    assert "Deleted folders 'a' and 'b'" in body
+
+
+def test_a_removal_that_left_a_saved_location_alone_says_so() -> None:
+    body = _one_imported_removal_body(
+        directories=[], kept_directories=[], misplaced_directories=["/elsewhere/a"]
+    )
+
+    assert "Its saved location is not its own, so nothing there was touched." in body
+    assert "deleted" not in body
+
+
+def test_a_mixed_removal_says_per_folder_what_happened() -> None:
+    body = _imported_removal_body(
+        directories=["/p/sound"], kept_directories=[], misplaced_directories=["files/x", "files/y"]
+    )
+
+    assert "Deleted folder 'sound', including the archived original input files." in body
+    assert (
+        "Left folders 'files/x' and 'files/y' untouched, because their saved locations are not "
+        "their own."
+    ) in body
+    assert "Their job directories" not in body

@@ -27,6 +27,7 @@ from mufinder.castep_io.output_parser import CastepResult
 from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationRun, Job
 from mufinder.services.job_artifacts import ParsedJobArtifacts, collect_job_artifacts
+from mufinder.services.job_file_cleanup import JobCleanupOutcome
 from mufinder.services.project_service import ProjectDocument, ProjectService
 from mufinder.domain.models import CalculationDefinition as _CalculationDefinition
 from mufinder.domain.models import MuonSite as _MuonSite
@@ -105,7 +106,8 @@ def _stub_energy_barriers_deps(**overrides) -> EnergyBarriersDeps:
         handle_site_host_mismatch=lambda _mismatch: True,
         show_warning=lambda _title, _text: None,
         dialog_parent=lambda: None,
-        clean_up_removed_jobs=lambda _plan, **_labels: True,
+        clean_up_removed_jobs=lambda _plan, **_labels: JobCleanupOutcome(),
+        report_cleanup_outcome=lambda _done, _outcome: None,
         paths_removed=lambda: None,
     )
     base.update(overrides)
@@ -487,9 +489,9 @@ def test_energy_barriers_remove_paths_stops_when_file_cleanup_is_cancelled(tmp_p
     plans: list[list] = []
     removed: list[bool] = []
 
-    def cancel(plan, **_labels) -> bool:
+    def cancel(plan, **_labels) -> JobCleanupOutcome:
         plans.append(list(plan))
-        return False
+        return JobCleanupOutcome(cancelled=True)
 
     statuses: list[str] = []
     controller = EnergyBarriersController(
@@ -506,12 +508,16 @@ def test_energy_barriers_remove_paths_stops_when_file_cleanup_is_cancelled(tmp_p
     assert [candidate.key for candidate in controller.neb_candidates()] == ["source-key"]
     assert removed == []
 
-    controller._deps = _stub_energy_barriers_deps(paths_removed=lambda: removed.append(True))
+    reported: list[str] = []
+    controller._deps = _stub_energy_barriers_deps(
+        paths_removed=lambda: removed.append(True),
+        report_cleanup_outcome=lambda done, _outcome: reported.append(done),
+    )
     controller.remove_paths(["source-key"])
 
     assert controller.neb_candidates() == []
     assert removed == [True]
-    assert statuses == ["Removed 1 energy-barrier path"]
+    assert reported == ["Removed 1 energy-barrier path"]
 
 
 @pytest.mark.parametrize(
