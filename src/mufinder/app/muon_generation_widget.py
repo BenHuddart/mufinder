@@ -46,6 +46,7 @@ from mufinder.app.theme import (
     set_progress_bar_state,
     style_section_subtitle,
     style_section_title,
+    style_warning_text,
 )
 from mufinder.app.workflow_table_utils import create_workflow_table
 from mufinder.domain.models import GENERATION_METHOD_LABELS, Structure
@@ -406,6 +407,11 @@ class MuonGenerationWidget(QWidget):
         left_layout.addWidget(form_box)
         left_layout.addLayout(action_row)
         left_layout.addWidget(self._generation_progress)
+        self._coordinate_warning = QLabel()
+        self._coordinate_warning.setWordWrap(True)
+        style_warning_text(self._coordinate_warning)
+        self._coordinate_warning.hide()
+        left_layout.addWidget(self._coordinate_warning)
         left_layout.addWidget(self._site_table)
         splitter.addWidget(left_panel)
         splitter.addWidget(viewer_panel)
@@ -860,6 +866,13 @@ class MuonGenerationWidget(QWidget):
         group_list = [dict(group) for group in groups or ()]
         if rows == self._site_rows and group_list == self._site_groups:
             return
+        warnings = list(
+            dict.fromkeys(
+                str(row["coordinate_warning"]) for row in rows if row.get("coordinate_warning")
+            )
+        )
+        self._coordinate_warning.setText("\n".join(warnings))
+        self._coordinate_warning.setVisible(bool(warnings))
         self._site_rows = [dict(row) for row in rows]
         self._site_groups = group_list
         self._site_table.clearSpans()
@@ -978,7 +991,7 @@ class MuonGenerationWidget(QWidget):
                     )
                 elif col == 0:
                     item.setText(str(row_data.get("label", "")))
-                    item.setToolTip("")
+                    item.setToolTip(str(row_data.get("coordinate_warning", "")))
 
     def select_site_ids(self, site_ids: list[str]) -> None:
         """Restore selection for generated-site table rows by id."""

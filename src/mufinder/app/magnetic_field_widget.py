@@ -1061,6 +1061,9 @@ class MagneticFieldWidget(QWidget):
             else ""
         )
         estimate = f" {UNRELAXED_SITE_NOTE}" if is_unrelaxed_site_source(site.source) else ""
+        coordinate_warning = str((site.properties or {}).get("coordinate_warning", ""))
+        if coordinate_warning:
+            estimate += f" {coordinate_warning}"
         clearance_error = self._muon_site_unavailable_reason()
         refused = f" {clearance_error}" if clearance_error else ""
         self._site_summary.setText(

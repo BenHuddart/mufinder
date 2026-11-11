@@ -389,7 +389,11 @@ from mufinder.services.muon_sites_summary import (
     validated_muon_sites_summary_snapshot,
 )
 from mufinder.services.perf_trace import PerfTrace, StageTiming
-from mufinder.services.site_generation_service import WORKER_GENERATION_METHODS
+from mufinder.services.site_generation_service import (
+    WORKER_GENERATION_METHODS,
+    uep_generation_selection,
+    uep_site_coordinate_warning,
+)
 from mufinder.services.project_service import (
     CONTINUABLE_JOB_STATUSES,
     ProjectDocument,
@@ -8448,7 +8452,10 @@ class MainWindow(QMainWindow):
 
                 representative_row = _representative_row(representative_index)
                 if representative_row is not None:
-                    rows.append(representative_row)
+                    try:
+                        rows.append(uep_generation_selection(self._document, representative_row))
+                    except SiteGenerationError:
+                        continue
 
         rows.sort(
             key=lambda row: (
@@ -10161,6 +10168,7 @@ class MainWindow(QMainWindow):
                 "id": str(site.id),
                 "label": site.label,
                 "method": site.generation_method or "",
+                "coordinate_warning": uep_site_coordinate_warning(site),
                 "status": site.status,
                 "fractional": site.initial_fractional_position,
                 "cartesian": site.initial_cartesian_position,

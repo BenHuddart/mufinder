@@ -675,3 +675,96 @@ def test_a_count_run_counts_the_whole_limit_of_every_try_that_fell_short(
 
     assert outcome.run is not None and outcome.run.retries == 1
     assert 500 < outcome.run.attempts_used <= 1000
+
+
+@pytest.mark.parametrize("source_scale", [1.0, 2.0])
+@pytest.mark.parametrize("use_preview", [False, True])
+def test_uep_generation_converts_source_cell_and_persists_verified_positions(
+    tmp_path: Path, source_scale: float, use_preview: bool
+) -> None:
+    from dataclasses import replace
+    from uuid import uuid4
+
+    from mufinder.services.magnetic_field_sites import uep_cluster_muon_site_options
+    from tests.support.magnetic_field_sites import uep_search_document
+
+    host = cof2_host()
+    source = replace(
+        host,
+        id=uuid4(),
+        lattice_vectors=[[4.8 * source_scale, 0.0, 0.0], [0.0, 4.8, 0.0], [0.0, 0.0, 3.2]],
+    )
+    document = uep_search_document(tmp_path, host, (0.75, 0.3, 0.75), source=source)
+    ((job_id, state),) = document.ui_state["uep_analysis_states"].items()
+    (cluster,) = state["batch_summary_data"]["clusters"]
+    selection = {
+        "source_job_id": job_id,
+        "source_structure_id": str(source.id),
+        "fractional_position": cluster["representative_fractional_position"],
+        "cartesian_position": cluster["representative_position_ang"],
+    }
+    preview = site_generation_service.uep_generation_selection(document, selection)
+    expected = site_generation_service.lattice_cart_to_frac(
+        selection["cartesian_position"],
+        host.lattice_vectors if source_scale == 2.0 else source.lattice_vectors,
+    )
+    expected = [v % 1.0 for v in expected]
+    assert preview["fractional_position"] == pytest.approx(expected)
+    assert site_generation_service.uep_generation_selection(document, preview) == preview
+    outcome = site_generation_service.generate_candidate_sites(
+        document,
+        method="uep_clusters",
+        parameters={"selections": [preview if use_preview else selection]},
+    )
+    (site,) = outcome.sites
+    assert site.initial_fractional_position == pytest.approx(expected)
+    assert site.initial_cartesian_position == pytest.approx(
+        site_generation_service.lattice_frac_to_cart(expected, host.lattice_vectors)
+    )
+    assert site.source_structure_id == host.id
+    assert site_generation_service.uep_site_coordinate_warning(site) == ""
+    service = ProjectService()
+    service.save_project(document)
+    loaded = service.load_project(document.project_root)
+    saved = loaded.sites[site.id]
+    assert saved.properties["uep_position_frame"] == "host"
+    assert saved.initial_fractional_position == pytest.approx(expected)
+    assert site_generation_service.uep_site_coordinate_warning(saved) == ""
+    generated = next(
+        o for o in uep_cluster_muon_site_options(loaded, host) if o.label == site.label
+    )
+    assert generated.fractional_position == pytest.approx(expected)
+
+
+@pytest.mark.parametrize("method", ["uep_cluster", "uep_cluster_member", "uep_batch_cluster"])
+def test_saved_uep_sites_warn_without_rewriting_ambiguous_positions(tmp_path: Path, method) -> None:
+    document = _document(tmp_path)
+    site = MuonSite(
+        generation_method=method,
+        initial_fractional_position=[0.2, 0.3, 0.4],
+        initial_cartesian_position=[9.0, 8.0, 7.0],
+    )
+    document.sites[site.id] = site
+    service = ProjectService()
+    service.save_project(document)
+    loaded = service.load_project(document.project_root)
+    saved = loaded.sites[site.id]
+    assert "supercell" in site_generation_service.uep_site_coordinate_warning(saved)
+    assert saved.initial_fractional_position == [0.2, 0.3, 0.4]
+    assert saved.initial_cartesian_position == [9.0, 8.0, 7.0]
+    saved.generation_method = "manual"
+    assert site_generation_service.uep_site_coordinate_warning(saved) == ""
+
+
+def test_linked_uep_selection_rejects_unusable_coordinates_without_adding_sites(tmp_path) -> None:
+    from uuid import uuid4
+
+    document = _document(tmp_path)
+    with pytest.raises(SiteGenerationError, match="cannot be converted"):
+        site_generation_service.generate_candidate_sites(
+            document,
+            method="uep_clusters",
+            parameters={"selections": [{"source_job_id": str(uuid4())}]},
+        )
+    assert document.sites == {}
+    assert document.generation_runs == {}

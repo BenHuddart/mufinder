@@ -848,6 +848,14 @@ defined by two of these modules, and a pinned count may only fall.
        sites point to through ``source_generation_batch_id``; a random run
        given no seed draws one in ``prepare_candidate_sites``. Clustering near an
        anchor adds the starts' positions before the move to their run.
+       ``uep_generation_selection`` converts UEP group representatives to the host
+       cell for both the picker and generation; ``uep_site_coordinate_warning``
+       flags saved starts with no verified coordinate frame.
+   * - ``mufinder.services.uep_grouping``
+     - Saved UEP search regrouping and source structure lookup, plus the shared
+       source-cell convention and Cartesian-to-host conversion
+       (``uep_search_lattice``, ``uep_result_host_position``) used by Generation
+       and Magnetic Fields.
    * - ``mufinder.services.generation_runs``
      - The words for a generation run: its one-line summary
        (``run_summary_line``, also the Journal's line with the seed,

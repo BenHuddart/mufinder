@@ -576,3 +576,19 @@ the project keeps under ``entities/generation_runs``; the
 ``generate_candidates`` provenance record carries a copy of the run. The package
 layers, shared helpers and controller contract used by the generation and
 relaxation workflows are described in :doc:`/architecture`.
+
+UEP coordinate checks
+---------------------
+
+UEP group representatives are converted to host-cell coordinates before they
+appear in the generation picker. Searches on a relaxed host cell retain that
+cell's fractional coordinates; searches on a supercell source are folded into
+the active host cell. Generated sites use the active host's lattice for their
+Cartesian coordinates and belong to the active host.
+
+Saved UEP starts without a verified host-cell coordinate record show a warning
+in Generation and, when selected, Magnetic Fields. If the search used a
+supercell, check or regenerate the start before relaxation or field
+calculations. Their stored positions are kept: clustering may have moved the
+fractional position without updating the Cartesian one, so the latter cannot
+safely repair an ambiguous saved start.

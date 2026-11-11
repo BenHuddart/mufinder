@@ -1380,3 +1380,14 @@ argument of ``probe_point`` and ``optimize_muon_position`` are gone:
 ``optimize_muon_position`` always returns the zero-point energy. Its ``tolerance_ev``
 argument is ``force_tolerance_ev_per_ang``, because it holds a gradient norm. No alias
 is kept, since nothing outside MuFinder calls them and no project stores them.
+
+UEP generated-site coordinate frame
+-----------------------------------
+
+``MuonSite.properties["uep_position_frame"] == "host"`` records that a UEP
+selection was converted to host-cell coordinates at generation. It is additive;
+no schema migration is required. A saved UEP start without the marker retains
+both stored positions and shows a coordinate warning. The warning is conservative:
+absence of the marker does not prove that a site is wrong. The marker survives
+clustering and staging, which operate in the host cell. Keep the missing-marker
+reader while projects with unverified starts can be opened.
