@@ -27,6 +27,8 @@ from mufinder.domain.models import (
 )
 from mufinder.castep_io.types import ValueWithUnit
 from mufinder.persistence.codec import to_jsonable
+from mufinder.persistence.json_store import ProjectStore
+from mufinder.persistence.migration_save import JOURNAL_NAME
 from mufinder.persistence.migrations import RETIRED_UI_STATE_KEYS
 from mufinder.science.site_generation import SiteGenerationError
 from mufinder.services.journal import build_journal
@@ -2044,6 +2046,101 @@ def test_schema_4_project_tensor_is_converted_once_across_save_and_reload(tmp_pa
     stored = _schema_4_tensor(root)
     assert stored == [pytest.approx(row, abs=1e-4) for row in _SCHEMA_4_TENSOR_T_PER_MUB]
     assert _schema_4_tensor(ProjectService().load_project(root)) == stored
+
+
+@pytest.mark.parametrize("retry", ["reload", "interrupted_reload", "same_session", "fresh_service"])
+def test_interrupted_migrating_save_converts_each_tensor_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, retry: str
+) -> None:
+    resource = pytest.importorskip("resource")
+    root = tmp_path / "interrupted.mufinder"
+    shutil.copytree(_SCHEMA_4_FIXTURE, root)
+    store = ProjectStore(root)
+    payload = store.read_json(root / "entities" / "results" / f"{_SCHEMA_4_TENSOR_ID}.json")
+    second_id = "6b6c7d8e-9f0a-4b1c-8d2e-3f4a5b6c7d8e"
+    payload["id"] = second_id
+    store.write_entity("results", second_id, payload)
+    service = ProjectService()
+    document = service.load_project(root)
+    expected = {key: to_jsonable(value) for key, value in document.results.items()}
+    write_entity = ProjectStore.write_entity
+
+    def short_write(self, entity_type, entity_id, payload):
+        if entity_id != second_id:
+            return write_entity(self, entity_type, entity_id, payload)
+        soft, hard = resource.getrlimit(resource.RLIMIT_FSIZE)
+        resource.setrlimit(resource.RLIMIT_FSIZE, (16, hard))
+        try:
+            return write_entity(self, entity_type, entity_id, payload)
+        finally:
+            resource.setrlimit(resource.RLIMIT_FSIZE, (soft, hard))
+
+    with monkeypatch.context() as failing:
+        failing.setattr(ProjectStore, "write_entity", short_write)
+        with pytest.raises(OSError):
+            service.save_project(document)
+        if retry == "interrupted_reload":
+            with pytest.raises(OSError, match="Cannot finish migration save"):
+                ProjectService().load_project(root)
+
+    assert (root / JOURNAL_NAME).exists()
+
+    # One tensor reached disk and one did not. Reload must finish the same
+    # converted snapshot, without either skipping or repeating the conversion.
+    assert (
+        _schema_4_tensor(root)
+        == expected[UUID(_SCHEMA_4_TENSOR_ID)]["data"]["results"][0]["dipolar_tensor_T_per_muB"]
+    )
+    if retry in {"same_session", "fresh_service"}:
+        document.project.name = "Edited after interruption"
+        document.results[UUID(_SCHEMA_4_TENSOR_ID)].data["edited"] = True
+        expected = {key: to_jsonable(value) for key, value in document.results.items()}
+        (service if retry == "same_session" else ProjectService()).save_project(document)
+    reopened = ProjectService().load_project(root)
+    if retry in {"same_session", "fresh_service"}:
+        assert reopened.project.name == "Edited after interruption"
+    assert not (root / JOURNAL_NAME).exists()
+    assert {key: to_jsonable(value) for key, value in reopened.results.items()} == expected
+    assert {
+        key: to_jsonable(value)
+        for key, value in ProjectService().load_project(root).results.items()
+    } == expected
+
+
+@pytest.mark.parametrize("failure", ["entity", "state", "manifest", "cleanup"])
+def test_interrupted_state_to_results_migration_recovers_one_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    root = _copy_schema_3_fixture(tmp_path)
+    service = ProjectService()
+    document = service.load_project(root)
+    expected = {key: to_jsonable(value) for key, value in document.results.items()}
+    write_json, unlink = ProjectStore.write_json, Path.unlink
+
+    def fail_write(self, path, payload):
+        if (
+            (failure == "entity" and path.parent.name == "results")
+            or (failure == "state" and path == self.state_path)
+            or (failure == "manifest" and path == self.project_manifest_path)
+        ):
+            raise OSError("interrupted")
+        return write_json(self, path, payload)
+
+    def fail_unlink(self, *args, **kwargs):
+        if failure == "cleanup" and self.name == JOURNAL_NAME:
+            raise OSError("interrupted")
+        return unlink(self, *args, **kwargs)
+
+    with monkeypatch.context() as failing:
+        failing.setattr(ProjectStore, "write_json", fail_write)
+        failing.setattr(Path, "unlink", fail_unlink)
+        with pytest.raises(OSError, match="interrupted"):
+            service.save_project(document)
+
+    reopened = ProjectService().load_project(root)
+    assert {key: to_jsonable(value) for key, value in reopened.results.items()} == expected
+    assert reopened.ui_state == document.ui_state
+    assert not (root / JOURNAL_NAME).exists()
 
 
 _SCHEMA_5_FIXTURE = Path(__file__).parents[1] / "fixtures" / "projects" / "schema_v5_relaxed_spins"

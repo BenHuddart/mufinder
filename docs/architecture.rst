@@ -968,6 +968,9 @@ defined by two of these modules, and a pinned count may only fall.
        instead of raising (``uuid_or_none``, ``int_or_none``,
        ``float_triplet_or_none``), and ``float_triplet``, which reads three
        floats and raises ``TypeError`` or ``ValueError`` otherwise.
+   * - ``mufinder.persistence.migration_save``
+     - The schema-advancing save journal: plan validation, durable commit and
+       direct replay before loading or retrying a save.
    * - ``mufinder.domain.constants``
      - Every physical constant and unit conversion (``HBAR_J_S``,
        ``MU0_T_M_PER_A``, ``BOHR_MAGNETON_J_PER_T``, ``BOHR_RADIUS_ANGSTROM``,
@@ -1951,6 +1954,16 @@ cheap. The manifest is always written, because its ``modified_at`` is bumped on
 every save. This is a save-time optimization only and does not change the on-disk
 format.
 
+Schema-advancing saves use ``mufinder.persistence.migration_save`` to commit
+one redo journal before writing metadata. The journal contains the target
+manifest, changed entity and state payloads, and live IDs for pruning. Loading
+and save retries replay a pending journal before decoding or consulting cached
+hashes. Replay writes target values directly, writes the manifest last, and
+removes the journal after success, so an interruption cannot repeat a migration's
+unit conversion. Cache changes from a migrating save are published only after
+the full snapshot succeeds. The recovery format and failure handling are defined
+in :doc:`/compatibility_policy`.
+
 Saving is split between autosave and manual save:
 
 - Durable project state, such as imported structures, saved workflow assets,
@@ -1969,8 +1982,8 @@ Saving is split between autosave and manual save:
   autosave cannot be written, the window stays open. If the only thing to write is
   what loading upgraded or tidied, or the project home's stage, which moves with
   every page visited, a failed write closes anyway and the next open redoes it,
-  unless the manifest already took the new schema version: entities left in the old
-  format would be read as current, so that keeps the window open too.
+  unless a migration journal is pending: that keeps the window open and reports
+  that the filesystem error needs resolving before recovery can finish.
   Opening a different project flushes the autosave but does not prompt, so
   unsaved analysis-session state is discarded; save first.
 - The manual-save bucket holds exploratory UI state: UEP wizard tab choices,
