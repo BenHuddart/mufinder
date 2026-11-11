@@ -35,6 +35,12 @@ from mufinder.domain.text import plural
 from mufinder.persistence import project_codec
 from mufinder.persistence.codec import to_jsonable
 from mufinder.persistence.json_store import ProjectStore
+from mufinder.persistence.migration_save import (
+    JOURNAL_NAME,
+    JOURNAL_VERSION,
+    recover_migration_save,
+    save_migration_snapshot,
+)
 from mufinder.persistence.migrations import (
     drop_retired_ui_state_keys,
     migrate_project_payloads,
@@ -357,6 +363,7 @@ class ProjectService:
     def load_project(self, project_root: Path) -> ProjectDocument:
         """Load a project from disk into a ProjectDocument."""
         store = ProjectStore(project_root)
+        recover_migration_save(store)
         manifest = store.read_json(store.project_manifest_path)
         payloads = {
             entity_type: store.load_entities(entity_type)
@@ -488,6 +495,20 @@ class ProjectService:
         store.initialize_layout()
         root_key = self._resolved_root(document.project_root)
 
+        if recover_migration_save(store):
+            self._reset_content_hashes(document.project_root)
+
+        # Also protect documents passed to a fresh service, whose migration
+        # bookkeeping was populated by a different service on load.
+        if root_key in self._upgraded_from_schema or root_key not in self._manifest_hashes:
+            if (
+                store.project_manifest_path.exists()
+                and stored_schema_version(store.read_json(store.project_manifest_path))
+                < document.project.schema_version
+            ):
+                self._save_migrated_project(document, store, root_key)
+                return
+
         # The manifest carries ``modified_at`` (bumped every save above), so it
         # is always rewritten and deliberately not hash-tracked.
         store.write_json(store.project_manifest_path, to_jsonable(document.project))
@@ -546,6 +567,49 @@ class ProjectService:
 
         trace.log_summary(extra=f"entity_files_written={written} entity_files_skipped={skipped}")
 
+    def _save_migrated_project(
+        self, document: ProjectDocument, store: ProjectStore, root_key: str
+    ) -> None:
+        """Persist a migrated snapshot with one durable redo plan."""
+        writes: dict[str, dict[str, Any]] = {}
+        keep: dict[str, list[str]] = {}
+        hashes: dict[tuple[str, str, str], str] = {}
+        for entity_type, entities in self._entity_groups(document):
+            keep[entity_type] = [entity_id for entity_id, _ in entities]
+            writes[entity_type] = {}
+            for entity_id, entity in entities:
+                payload = to_jsonable(entity)
+                key = (root_key, entity_type, entity_id)
+                digest = self._payload_hash(payload)
+                hashes[key] = digest
+                if (
+                    self._content_hashes.get(key) != digest
+                    or not (store.entities_root / entity_type / f"{entity_id}.json").exists()
+                ):
+                    writes[entity_type][entity_id] = payload
+        ui_payload = to_jsonable(document.ui_state)
+        ui_digest = self._payload_hash(ui_payload)
+        ui_key = (root_key, self._UI_STATE_ENTITY_TYPE, self._UI_STATE_ENTITY_ID)
+        state_changed = (
+            self._content_hashes.get(ui_key) != ui_digest or not store.state_path.exists()
+        )
+        save_migration_snapshot(
+            store,
+            {
+                "journal_version": JOURNAL_VERSION,
+                "manifest": to_jsonable(document.project),
+                "entities": writes,
+                "keep_ids": keep,
+                "state": ui_payload if state_changed else None,
+            },
+        )
+        # Publish cache changes only after the complete snapshot is committed.
+        self._reset_content_hashes(document.project_root)
+        self._content_hashes.update(hashes)
+        self._content_hashes[ui_key] = ui_digest
+        self._settled_ui_state[root_key] = _SettledUiState.of(ui_payload, ui_digest)
+        self._manifest_hashes[root_key] = self._manifest_hash(document)
+
     def settle_ui_state(self, document: ProjectDocument) -> None:
         """Take ``document``'s UI state as what the user has seen and not changed.
 
@@ -587,9 +651,9 @@ class ProjectService:
     def save_tidying(self, document: ProjectDocument) -> None:
         """Save a project whose ``unsaved_changes`` are only ``TIDYING``, if the disk allows.
 
-        A failure that left the project as it was is only logged, since the next open
-        does the same work again. A failure after the manifest took a new schema version
-        is raised: the entities still in the old format would be read as current.
+        A failure before a migration journal is committed is only logged: the
+        next open does the same work again. A pending journal is reported so the
+        user knows that filesystem recovery is needed before loading can finish.
         """
 
         try:
@@ -601,10 +665,12 @@ class ProjectService:
 
     def _upgrade_half_written(self, document: ProjectDocument) -> bool:
         root_key = self._resolved_root(document.project_root)
+        store = ProjectStore(document.project_root)
+        if (store.project_root / JOURNAL_NAME).exists():
+            return True
         loaded_from = self._upgraded_from_schema.get(root_key)
         if loaded_from is None:
             return False
-        store = ProjectStore(document.project_root)
         try:
             return (
                 stored_schema_version(store.read_json(store.project_manifest_path)) != loaded_from

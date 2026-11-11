@@ -17,6 +17,18 @@ Compatibility ledger
      - Location
      - Purpose
      - Expiry policy
+   * - ``.migration-save.json`` recovery journal
+     - Project root; ``mufinder.persistence.migration_save``
+     - A pending schema-advancing save's redo plan. Format 1 stores
+       ``journal_version``, the target ``manifest``, changed ``entities``
+       keyed by type and UUID, per-type ``keep_ids`` for pruning, and
+       ``state`` (a replacement UI-state dict, or ``null`` to leave it alone).
+       Recovery validates the plan and project identity, replays the target
+       payloads without migration, writes the manifest last, then removes
+       the journal. Ordinary entity formats and schema versions are unchanged.
+     - Current recovery data. Keep readers for format 1 until pending journals
+       can be upgraded safely. Do not open a project with a pending journal
+       in a build without journal recovery, or remove the journal by hand.
    * - ``ConvergenceWidget``
      - ``mufinder.app.convergence_widget``
      - Import alias for ``CutoffConvergenceWidget``, also exported from
@@ -915,6 +927,24 @@ Provenance is history: no step rewrites it, and readers of provenance accept
 every name a record was ever written with. A project saved at the current
 version or a newer one is loaded as it is. A manifest without
 ``schema_version`` is read as schema 1.
+
+A save that advances the stored schema commits a synced, atomic
+``.migration-save.json`` redo plan before changing canonical metadata. Only
+changed or missing entities and UI state are included; calculation outputs
+and provenance are not copied. The manifest is written last and the journal
+is removed only after the whole plan succeeds. Loading and retrying a save
+finish a pending plan before reading project metadata or deciding which
+files to skip. Recovery writes already-migrated values, so repeated recovery
+cannot repeat unit conversions or create duplicate migrated results.
+
+A failed journal creation leaves canonical metadata untouched. A failure
+after journal creation leaves the plan available for retry. A malformed or
+unsupported journal refuses recovery before changing files; restore a complete
+backup and retain the journal for diagnosis. Filesystem failures during replay
+report the project path and ask the user to resolve the error and reopen or
+retry saving. The existing platform-dependent directory-sync policy applies.
+This recovery covers saves that advance the schema; ordinary saves retain
+their per-file atomic-write behaviour.
 
 .. list-table::
    :header-rows: 1

@@ -17,6 +17,7 @@ from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.domain.models import Result
 from mufinder.persistence import json_store
 from mufinder.persistence.json_store import ProjectStore
+from mufinder.persistence.migration_save import JOURNAL_NAME
 from mufinder.persistence.migrations import RETIRED_UI_STATE_KEYS
 from mufinder.persistence.codec import to_jsonable
 from mufinder.services.project_service import (
@@ -590,12 +591,12 @@ def test_saving_tidying_reports_an_upgrade_left_half_written(tmp_path: Path, mon
     store = ProjectStore(reopened.project_root)
     write_json = ProjectStore.write_json
 
-    def _manifest_only(self, path, payload) -> None:
-        if path != store.project_manifest_path:
+    def _journal_only(self, path, payload) -> None:
+        if path != store.project_root / JOURNAL_NAME:
             raise OSError(28, "No space left on device")
         write_json(self, path, payload)
 
-    monkeypatch.setattr(ProjectStore, "write_json", _manifest_only)
+    monkeypatch.setattr(ProjectStore, "write_json", _journal_only)
     reopened.ui_state["tidied"] = True
 
     with pytest.raises(OSError):
