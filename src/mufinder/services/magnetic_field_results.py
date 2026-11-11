@@ -51,6 +51,11 @@ magnetic structure its owner keeps, which calculating with a new one replaces: o
 ``q != 0`` term of period up to its recorded ``commensurate_max_period`` (64 when it records
 none) held that term at ``T = 0`` and is older (:func:`distribution_held_a_short_period_at_zero`).
 
+Reciprocal-equivalent long-period components share a signed phase, including q and 1 - q.
+Version 3 records that correction. A version 2 distribution is older only when its owner's
+model contains such a pair; unaffected version 2 fields keep their status. A keyless
+aliased distribution records effective version 2 when copied to a simulation source.
+
 A muon-polarisation record (:data:`MUON_POLARISATION_RESULT_TYPE`) holds a
 :class:`~mufinder.science.polarisation.PolarisationResult` in
 ``data["result"]``, one record per owner. It is stored and read with
@@ -71,7 +76,9 @@ from mufinder.persistence.codec import to_jsonable
 from mufinder.science.demagnetization import FOURIER_PADDING
 from mufinder.science.magnetic_fields import (
     MagneticFieldError,
+    MAX_LISTED_TRANSLATION_PERIOD,
     has_short_period_modulation,
+    has_reciprocal_phase_aliases,
 )
 from mufinder.science.magnetic_structure import MagneticStructureError, MagneticStructureModel
 from mufinder.science.polarisation import PolarisationError, PolarisationResult
@@ -144,8 +151,9 @@ PLATE_METHOD_NOT_USED = 0
 #: change means such an order gives different rows or samples. A commensurate result with
 #: ``q != 0`` and every distribution record it; ``q = 0`` results are never marked by it.
 #: Version 1 is every such result from before the version was recorded, which took a
-#: commensurate component at ``T = 0`` alone.
-TRANSLATION_METHOD_VERSION = 2
+#: commensurate component at ``T = 0`` alone. Version 2 resolves short periods; version 3
+#: also gives reciprocal-equivalent long-period components their shared signed phase.
+TRANSLATION_METHOD_VERSION = 3
 #: Where a stored field result keeps the :data:`TRANSLATION_METHOD_VERSION` it was calculated with.
 TRANSLATION_METHOD_VERSION_KEY = "translation_method_version"
 _UNRECORDED_TRANSLATION_METHOD_VERSION = 1
@@ -263,6 +271,34 @@ def distribution_held_a_short_period_at_zero(
     ``None`` or a model that does not read counts as not older.
     """
 
+    return _distribution_model_matches(
+        result,
+        magnetic_structure,
+        has_short_period_modulation,
+        default_max_period=_UNRECORDED_COMMENSURATE_MAX_PERIOD,
+    )
+
+
+def distribution_used_aliased_phase_basis(
+    result: Mapping[str, Any], magnetic_structure: object
+) -> bool:
+    """Return whether a distribution's model needs the reciprocal phase-basis correction."""
+
+    return _distribution_model_matches(
+        result,
+        magnetic_structure,
+        has_reciprocal_phase_aliases,
+        default_max_period=MAX_LISTED_TRANSLATION_PERIOD,
+    )
+
+
+def _distribution_model_matches(
+    result: Mapping[str, Any],
+    magnetic_structure: object,
+    predicate: Callable[..., bool],
+    *,
+    default_max_period: int,
+) -> bool:
     rows = result.get("results")
     if result.get("kind") != "distribution" or not isinstance(rows, list) or not rows:
         return False
@@ -275,12 +311,10 @@ def distribution_held_a_short_period_at_zero(
         first = rows[0] if isinstance(rows[0], Mapping) else {}
         parameters = first.get("calculation_parameters")
         parameters = parameters if isinstance(parameters, Mapping) else {}
-        return has_short_period_modulation(
+        return predicate(
             model,
             tolerance=float(parameters.get("commensurate_tolerance", 1e-8)),
-            max_period=int(
-                parameters.get("commensurate_max_period", _UNRECORDED_COMMENSURATE_MAX_PERIOD)
-            ),
+            max_period=int(parameters.get("commensurate_max_period", default_max_period)),
         )
     except (MagneticFieldError, MagneticStructureError, TypeError, ValueError):
         return False
@@ -289,11 +323,20 @@ def distribution_held_a_short_period_at_zero(
 def _predates_translation_method(result: Mapping[str, Any], magnetic_structure: object) -> bool:
     version = result.get(TRANSLATION_METHOD_VERSION_KEY)
     if version is None:
-        return lists_only_one_translation(result) or distribution_held_a_short_period_at_zero(
-            result, magnetic_structure
+        return (
+            lists_only_one_translation(result)
+            or distribution_held_a_short_period_at_zero(result, magnetic_structure)
+            or distribution_used_aliased_phase_basis(result, magnetic_structure)
         )
     if version == TRANSLATION_METHOD_NOT_USED and not isinstance(version, bool):
         return False
+    if (
+        version == 2
+        and isinstance(version, int)
+        and not isinstance(version, bool)
+        and "kind" in result
+    ):
+        return distribution_used_aliased_phase_basis(result, magnetic_structure)
     return (
         not isinstance(version, int)
         or isinstance(version, bool)
@@ -369,15 +412,25 @@ def recorded_translation_method_version(
     """Return the translation method version of a field record, as a simulation should keep it.
 
     ``magnetic_structure`` is the record owner's model, which decides for a distribution.
+    An unaffected version 2 record has the current method's effective version, so its
+    simulation source keeps the same status without needing the owner's model later.
     """
 
     version = data.get(TRANSLATION_METHOD_VERSION_KEY)
     if version is not None:
+        if (
+            version == 2
+            and not isinstance(version, bool)
+            and not _predates_translation_method(data, magnetic_structure)
+        ):
+            return TRANSLATION_METHOD_VERSION
         return version
     if lists_only_one_translation(data) or distribution_held_a_short_period_at_zero(
         data, magnetic_structure
     ):
         return _UNRECORDED_TRANSLATION_METHOD_VERSION
+    if distribution_used_aliased_phase_basis(data, magnetic_structure):
+        return 2
     return TRANSLATION_METHOD_NOT_USED
 
 

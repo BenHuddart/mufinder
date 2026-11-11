@@ -277,6 +277,46 @@ def test_a_distribution_from_before_the_translation_method_reads_its_owners_mode
     assert older_method_sources(frozen, document) == list(frozen.sources)
 
 
+@pytest.mark.parametrize("aliased", [False, True])
+@pytest.mark.parametrize("version", [None, 2, TRANSLATION_METHOD_VERSION])
+def test_simulation_sources_keep_the_reciprocal_phase_method_status(
+    document, aliased, version
+) -> None:
+    distribution = MagneticFieldDistributionResult(
+        site_label="helix",
+        muon_position=(0.5, 0.5, 0.5),
+        fields_T=np.array([[0.0, 0.0, 0.01], [0.0, 0.01, 0.0]]),
+        histogram_centres_T=np.array([0.01]),
+        histogram_counts=np.array([2.0]),
+        applied_T=ZERO,
+        calculation_parameters={"commensurate_max_period": 12},
+    )
+    fields = {**_current_fields(), "kind": "distribution", "results": [distribution.to_json()]}
+    if version is not None:
+        fields[TRANSLATION_METHOD_VERSION_KEY] = version
+    document.project.magnetic_structure = collinear_waves_model(
+        (0.22, 0.0, 0.0), (0.78 if aliased else 0.44, 0.0, 0.0)
+    ).to_json()
+    _store_fields(document, MAGNETIC_FIELD_PAGE_OWNER, fields)
+    record = _simulate_page(document)
+    older = aliased and version != TRANSLATION_METHOD_VERSION
+    assert bool(older_method_sources(record, document)) is older
+    # Historical simulations already recorded version 2; their original field record scopes it.
+    if version in (None, 2):
+        historical_version = TRANSLATION_METHOD_NOT_USED if version is None else 2
+        historical = replace(
+            record,
+            sources=tuple(
+                replace(source, translation_method_version=historical_version)
+                for source in record.sources
+            ),
+        )
+        assert bool(older_method_sources(historical, document)) is older
+    restored = polarisation_simulation(document, record.simulation_id)
+    assert restored is not None
+    assert bool(older_method_sources(restored, document)) is older
+
+
 def test_removed_sources_are_those_with_no_fields_left(document) -> None:
     record = run_polarisation_simulation(
         document,

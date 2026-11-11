@@ -670,18 +670,69 @@ def test_a_result_with_no_translation_version_is_decided_by_its_rows(
     [
         (TRANSLATION_METHOD_VERSION, False),
         (TRANSLATION_METHOD_VERSION + 1, False),
-        (TRANSLATION_METHOD_VERSION - 1, True),
+        (2, False),
+        (1, True),
         (TRANSLATION_METHOD_NOT_USED, False),
         ("2", True),
         (True, True),
     ],
 )
-def test_a_recorded_translation_version_decides_whatever_the_rows_hold(recorded, older) -> None:
+def test_a_recorded_translation_version_marks_only_affected_commensurate_rows(
+    recorded, older
+) -> None:
     result = _current_field_result(
         "commensurate", _field_rows(_HOME), **{TRANSLATION_METHOD_VERSION_KEY: recorded}
     )
 
     assert field_result_uses_older_method(result) is older
+
+
+@pytest.mark.parametrize("version", [None, 2, TRANSLATION_METHOD_VERSION])
+@pytest.mark.parametrize(
+    ("vectors", "affected"),
+    [
+        (((0.22, 0, 0), (0.78, 0, 0)), True),
+        (((0.22, 0, 0), (0.44, 0, 0), (0.56, 0, 0)), True),
+        (((0.22, 0, 0), (1.22, 1, -1)), True),
+        (((0.22, 0, 0), (0.44, 0, 0)), False),
+        (((0.22, 0, 0), (-0.22, 0, 0)), False),
+        (((0.22, 0, 0), (0, 0.78, 0)), False),
+        (((0.25, 0, 0), (0.75, 0, 0)), False),
+    ],
+    ids=[
+        "complement",
+        "dependent-complement",
+        "shift",
+        "harmonic",
+        "negative",
+        "independent",
+        "short",
+    ],
+)
+def test_only_aliased_distributions_predate_the_phase_basis_correction(
+    version, vectors, affected
+) -> None:
+    rows = _field_rows(_HOME)
+    rows[0]["calculation_parameters"]["commensurate_max_period"] = 12
+    result = _current_field_result("distribution", rows)
+    if version is not None:
+        result[TRANSLATION_METHOD_VERSION_KEY] = version
+    model = _model_json(*vectors)
+    older = version != TRANSLATION_METHOD_VERSION and affected
+    # Keyless short-period distributions also predate exact translation sampling.
+    if version is None and vectors[0][0] == 0.25:
+        older = True
+    assert field_result_uses_older_method(result, None, model) is older
+    effective = recorded_translation_method_version(result, model)
+    assert (
+        field_result_uses_older_method(
+            {
+                CALCULATION_VERSION_KEY: CALCULATION_METHOD_VERSION,
+                TRANSLATION_METHOD_VERSION_KEY: effective,
+            }
+        )
+        is older
+    )
 
 
 def test_a_translation_version_is_stored_and_comes_back(tmp_path: Path) -> None:

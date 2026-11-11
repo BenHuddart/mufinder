@@ -4454,6 +4454,86 @@ def _two_q_model(q_long, q_short) -> MagneticStructureModel:
 
 
 @pytest.mark.parametrize(
+    ("q", "period"),
+    [(1.0 / 13.0, 13), (0.22, 50), (0.44, 25)],
+    ids=["period-13", "period-50", "period-25"],
+)
+@pytest.mark.parametrize("reverse", [False, True], ids=["q-first", "complement-first"])
+@pytest.mark.parametrize("dependent", [False, True], ids=["basis-pair", "dependent-pair"])
+def test_real_muesr_complementary_q_fields_match_every_translation(
+    real_muesr, q, period, reverse, dependent
+) -> None:
+    first, second = (1.0 - q, q) if reverse else (q, 1.0 - q)
+    site = _GENERAL_SITE
+    model = _two_q_model(first, second)
+    basis_q = first
+    if dependent:
+        # Both members of the complementary pair depend on a third component's phase.
+        basis_q = q / 2.0
+        period *= 2
+        model = replace(
+            model,
+            q_basis_rlu=((first, 0.0, 0.0), (second, 0.0, 0.0), (basis_q, 0.0, 0.0)),
+            components=(
+                replace(
+                    model.components[0],
+                    component_id="fundamental",
+                    terms=(
+                        FourierTerm((0.0, 0.0, 1.0), ComplexVector.from_vector([0.2, 0.3, 0.4])),
+                    ),
+                ),
+                *model.components,
+            ),
+        )
+    # A non-origin atom and nonzero phases pin the original Fourier amplitudes too.
+    structure = replace(_structure(), fractional_positions=[[0.37, 0.43, 0.51]])
+    model = replace(
+        model,
+        global_phase_turns=0.19,
+        components=tuple(replace(c, phase_turns=0.07 * i) for i, c in enumerate(model.components)),
+    )
+    (result,) = calculate_incommensurate_field_distributions(
+        structure,
+        model,
+        [site],
+        options=MagneticFieldOptions(
+            supercell=(15, 15, 15),
+            radius=_RADIUS,
+            include_lorentz=False,
+            nangles=40 * period,
+            phase_sample_count=10 * period,
+            phase_sampling="grid",
+        ),
+    )
+    direct = np.array(
+        [
+            _direct_lattice_field(structure, model, np.add(site, (n, 0, 0)), _RADIUS)
+            for n in range(period)
+        ]
+    )
+    # Grid rows ascend in the first component's phase, rather than translation order.
+    phase_indices = np.rint(
+        np.mod(basis_q * (np.arange(period) + 14.1), 1.0) * (10 * period)
+    ).astype(int) % (10 * period)
+    # Allow sub-microtesla backend rounding at the non-origin atom.
+    np.testing.assert_allclose(result.fields_T[phase_indices], direct, rtol=1e-6, atol=3e-7)
+    phases = regenerate_phase_samples(result)
+    assert phases is not None
+    assert phases.component_phase_coefficients.shape[1] == 1
+    assert set(phases.component_phase_coefficients[:, 0]) == (
+        {-2.0, 1.0, 2.0} if dependent else {-1.0, 1.0}
+    )
+
+    restored = MagneticFieldDistributionResult.from_json(result.to_json())
+    np.testing.assert_allclose(restored.fields_T, result.fields_T)
+    restored_phases = regenerate_phase_samples(restored)
+    assert restored_phases is not None
+    np.testing.assert_allclose(
+        restored_phases.component_phase_coefficients, phases.component_phase_coefficients
+    )
+
+
+@pytest.mark.parametrize(
     ("q_long", "q_short", "period"),
     [(1.0 / 13.0, 0.25, 52), (1.0 / 24.0, 1.0 / 12.0, 24)],
     ids=["independent", "harmonic"],
