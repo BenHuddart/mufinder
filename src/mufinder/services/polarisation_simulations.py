@@ -583,9 +583,21 @@ def _source_translation_method_version(
 ) -> object:
     """Return a source's translation method version, reading its field record if it has none."""
 
-    if source.translation_method_version is not None:
+    contextual_version = type(
+        source.translation_method_version
+    ) is int and source.translation_method_version in (TRANSLATION_METHOD_NOT_USED, 2)
+    if source.translation_method_version is not None and not contextual_version:
         return source.translation_method_version
-    record = None if document is None else document.results.get(source.record_id)
+    record = (
+        None
+        if document is None
+        else magnetic_field_result(document, source.owner, MAGNETIC_FIELD_RESULT_TYPE)
+    )
+    if record is not None and str(record.id) != str(source.record_id):
+        record = None
+    if contextual_version and (record is None or not isinstance(record.data, Mapping)):
+        # Without the original record, keep the recorded method's conservative status.
+        return source.translation_method_version
     if record is None or not isinstance(record.data, Mapping):
         return TRANSLATION_METHOD_NOT_USED
     return recorded_translation_method_version(

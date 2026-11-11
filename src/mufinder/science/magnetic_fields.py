@@ -752,6 +752,39 @@ def has_short_period_modulation(
     return False
 
 
+def has_reciprocal_phase_aliases(
+    model: MagneticStructureModel,
+    *,
+    tolerance: float = 1e-8,
+    max_period: int = MAX_LISTED_TRANSLATION_PERIOD,
+) -> bool:
+    """Return whether long-period terms share a signed q modulo a nonzero reciprocal vector.
+
+    Such terms share a translation phase, including when they depend on another phase axis.
+    This detects distributions that need the reciprocal phase-basis correction.
+    """
+
+    vectors = [
+        model.q_coeff_to_rlu(term.q_coeff)
+        for component in enabled_magnetic_components(model)
+        for term in component.terms
+        if np.any(term.coefficient.to_array())
+    ]
+    vectors = [
+        q
+        for q in vectors
+        if not is_commensurate_propagation_vector(q, tolerance=tolerance, max_period=max_period)
+    ]
+    return any(
+        not np.allclose(original, representative, atol=float(tolerance), rtol=0.0)
+        for original, representative in zip(
+            vectors,
+            _reciprocal_phase_representatives(vectors, tolerance=tolerance, max_period=max_period),
+            strict=True,
+        )
+    )
+
+
 def approximant_lists_its_fields(
     structure: Structure,
     model: MagneticStructureModel,
@@ -1956,6 +1989,15 @@ def calculate_incommensurate_field_distributions(
     if not models:
         raise MagneticFieldError("magnetic structure has no non-zero Fourier components")
 
+    representatives = _reciprocal_phase_representatives(
+        [entry.k_rlu for entry in models],
+        tolerance=opts.commensurate_tolerance,
+        max_period=opts.commensurate_max_period,
+    )
+    models = tuple(
+        replace(entry, k_rlu=q_rlu) for entry, q_rlu in zip(models, representatives, strict=True)
+    )
+
     muons = _expanded_muon_positions(structure, muon_sites, opts)
     distortions = _site_distortions(structure, muon_sites, distorted_structures, opts)
     radius_sample = _build_muesr_sample(structure, [position for _label, position in muons])
@@ -2429,6 +2471,8 @@ def _active_phase_basis_and_coefficients(
     A short-period component that is a whole multiple of the basis, such as a 1/12 harmonic
     of a 1/24 helix, keeps that multiple of the phase, as its translations do. Any other
     ``q != 0`` component of period up to ``max_period`` is listed (:class:`_PhaseBasis`).
+    Vectors differing by a reciprocal lattice vector share a phase; a vector equivalent
+    to the negative of a basis vector takes the opposite phase, including q and 1 - q.
     """
 
     q_vectors: list[np.ndarray] = []
@@ -2472,6 +2516,64 @@ def _active_phase_basis_and_coefficients(
             )
         coeffs.append(tuple(float(value) for value in solved))
     return _PhaseBasis(basis_rlu=basis, coefficients=coeffs, listed=tuple(listed))
+
+
+def _reciprocal_phase_representatives(
+    q_vectors: Sequence[np.ndarray], *, tolerance: float, max_period: int
+) -> list[np.ndarray]:
+    """Align signed reciprocal aliases without breaking their existing harmonic relationships.
+
+    muLFC's lookup row origin depends on q . mu. Matching signed representatives align
+    those origins as well as phase coefficients. Atom-resolved amplitudes keep their
+    original phases. A group's representative favours an integer combination of the
+    existing phase basis, so q, 1 - 2q, 2q keeps coefficients 1, -2, 2 in either pair order.
+    """
+
+    representatives: list[np.ndarray] = []
+    basis: list[np.ndarray] = []
+    for candidate in q_vectors:
+        representative = np.asarray(candidate, dtype=float)
+        matched = False
+        for previous in representatives:
+            sign = _reciprocal_phase_sign(candidate, previous, tolerance=tolerance)
+            if sign is not None:
+                representative = sign * previous
+                matched = True
+                break
+        if not matched and basis:
+            best_norm = float("inf")
+            for peer in q_vectors:
+                sign = _reciprocal_phase_sign(candidate, peer, tolerance=tolerance)
+                if sign is None:
+                    continue
+                proposed = sign * np.asarray(peer, dtype=float)
+                solved = np.linalg.lstsq(np.asarray(basis).T, proposed, rcond=None)[0]
+                rounded = np.rint(solved)
+                if np.allclose(solved, rounded, atol=1e-9, rtol=0.0) and np.allclose(
+                    rounded @ np.asarray(basis), proposed, atol=float(tolerance), rtol=0.0
+                ):
+                    norm = float(np.linalg.norm(rounded))
+                    if norm < best_norm:
+                        representative = proposed
+                        best_norm = norm
+        representatives.append(representative)
+        if not is_commensurate_propagation_vector(
+            representative, tolerance=tolerance, max_period=max_period
+        ) and _rank_increases(basis, representative, tolerance=tolerance):
+            basis.append(representative)
+    return representatives
+
+
+def _reciprocal_phase_sign(
+    candidate: np.ndarray, reference: np.ndarray, *, tolerance: float
+) -> float | None:
+    """Return the shared phase's sign when candidate = ±reference + G."""
+
+    for sign in (1.0, -1.0):
+        difference = candidate - sign * reference
+        if np.allclose(difference, np.rint(difference), atol=float(tolerance), rtol=0.0):
+            return sign
+    return None
 
 
 def _rank_increases(

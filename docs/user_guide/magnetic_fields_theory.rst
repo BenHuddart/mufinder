@@ -185,6 +185,13 @@ incommensurate lookup table using ``locfield(..., 'i', nangles=N)``. ``N`` is
 the ``Lookup angles per q`` setting. Each lookup row is a dipolar, Lorentz, and
 contact field contribution for one reduced phase angle in ``[0, 1)``.
 
+Wavevectors differing by a reciprocal lattice vector have the same translation
+phase. A pair such as ``(q, 0, 0)`` and ``(1 − q, 0, 0)`` shares one phase axis
+with opposite signs, in either component order, including when both depend on
+another component's phase. Each component keeps its own Fourier amplitudes and
+phases at the atoms' positions. The backend uses matching signed reciprocal
+representatives so that its lookup rows have the same phase reference.
+
 MuFinder then identifies the active independent phase dimensions from the
 actual incommensurate component wavevectors, not merely from populated q-basis
 rows. Unused q-basis rows therefore do not add dimensions, and physically

@@ -274,7 +274,12 @@ Compatibility ledger
        a ``q ≠ 0`` term of period up to the ``commensurate_max_period`` in its
        ``calculation_parameters``, or 64 when none is recorded, is older. A simulation source without it reads the record named by its
        ``record_id`` and that owner's structure, and is not marked once that record is
-       gone, when the simulation is stale instead. Additive, so no migration.
+       gone, when the simulation is stale instead. Version 3 also resolves the signed
+       phase of reciprocal-equivalent long-period terms. Version 2 distributions and
+       keyless distributions with such a pair are older; unaffected version 2 fields
+       retain their status. Simulation sources read their original field record to scope
+       version 2 and keep the recorded older status when that record is unavailable.
+       Additive, so no migration.
      - Current project data, not deprecated. It may not be dropped without a schema
        migration that first records which results list their translations.
    * - ``generate_random_sites_by_distance``
