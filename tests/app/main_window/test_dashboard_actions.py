@@ -3435,3 +3435,108 @@ def test_dashboard_columns_are_sized_once_not_per_cell(
 
     assert runtime_item.text() == "00:01"
     assert window._jobs_table.columnWidth(window._JOB_RUNTIME_COLUMN) < width_grown
+
+
+@pytest.mark.parametrize("field_name", ["propagation", "applied", "hyperfine", "measured"])
+def test_dismiss_flush_preserves_typing_and_saves_the_typed_value(
+    project_with_host, monkeypatch, qapp, field_name
+) -> None:
+    window, service, document = project_with_host
+    host = document.structures[document.project.host_structure_id]
+    job = service.add_job(
+        document,
+        label="failed",
+        workflow_stage=main_window_module.WorkflowStage.CONVERGENCE_CUTOFF,
+        calc_type="castep_convergence_cutoff",
+    )
+    job.status = JobStatus.FAILED
+    magnetic = window._magnetic_field_view
+    if field_name == "propagation":
+        select_route(window, "host_structure")
+        edit = window._host_structure_view._propagation_x
+    else:
+        select_route(window, "magnetic_fields")
+        if field_name == "applied":
+            edit = magnetic._applied_field_input.edits[0]
+        elif field_name == "hyperfine":
+            edit = magnetic._hyperfine_coupling
+        else:
+            magnetic._measured_magnetization_check.setChecked(True)
+            edit = magnetic._measured_magnetization_input.edits[0]
+    window.show()
+    window.activateWindow()
+    edit.setFocus()
+    qapp.processEvents()
+    assert edit.hasFocus()
+    edit.selectAll()
+    QTest.keyClicks(edit, "00.1")
+    cursor = edit.cursorPosition()
+    monkeypatch.setattr(workflow_table_utils, "confirm_destructive", lambda *a, **kw: True)
+    window._on_dismiss_from_dashboard([job.id])
+    window._flush_dashboard()
+    assert job.dismissed_at is not None
+    assert edit.text() == "00.1"
+    assert edit.cursorPosition() == cursor
+    assert edit.hasFocus()
+    QTest.keyClicks(edit, "2")
+    QTest.keyClick(edit, Qt.Key.Key_Tab)
+    assert edit.text() == "00.12"
+    window._save_project()
+    loaded = service.load_project(document.project_root)
+    if field_name == "propagation":
+        assert host.properties["propagation_vector"][0] == 0.12
+        assert loaded.structures[host.id].properties["propagation_vector"][0] == 0.12
+    else:
+        state = loaded.ui_state[window._MAGNETIC_FIELD_FORM_KEY]
+        key = {
+            "applied": "applied_field_T",
+            "hyperfine": "hyperfine_coupling",
+            "measured": "measured_magnetization",
+        }[field_name]
+        value = state[key] if field_name == "hyperfine" else state[key][0]
+        assert float(value) == 0.12
+
+
+def test_host_refresh_updates_an_idle_field(project_with_host) -> None:
+    window, _service, document = project_with_host
+    host = document.structures[document.project.host_structure_id]
+    host.properties["propagation_vector"] = [0.25, 0.0, 0.0]
+    window._refresh_host_structure_view()
+    assert window._host_structure_view._propagation_x.text() == "0.25"
+
+
+def test_reopening_the_same_project_replaces_unfinished_host_text(project_with_host, qapp):
+    window, _service, document = project_with_host
+    root = document.project_root
+    window._save_project()
+    select_route(window, "host_structure")
+    window.show()
+    window.activateWindow()
+    edit = window._host_structure_view._propagation_x
+    edit.setFocus()
+    qapp.processEvents()
+    edit.selectAll()
+    QTest.keyClicks(edit, "-")
+    assert edit.text() == "-"
+    assert window.open_project(root)
+    assert edit.text() == "0"
+    assert not edit.isModified()
+
+
+@pytest.mark.parametrize("leave_focus", [False, True])
+def test_energy_barrier_draft_limit_survives_a_dashboard_flush(
+    project_with_host, qapp, leave_focus
+):
+    window, _service, _document = project_with_host
+    select_route(window, "energy_barriers")
+    edit = window._energy_barriers_view._max_path_length_input
+    window.show()
+    window.activateWindow()
+    edit.setFocus()
+    qapp.processEvents()
+    QTest.keyClicks(edit, "2.5")
+    if leave_focus:
+        QTest.keyClick(edit, Qt.Key.Key_Tab)
+    window._request_dashboard_flush(failure_message="Autosave failed")
+    window._flush_dashboard()
+    assert edit.text() == "2.5"

@@ -12,6 +12,9 @@ from pathlib import Path
 from uuid import UUID, uuid4
 
 import pytest
+from PySide6.QtCore import Qt
+from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QLineEdit
 
 from mufinder.app.main_window import MainWindow
 from mufinder.app.relaxation_analysis_widget import (
@@ -249,6 +252,15 @@ def test_a_dashboard_flush_after_a_new_completed_relaxation_updates_the_existing
     built = len(constructed_viewers)
     _reset(rebuilds)
 
+    name_edit = page.findChild(QLineEdit)
+    window.show()
+    window.activateWindow()
+    name_edit.setFocus()
+    qapp.processEvents()
+    QTest.keyClicks(name_edit, " draft")
+    pending_name = name_edit.text()
+    cursor = name_edit.cursorPosition()
+
     # The workspace's relaxation completes.
     source = CompletedRelaxationAnalysisSource(
         job_id=UUID(workspaces[0]["job_ids"][0]),
@@ -267,3 +279,9 @@ def test_a_dashboard_flush_after_a_new_completed_relaxation_updates_the_existing
     assert view._workspace_tabs.widget(0) is page
     assert page.findChild(AtomicStructureViewer) is viewer
     assert table.topLevelItemCount() == 1
+    assert name_edit.text() == pending_name
+    assert name_edit.cursorPosition() == cursor
+    assert name_edit.hasFocus()
+    QTest.keyClick(name_edit, Qt.Key.Key_Tab)
+    assert window._document.ui_state["relaxation_analysis_workspaces"][0]["name"] == pending_name
+    window._save_project()

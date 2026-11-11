@@ -10,6 +10,7 @@ from PySide6.QtGui import QDoubleValidator
 from PySide6.QtWidgets import QHBoxLayout, QLineEdit, QWidget
 
 from mufinder.app.theme import style_inline_group
+from mufinder.app.text_editing import refresh_line_edit
 
 _AXES = ("x", "y", "z")
 
@@ -127,6 +128,10 @@ class DecimalLineEdit(QLineEdit):
             return
         self.setText(text)
         self._last_value = numeric
+
+    def refresh_value(self, value: float, *, force: bool = False) -> None:
+        """Show a model value while preserving pending typing unless forced."""
+        refresh_line_edit(self, self._format_value(self._clamp(float(value))), force=force)
 
     def value(self) -> float:
         parsed = self._parse(self.text())
@@ -261,7 +266,7 @@ class VectorInput(QWidget):
         x, y, z = components
         return (x, y, z)
 
-    def set_value(self, values: object) -> None:
+    def set_value(self, values: object, *, preserve_edits: bool = False) -> None:
         """Show the three components of ``values``, or zeros when it is not three finite numbers."""
 
         components: tuple[float, ...] = (0.0, 0.0, 0.0)
@@ -277,7 +282,7 @@ class VectorInput(QWidget):
             if all(math.isfinite(value) for value in parsed):
                 components = parsed
         for edit, value in zip(self._edits, components, strict=True):
-            edit.setText(f"{value:g}")
+            refresh_line_edit(edit, f"{value:g}", force=not preserve_edits)
 
 
 def _vector_component(text: str, quantity: str) -> float:

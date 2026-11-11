@@ -395,7 +395,18 @@ defined by two of these modules, and a pinned count may only fall.
        session's ``qapp`` fixture with the shared one; worker threads never
        call ``gc.collect()`` or hold the only reference to a Qt object.
    * - ``mufinder.app.text_editing``
-     - The paste shortcut in editable text widgets
+     - Model-to-form text refreshes (``refresh_line_edit``) preserve focus,
+       cursor, selection and pending typing. A successful ``editingFinished``
+       clears the pending flag for fields that commit on leaving; fields
+       committed by an action use ``commit_on_finish=False`` and acknowledge
+       the saved text on their next refresh. Invalid intermediate text remains
+       protected after focus leaves. Explicit loads and resets force replacement.
+       ``DecimalLineEdit.refresh_value`` and ``VectorInput.set_value`` with
+       ``preserve_edits`` use this same helper. The Host Structure page and
+       Magnetic Fields page and workspaces, Relaxation Analysis workspace
+       names and Energy Barriers maximum path length use it on dashboard
+       refreshes.
+       The paste shortcut in editable text widgets
        (``TextEditingShortcutFilter``, ``install_text_editing_shortcuts``):
        V with Control or Meta pastes into the focused line edit, text edit,
        plain text edit or editable combo box unless it is read-only or

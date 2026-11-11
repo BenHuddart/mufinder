@@ -33,6 +33,7 @@ from PySide6.QtWidgets import (
 )
 
 from mufinder.app.blocking_call import BlockingCallCancelled, run_blocking_call
+from mufinder.app.text_editing import refresh_line_edit
 from mufinder.app.decimal_input import DecimalLineEdit, VectorInput
 from mufinder.app.demagnetizing_dialogs import (
     ADVANCED_DEMAG_SHAPES,
@@ -740,9 +741,16 @@ class MagneticFieldWidget(QWidget):
         deletable: bool = False,
     ) -> None:
         self._page_reloads += 1
+        host = None if document is None else active_host_structure(document)
+        self._refreshing_same_document = document is self._document and host is self._host_structure
         self._document = document
-        self._host_structure = None if document is None else active_host_structure(document)
-        self.set_workspace_title(title, editable=title_editable, deletable=deletable)
+        self._host_structure = host
+        self.set_workspace_title(
+            title,
+            editable=title_editable,
+            deletable=deletable,
+            preserve_edits=self._refreshing_same_document,
+        )
         if magnetic_structure is None and document is not None:
             magnetic_structure = document.project.magnetic_structure
         self._model = magnetic_model_for_host(magnetic_structure, self._host_structure)
@@ -813,20 +821,24 @@ class MagneticFieldWidget(QWidget):
         *,
         editable: bool = False,
         deletable: bool = False,
+        preserve_edits: bool = False,
     ) -> None:
         normalized = str(title).strip() or "Magnetic Fields"
         self._restoring_title = True
         try:
             self._title.setText(normalized)
             self._title.setVisible(not editable)
-            self._title_edit.setText(normalized)
+            refresh_line_edit(self._title_edit, normalized, force=not preserve_edits)
             self._title_edit.setVisible(editable)
             self._delete_workspace_button.setVisible(deletable)
         finally:
             self._restoring_title = False
 
-    def set_form_state(self, state: Mapping[str, object] | None) -> None:
+    def set_form_state(
+        self, state: Mapping[str, object] | None, *, preserve_edits: bool = False
+    ) -> None:
         """Restore magnetic-field tab settings from project UI state."""
+        preserve_edits = preserve_edits and getattr(self, "_refreshing_same_document", False)
         self._page_reloads += 1
         if not isinstance(state, Mapping) or not state:
             self._reset_form_state()
@@ -851,9 +863,13 @@ class MagneticFieldWidget(QWidget):
             else:
                 self._none_radio.setChecked(True)
             self._set_measured_magnetization_from_state(
-                state.get("use_measured_magnetization"), state.get("measured_magnetization")
+                state.get("use_measured_magnetization"),
+                state.get("measured_magnetization"),
+                preserve_edits=preserve_edits,
             )
-            self._applied_field_input.set_value(state.get("applied_field_T"))
+            self._applied_field_input.set_value(
+                state.get("applied_field_T"), preserve_edits=preserve_edits
+            )
 
             self._settings = self._settings.with_state(state)
             self._include_equivalent_sites.setChecked(
@@ -861,7 +877,9 @@ class MagneticFieldWidget(QWidget):
             )
             raw_hyperfine = state.get("hyperfine_coupling")
             if raw_hyperfine is not None:
-                self._hyperfine_coupling.setText(str(raw_hyperfine))
+                refresh_line_edit(
+                    self._hyperfine_coupling, str(raw_hyperfine), force=not preserve_edits
+                )
             self._set_hyperfine_unit(
                 str(state.get("hyperfine_coupling_unit", self._current_hyperfine_unit()))
             )
@@ -1459,8 +1477,10 @@ class MagneticFieldWidget(QWidget):
     def _applied_field(self) -> tuple[float, float, float]:
         return self._applied_field_input.value("applied field")
 
-    def _set_measured_magnetization_from_state(self, enabled: object, values: object) -> None:
-        self._measured_magnetization_input.set_value(values)
+    def _set_measured_magnetization_from_state(
+        self, enabled: object, values: object, *, preserve_edits: bool = False
+    ) -> None:
+        self._measured_magnetization_input.set_value(values, preserve_edits=preserve_edits)
         self._measured_magnetization_check.setChecked(bool(enabled))
 
     def _refresh_measured_magnetization_unit(self) -> None:
