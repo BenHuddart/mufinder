@@ -1403,7 +1403,9 @@ class EnergyBarriersController(WorkflowJobController):
             reactant_key=reactant_key,
             product_key=product_key,
             max_path_length_text=energy_barrier_max_path_length_text(document),
+            preserve_edits=getattr(self, "_endpoint_document", None) is document,
         )
+        self._endpoint_document = document
         view.set_path_symmetry_note(self.path_symmetry_note(reactant_key))
 
         view.set_sources(self._path_rows())

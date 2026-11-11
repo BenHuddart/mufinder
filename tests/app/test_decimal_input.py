@@ -180,3 +180,47 @@ def test_a_field_that_asks_is_corrected_on_leaving_it(
     assert field.text() == shown
     assert finished == [shown]
     window.close()
+
+
+def test_refresh_keeps_invalid_typing_after_focus_leaves_and_forced_load_replaces_it(qapp):
+    container = QWidget()
+    layout = QVBoxLayout(container)
+    edit = DecimalLineEdit()
+    other = DecimalLineEdit()
+    layout.addWidget(edit)
+    layout.addWidget(other)
+    edit.refresh_value(0, force=True)
+    container.show()
+    container.activateWindow()
+    edit.setFocus()
+    qapp.processEvents()
+    edit.selectAll()
+    QTest.keyClicks(edit, "-")
+    QTest.keyClick(edit, Qt.Key.Key_Tab)
+    assert not edit.hasFocus()
+    edit.refresh_value(2)
+    assert edit.text() == "-"
+    edit.refresh_value(3, force=True)
+    assert edit.text() == "3"
+    assert not edit.isModified()
+    container.close()
+
+
+def test_committed_decimal_accepts_a_later_refresh(qapp):
+    container = QWidget()
+    layout = QVBoxLayout(container)
+    edit = DecimalLineEdit()
+    layout.addWidget(edit)
+    layout.addWidget(DecimalLineEdit())
+    edit.refresh_value(0, force=True)
+    container.show()
+    container.activateWindow()
+    edit.setFocus()
+    qapp.processEvents()
+    edit.selectAll()
+    QTest.keyClicks(edit, "012")
+    QTest.keyClick(edit, Qt.Key.Key_Tab)
+    assert not edit.isModified()
+    edit.refresh_value(4)
+    assert edit.text() == "4"
+    container.close()

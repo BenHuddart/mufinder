@@ -124,3 +124,29 @@ def _is_editable_text_widget(widget: QWidget) -> bool:
     if callable(is_read_only) and bool(is_read_only()):
         return False
     return True
+
+
+def refresh_line_edit(
+    edit: QLineEdit, text: str, *, force: bool = False, commit_on_finish: bool = True
+) -> None:
+    """Refresh model text without interrupting focused or uncommitted typing.
+
+    Successful editingFinished clears the pending flag; invalid intermediate text
+    keeps it even after focus leaves. Explicit loads and resets pass force=True.
+    Fields committed by an action pass commit_on_finish=False; a refresh of
+    their saved text acknowledges the edit. Equal text is left untouched so
+    cursor, selection and undo history survive.
+    """
+    if not getattr(edit, "_refresh_tracks_commit", False):
+        if commit_on_finish:
+            edit.editingFinished.connect(lambda: edit.setModified(False))
+        edit._refresh_tracks_commit = True
+    if edit.text() == text:
+        edit.setModified(False)
+        return
+    if not force and (edit.hasFocus() or edit.isModified()):
+        return
+    if edit.text() != text:
+        edit.setText(text)
+    if force:
+        edit.setModified(False)
