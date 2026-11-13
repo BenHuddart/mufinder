@@ -399,3 +399,15 @@ def test_create_scheduler_factory() -> None:
 )
 def test_slurm_state_name_expands_short_codes(state: str, name: str) -> None:
     assert SlurmScheduler().state_name(state) == name
+
+
+@pytest.mark.parametrize("queue_system", ["slurm", "addqueue"])
+def test_history_uses_configured_accounting_path_without_discovery(queue_system) -> None:
+    scheduler = create_scheduler(queue_system, accounting_command_path=" /opt/slurm tools/sacct ")
+    ssh = _FakeSSH([(0, "7|FAILED|00:10:00|job\n", "")])
+
+    assert scheduler.history(ssh, ["7"])["7"].state == "FAILED"
+    assert ssh.commands == [
+        "'/opt/slurm tools/sacct' --jobs=7 --allocations --noheader --parsable2 "
+        "--format=JobID,State,Elapsed,JobName"
+    ]

@@ -117,10 +117,12 @@ class SlurmScheduler(Scheduler):
         submit_command_path: str = "",
         queue_check_command_path: str = "",
         cancel_command_path: str = "",
+        accounting_command_path: str = "",
     ) -> None:
         self._submit_command_path = submit_command_path.strip()
         self._queue_check_command_path = queue_check_command_path.strip()
         self._cancel_command_path = cancel_command_path.strip()
+        self._accounting_command_path = accounting_command_path.strip()
         self._resolved_commands: dict[str, str] = {}
 
     def submit(self, ssh, request: SchedulerSubmitRequest) -> str:
@@ -212,7 +214,9 @@ class SlurmScheduler(Scheduler):
         if not job_ids:
             return {}
 
-        accounting_command = self._resolve_command(ssh, "history", "sacct", "")
+        accounting_command = self._resolve_command(
+            ssh, "history", "sacct", self._accounting_command_path
+        )
         command = (
             f"{shlex.quote(accounting_command)} "
             f"--jobs={shlex.quote(','.join(job_ids))} "
@@ -383,6 +387,7 @@ def create_scheduler(
     submit_command_path: str = "",
     queue_check_command_path: str = "",
     cancel_command_path: str = "",
+    accounting_command_path: str = "",
 ) -> Scheduler:
     """Create a scheduler backend for a configured queue system."""
 
@@ -392,11 +397,13 @@ def create_scheduler(
             submit_command_path=submit_command_path,
             queue_check_command_path=queue_check_command_path,
             cancel_command_path=cancel_command_path,
+            accounting_command_path=accounting_command_path,
         )
     if normalized == "addqueue":
         return AddqueueScheduler(
             submit_command_path=submit_command_path,
             queue_check_command_path=queue_check_command_path,
             cancel_command_path=cancel_command_path,
+            accounting_command_path=accounting_command_path,
         )
     raise ValueError(f"Unsupported queue system: {queue_system}")

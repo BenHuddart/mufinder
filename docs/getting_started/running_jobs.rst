@@ -792,8 +792,11 @@ stored globally, including built-in SCARF and Redwood presets.
   the ``Jump host`` group. Its fields appear when the box is ticked: a separate
   host name, port, username, authentication method and SSH key path.
 - The ``Scheduler commands`` group sets explicit paths for the submit, queue
-  check and cancel commands. A command without a configured path is located by
-  probing the non-interactive SSH shell.
+  check, cancel and accounting (``sacct``) commands. A command without a configured path is located by
+  probing the non-interactive SSH shell. Redwood uses
+  ``/usr/local/shared/slurm/bin/sacct`` for accounting; a saved Redwood profile
+  without an accounting-path setting receives this default. An explicitly saved
+  empty path keeps command discovery enabled.
 - SSH key authentication is primary, with password fallback
   (``Authentication method``: ``SSH key`` or ``Password``).
 - The Redwood preset targets ``glamdring.physics.ox.ac.uk`` through the Physics

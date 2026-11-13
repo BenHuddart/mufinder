@@ -510,6 +510,7 @@ def _generate_scheduler_keywords_json(
         submit_command_path=config.submit_command_path,
         queue_check_command_path=config.queue_check_command_path,
         cancel_command_path=config.cancel_command_path,
+        accounting_command_path=config.accounting_command_path,
     )
     remote_directory = posixpath.join(
         config.working_directory_for(),

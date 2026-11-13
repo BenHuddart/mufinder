@@ -84,6 +84,7 @@ class ClusterConfig:
     keyword_execution_mode: str = DEFAULT_KEYWORD_EXECUTION_MODE
     keyword_shell_init: str = ""
     queues: tuple[ClusterQueue, ...] = ()
+    accounting_command_path: str = ""
 
     def working_directory_for(self, username: str | None = None) -> str:
         """Return the default working directory with ``{username}`` filled in.

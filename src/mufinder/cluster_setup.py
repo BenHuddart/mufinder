@@ -33,6 +33,7 @@ _SCARF_TEMPLATE_TOKEN = "builtin:scarf-slurm"
 _REDWOOD_PARTITION = "redwood"
 _REDWOOD_ADDQUEUE = "/usr/local/shared/bin/addqueue"
 _REDWOOD_SQUEUE = "/usr/local/shared/slurm/bin//squeue"
+_REDWOOD_SACCT = "/usr/local/shared/slurm/bin/sacct"
 _REDWOOD_SCANCEL = "/usr/local/shared/slurm/bin//scancel"
 _REDWOOD_PRESET_NAME = "Redwood"
 _REDWOOD_HOSTNAME = "glamdring.physics.ox.ac.uk"
@@ -88,6 +89,7 @@ def _default_clusters() -> list[ClusterConfig]:
             submit_command_path=_REDWOOD_ADDQUEUE,
             queue_check_command_path=_REDWOOD_SQUEUE,
             cancel_command_path=_REDWOOD_SCANCEL,
+            accounting_command_path=_REDWOOD_SACCT,
             keyword_execution_mode="direct",
             keyword_shell_init="",
         ),
@@ -511,6 +513,14 @@ def _cluster_from_settings(settings: QSettings, name: str) -> ClusterConfig | No
         cancel_command_path=str(
             settings.value(f"{prefix}/cancel_command_path", "", str) or ""
         ).strip(),
+        accounting_command_path=str(
+            settings.value(
+                f"{prefix}/accounting_command_path",
+                builtin.accounting_command_path if builtin is not None else "",
+                str,
+            )
+            or ""
+        ).strip(),
         keyword_execution_mode=keyword_execution_mode,
         keyword_shell_init=keyword_shell_init,
         queues=queues,
@@ -612,6 +622,7 @@ def save_cluster_configs(settings: QSettings, configs: Iterable[ClusterConfig]) 
                 submit_command_path=config.submit_command_path.strip(),
                 queue_check_command_path=config.queue_check_command_path.strip(),
                 cancel_command_path=config.cancel_command_path.strip(),
+                accounting_command_path=config.accounting_command_path.strip(),
                 keyword_execution_mode=config.keyword_execution_mode.strip().lower()
                 or _DEFAULT_KEYWORD_EXECUTION_MODE,
                 keyword_shell_init=config.keyword_shell_init.rstrip(),
@@ -655,6 +666,7 @@ def save_cluster_configs(settings: QSettings, configs: Iterable[ClusterConfig]) 
         settings.setValue(f"{prefix}/submit_command_path", config.submit_command_path)
         settings.setValue(f"{prefix}/queue_check_command_path", config.queue_check_command_path)
         settings.setValue(f"{prefix}/cancel_command_path", config.cancel_command_path)
+        settings.setValue(f"{prefix}/accounting_command_path", config.accounting_command_path)
         settings.setValue(f"{prefix}/keyword_execution_mode", config.keyword_execution_mode)
         settings.setValue(f"{prefix}/keyword_shell_init", config.keyword_shell_init)
         settings.setValue(f"{prefix}/queues", _queues_to_settings(config.queues))

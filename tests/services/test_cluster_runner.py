@@ -2348,3 +2348,33 @@ def test_cluster_runner_reports_no_geometry_progress_while_disconnected(
     runner.read_geometry_progress([job_id])
 
     assert results == [{job_id: None}]
+
+
+@pytest.mark.parametrize("queue_system", ["slurm", "addqueue"])
+def test_connect_passes_accounting_path_to_scheduler(qapp, monkeypatch, queue_system) -> None:
+    ssh = FakeSSH()
+    commands = []
+
+    def remote_command(command, timeout=30):
+        commands.append(command)
+        if command.startswith("/opt/slurm/squeue "):
+            return 0, "", ""
+        assert command.startswith("/opt/slurm/sacct ")
+        return 0, "123|FAILED|00:00:01|job\n", ""
+
+    ssh.exec_command = remote_command
+    monkeypatch.setattr(cluster_runner_module, "SSHConnection", lambda *args, **kwargs: ssh)
+    runner = ClusterJobRunner()
+    runner.connect_to_cluster(
+        ClusterConfig(
+            name="custom",
+            hostname="cluster.example",
+            username="alice",
+            queue_system=queue_system,
+            queue_check_command_path="/opt/slurm/squeue",
+            accounting_command_path="/opt/slurm/sacct",
+        )
+    )
+    assert runner.scheduler_job_is_active("123") is False
+    assert len(commands) == 2
+    runner.disconnect()

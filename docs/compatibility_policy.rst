@@ -29,6 +29,12 @@ Compatibility ledger
      - Current recovery data. Keep readers for format 1 until pending journals
        can be upgraded safely. Do not open a project with a pending journal
        in a build without journal recovery, or remove the journal by hand.
+   * - ``accounting_command_path`` absent from cluster settings
+     - ``mufinder.cluster_setup``
+     - Redwood profiles without the key use
+       ``/usr/local/shared/slurm/bin/sacct``. Other profiles default to command
+       discovery; explicit empty or custom paths are preserved.
+     - Settings read default. Keep while profiles without the key may be loaded.
    * - ``ConvergenceWidget``
      - ``mufinder.app.convergence_widget``
      - Import alias for ``CutoffConvergenceWidget``, also exported from

@@ -40,6 +40,7 @@ def test_cluster_setup_roundtrip_multiple_configs() -> None:
             cores_per_node=128,
             default_walltime="02:00:00",
             template_script_path="/templates/slurm.sh",
+            accounting_command_path="/opt/slurm/sacct",
             keyword_execution_mode="direct",
             keyword_shell_init="",
         ),
@@ -163,6 +164,7 @@ def test_cluster_setup_returns_scarf_default_when_empty() -> None:
     assert loaded[1].default_queue_name == "redwood"
     assert loaded[1].default_memory_gb == 7.5
     assert loaded[1].castep_executable == "/mnt/redwoodfs/muon/castep.mpi"
+    assert loaded[1].accounting_command_path == "/usr/local/shared/slurm/bin/sacct"
     assert loaded[1].submit_command_path == "/usr/local/shared/bin/addqueue"
     assert loaded[1].keyword_execution_mode == "direct"
     assert loaded[1].keyword_shell_init == ""
@@ -606,3 +608,21 @@ def test_cluster_setup_drops_queue_overrides_the_scheduler_cannot_use() -> None:
     assert loaded is not None
     (queue,) = loaded.queues
     assert queue == ClusterQueue(name="redwood", default_memory_gb=16.0)
+
+
+@pytest.mark.parametrize("name", ["Redwood", "redwood", "custom"])
+@pytest.mark.parametrize("stored_path", [None, "", "/opt/slurm/sacct"])
+def test_accounting_path_defaults_only_when_absent(name, stored_path) -> None:
+    settings = _FakeSettings()
+    settings.setValue("clusters/names", [name])
+    settings.setValue(f"clusters/{name}/hostname", "cluster.example")
+    if stored_path is not None:
+        settings.setValue(f"clusters/{name}/accounting_command_path", stored_path)
+
+    config = load_cluster_config(settings, name)
+    expected = stored_path
+    if expected is None:
+        expected = "/usr/local/shared/slurm/bin/sacct" if name.lower() == "redwood" else ""
+    assert config.accounting_command_path == expected
+    save_cluster_configs(settings, [config])
+    assert load_cluster_config(settings, name).accounting_command_path == expected
