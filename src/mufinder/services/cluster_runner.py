@@ -253,6 +253,7 @@ class ClusterJobRunner(QObject):
             submit_command_path=config.submit_command_path,
             queue_check_command_path=config.queue_check_command_path,
             cancel_command_path=config.cancel_command_path,
+            accounting_command_path=config.accounting_command_path,
         )
         self._credential_cache = resolved_credentials
         self.connection_status_changed.emit(True)

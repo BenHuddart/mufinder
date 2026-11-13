@@ -383,15 +383,18 @@ class ClusterSetupDialog(QDialog):
         self._submit_command_edit = QLineEdit(commands_group)
         self._queue_check_command_edit = QLineEdit(commands_group)
         self._cancel_command_edit = QLineEdit(commands_group)
+        self._accounting_command_edit = QLineEdit(commands_group)
         for edit in (
             self._submit_command_edit,
             self._queue_check_command_edit,
             self._cancel_command_edit,
+            self._accounting_command_edit,
         ):
             edit.setPlaceholderText("Found on the cluster's PATH")
         commands_form.addRow("Submit command path", self._submit_command_edit)
         commands_form.addRow("Queue check command path", self._queue_check_command_edit)
         commands_form.addRow("Cancel command path", self._cancel_command_edit)
+        commands_form.addRow("Accounting command path", self._accounting_command_edit)
         tab_layout.addWidget(commands_group)
         tab_layout.addStretch(1)
         return tab
@@ -682,6 +685,7 @@ class ClusterSetupDialog(QDialog):
         self._submit_command_edit.setText(config.submit_command_path)
         self._queue_check_command_edit.setText(config.queue_check_command_path)
         self._cancel_command_edit.setText(config.cancel_command_path)
+        self._accounting_command_edit.setText(config.accounting_command_path)
         self._set_keyword_mode(config.keyword_execution_mode)
         self._keyword_shell_init_edit.setText(config.keyword_shell_init)
         self._load_queues(config)
@@ -1033,6 +1037,7 @@ class ClusterSetupDialog(QDialog):
             submit_command_path=self._submit_command_edit.text().strip(),
             queue_check_command_path=self._queue_check_command_edit.text().strip(),
             cancel_command_path=self._cancel_command_edit.text().strip(),
+            accounting_command_path=self._accounting_command_edit.text().strip(),
             keyword_execution_mode=str(self._keyword_mode_combo.currentData() or "scheduler"),
             keyword_shell_init=self._keyword_shell_init_edit.text().strip(),
             queues=queues,
