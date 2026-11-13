@@ -526,3 +526,34 @@ def test_cluster_positions_saves_the_project_with_the_original_starts(
     assert run.moves[0].original_positions == {str(created[0].id): original}
     assert window._document.provenance[-1].action == "cluster_candidate_positions"
     window.close()
+
+
+def test_relaxed_supercell_uep_picker_and_generated_start_use_host_coordinates(
+    main_window, tmp_path
+) -> None:
+    from dataclasses import replace
+    from uuid import uuid4
+
+    from mufinder.services.site_generation_service import uep_generation_selection
+    from tests.support.magnetic_field_sites import uep_search_document
+
+    host = cof2_host()
+    source = replace(
+        host,
+        id=uuid4(),
+        lattice_vectors=[[9.39, 0.0, 0.0], [0.0, 4.695, 0.0], [0.0, 0.0, 3.18]],
+    )
+    document = uep_search_document(tmp_path, host, (0.75, 0.3, 0.75), source=source)
+    main_window._document = document
+    main_window._refresh_muon_generation_table()
+    (selection,) = main_window._muon_generation_view._uep_cluster_rows
+    assert selection["source_structure_id"] == str(host.id)
+    assert selection == uep_generation_selection(document, selection)
+    assert selection["fractional_position"][0] != pytest.approx(0.25)
+    main_window._muon_generation_view.generate_requested.emit(
+        "uep_clusters", {"selections": [selection]}
+    )
+    (site,) = document.sites.values()
+    assert site.initial_fractional_position == pytest.approx(selection["fractional_position"])
+    assert site.source_structure_id == host.id
+    assert main_window._muon_generation_view._coordinate_warning.isHidden()

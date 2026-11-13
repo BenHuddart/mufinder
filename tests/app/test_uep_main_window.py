@@ -1006,7 +1006,7 @@ def test_a_generation_row_reads_the_group_and_records_its_member(
                         "cluster_index": 1,
                         "size": 12,
                         "representative_index": 0,
-                        "representative_position_ang": [0.0, 1.0, 0.5],
+                        "representative_position_ang": [0.0, 2.5, 1.25],
                         "representative_fractional_position": [0.0, 0.5, 0.25],
                         "member_indexes": [0],
                     }
@@ -1019,7 +1019,7 @@ def test_a_generation_row_reads_the_group_and_records_its_member(
     (row,) = window._uep_cluster_source_rows()
 
     assert row["fractional_position"] == [0.0, 0.5, 0.25]
-    assert row["cartesian_position"] == [0.0, 1.0, 0.5]
+    assert row["cartesian_position"] == [0.0, 2.5, 1.25]
     assert row["cluster_size"] == 12
     assert row["label"] == "UEP Site 1"
     assert row["properties"]["member_index"] == 0

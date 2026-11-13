@@ -1021,3 +1021,26 @@ def test_rows_outside_every_group_follow_the_groups_without_a_header(qapp) -> No
         "Attached-F Site 1",
         "Random Site 2",
     ]
+
+
+def test_saved_uep_coordinate_warning_is_visible_and_clears(qapp) -> None:
+    from mufinder.services.site_generation_service import UEP_COORDINATE_WARNING
+
+    widget = MuonGenerationWidget()
+    widget.set_sites(
+        [
+            {
+                "id": "old-site",
+                "label": "UEP Site 1",
+                "method": "uep_cluster",
+                "fractional": [0.2, 0.3, 0.4],
+                "coordinate_warning": UEP_COORDINATE_WARNING,
+            }
+        ]
+    )
+    assert not widget._coordinate_warning.isHidden()
+    assert widget._coordinate_warning.text() == UEP_COORDINATE_WARNING
+    assert widget._site_table.item(0, 0).toolTip() == UEP_COORDINATE_WARNING
+    widget.set_sites([])
+    assert widget._coordinate_warning.isHidden()
+    widget.close()

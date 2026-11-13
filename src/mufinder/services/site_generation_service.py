@@ -33,7 +33,7 @@ from uuid import UUID
 from mufinder.domain.enums import WorkflowStage
 from mufinder.domain.models import GenerationRun, GenerationRunMove, MuonSite, ProvenanceRecord
 from mufinder.domain.text import plural
-from mufinder.persistence.codec import to_jsonable
+from mufinder.persistence.codec import to_jsonable, uuid_or_none
 from mufinder.science.site_generation import (
     ATTACHED_NEIGHBOUR_CUTOFF_ANG,
     SiteGenerationError,
@@ -54,6 +54,7 @@ from mufinder.science.spglib_compat import (
     symmetry_detection_warning,
 )
 from mufinder.services.project_document import ProjectDocument, active_host_structure
+from mufinder.services.uep_grouping import uep_search_lattice, uep_result_host_position
 
 #: Status of a freshly generated muon site.
 GENERATED_SITE_STATUS = "generated"
@@ -897,6 +898,60 @@ def _generate_attached_element_sites(
     return _GeneratedBatch(sites=sites, inputs=inputs, attempts_used=attempts_used)
 
 
+#: Warning for saved UEP starts with no verified host-cell coordinate record.
+UEP_COORDINATE_WARNING = (
+    "This saved UEP site's coordinate cell is unverified. If its search used a supercell, "
+    "its position may be incorrect. Check or regenerate it before Muon Relaxation or "
+    "Magnetic Fields calculations."
+)
+
+
+def uep_site_coordinate_warning(site: MuonSite) -> str:
+    """Warn about UEP starts whose coordinate frame cannot be established safely.
+
+    Stored Cartesian coordinates cannot repair these starts: an earlier clustering
+    operation may have moved only their fractional coordinates.
+    """
+
+    if site.generation_method not in {*_UEP_CLUSTER_METHODS, "uep_batch_cluster"}:
+        return ""
+    return "" if site.properties.get("uep_position_frame") == "host" else UEP_COORDINATE_WARNING
+
+
+def uep_generation_selection(
+    document: ProjectDocument, selection: dict[str, Any]
+) -> dict[str, Any]:
+    """Return a UEP group selection in the active host cell, for preview and generation.
+
+    Keep the group's symmetry representative. Convert its Cartesian position using
+    the source cell for one-cell sources and the host cell for supercell sources,
+    matching Magnetic Fields. Unlinked caller-supplied selections retain their
+    coordinates and remain unverified.
+    """
+
+    host = active_host_structure(document)
+    raw_properties = selection.get("properties")
+    properties = dict(raw_properties) if isinstance(raw_properties, dict) else {}
+    if properties.get("uep_position_frame") == "host":
+        return selection
+    raw_job_id = selection.get("source_job_id", properties.get("source_job_id"))
+    if host is None or uuid_or_none(raw_job_id) is None:
+        return selection
+    fractional = uep_result_host_position(
+        {"optimized_position_ang": selection.get("cartesian_position")},
+        uep_search_lattice(document, host, raw_job_id),
+    )
+    if fractional is None:
+        raise SiteGenerationError("Selected UEP site cannot be converted to host-cell coordinates.")
+    return {
+        **selection,
+        "fractional_position": list(fractional),
+        "cartesian_position": lattice_frac_to_cart(fractional, host.lattice_vectors),
+        "source_structure_id": str(host.id),
+        "properties": {**properties, "uep_position_frame": "host"},
+    }
+
+
 def _generate_uep_cluster_sites(
     document: ProjectDocument,
     host: _HostContext,
@@ -967,6 +1022,7 @@ def _uep_cluster_site(
 ) -> MuonSite | None:
     """Build the site for one UEP cluster row, or ``None`` when the document already has it."""
 
+    selection = uep_generation_selection(document, selection)
     fractional_raw = selection.get("fractional_position", selection.get("fractional", []))
     cartesian_raw = selection.get("cartesian_position", selection.get("cartesian", []))
     if (
