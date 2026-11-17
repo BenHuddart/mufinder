@@ -287,6 +287,7 @@ class ClusterJobRunner(QObject):
         mem_per_cpu_gb: float | None = None,
         queue_name: str = "",
         comment: str = "",
+        processes_per_node: int | None = None,
         castep_executable: str = "",
         remote_directory: str | None = None,
         reuse_existing_files: bool = False,
@@ -391,6 +392,7 @@ class ClusterJobRunner(QObject):
             memory_gb=memory_gb,
             queue_name=queue_name,
             comment=comment,
+            processes_per_node=processes_per_node,
         )
         remote_job_id = scheduler.submit(ssh, request)
 

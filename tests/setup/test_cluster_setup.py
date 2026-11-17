@@ -8,7 +8,7 @@ import pytest
 
 import mufinder.cluster_setup as cluster_setup_module
 from mufinder.cluster_setup import load_cluster_config, load_cluster_configs, save_cluster_configs
-from mufinder.domain.cluster import ClusterConfig
+from mufinder.domain.cluster import ClusterConfig, ClusterNodeGroup
 
 
 class _FakeSettings:
@@ -626,3 +626,52 @@ def test_accounting_path_defaults_only_when_absent(name, stored_path) -> None:
     assert config.accounting_command_path == expected
     save_cluster_configs(settings, [config])
     assert load_cluster_config(settings, name).accounting_command_path == expected
+
+
+_REDWOOD_NODE_GROUPS = (
+    ClusterNodeGroup(count=19, processes=32),
+    ClusterNodeGroup(count=28, processes=64),
+)
+
+
+def test_redwood_preset_lists_its_node_groups() -> None:
+    redwood = next(
+        config for config in load_cluster_configs(_FakeSettings()) if config.name == "Redwood"
+    )
+
+    assert redwood.node_groups == _REDWOOD_NODE_GROUPS
+    # The 32-core default pre-fills the total; it is not the node capacity.
+    assert redwood.cores_per_node == 32
+
+
+def test_cluster_setup_roundtrips_node_groups() -> None:
+    settings = _FakeSettings()
+    groups = (ClusterNodeGroup(count=4, processes=128),)
+    save_cluster_configs(settings, [_psi_profile(node_groups=groups)])
+
+    assert load_cluster_config(settings, "PSI").node_groups == groups
+
+
+@pytest.mark.parametrize("name", ["Redwood", "redwood", "custom"])
+def test_node_groups_default_to_the_preset_only_when_absent(name) -> None:
+    settings = _FakeSettings()
+    settings.setValue("clusters/names", [name])
+    settings.setValue(f"clusters/{name}/hostname", "cluster.example")
+
+    config = load_cluster_config(settings, name)
+
+    expected = _REDWOOD_NODE_GROUPS if name.lower() == "redwood" else ()
+    assert config.node_groups == expected
+    save_cluster_configs(settings, [replace(config, node_groups=())])
+    # Once saved, an empty list stays empty rather than taking the preset again.
+    assert load_cluster_config(settings, name).node_groups == ()
+
+
+@pytest.mark.parametrize("stored", ["not json", '{"count": 2}', '[{"count": 0, "processes": 8}]'])
+def test_cluster_setup_reads_unusable_node_groups_safely(stored: str) -> None:
+    settings = _FakeSettings()
+    settings.setValue("clusters/names", ["custom"])
+    settings.setValue("clusters/custom/hostname", "cluster.example")
+    settings.setValue("clusters/custom/node_groups", stored)
+
+    assert load_cluster_config(settings, "custom").node_groups == ()

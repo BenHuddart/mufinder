@@ -31,7 +31,12 @@ from mufinder.app.farm_validation import check_farm_counts
 from mufinder.app.theme import style_hint_text
 from mufinder.domain.cluster import PLACEHOLDER_USERNAME, ClusterConfig
 from mufinder.domain.text import plural
-from mufinder.services.cluster_queues import is_valid_queue_name, walltime_issue
+from mufinder.services.cluster_queues import (
+    equal_placements,
+    is_valid_queue_name,
+    placement_issue,
+    walltime_issue,
+)
 from mufinder.services.keychain import credential_store_for_display, is_glamdring_keychain_supported
 from mufinder.services.script_template import template_sets_partition
 from mufinder.services.ssh_client import SSHCredentials
@@ -56,6 +61,13 @@ class ClusterSubmissionConfig:
     memory_gb: float | None = None
     mem_per_cpu_gb: float | None = None
     comment: str = ""
+    #: Equal processes per node (addqueue only); ``None`` lets the scheduler
+    #: place the processes.
+    processes_per_node: int | None = None
+
+
+#: The placement combo entry that leaves placement to the scheduler.
+_SCHEDULER_PLACEMENT_TEXT = "Scheduler decides"
 
 
 class ClusterSubmissionDialog(QDialog):
@@ -136,6 +148,22 @@ class ClusterSubmissionDialog(QDialog):
         self._num_processes_spin.setValue(1)
         form.addRow("Processor cores per job", self._num_processes_spin)
 
+        # addqueue only: the equal splits of the total that the profile's nodes
+        # can hold, rebuilt whenever the total or the cluster changes.
+        self._placement_label = QLabel("Node placement", form_group)
+        self._placement_combo = QComboBox(form_group)
+        self._placement_combo.setAccessibleName("Node placement")
+        form.addRow(self._placement_label, self._placement_combo)
+        self._placement_hint = QLabel(form_group)
+        self._placement_hint.setWordWrap(True)
+        self._placement_hint.setAccessibleName("Node placement request")
+        style_hint_text(self._placement_hint)
+        form.addRow("", self._placement_hint)
+        # Why OK is disabled: the placement cannot be sent, or the rank count
+        # cannot serve the task-farm counts.
+        self._placement_issue = ""
+        self._farm_blocked = False
+
         self._walltime_edit = QLineEdit(form_group)
         self._walltime_edit.setPlaceholderText("HH:MM:SS")
         form.addRow("Maximum runtime", self._walltime_edit)
@@ -210,7 +238,8 @@ class ClusterSubmissionDialog(QDialog):
         self._username_edit.textChanged.connect(lambda *_: self._on_username_changed())
         self._mem_per_cpu_check.toggled.connect(self._mem_per_cpu_edit.setEnabled)
         self._mem_per_cpu_edit.setEnabled(self._mem_per_cpu_check.isChecked())
-        self._num_processes_spin.valueChanged.connect(lambda *_: self._refresh_farm_validation())
+        self._num_processes_spin.valueChanged.connect(lambda *_: self._on_total_changed())
+        self._placement_combo.currentIndexChanged.connect(lambda *_: self._refresh_placement())
 
         if default_cluster_name:
             index = self._cluster_combo.findText(default_cluster_name)
@@ -233,10 +262,74 @@ class ClusterSubmissionDialog(QDialog):
             ranks=self._num_processes_spin.value(),
             rank_label="processor cores",
         )
+        self._farm_blocked = verdict.blocked
+        self._farm_warning.setText(verdict.blocking_message or verdict.warning_message)
+        self._refresh_ok_button()
+
+    def _refresh_ok_button(self) -> None:
+        """Enable OK only while the farm counts and the placement both allow it."""
+
         ok_button = self._button_box.button(QDialogButtonBox.StandardButton.Ok)
         if ok_button is not None:
-            ok_button.setEnabled(not verdict.blocked)
-        self._farm_warning.setText(verdict.blocking_message or verdict.warning_message)
+            ok_button.setEnabled(not self._farm_blocked and not self._placement_issue)
+
+    def _on_total_changed(self) -> None:
+        self._rebuild_placement_options(self.selected_processes_per_node())
+        self._refresh_farm_validation()
+
+    def selected_processes_per_node(self) -> int | None:
+        """The chosen processes per node, or ``None`` when the scheduler places them."""
+
+        if not self._is_addqueue_cluster():
+            return None
+        value = self._placement_combo.currentData()
+        return int(value) if value is not None else None
+
+    def _rebuild_placement_options(self, keep: int | None) -> None:
+        """List the equal splits of the total, keeping ``keep`` selected.
+
+        A kept value that no longer fits the total stays in the list, marked
+        as not possible, so the request is never changed behind the user's
+        back; the hint says why and OK is disabled until another entry is picked.
+        """
+
+        total = self._num_processes_spin.value()
+        config = self.selected_cluster_config()
+        node_groups = config.node_groups if config is not None else ()
+        combo = self._placement_combo
+        combo.blockSignals(True)
+        combo.clear()
+        combo.addItem(_SCHEDULER_PLACEMENT_TEXT, None)
+        for placement in equal_placements(total, node_groups):
+            combo.addItem(
+                f"{plural(placement.nodes, 'node')} × {placement.per_node} per node",
+                placement.per_node,
+            )
+        if keep is not None:
+            index = combo.findData(int(keep))
+            if index < 0:
+                combo.addItem(f"{int(keep)} per node (not possible)", int(keep))
+                index = combo.count() - 1
+            combo.setCurrentIndex(index)
+        combo.blockSignals(False)
+        self._refresh_placement()
+
+    def _refresh_placement(self) -> None:
+        """Show the request the placement sends, or why it cannot be sent."""
+
+        total = self._num_processes_spin.value()
+        per_node = self.selected_processes_per_node()
+        self._placement_issue = ""
+        if per_node is None:
+            text = f"Requests -n {total}"
+        else:
+            config = self.selected_cluster_config()
+            self._placement_issue = placement_issue(
+                total, per_node, config.node_groups if config is not None else ()
+            )
+            text = self._placement_issue or f"Requests -n {total // per_node}x{per_node}"
+        self._placement_hint.setText(text)
+        self._refresh_ok_button()
 
     def selected_cluster_name(self) -> str:
         return self._cluster_combo.currentText().strip()
@@ -273,6 +366,7 @@ class ClusterSubmissionDialog(QDialog):
             memory_gb=float(self._memory_spin.value()) if addqueue else None,
             mem_per_cpu_gb=self._selected_mem_per_cpu_gb(),
             comment=self._comment_edit.text().strip() if addqueue else "",
+            processes_per_node=self.selected_processes_per_node(),
         )
 
     def _apply_cluster_defaults(self) -> None:
@@ -424,6 +518,7 @@ class ClusterSubmissionDialog(QDialog):
             if config.memory_gb is not None:
                 self._memory_spin.setValue(float(config.memory_gb))
             self._comment_edit.setText(config.comment.strip())
+            self._rebuild_placement_options(config.processes_per_node)
         else:
             self._apply_mem_per_cpu_default(config.mem_per_cpu_gb)
 
@@ -559,6 +654,10 @@ class ClusterSubmissionDialog(QDialog):
         # memory request through the "Memory per core" argument above instead.
         self._mem_per_cpu_check.setVisible(not addqueue)
         self._mem_per_cpu_edit.setVisible(not addqueue)
+        # Equal placement is an addqueue argument (-n NxP); SLURM jobs never send it.
+        self._form.setRowVisible(self._placement_combo, addqueue)
+        self._form.setRowVisible(self._placement_hint, addqueue)
+        self._rebuild_placement_options(None)
         if addqueue:
             self._walltime_edit.setPlaceholderText("Optional for addqueue (HH:MM:SS)")
         else:
@@ -681,6 +780,9 @@ class ClusterSubmissionDialog(QDialog):
                 f"'{config.queue_name}' is not a queue name. Use letters, digits, '.', '_' and '-', "
                 "with commas between several partitions.",
             )
+            return
+        if self._placement_issue:
+            QMessageBox.warning(self, "Invalid node placement", self._placement_issue)
             return
         cluster = self.selected_cluster_config()
         issue = walltime_issue(

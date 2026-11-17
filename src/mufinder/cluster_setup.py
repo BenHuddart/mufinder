@@ -16,6 +16,7 @@ from mufinder.domain.cluster import (
     PLACEHOLDER_USERNAME,
     USERNAME_TOKEN,
     ClusterConfig,
+    ClusterNodeGroup,
     ClusterQueue,
 )
 
@@ -38,6 +39,12 @@ _REDWOOD_SCANCEL = "/usr/local/shared/slurm/bin//scancel"
 _REDWOOD_PRESET_NAME = "Redwood"
 _REDWOOD_HOSTNAME = "glamdring.physics.ox.ac.uk"
 _REDWOOD_JUMP_HOSTNAME = "bastion.physics.ox.ac.uk"
+#: Redwood's compute nodes: 19 that run up to 32 MPI processes and 28 that
+#: run up to 64.
+_REDWOOD_NODE_GROUPS = (
+    ClusterNodeGroup(count=19, processes=32),
+    ClusterNodeGroup(count=28, processes=64),
+)
 _SCARF_KEYWORD_SHELL_INIT = "module load CASTEP"
 
 
@@ -92,6 +99,7 @@ def _default_clusters() -> list[ClusterConfig]:
             accounting_command_path=_REDWOOD_SACCT,
             keyword_execution_mode="direct",
             keyword_shell_init="",
+            node_groups=_REDWOOD_NODE_GROUPS,
         ),
     ]
 
@@ -266,6 +274,55 @@ def _queues_to_settings(queues: tuple[ClusterQueue, ...]) -> str:
             entry["template_script_path"] = queue.template_script_path
         entries.append(entry)
     return json.dumps(entries) if entries else ""
+
+
+def _normalise_node_groups(groups: Iterable[ClusterNodeGroup]) -> tuple[ClusterNodeGroup, ...]:
+    """Drop groups without a positive node count and process count."""
+
+    cleaned: list[ClusterNodeGroup] = []
+    for group in groups:
+        try:
+            count = int(group.count)
+            processes = int(group.processes)
+        except (TypeError, ValueError):
+            continue
+        if count > 0 and processes > 0:
+            cleaned.append(ClusterNodeGroup(count=count, processes=processes))
+    return tuple(cleaned)
+
+
+def _node_groups_from_settings(
+    raw: object, *, default: tuple[ClusterNodeGroup, ...]
+) -> tuple[ClusterNodeGroup, ...]:
+    """Decode the persisted ``node_groups`` JSON list.
+
+    A profile saved before the key existed (``raw`` is ``None``) takes
+    ``default``, its preset's groups; a saved empty list stays empty.
+    """
+
+    if raw is None:
+        return default
+    if raw == "":
+        return ()
+    try:
+        entries = json.loads(str(raw))
+    except (TypeError, ValueError):
+        return default
+    if not isinstance(entries, list):
+        return default
+    groups: list[ClusterNodeGroup] = []
+    for entry in entries:
+        if isinstance(entry, dict):
+            groups.append(
+                ClusterNodeGroup(count=entry.get("count", 0), processes=entry.get("processes", 0))
+            )
+    return _normalise_node_groups(groups)
+
+
+def _node_groups_to_settings(groups: tuple[ClusterNodeGroup, ...]) -> str:
+    return json.dumps(
+        [{"count": int(group.count), "processes": int(group.processes)} for group in groups]
+    )
 
 
 def _settings_value(settings: QSettings, key: str, default=None):  # noqa: ANN001
@@ -524,6 +581,10 @@ def _cluster_from_settings(settings: QSettings, name: str) -> ClusterConfig | No
         keyword_execution_mode=keyword_execution_mode,
         keyword_shell_init=keyword_shell_init,
         queues=queues,
+        node_groups=_node_groups_from_settings(
+            settings.value(f"{prefix}/node_groups", None),
+            default=builtin.node_groups if builtin is not None else (),
+        ),
     )
 
 
@@ -627,6 +688,7 @@ def save_cluster_configs(settings: QSettings, configs: Iterable[ClusterConfig]) 
                 or _DEFAULT_KEYWORD_EXECUTION_MODE,
                 keyword_shell_init=config.keyword_shell_init.rstrip(),
                 queues=queues,
+                node_groups=_normalise_node_groups(config.node_groups),
             )
         )
 
@@ -670,3 +732,4 @@ def save_cluster_configs(settings: QSettings, configs: Iterable[ClusterConfig]) 
         settings.setValue(f"{prefix}/keyword_execution_mode", config.keyword_execution_mode)
         settings.setValue(f"{prefix}/keyword_shell_init", config.keyword_shell_init)
         settings.setValue(f"{prefix}/queues", _queues_to_settings(config.queues))
+        settings.setValue(f"{prefix}/node_groups", _node_groups_to_settings(config.node_groups))

@@ -2626,3 +2626,49 @@ def test_main_window_missing_username_opens_the_cluster_profile(
     setup_action.trigger()
     assert opened == ["SCARF", None]
     window.close()
+
+
+def test_main_window_round_trips_processes_per_node_in_last_submission_config(
+    main_window, tmp_path: Path
+) -> None:
+    window = main_window
+    doc = ProjectService().create_project(tmp_path / "placement.mufinder", "Placement")
+    window._document = doc
+
+    window._persist_last_cluster_submission_config(
+        ClusterSubmissionConfig(
+            cluster_name="Redwood",
+            working_directory="/mnt/redwoodfs/alice/project",
+            username="alice",
+            num_processes=128,
+            walltime="",
+            processes_per_node=32,
+        ),
+        workflow_type="convergence",
+    )
+
+    persisted = doc.ui_state[main_window_module.MainWindow._LAST_CLUSTER_SUBMISSION_CONFIG_KEY]
+    assert persisted["processes_per_node"] == 32
+    restored = window._load_last_cluster_submission_config(workflow_type="convergence")
+    assert restored is not None
+    assert restored.processes_per_node == 32
+    window.close()
+
+
+@pytest.mark.parametrize("stored", [None, "", "two", 0, -4])
+def test_main_window_loads_absent_or_invalid_processes_per_node_as_unset(
+    main_window, tmp_path: Path, stored: object
+) -> None:
+    window = main_window
+    doc = ProjectService().create_project(tmp_path / "placement_bad.mufinder", "Placement")
+    window._document = doc
+    payload: dict[str, object] = {"cluster_name": "Redwood", "num_processes": 128}
+    if stored is not None:
+        payload["processes_per_node"] = stored
+    doc.ui_state[main_window_module.MainWindow._LAST_CLUSTER_SUBMISSION_CONFIG_KEY] = payload
+
+    restored = window._load_last_cluster_submission_config()
+
+    assert restored is not None
+    assert restored.processes_per_node is None
+    window.close()

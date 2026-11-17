@@ -2,7 +2,9 @@
 
 A cluster profile lists named queues (``ClusterQueue``), and a submission picks
 one. The setup dialog and the submission dialog both validate queue names and
-walltimes the same way, through the helpers here.
+walltimes the same way, through the helpers here. The equal process placement
+an addqueue submission may request is checked here too, against the profile's
+node groups.
 
 Layering: this lives in ``mufinder.services`` and imports only ``domain``; it
 holds no widgets.
@@ -11,9 +13,10 @@ holds no widgets.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 import re
 
-from mufinder.domain.cluster import ClusterQueue
+from mufinder.domain.cluster import ClusterNodeGroup, ClusterQueue
 
 #: A queue (SLURM partition or addqueue queue) name. SLURM accepts a
 #: comma-separated list of partitions, so commas are allowed; anything that
@@ -131,3 +134,72 @@ def queue_issues(queues: Sequence[ClusterQueue], *, profile_walltime: str = "") 
         ):
             issues.append(f"{label}: memory must be a positive number of GB.")
     return issues
+
+
+@dataclass(frozen=True, slots=True)
+class ProcessPlacement:
+    """An equal split of a job's MPI processes: ``nodes`` × ``per_node``."""
+
+    nodes: int
+    per_node: int
+
+    @property
+    def total(self) -> int:
+        return self.nodes * self.per_node
+
+    def addqueue_argument(self) -> str:
+        """Return addqueue's ``-n`` value for this split, e.g. ``"2x64"``."""
+
+        return f"{self.nodes}x{self.per_node}"
+
+
+def _nodes_holding(per_node: int, node_groups: Sequence[ClusterNodeGroup]) -> int:
+    """Return how many nodes can each run ``per_node`` processes."""
+
+    return sum(group.count for group in node_groups if group.processes >= per_node)
+
+
+def placement_issue(total: int, per_node: int, node_groups: Sequence[ClusterNodeGroup] = ()) -> str:
+    """Return why ``total`` processes cannot run ``per_node`` to a node, or ``""``.
+
+    ``per_node`` must be positive, no greater than ``total`` and divide it
+    exactly. With ``node_groups`` (the profile's hardware), some node must run
+    ``per_node`` processes and enough such nodes must exist for the split.
+    Without node groups no hardware limit is checked. Nothing is rounded.
+    """
+
+    if total < 1:
+        return "The job needs at least one processor core."
+    if per_node < 1:
+        return "Processes per node must be a positive whole number."
+    if per_node > total:
+        return f"{per_node} processes per node is more than the {total} cores the job uses."
+    if total % per_node:
+        return f"{per_node} processes per node does not divide {total} cores into whole nodes."
+    if not node_groups:
+        return ""
+    largest = max(group.processes for group in node_groups)
+    if per_node > largest:
+        return f"No node on this cluster runs more than {largest} processes."
+    nodes = total // per_node
+    available = _nodes_holding(per_node, node_groups)
+    if nodes > available:
+        return (
+            f"{nodes} nodes × {per_node} per node needs more nodes than the {available} "
+            f"on this cluster that run {per_node} processes."
+        )
+    return ""
+
+
+def equal_placements(
+    total: int, node_groups: Sequence[ClusterNodeGroup] = ()
+) -> list[ProcessPlacement]:
+    """Return every valid equal split of ``total``, most processes per node first."""
+
+    if total < 1:
+        return []
+    return [
+        ProcessPlacement(nodes=total // per_node, per_node=per_node)
+        for per_node in range(total, 0, -1)
+        if not placement_issue(total, per_node, node_groups)
+    ]

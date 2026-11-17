@@ -4,12 +4,21 @@ from __future__ import annotations
 
 import pytest
 
-from mufinder.domain.cluster import ClusterQueue
+from mufinder.domain.cluster import ClusterNodeGroup, ClusterQueue
 from mufinder.services.cluster_queues import (
+    ProcessPlacement,
+    equal_placements,
     is_valid_queue_name,
     parse_walltime_seconds,
+    placement_issue,
     queue_issues,
     walltime_issue,
+)
+
+#: 19 nodes that run 32 processes and 28 that run 64.
+_REDWOOD_NODES = (
+    ClusterNodeGroup(count=19, processes=32),
+    ClusterNodeGroup(count=28, processes=64),
 )
 
 
@@ -105,3 +114,67 @@ def test_queue_issues_reports_duplicate_names() -> None:
     assert queue_issues([ClusterQueue(name="q"), ClusterQueue(name="q")]) == [
         "The queue 'q' is listed twice."
     ]
+
+
+def test_process_placement_formats_the_addqueue_argument() -> None:
+    placement = ProcessPlacement(nodes=2, per_node=64)
+
+    assert placement.addqueue_argument() == "2x64"
+    assert placement.total == 128
+
+
+@pytest.mark.parametrize(
+    ("total", "expected"),
+    [
+        (128, ["2x64", "4x32", "8x16", "16x8", "32x4"]),
+        (96, ["2x48", "3x32", "4x24", "6x16", "8x12", "12x8", "16x6", "24x4", "32x3"]),
+        (37, ["1x37", "37x1"]),
+        (2000, []),
+    ],
+)
+def test_equal_placements_lists_the_splits_the_nodes_hold(total: int, expected: list[str]) -> None:
+    placements = equal_placements(total, _REDWOOD_NODES)
+
+    assert [placement.addqueue_argument() for placement in placements] == expected
+
+
+def test_equal_placements_without_node_groups_lists_every_divisor() -> None:
+    placements = equal_placements(12)
+
+    assert [placement.per_node for placement in placements] == [12, 6, 4, 3, 2, 1]
+
+
+def test_equal_placements_of_no_processes_is_empty() -> None:
+    assert equal_placements(0) == []
+
+
+@pytest.mark.parametrize(
+    ("total", "per_node", "expected"),
+    [
+        (128, 64, ""),
+        (48, 48, ""),
+        (128, 0, "Processes per node must be a positive whole number."),
+        (32, 64, "64 processes per node is more than the 32 cores the job uses."),
+        (128, 48, "48 processes per node does not divide 128 cores into whole nodes."),
+        (192, 96, "No node on this cluster runs more than 64 processes."),
+        (
+            1920,
+            40,
+            "48 nodes × 40 per node needs more nodes than the 28 on this cluster that "
+            "run 40 processes.",
+        ),
+        (
+            128,
+            2,
+            "64 nodes × 2 per node needs more nodes than the 47 on this cluster that "
+            "run 2 processes.",
+        ),
+    ],
+)
+def test_placement_issue_explains_each_refusal(total: int, per_node: int, expected: str) -> None:
+    assert placement_issue(total, per_node, _REDWOOD_NODES) == expected
+
+
+def test_placement_issue_without_node_groups_checks_only_the_arithmetic() -> None:
+    assert placement_issue(4096, 512) == ""
+    assert placement_issue(100, 30) != ""

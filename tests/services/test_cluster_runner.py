@@ -1189,9 +1189,11 @@ def test_cluster_runner_submit_addqueue_forwards_runtime_options(
         memory_gb=9.0,
         queue_name="redwood-priority",
         comment="test comment",
+        processes_per_node=20,
     )
 
     request = scheduler.submit_requests[0]
+    assert request.processes_per_node == 20
     assert request.script_path == ""
     assert request.queue_name == "redwood-priority"
     assert request.memory_gb == 9.0
