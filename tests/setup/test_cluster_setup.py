@@ -652,15 +652,25 @@ def test_cluster_setup_roundtrips_node_groups() -> None:
     assert load_cluster_config(settings, "PSI").node_groups == groups
 
 
-@pytest.mark.parametrize("name", ["Redwood", "redwood", "custom"])
-def test_node_groups_default_to_the_preset_only_when_absent(name) -> None:
+@pytest.mark.parametrize(
+    ("name", "hostname", "takes_preset"),
+    [
+        ("Redwood", "glamdring.physics.ox.ac.uk", True),
+        ("redwood", "GLAMDRING.physics.ox.ac.uk", True),
+        ("Redwood", "other-site.example", False),
+        ("custom", "glamdring.physics.ox.ac.uk", False),
+    ],
+)
+def test_node_groups_default_to_the_preset_only_when_absent(
+    name: str, hostname: str, takes_preset: bool
+) -> None:
     settings = _FakeSettings()
     settings.setValue("clusters/names", [name])
-    settings.setValue(f"clusters/{name}/hostname", "cluster.example")
+    settings.setValue(f"clusters/{name}/hostname", hostname)
 
     config = load_cluster_config(settings, name)
 
-    expected = _REDWOOD_NODE_GROUPS if name.lower() == "redwood" else ()
+    expected = _REDWOOD_NODE_GROUPS if takes_preset else ()
     assert config.node_groups == expected
     save_cluster_configs(settings, [replace(config, node_groups=())])
     # Once saved, an empty list stays empty rather than taking the preset again.

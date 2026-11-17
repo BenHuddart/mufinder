@@ -8,7 +8,7 @@ import re
 import shlex
 
 from mufinder.domain.enums import JobStatus
-from mufinder.services.cluster_queues import ProcessPlacement, placement_issue
+from mufinder.services.cluster_queues import ProcessPlacement
 
 
 @dataclass(frozen=True, slots=True)
@@ -335,11 +335,7 @@ class AddqueueScheduler(SlurmScheduler):
         total = max(1, int(request.num_processes))
         process_count = str(total)
         if request.processes_per_node is not None:
-            per_node = int(request.processes_per_node)
-            issue = placement_issue(total, per_node)
-            if issue:
-                raise ValueError(f"Cannot place {total} processes equally: {issue}")
-            placement = ProcessPlacement(nodes=total // per_node, per_node=per_node)
+            placement = ProcessPlacement.split(total, int(request.processes_per_node))
             process_count = placement.addqueue_argument()
 
         submit_command = self._resolve_command(ssh, "submit", "addqueue", self._submit_command_path)

@@ -32,6 +32,7 @@ from mufinder.app.theme import style_hint_text
 from mufinder.domain.cluster import PLACEHOLDER_USERNAME, ClusterConfig
 from mufinder.domain.text import plural
 from mufinder.services.cluster_queues import (
+    ProcessPlacement,
     equal_placements,
     is_valid_queue_name,
     placement_issue,
@@ -327,7 +328,9 @@ class ClusterSubmissionDialog(QDialog):
             self._placement_issue = placement_issue(
                 total, per_node, config.node_groups if config is not None else ()
             )
-            text = self._placement_issue or f"Requests -n {total // per_node}x{per_node}"
+            text = self._placement_issue or (
+                f"Requests -n {ProcessPlacement.split(total, per_node).addqueue_argument()}"
+            )
         self._placement_hint.setText(text)
         self._refresh_ok_button()
 
@@ -370,6 +373,9 @@ class ClusterSubmissionDialog(QDialog):
         )
 
     def _apply_cluster_defaults(self) -> None:
+        # Start the new cluster on "Scheduler decides" before its defaults change
+        # the total, so the previous cluster's split is never checked against it.
+        self._rebuild_placement_options(None)
         config = self.selected_cluster_config()
         if config is None:
             self._working_directory_edit.setText("")
@@ -657,7 +663,6 @@ class ClusterSubmissionDialog(QDialog):
         # Equal placement is an addqueue argument (-n NxP); SLURM jobs never send it.
         self._form.setRowVisible(self._placement_combo, addqueue)
         self._form.setRowVisible(self._placement_hint, addqueue)
-        self._rebuild_placement_options(None)
         if addqueue:
             self._walltime_edit.setPlaceholderText("Optional for addqueue (HH:MM:SS)")
         else:

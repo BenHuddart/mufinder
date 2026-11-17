@@ -116,11 +116,16 @@ def test_queue_issues_reports_duplicate_names() -> None:
     ]
 
 
-def test_process_placement_formats_the_addqueue_argument() -> None:
-    placement = ProcessPlacement(nodes=2, per_node=64)
+def test_process_placement_splits_the_total_and_formats_the_addqueue_argument() -> None:
+    placement = ProcessPlacement.split(128, 64)
 
+    assert placement == ProcessPlacement(nodes=2, per_node=64)
     assert placement.addqueue_argument() == "2x64"
-    assert placement.total == 128
+
+
+def test_process_placement_refuses_a_split_that_does_not_divide_the_total() -> None:
+    with pytest.raises(ValueError, match="does not divide 96 cores"):
+        ProcessPlacement.split(96, 64)
 
 
 @pytest.mark.parametrize(

@@ -837,7 +837,7 @@ stored globally, including built-in SCARF and Redwood presets.
   keeps whatever submit command path it was saved with.
 - The Redwood preset records its compute nodes (19 that run up to 32 processes
   and 28 that run up to 64) for :ref:`addqueue-node-placement`; a saved Redwood
-  profile without that setting receives it. The node list is not edited in
+  profile on that host without the setting receives it. The node list is not edited in
   ``Setup > HPC Clusters``. ``Cores per node`` stays the pre-filled total, not a
   limit.
 

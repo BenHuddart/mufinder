@@ -37,8 +37,9 @@ Compatibility ledger
      - Settings read default. Keep while profiles without the key may be loaded.
    * - ``node_groups`` absent from cluster settings
      - ``mufinder.cluster_setup``
-     - Redwood profiles without the key take the preset's node groups (19 nodes
-       of 32 processes, 28 of 64). Other profiles have none; a saved empty list
+     - Redwood profiles on the preset's host without the key take the preset's
+       node groups (19 nodes of 32 processes, 28 of 64). Other profiles, and a
+       Redwood profile pointed at another host, have none; a saved empty list
        stays empty.
      - Settings read default. Keep while profiles without the key may be loaded.
    * - ``processes_per_node`` absent from the last cluster submission

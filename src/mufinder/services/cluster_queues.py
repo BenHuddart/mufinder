@@ -143,9 +143,18 @@ class ProcessPlacement:
     nodes: int
     per_node: int
 
-    @property
-    def total(self) -> int:
-        return self.nodes * self.per_node
+    @classmethod
+    def split(cls, total: int, per_node: int) -> ProcessPlacement:
+        """Return ``total`` processes split ``per_node`` to a node.
+
+        Raises ``ValueError`` with :func:`placement_issue`'s reason when
+        ``per_node`` does not divide ``total`` into whole nodes.
+        """
+
+        issue = placement_issue(total, per_node)
+        if issue:
+            raise ValueError(f"Cannot place {total} processes equally: {issue}")
+        return cls(nodes=total // per_node, per_node=per_node)
 
     def addqueue_argument(self) -> str:
         """Return addqueue's ``-n`` value for this split, e.g. ``"2x64"``."""

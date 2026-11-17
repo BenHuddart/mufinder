@@ -583,7 +583,11 @@ def _cluster_from_settings(settings: QSettings, name: str) -> ClusterConfig | No
         queues=queues,
         node_groups=_node_groups_from_settings(
             settings.value(f"{prefix}/node_groups", None),
-            default=builtin.node_groups if builtin is not None else (),
+            # The preset's hardware only describes the preset's own host.
+            default=builtin.node_groups
+            if builtin is not None
+            and hostname.strip().casefold() == builtin.hostname.strip().casefold()
+            else (),
         ),
     )
 
