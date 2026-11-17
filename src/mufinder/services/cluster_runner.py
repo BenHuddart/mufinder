@@ -22,6 +22,7 @@ from mufinder.services.cluster_retrieval import (
     retrieve_error_files,
     retrieve_job_outputs,
 )
+from mufinder.services.cluster_queues import ProcessPlacement
 from mufinder.services.cluster_security import invalid_remote_job_labels
 from mufinder.services.failure_diagnosis import (
     MISSING_SCHEDULER_ENTRY_FAILURE_MESSAGE,
@@ -287,6 +288,7 @@ class ClusterJobRunner(QObject):
         mem_per_cpu_gb: float | None = None,
         queue_name: str = "",
         comment: str = "",
+        processes_per_node: int | None = None,
         castep_executable: str = "",
         remote_directory: str | None = None,
         reuse_existing_files: bool = False,
@@ -328,6 +330,9 @@ class ClusterJobRunner(QObject):
         if not remote_root and not normalized_remote_directory:
             raise ConnectionError("Remote working directory is required.")
         self._validate_seed_name(seed_name)
+        if processes_per_node is not None:
+            # Refuse an impossible split before anything reaches the cluster.
+            ProcessPlacement.split(max(1, int(num_processes)), int(processes_per_node))
 
         remote_dir = normalized_remote_directory or posixpath.join(remote_root, seed_name)
         ssh.mkdir(remote_dir, exist_ok=True)
@@ -391,6 +396,7 @@ class ClusterJobRunner(QObject):
             memory_gb=memory_gb,
             queue_name=queue_name,
             comment=comment,
+            processes_per_node=processes_per_node,
         )
         remote_job_id = scheduler.submit(ssh, request)
 

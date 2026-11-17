@@ -35,6 +35,18 @@ Compatibility ledger
        ``/usr/local/shared/slurm/bin/sacct``. Other profiles default to command
        discovery; explicit empty or custom paths are preserved.
      - Settings read default. Keep while profiles without the key may be loaded.
+   * - ``node_groups`` absent from cluster settings
+     - ``mufinder.cluster_setup``
+     - Redwood profiles on the preset's host without the key take the preset's
+       node groups (19 nodes of 32 processes, 28 of 64). Other profiles, and a
+       Redwood profile pointed at another host, have none; a saved empty list
+       stays empty.
+     - Settings read default. Keep while profiles without the key may be loaded.
+   * - ``processes_per_node`` absent from the last cluster submission
+     - ``mufinder.app.main_window`` (project ``ui_state``)
+     - A last-used submission saved without the key, or with an unreadable
+       value, restores as ``None`` (the scheduler places the processes).
+     - Settings read default. Keep while projects without the key may be loaded.
    * - ``ConvergenceWidget``
      - ``mufinder.app.convergence_widget``
      - Import alias for ``CutoffConvergenceWidget``, also exported from

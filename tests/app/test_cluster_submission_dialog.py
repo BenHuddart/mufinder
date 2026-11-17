@@ -14,7 +14,7 @@ import mufinder.app.cluster_submission_dialog as dialog_module
 import mufinder.services.keychain as keychain_module
 from mufinder.app.cluster_submission_dialog import ClusterSubmissionConfig, ClusterSubmissionDialog
 from mufinder.app.text_editing import install_text_editing_shortcuts
-from mufinder.domain.cluster import ClusterConfig
+from mufinder.domain.cluster import ClusterConfig, ClusterNodeGroup
 from mufinder.services.ssh_client import SSHCredentials
 
 
@@ -1060,4 +1060,191 @@ def test_paste_shortcut_follows_tab_and_click_through_the_queue_combo(qapp, monk
     QTest.mouseClick(dialog._queue_combo.lineEdit(), Qt.MouseButton.LeftButton)
     assert qapp.focusWidget() is dialog._queue_combo
     assert slot_errors == []
+    dialog.close()
+
+
+def _redwood_dialog(**kwargs) -> ClusterSubmissionDialog:  # noqa: ANN003
+    configs = [
+        replace(config, node_groups=_REDWOOD_NODE_GROUPS) if config.name == "redwood" else config
+        for config in _configs()
+    ]
+    return ClusterSubmissionDialog(
+        job_labels=["job_a"], cluster_configs=configs, default_cluster_name="redwood", **kwargs
+    )
+
+
+_REDWOOD_NODE_GROUPS = (
+    ClusterNodeGroup(count=19, processes=32),
+    ClusterNodeGroup(count=28, processes=64),
+)
+
+
+def _placement_items(dialog: ClusterSubmissionDialog) -> list[str]:
+    combo = dialog._placement_combo
+    return [combo.itemText(index) for index in range(combo.count())]
+
+
+def _ok_enabled(dialog: ClusterSubmissionDialog) -> bool:
+    return dialog._button_box.button(dialog_module.QDialogButtonBox.StandardButton.Ok).isEnabled()
+
+
+def test_addqueue_placement_lists_the_splits_the_nodes_hold(qapp) -> None:
+    dialog = _redwood_dialog()
+    dialog._num_processes_spin.setValue(128)
+
+    assert _placement_items(dialog) == [
+        "Scheduler decides",
+        "2 nodes × 64 per node",
+        "4 nodes × 32 per node",
+        "8 nodes × 16 per node",
+        "16 nodes × 8 per node",
+        "32 nodes × 4 per node",
+    ]
+    assert dialog._placement_combo.currentIndex() == 0
+    assert dialog._placement_hint.text() == "Requests -n 128"
+    assert dialog.config().processes_per_node is None
+    dialog.close()
+
+
+def test_addqueue_placement_choice_sets_the_request(qapp) -> None:
+    dialog = _redwood_dialog()
+    dialog._num_processes_spin.setValue(128)
+
+    dialog._placement_combo.setCurrentIndex(dialog._placement_combo.findData(32))
+
+    assert dialog._placement_hint.text() == "Requests -n 4x32"
+    assert dialog.config().processes_per_node == 32
+    assert _ok_enabled(dialog)
+    dialog.close()
+
+
+def test_changing_the_total_marks_a_placement_that_no_longer_fits(
+    qapp, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dialog = _redwood_dialog()
+    dialog._num_processes_spin.setValue(128)
+    dialog._placement_combo.setCurrentIndex(dialog._placement_combo.findData(64))
+
+    dialog._num_processes_spin.setValue(96)
+
+    # The choice is kept, never rounded to a neighbour; OK waits for a fix.
+    assert dialog._placement_combo.currentText() == "64 per node (not possible)"
+    assert dialog._placement_hint.text() == (
+        "64 processes per node does not divide 96 cores into whole nodes."
+    )
+    assert dialog.config().processes_per_node == 64
+    assert not _ok_enabled(dialog)
+    warnings: list[str] = []
+    monkeypatch.setattr(
+        dialog_module.QMessageBox, "warning", lambda *args: warnings.append(args[2])
+    )
+    dialog._accept_if_valid()
+    assert warnings == [dialog._placement_hint.text()]
+
+    dialog._num_processes_spin.setValue(192)
+    assert dialog._placement_combo.currentText() == "3 nodes × 64 per node"
+    assert _ok_enabled(dialog)
+    dialog.close()
+
+
+def test_placement_and_farm_checks_both_hold_ok(qapp) -> None:
+    dialog = _redwood_dialog(farm_counts={"job_a": 6})
+    dialog._num_processes_spin.setValue(64)
+    dialog._placement_combo.setCurrentIndex(dialog._placement_combo.findData(32))
+    dialog._num_processes_spin.setValue(4)
+
+    assert not _ok_enabled(dialog)
+    dialog._num_processes_spin.setValue(64)
+    assert _ok_enabled(dialog)
+    dialog.close()
+
+
+def test_placement_is_hidden_and_unsent_for_slurm(qapp) -> None:
+    dialog = _redwood_dialog()
+    dialog._num_processes_spin.setValue(128)
+    dialog._placement_combo.setCurrentIndex(dialog._placement_combo.findData(64))
+
+    dialog._cluster_combo.setCurrentText("alpha")
+
+    assert dialog._placement_combo.isHidden()
+    assert dialog._placement_hint.isHidden()
+    assert dialog.config().processes_per_node is None
+    assert _ok_enabled(dialog)
+    dialog.close()
+
+
+def test_switching_back_to_addqueue_starts_with_the_scheduler_placing(qapp) -> None:
+    dialog = _redwood_dialog()
+    dialog._placement_combo.setCurrentIndex(1)
+    dialog._cluster_combo.setCurrentText("alpha")
+
+    dialog._cluster_combo.setCurrentText("redwood")
+
+    assert not dialog._placement_combo.isHidden()
+    assert dialog.config().processes_per_node is None
+    dialog.close()
+
+
+def test_addqueue_profile_without_node_groups_lists_every_divisor(qapp) -> None:
+    dialog = ClusterSubmissionDialog(
+        job_labels=["job_a"], cluster_configs=_configs(), default_cluster_name="redwood"
+    )
+    dialog._num_processes_spin.setValue(12)
+
+    assert [
+        dialog._placement_combo.itemData(i) for i in range(dialog._placement_combo.count())
+    ] == [
+        None,
+        12,
+        6,
+        4,
+        3,
+        2,
+        1,
+    ]
+    dialog.close()
+
+
+def test_addqueue_placement_is_restored_from_the_last_submission(qapp) -> None:
+    initial = ClusterSubmissionConfig(
+        cluster_name="redwood",
+        working_directory="/mnt/redwoodfs/charlie/run",
+        username="charlie",
+        num_processes=128,
+        walltime="",
+        queue_name="redwood",
+        processes_per_node=32,
+    )
+
+    dialog = _redwood_dialog(initial_config=initial)
+
+    assert dialog._num_processes_spin.value() == 128
+    assert dialog._placement_combo.currentText() == "4 nodes × 32 per node"
+    assert dialog.config().processes_per_node == 32
+    dialog.close()
+
+
+def test_restored_placement_that_no_longer_fits_is_shown_not_dropped(qapp) -> None:
+    initial = ClusterSubmissionConfig(
+        cluster_name="redwood",
+        working_directory="/mnt/redwoodfs/charlie/run",
+        username="charlie",
+        num_processes=192,
+        walltime="",
+        processes_per_node=96,
+    )
+
+    dialog = _redwood_dialog(initial_config=initial)
+
+    assert dialog._placement_combo.currentText() == "96 per node (not possible)"
+    assert dialog._placement_hint.text() == "No node on this cluster runs more than 64 processes."
+    assert not _ok_enabled(dialog)
+    dialog.close()
+
+
+def test_placement_controls_have_accessible_names(qapp) -> None:
+    dialog = _redwood_dialog()
+
+    assert dialog._placement_combo.accessibleName() == "Node placement"
+    assert dialog._placement_hint.accessibleName() == "Node placement request"
     dialog.close()

@@ -5143,6 +5143,15 @@ class MainWindow(QMainWindow):
         if mem_per_cpu_gb is not None and mem_per_cpu_gb <= 0:
             mem_per_cpu_gb = None
 
+        # Saved before equal placement existed, or unreadable: the scheduler places.
+        per_node_raw = payload.get("processes_per_node")
+        try:
+            processes_per_node = None if per_node_raw in (None, "") else int(per_node_raw)
+        except (TypeError, ValueError):
+            processes_per_node = None
+        if processes_per_node is not None and processes_per_node < 1:
+            processes_per_node = None
+
         persisted_workflow_type = str(payload.get("workflow_type", "")).strip()
         same_workflow = (
             not workflow_type
@@ -5162,6 +5171,7 @@ class MainWindow(QMainWindow):
             memory_gb=memory_gb,
             mem_per_cpu_gb=mem_per_cpu_gb,
             comment=str(payload.get("comment", "")).strip(),
+            processes_per_node=processes_per_node,
         )
 
     def _persist_last_cluster_submission_config(
@@ -5182,6 +5192,7 @@ class MainWindow(QMainWindow):
             "memory_gb": getattr(config, "memory_gb", None),
             "mem_per_cpu_gb": getattr(config, "mem_per_cpu_gb", None),
             "comment": str(getattr(config, "comment", "")),
+            "processes_per_node": getattr(config, "processes_per_node", None),
             "workflow_type": workflow_type,
         }
 

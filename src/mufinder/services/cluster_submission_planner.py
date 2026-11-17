@@ -447,6 +447,10 @@ def build_cluster_submissions(
                     mem_per_cpu_gb=getattr(submission, "mem_per_cpu_gb", None),
                     queue_name=queue_name,
                     comment=getattr(submission, "comment", ""),
+                    # Equal placement is an addqueue argument; SLURM never gets it.
+                    processes_per_node=getattr(submission, "processes_per_node", None)
+                    if cluster.queue_system.strip().lower() == "addqueue"
+                    else None,
                     castep_executable=queue_cluster.castep_executable,
                     reuse_existing_files=target.reuse_existing_files,
                     allow_existing_remote_directory=target.allow_existing_remote_directory,

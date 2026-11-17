@@ -653,7 +653,10 @@ defined by two of these modules, and a pinned count may only fall.
        (``parse_walltime_seconds``) and the walltime-format and
        queue-maximum check that the setup and submission dialogs share
        (``walltime_issue``), and the rules a profile's queue list must meet
-       before it is saved (``queue_issues``); the setup dialog only
+       before it is saved (``queue_issues``), and the equal process
+       placement an ``addqueue`` submission may request
+       (``ProcessPlacement``, ``equal_placements``, ``placement_issue``),
+       checked against the profile's ``node_groups``; the setup dialog only
        translates its table cells to and from ``ClusterQueue`` records. Resolving a queue's overrides onto its profile is
        ``ClusterConfig.for_queue`` in ``mufinder.domain.cluster``.
    * - ``mufinder.services.cluster_retrieval``

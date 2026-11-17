@@ -1189,9 +1189,11 @@ def test_cluster_runner_submit_addqueue_forwards_runtime_options(
         memory_gb=9.0,
         queue_name="redwood-priority",
         comment="test comment",
+        processes_per_node=20,
     )
 
     request = scheduler.submit_requests[0]
+    assert request.processes_per_node == 20
     assert request.script_path == ""
     assert request.queue_name == "redwood-priority"
     assert request.memory_gb == 9.0
@@ -1200,6 +1202,36 @@ def test_cluster_runner_submit_addqueue_forwards_runtime_options(
     assert all(
         not str(cmd[1]).endswith("run.sh") for cmd in runner._ssh.commands if cmd[0] == "put"
     )
+
+
+def test_cluster_runner_refuses_an_impossible_placement_before_uploading(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    runner = ClusterJobRunner()
+    runner._ssh = FakeSSH()
+    scheduler = _FakeScheduler()
+    runner._scheduler = scheduler
+    runner._config = cluster_runner_module.ClusterConfig(
+        name="Redwood", hostname="glamdring.physics.ox.ac.uk", queue_system="ADDQUEUE"
+    )
+    seed = "conv_ecut_540"
+
+    with pytest.raises(ValueError, match="does not divide 96 cores"):
+        runner.submit(
+            job_id=uuid4(),
+            local_job_dir=_prepare_local_job(tmp_path, seed),
+            seed_name=seed,
+            num_processes=96,
+            walltime="",
+            working_directory="/mnt/redwoodfs/user/project",
+            template_script_path="",
+            cores_per_node=32,
+            processes_per_node=64,
+        )
+
+    assert runner._ssh.commands == []
+    assert scheduler.submit_requests == []
 
 
 def test_cluster_runner_track_existing_job_registers_active_entry(qapp, tmp_path: Path) -> None:

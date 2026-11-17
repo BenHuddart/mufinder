@@ -8,6 +8,7 @@ import re
 import shlex
 
 from mufinder.domain.enums import JobStatus
+from mufinder.services.cluster_queues import ProcessPlacement
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,6 +35,9 @@ class SchedulerSubmitRequest:
     memory_gb: float | None = None
     queue_name: str = ""
     comment: str = ""
+    #: Equal processes per node (addqueue ``-n NxP``); ``None`` asks for the
+    #: total only and leaves placement to the scheduler.
+    processes_per_node: int | None = None
 
 
 class Scheduler(ABC):
@@ -328,12 +332,18 @@ class AddqueueScheduler(SlurmScheduler):
     """addqueue submitter with SLURM-compatible polling/cancel."""
 
     def submit(self, ssh, request: SchedulerSubmitRequest) -> str:
+        total = max(1, int(request.num_processes))
+        process_count = str(total)
+        if request.processes_per_node is not None:
+            placement = ProcessPlacement.split(total, int(request.processes_per_node))
+            process_count = placement.addqueue_argument()
+
         submit_command = self._resolve_command(ssh, "submit", "addqueue", self._submit_command_path)
         args: list[str] = [
             submit_command,
             "--sbatch",
             "-n",
-            str(max(1, int(request.num_processes))),
+            process_count,
         ]
 
         queue_name = request.queue_name.strip()
