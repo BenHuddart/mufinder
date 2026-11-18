@@ -6673,7 +6673,8 @@ class MainWindow(QMainWindow):
         if self._document is None:
             return
         job = self._document.jobs.get(job_id)
-        if job is not None:
+        # Recording the result can fail the job instead; that path reports itself.
+        if job is not None and job.status == JobStatus.COMPLETED:
             self.statusBar().showMessage(f"Completed cluster job {job.label}")
 
     def _on_cluster_job_failed(self, job_id: UUID, message: str) -> None:

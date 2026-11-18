@@ -3710,6 +3710,8 @@ def test_a_finished_cluster_job_whose_result_cannot_be_recorded_fails_with_the_r
     )
     assert doc.results == {}
     assert all(run.result_id is None for run in doc.runs.values())
+    # The cluster wrapper must not report the opposite outcome afterwards.
+    assert window.statusBar().currentMessage() == "Could not record the result of f0"
     window.close()
 
 
