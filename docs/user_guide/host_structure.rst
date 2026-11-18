@@ -123,6 +123,15 @@ Limitations
   limitations in :doc:`/user_guide/structure_files`.
 - An imported host cannot be renamed or removed from the panel.
 
+Background job updates preserve text while a field has focus or contains an
+unfinished edit. Valid text commits through the field's usual editing action;
+other fields continue to show refreshed project values. This also applies to
+the Magnetic Fields page's applied field, measured magnetisation, hyperfine
+coupling and workspace title, Relaxation Analysis workspace names and the
+Energy Barriers maximum path length. The path length stays as typed until
+Generate Paths uses it. Loading another project or host, and explicitly
+resetting a form, fills the fields from that new state.
+
 For developers
 --------------
 

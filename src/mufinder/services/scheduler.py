@@ -8,6 +8,7 @@ import re
 import shlex
 
 from mufinder.domain.enums import JobStatus
+from mufinder.services.cluster_queues import ProcessPlacement
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,6 +35,9 @@ class SchedulerSubmitRequest:
     memory_gb: float | None = None
     queue_name: str = ""
     comment: str = ""
+    #: Equal processes per node (addqueue ``-n NxP``); ``None`` asks for the
+    #: total only and leaves placement to the scheduler.
+    processes_per_node: int | None = None
 
 
 class Scheduler(ABC):
@@ -117,10 +121,12 @@ class SlurmScheduler(Scheduler):
         submit_command_path: str = "",
         queue_check_command_path: str = "",
         cancel_command_path: str = "",
+        accounting_command_path: str = "",
     ) -> None:
         self._submit_command_path = submit_command_path.strip()
         self._queue_check_command_path = queue_check_command_path.strip()
         self._cancel_command_path = cancel_command_path.strip()
+        self._accounting_command_path = accounting_command_path.strip()
         self._resolved_commands: dict[str, str] = {}
 
     def submit(self, ssh, request: SchedulerSubmitRequest) -> str:
@@ -212,7 +218,9 @@ class SlurmScheduler(Scheduler):
         if not job_ids:
             return {}
 
-        accounting_command = self._resolve_command(ssh, "history", "sacct", "")
+        accounting_command = self._resolve_command(
+            ssh, "history", "sacct", self._accounting_command_path
+        )
         command = (
             f"{shlex.quote(accounting_command)} "
             f"--jobs={shlex.quote(','.join(job_ids))} "
@@ -324,12 +332,18 @@ class AddqueueScheduler(SlurmScheduler):
     """addqueue submitter with SLURM-compatible polling/cancel."""
 
     def submit(self, ssh, request: SchedulerSubmitRequest) -> str:
+        total = max(1, int(request.num_processes))
+        process_count = str(total)
+        if request.processes_per_node is not None:
+            placement = ProcessPlacement.split(total, int(request.processes_per_node))
+            process_count = placement.addqueue_argument()
+
         submit_command = self._resolve_command(ssh, "submit", "addqueue", self._submit_command_path)
         args: list[str] = [
             submit_command,
             "--sbatch",
             "-n",
-            str(max(1, int(request.num_processes))),
+            process_count,
         ]
 
         queue_name = request.queue_name.strip()
@@ -383,6 +397,7 @@ def create_scheduler(
     submit_command_path: str = "",
     queue_check_command_path: str = "",
     cancel_command_path: str = "",
+    accounting_command_path: str = "",
 ) -> Scheduler:
     """Create a scheduler backend for a configured queue system."""
 
@@ -392,11 +407,13 @@ def create_scheduler(
             submit_command_path=submit_command_path,
             queue_check_command_path=queue_check_command_path,
             cancel_command_path=cancel_command_path,
+            accounting_command_path=accounting_command_path,
         )
     if normalized == "addqueue":
         return AddqueueScheduler(
             submit_command_path=submit_command_path,
             queue_check_command_path=queue_check_command_path,
             cancel_command_path=cancel_command_path,
+            accounting_command_path=accounting_command_path,
         )
     raise ValueError(f"Unsupported queue system: {queue_system}")

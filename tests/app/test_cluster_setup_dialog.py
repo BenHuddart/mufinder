@@ -133,12 +133,14 @@ def test_cluster_setup_dialog_addqueue_does_not_require_template(qapp) -> None:
     dialog._queue_system_combo.setCurrentText("ADDQUEUE")
     dialog._walltime_edit.setText("")
     dialog._set_template_path("")
+    dialog._accounting_command_edit.setText(" /opt/slurm/sacct ")
     dialog._submit_command_edit.setText("/bin/addqueue")
 
     dialog._accept_and_save()
 
     loaded = load_cluster_configs(settings)
     saved = next(config for config in loaded if config.name == "glamdring")
+    assert saved.accounting_command_path == "/opt/slurm/sacct"
     assert saved.queue_system == "ADDQUEUE"
     assert saved.default_walltime == ""
     dialog.close()
@@ -1197,4 +1199,11 @@ def test_cluster_setup_dialog_renaming_the_default_queue_keeps_it_default(qapp) 
     saved = next(config for config in load_cluster_configs(settings) if config.name == "PSI")
     assert saved.default_queue_name == "day"
     assert [queue.name for queue in saved.queues] == ["hour", "day"]
+    dialog.close()
+
+
+def test_cluster_setup_dialog_loads_redwood_accounting_default(qapp) -> None:
+    dialog = ClusterSetupDialog(settings=_FakeSettings())
+    dialog._select_cluster("Redwood")
+    assert dialog._accounting_command_edit.text() == "/usr/local/shared/slurm/bin/sacct"
     dialog.close()

@@ -84,6 +84,9 @@ class ClusterJobSubmission:
     mem_per_cpu_gb: float | None = None
     queue_name: str = ""
     comment: str = ""
+    #: Equal processes per node for addqueue; ``None`` leaves placement to the
+    #: scheduler.
+    processes_per_node: int | None = None
     castep_executable: str = ""
     reuse_existing_files: bool = False
     allow_existing_remote_directory: bool = False

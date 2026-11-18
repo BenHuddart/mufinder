@@ -1978,8 +1978,9 @@ def _write_previous_run_output(job_dir: Path, label: str) -> None:
         (job_dir / name).write_text("previous run\n", encoding="utf-8")
 
 
+@pytest.mark.parametrize("accounting_state", ["FAILED", "RUNNING", "ERROR"])
 def test_main_window_start_again_on_cluster_deletes_its_own_directory_without_prompting(
-    main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, accounting_state
 ) -> None:
     window = main_window
     service = ProjectService()
@@ -1996,12 +1997,29 @@ def test_main_window_start_again_on_cluster_deletes_its_own_directory_without_pr
 
     patch_continuation_cluster_dialog(monkeypatch)
     recorded = patch_continuation_cluster_runner(monkeypatch, window, directory_exists=True)
-    scheduler_checks: list[str] = []
-    monkeypatch.setattr(
-        window._cluster_runner._runner,
-        "scheduler_job_is_active",
-        lambda remote_job_id: scheduler_checks.append(remote_job_id) or False,
+    from mufinder.services.scheduler import create_scheduler
+    from tests.support.cluster_ssh import FakeSSH
+
+    runner = window._cluster_runner._runner
+    runner._ssh = FakeSSH()
+    runner._scheduler = create_scheduler(
+        "addqueue",
+        queue_check_command_path="/opt/slurm/squeue",
+        accounting_command_path="/usr/local/shared/slurm/bin/sacct",
     )
+    commands = []
+
+    def remote_command(command, timeout=30):
+        commands.append(command)
+        if command.startswith("/opt/slurm/squeue "):
+            return 0, "", ""
+        assert command.startswith("/usr/local/shared/slurm/bin/sacct ")
+        if accounting_state == "ERROR":
+            return 127, "", "sacct: command not found"
+        return 0, f"55501|{accounting_state}|00:00:01|relax_a\n", ""
+
+    monkeypatch.setattr(runner._ssh, "exec_command", remote_command, raising=False)
+    monkeypatch.setattr(main_window_module, "show_detailed_warning", lambda *args, **kwargs: None)
     monkeypatch.setattr(
         window,
         "_prompt_remote_directory_overwrite",
@@ -2016,7 +2034,12 @@ def test_main_window_start_again_on_cluster_deletes_its_own_directory_without_pr
     )
 
     # The previous run is confirmed finished before its directory is deleted.
-    assert scheduler_checks == ["55501"]
+    assert len(commands) == 2
+    if accounting_state != "FAILED":
+        assert recorded["deleted"] == []
+        assert recorded["submitted"] == []
+        window.close()
+        return
     assert recorded["checked"] == []
     assert recorded["deleted"] == ["/remote/work/relax_a"]
     assert len(recorded["submitted"]) == 1

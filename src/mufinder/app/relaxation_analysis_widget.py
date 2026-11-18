@@ -42,6 +42,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from mufinder.app.text_editing import refresh_line_edit
 from mufinder.app.atomic_structure_viewer import (
     AtomicStructureViewer,
     MUON_VIEWER_RADIUS_ANG,
@@ -2013,8 +2014,8 @@ class RelaxationAnalysisWidget(QWidget):
         name = _workspace_name(workspace)
         self._workspace_tabs.setTabText(self._workspace_tabs.indexOf(page), name)
         name_edit = page.findChild(QLineEdit)
-        if name_edit is not None and name_edit.text() != name:
-            name_edit.setText(name)
+        if name_edit is not None:
+            refresh_line_edit(name_edit, name)
         show_shifted = page.findChild(QCheckBox, "analysisShowShiftedCheckBox")
         if show_shifted is not None:
             with QSignalBlocker(show_shifted):
@@ -2179,6 +2180,7 @@ class RelaxationAnalysisWidget(QWidget):
         header_layout.setContentsMargins(14, 12, 14, 12)
         header_layout.setHorizontalSpacing(10)
         name_edit = QLineEdit(_workspace_name(workspace), header)
+        refresh_line_edit(name_edit, _workspace_name(workspace), force=True)
         name_edit.setAccessibleName("Workspace Name")
         name_edit.editingFinished.connect(
             lambda wid=_workspace_id(workspace), edit=name_edit: self._rename_workspace(

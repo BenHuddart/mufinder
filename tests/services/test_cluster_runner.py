@@ -1189,9 +1189,11 @@ def test_cluster_runner_submit_addqueue_forwards_runtime_options(
         memory_gb=9.0,
         queue_name="redwood-priority",
         comment="test comment",
+        processes_per_node=20,
     )
 
     request = scheduler.submit_requests[0]
+    assert request.processes_per_node == 20
     assert request.script_path == ""
     assert request.queue_name == "redwood-priority"
     assert request.memory_gb == 9.0
@@ -1200,6 +1202,36 @@ def test_cluster_runner_submit_addqueue_forwards_runtime_options(
     assert all(
         not str(cmd[1]).endswith("run.sh") for cmd in runner._ssh.commands if cmd[0] == "put"
     )
+
+
+def test_cluster_runner_refuses_an_impossible_placement_before_uploading(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    runner = ClusterJobRunner()
+    runner._ssh = FakeSSH()
+    scheduler = _FakeScheduler()
+    runner._scheduler = scheduler
+    runner._config = cluster_runner_module.ClusterConfig(
+        name="Redwood", hostname="glamdring.physics.ox.ac.uk", queue_system="ADDQUEUE"
+    )
+    seed = "conv_ecut_540"
+
+    with pytest.raises(ValueError, match="does not divide 96 cores"):
+        runner.submit(
+            job_id=uuid4(),
+            local_job_dir=_prepare_local_job(tmp_path, seed),
+            seed_name=seed,
+            num_processes=96,
+            walltime="",
+            working_directory="/mnt/redwoodfs/user/project",
+            template_script_path="",
+            cores_per_node=32,
+            processes_per_node=64,
+        )
+
+    assert runner._ssh.commands == []
+    assert scheduler.submit_requests == []
 
 
 def test_cluster_runner_track_existing_job_registers_active_entry(qapp, tmp_path: Path) -> None:
@@ -2348,3 +2380,33 @@ def test_cluster_runner_reports_no_geometry_progress_while_disconnected(
     runner.read_geometry_progress([job_id])
 
     assert results == [{job_id: None}]
+
+
+@pytest.mark.parametrize("queue_system", ["slurm", "addqueue"])
+def test_connect_passes_accounting_path_to_scheduler(qapp, monkeypatch, queue_system) -> None:
+    ssh = FakeSSH()
+    commands = []
+
+    def remote_command(command, timeout=30):
+        commands.append(command)
+        if command.startswith("/opt/slurm/squeue "):
+            return 0, "", ""
+        assert command.startswith("/opt/slurm/sacct ")
+        return 0, "123|FAILED|00:00:01|job\n", ""
+
+    ssh.exec_command = remote_command
+    monkeypatch.setattr(cluster_runner_module, "SSHConnection", lambda *args, **kwargs: ssh)
+    runner = ClusterJobRunner()
+    runner.connect_to_cluster(
+        ClusterConfig(
+            name="custom",
+            hostname="cluster.example",
+            username="alice",
+            queue_system=queue_system,
+            queue_check_command_path="/opt/slurm/squeue",
+            accounting_command_path="/opt/slurm/sacct",
+        )
+    )
+    assert runner.scheduler_job_is_active("123") is False
+    assert len(commands) == 2
+    runner.disconnect()

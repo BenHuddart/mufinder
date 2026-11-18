@@ -1625,7 +1625,12 @@ structure has a component at ``q ≠ 0`` with a period up to the
 ``commensurate_max_period`` recorded in its calculation parameters (64 when none is
 recorded), which it held at :math:`\mathbf{T} = 0`; the page reads that from the
 structure it keeps, since choosing another structure clears the results. A result at ``q = 0``, any other distribution and
-the list of an approximant are not marked by it.
+the list of an approximant are not marked by that correction.
+Distributions also record the correction that gives reciprocal-equivalent
+wavevectors their shared signed phase. A saved distribution with a long-period
+pair such as ``(q, 0, 0)`` and ``(1 − q, 0, 0)`` is marked older when it lacks
+that correction, including when both components depend on another phase axis.
+Other distributions and commensurate lists retain their method status.
 MuFinder never rewrites or recalculates them on its own, so they stay exactly as
 calculated, and saving, reopening or saving a workspace keeps them and the line.
 The calculation's ``Calculate`` button replaces them with new numbers and clears

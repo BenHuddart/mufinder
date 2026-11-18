@@ -1275,6 +1275,7 @@ def test_prepare_cluster_submission_expands_retrieval_flags_into_runner_keywords
         "mem_per_cpu_gb": None,
         "queue_name": "",
         "comment": "",
+        "processes_per_node": None,
         "castep_executable": "",
         "reuse_existing_files": True,
         "allow_existing_remote_directory": False,

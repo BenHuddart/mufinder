@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from mufinder.app.text_editing import refresh_line_edit
 from mufinder.app.atomic_structure_viewer import AtomicStructureViewer
 from mufinder.app.pinned_sites_scope import PinnedSitesScopeBar
 from mufinder.app.plot_canvas import PlotFrame, create_plot_canvas
@@ -743,14 +744,19 @@ class EnergyBarriersWidget(SourceTableWidget):
         reactant_key: str = "",
         product_key: str = "",
         max_path_length_text: str = "",
+        preserve_edits: bool = False,
     ) -> None:
         self._endpoint_rows = list(rows)
         reactant_key = reactant_key.strip()
         product_key = product_key.strip()
         current_reactant = reactant_key or self.selected_endpoint_keys()[0]
         current_product = product_key or self.selected_endpoint_keys()[1]
-        if self._max_path_length_input.text().strip() != max_path_length_text.strip():
-            self._max_path_length_input.setText(max_path_length_text.strip())
+        refresh_line_edit(
+            self._max_path_length_input,
+            max_path_length_text.strip(),
+            force=not preserve_edits,
+            commit_on_finish=False,
+        )
 
         self._reactant_combo.blockSignals(True)
         self._product_combo.blockSignals(True)

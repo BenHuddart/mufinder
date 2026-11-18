@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from uuid import UUID
 
@@ -46,6 +46,7 @@ class _Settings:
     memory_gb: float | None = 64.0
     mem_per_cpu_gb: float | None = None
     comment: str = "note"
+    processes_per_node: int | None = 8
 
 
 def _remote_job_directory(*, working_directory: str, seed_name: str) -> str:
@@ -545,3 +546,21 @@ def test_submission_applies_the_chosen_queue_overrides() -> None:
         64,
         "/opt/castep-short/castep.mpi",
     )
+
+
+@pytest.mark.parametrize(("queue_system", "expected"), [("ADDQUEUE", 8), ("slurm", None)])
+def test_submission_sends_equal_placement_only_to_addqueue(
+    queue_system: str, expected: int | None
+) -> None:
+    job = make_job("a")
+
+    (item,) = build_cluster_submissions(
+        _plan([job]),
+        OverwriteDecisions(),
+        cluster=replace(CLUSTER, queue_system=queue_system),
+        submission=_Settings(),
+        retrieval_flags=lambda _job: RetrievalFlags(),
+        output_directory=lambda job: Path("/local") / job.label,
+    ).items
+
+    assert item.submission.processes_per_node == expected

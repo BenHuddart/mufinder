@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from mufinder.domain.enums import JobStatus
@@ -301,6 +303,49 @@ def _addqueue_request() -> SchedulerSubmitRequest:
     )
 
 
+def test_addqueue_submit_sends_equal_placement_as_nodes_by_processes() -> None:
+    scheduler = AddqueueScheduler(submit_command_path="/bin/addqueue")
+    ssh = _FakeSSH([(0, "Submitted batch job 1\n", "")])
+    request = SchedulerSubmitRequest(
+        working_dir="/remote/work",
+        seed_name="seed",
+        num_processes=128,
+        cores_per_node=32,
+        walltime="02:00:00",
+        castep_executable="castep.mpi",
+        queue_name="redwood",
+        memory_gb=7.5,
+        comment="spread",
+        processes_per_node=64,
+    )
+
+    scheduler.submit(ssh, request)
+
+    command = ssh.commands[0]
+    assert "--sbatch -n 2x64 -q redwood -m 7.5 -c spread -t 02:00:00" in command
+    assert "-n 128" not in command
+
+
+def test_addqueue_submit_without_placement_sends_the_total() -> None:
+    ssh = _FakeSSH([(0, "Submitted batch job 1\n", "")])
+
+    AddqueueScheduler(submit_command_path="/bin/addqueue").submit(ssh, _addqueue_request())
+
+    assert "--sbatch -n 4 " in ssh.commands[0]
+
+
+@pytest.mark.parametrize("per_node", [0, 3, 8])
+def test_addqueue_submit_refuses_a_placement_that_does_not_divide_the_total(
+    per_node: int,
+) -> None:
+    ssh = _FakeSSH([])
+    request = replace(_addqueue_request(), processes_per_node=per_node)
+
+    with pytest.raises(ValueError, match="Cannot place 4 processes equally"):
+        AddqueueScheduler(submit_command_path="/bin/addqueue").submit(ssh, request)
+    assert ssh.commands == []
+
+
 def test_addqueue_submit_reads_a_job_id_from_free_form_output() -> None:
     scheduler = AddqueueScheduler(submit_command_path="/bin/addqueue")
 
@@ -399,3 +444,15 @@ def test_create_scheduler_factory() -> None:
 )
 def test_slurm_state_name_expands_short_codes(state: str, name: str) -> None:
     assert SlurmScheduler().state_name(state) == name
+
+
+@pytest.mark.parametrize("queue_system", ["slurm", "addqueue"])
+def test_history_uses_configured_accounting_path_without_discovery(queue_system) -> None:
+    scheduler = create_scheduler(queue_system, accounting_command_path=" /opt/slurm tools/sacct ")
+    ssh = _FakeSSH([(0, "7|FAILED|00:10:00|job\n", "")])
+
+    assert scheduler.history(ssh, ["7"])["7"].state == "FAILED"
+    assert ssh.commands == [
+        "'/opt/slurm tools/sacct' --jobs=7 --allocations --noheader --parsable2 "
+        "--format=JobID,State,Elapsed,JobName"
+    ]

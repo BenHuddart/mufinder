@@ -234,7 +234,7 @@ class HostStructureWidget(QWidget):
             property_signature,
         )
 
-    def set_structure(self, structure: Structure | None) -> None:
+    def set_structure(self, structure: Structure | None, *, force: bool = False) -> None:
         """Render structure metadata and one atom-table row per atom.
 
         No-op (beyond storing the reference) when the rendered structure is
@@ -242,11 +242,20 @@ class HostStructureWidget(QWidget):
         full 3D viewer mesh rebuild on every dashboard flush.
         """
         fingerprint = self._render_fingerprint(structure)
-        if self._structure_fingerprint_valid and fingerprint == self._structure_fingerprint:
+        if (
+            not force
+            and self._structure_fingerprint_valid
+            and fingerprint == self._structure_fingerprint
+        ):
             self._current_structure = structure
             return
         self._structure_fingerprint = fingerprint
         self._structure_fingerprint_valid = True
+        same_structure = (
+            self._current_structure is not None
+            and structure is not None
+            and self._current_structure.id == structure.id
+        )
         self._current_structure = structure
         self._atom_table.setRowCount(0)
         # One viewer render for the structure and its spins.
@@ -257,7 +266,9 @@ class HostStructureWidget(QWidget):
                 self._summary.setText("No host structure loaded.")
                 self._atomic_spins = []
                 self._propagation_vector = [0.0, 0.0, 0.0]
-                self._set_propagation_inputs(self._propagation_vector)
+                self._set_propagation_inputs(
+                    self._propagation_vector, force=force or not same_structure
+                )
                 self._viewer.set_spins(None)
                 self._supercell_button.setEnabled(False)
                 self._updating = False
@@ -274,7 +285,9 @@ class HostStructureWidget(QWidget):
 
             self._atomic_spins = structure_atomic_spins(structure)
             self._propagation_vector = list(propagation_vector_from_structure(structure))
-            self._set_propagation_inputs(self._propagation_vector)
+            self._set_propagation_inputs(
+                self._propagation_vector, force=force or not same_structure
+            )
 
             for index, (species, frac) in enumerate(
                 zip(structure.species, structure.fractional_positions),
@@ -395,10 +408,11 @@ class HostStructureWidget(QWidget):
         finally:
             self._syncing_selection = False
 
-    def _set_propagation_inputs(self, vector: list[float]) -> None:
-        self._propagation_x.setValue(float(vector[0]))
-        self._propagation_y.setValue(float(vector[1]))
-        self._propagation_z.setValue(float(vector[2]))
+    def _set_propagation_inputs(self, vector: list[float], *, force: bool) -> None:
+        for edit, value in zip(
+            (self._propagation_x, self._propagation_y, self._propagation_z), vector, strict=True
+        ):
+            edit.refresh_value(value, force=force)
 
     def _set_readonly_item(self, row: int, column: int, text: str) -> None:
         item = QTableWidgetItem(text)

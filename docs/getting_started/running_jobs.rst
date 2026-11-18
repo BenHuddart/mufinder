@@ -131,6 +131,8 @@ settings for this submission.
    with the other last-used settings.
 3. Check ``Remote working directory`` and ``Username``, then set
    ``Processor cores per job`` and ``Maximum runtime`` (``HH:MM:SS``).
+   For an ``addqueue`` cluster, ``Node placement`` sets how the cores spread
+   across compute nodes (see :ref:`addqueue-node-placement`).
 4. Set the memory request. For a SLURM cluster tick ``Memory per CPU (GB)`` to
    request memory per allocated CPU; it is off by default, so jobs are
    submitted with no memory directive (see :ref:`slurm-memory-requests`). For
@@ -155,13 +157,42 @@ the cluster's scheduler.
   ``quantum_phonon_…``, ``barrier_…``), and a batch mixing workflows keeps each
   job's own name.
 - On Redwood, MuFinder submits with ``addqueue``, using the chosen queue,
-  ``Memory per core (GB)`` and ``Submission note``.
+  ``Memory per core (GB)`` and ``Submission note``, and the node placement
+  described below.
 - Cluster submission refuses job labels containing anything other than letters,
   digits, ``.``, ``_`` and ``-``, because remote paths and scheduler commands
   use the label directly. Remote job directories are deleted recursively over
   SFTP, never through a remote shell command.
 - When a matching cluster connection is already active, submission reuses it
   and does not ask for a password or passphrase again.
+
+.. _addqueue-node-placement:
+
+Node placement on addqueue clusters
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+``Node placement`` appears below ``Processor cores per job`` for ``addqueue``
+clusters only. It starts on ``Scheduler decides``, which sends the total alone
+(``-n 128``) and leaves the spread across nodes to the scheduler.
+
+The other entries split the total equally, one entry per number of processes
+per node that divides the total exactly, largest first: for 128 cores,
+``2 nodes × 64 per node`` sends ``-n 2x64`` and ``4 nodes × 32 per node`` sends
+``-n 4x32``. The line under the list shows the ``-n`` value that will be sent.
+Only splits the cluster's nodes can hold are listed. Redwood has 19 nodes that
+run up to 32 processes and 28 that run up to 64, so a split of more than 32 per
+node can use at most 28 nodes, one of 32 or fewer at most 47, and none can
+exceed 64 per node. A cluster with no recorded node list offers every exact split.
+Requesting 32 or fewer per node does not choose the node type; the scheduler
+may still place them on larger nodes.
+
+Changing ``Processor cores per job`` rebuilds the list and keeps the chosen
+processes per node. If that number no longer fits the new total, the entry is
+shown as ``(not possible)``, the line under it says why, and ``OK`` stays
+disabled until another split is picked or the total fits again. MuFinder never
+rounds the request. The choice is remembered with the other last-used
+submission settings; a project saved before the option existed starts on
+``Scheduler decides``. SLURM submissions are unchanged.
 
 Working with selected rows
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -792,8 +823,11 @@ stored globally, including built-in SCARF and Redwood presets.
   the ``Jump host`` group. Its fields appear when the box is ticked: a separate
   host name, port, username, authentication method and SSH key path.
 - The ``Scheduler commands`` group sets explicit paths for the submit, queue
-  check and cancel commands. A command without a configured path is located by
-  probing the non-interactive SSH shell.
+  check, cancel and accounting (``sacct``) commands. A command without a configured path is located by
+  probing the non-interactive SSH shell. Redwood uses
+  ``/usr/local/shared/slurm/bin/sacct`` for accounting; a saved Redwood profile
+  without an accounting-path setting receives this default. An explicitly saved
+  empty path keeps command discovery enabled.
 - SSH key authentication is primary, with password fallback
   (``Authentication method``: ``SSH key`` or ``Password``).
 - The Redwood preset targets ``glamdring.physics.ox.ac.uk`` through the Physics
@@ -801,6 +835,11 @@ stored globally, including built-in SCARF and Redwood presets.
   Physics/bastion and Glamdring credentials because those accounts can differ.
   The preset submits with ``/usr/local/shared/bin/addqueue``; a saved profile
   keeps whatever submit command path it was saved with.
+- The Redwood preset records its compute nodes (19 that run up to 32 processes
+  and 28 that run up to 64) for :ref:`addqueue-node-placement`; a saved Redwood
+  profile on that host without the setting receives it. The node list is not edited in
+  ``Setup > HPC Clusters``. ``Cores per node`` stays the pre-filled total, not a
+  limit.
 
 Passwords and the system keyring
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

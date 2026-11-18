@@ -579,6 +579,9 @@ During polling:
 
 - Only tracked jobs for the currently connected cluster are polled: the
   non-terminal ones, and failed ones watched for reappearance.
+- Accounting uses the cluster profile's ``Accounting command path`` when set,
+  otherwise command discovery in the non-interactive SSH shell. Accounting
+  lookup errors block fresh-start directory deletion and replacement submission.
 - SLURM is polled with ``squeue --all --jobs=<ids>``. ``--all`` keeps jobs in
   hidden or unavailable partitions in the output, which ``squeue`` otherwise
   leaves out. Every job ``squeue`` does not list is then looked up in job

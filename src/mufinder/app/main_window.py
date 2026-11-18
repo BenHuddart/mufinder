@@ -2235,7 +2235,7 @@ class MainWindow(QMainWindow):
             with trace.stage("_refresh_jobs_table"):
                 self._refresh_jobs_table()
             with trace.stage("_refresh_host_structure_view"):
-                self._refresh_host_structure_view()
+                self._refresh_host_structure_view(force=True)
             with trace.stage("_refresh_magnetic_field_view"):
                 self._refresh_magnetic_field_view()
             with trace.stage("_refresh_polarisation_view"):
@@ -3483,7 +3483,8 @@ class MainWindow(QMainWindow):
                 deletable=True,
             )
             widget.set_form_state(
-                attach_magnetic_field_results(self._document, workspace_id, form_state)
+                attach_magnetic_field_results(self._document, workspace_id, form_state),
+                preserve_edits=True,
             )
             widget.magnetic_structure_changed.connect(
                 lambda payload, workspace_id=workspace_id: (
@@ -3543,7 +3544,8 @@ class MainWindow(QMainWindow):
                 deletable=True,
             )
             widget.set_form_state(
-                attach_magnetic_field_results(self._document, workspace_id, form_state)
+                attach_magnetic_field_results(self._document, workspace_id, form_state),
+                preserve_edits=True,
             )
 
     def _set_active_route(self, route: str) -> None:
@@ -5145,6 +5147,15 @@ class MainWindow(QMainWindow):
         if mem_per_cpu_gb is not None and mem_per_cpu_gb <= 0:
             mem_per_cpu_gb = None
 
+        # Saved before equal placement existed, or unreadable: the scheduler places.
+        per_node_raw = payload.get("processes_per_node")
+        try:
+            processes_per_node = None if per_node_raw in (None, "") else int(per_node_raw)
+        except (TypeError, ValueError):
+            processes_per_node = None
+        if processes_per_node is not None and processes_per_node < 1:
+            processes_per_node = None
+
         persisted_workflow_type = str(payload.get("workflow_type", "")).strip()
         same_workflow = (
             not workflow_type
@@ -5164,6 +5175,7 @@ class MainWindow(QMainWindow):
             memory_gb=memory_gb,
             mem_per_cpu_gb=mem_per_cpu_gb,
             comment=str(payload.get("comment", "")).strip(),
+            processes_per_node=processes_per_node,
         )
 
     def _persist_last_cluster_submission_config(
@@ -5184,6 +5196,7 @@ class MainWindow(QMainWindow):
             "memory_gb": getattr(config, "memory_gb", None),
             "mem_per_cpu_gb": getattr(config, "mem_per_cpu_gb", None),
             "comment": str(getattr(config, "comment", "")),
+            "processes_per_node": getattr(config, "processes_per_node", None),
             "workflow_type": workflow_type,
         }
 
@@ -10195,7 +10208,7 @@ class MainWindow(QMainWindow):
         self._refresh_workflow_stage_icons()
         self._sync_project_home()
 
-    def _refresh_host_structure_view(self) -> None:
+    def _refresh_host_structure_view(self, *, force: bool = False) -> None:
         if self._document is None:
             self._host_structure_view.set_structure(None)
             self._host_structure_view.set_promotable_hosts([], None)
@@ -10207,7 +10220,7 @@ class MainWindow(QMainWindow):
         host: Structure | None = self._document.structures.get(host_id) if host_id else None
         promotable = self._project_service.list_promotable_host_structures(self._document)
         self._host_structure_view.set_promotable_hosts(promotable, host_id)
-        self._host_structure_view.set_structure(host)
+        self._host_structure_view.set_structure(host, force=force)
         self._refresh_magnetic_field_view()
         self._refresh_active_host_badges()
 
@@ -10370,7 +10383,8 @@ class MainWindow(QMainWindow):
                 self._document,
                 MAGNETIC_FIELD_PAGE_OWNER,
                 self._document.ui_state.get(self._MAGNETIC_FIELD_FORM_KEY, {}),
-            )
+            ),
+            preserve_edits=True,
         )
         self._refresh_magnetic_field_workspace_views()
 

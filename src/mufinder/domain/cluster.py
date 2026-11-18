@@ -29,6 +29,18 @@ PLACEHOLDER_JUMP_USERNAME = "physics_username"
 
 
 @dataclass(frozen=True, slots=True)
+class ClusterNodeGroup:
+    """``count`` compute nodes that each run up to ``processes`` MPI processes.
+
+    A profile's node groups describe the hardware an equal-placement request
+    must fit; they are a capacity, not a default.
+    """
+
+    count: int
+    processes: int
+
+
+@dataclass(frozen=True, slots=True)
 class ClusterQueue:
     """One named queue (SLURM partition or addqueue queue) of a cluster.
 
@@ -84,6 +96,10 @@ class ClusterConfig:
     keyword_execution_mode: str = DEFAULT_KEYWORD_EXECUTION_MODE
     keyword_shell_init: str = ""
     queues: tuple[ClusterQueue, ...] = ()
+    accounting_command_path: str = ""
+    #: The compute nodes an addqueue equal-placement request can use. Empty
+    #: means MuFinder knows no limit beyond the request's own arithmetic.
+    node_groups: tuple[ClusterNodeGroup, ...] = ()
 
     def working_directory_for(self, username: str | None = None) -> str:
         """Return the default working directory with ``{username}`` filled in.
