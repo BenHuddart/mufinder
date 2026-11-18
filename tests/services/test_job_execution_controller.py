@@ -612,6 +612,45 @@ def test_cluster_submission_rejects_jobs_outside_the_eligible_statuses(tmp_path:
     assert job.status == JobStatus.RUNNING
 
 
+def test_cluster_stop_reported_for_a_queued_job_stops_it(tmp_path: Path) -> None:
+    # The job ran and hit its walltime between two polls, or while MuFinder was
+    # disconnected, so the runner reports ``stopped`` for a job the document
+    # still holds as queued.
+    service, document = _document(tmp_path)
+    job_id = make_job("queued-then-stopped", service=service, document=document).id
+    controller = _controller(
+        document=document,
+        service=service,
+        cluster_runner=FakeClusterRunner(),
+        output_dir=tmp_path / "queued-then-stopped",
+    )
+    controller.submit_cluster_job(
+        ClusterJobSubmission(
+            job=document.jobs[job_id],
+            output_dir=tmp_path / "queued-then-stopped",
+            seed_name="queued-then-stopped",
+            remote_target="/remote/queued-then-stopped",
+            execution_target="test-cluster",
+            num_processes=8,
+            walltime="01:00:00",
+            working_directory="/remote",
+            template_script_path="",
+            cores_per_node=4,
+        )
+    )
+    assert document.jobs[job_id].status in {JobStatus.SUBMITTING, JobStatus.QUEUED}
+
+    # A retrieval pass announces itself first; the document is not running, so
+    # it has no ``retrieving`` edge to take.
+    controller.mark_cluster_status_changed(job_id, JobStatus.RETRIEVING.value)
+    update = controller.mark_cluster_status_changed(job_id, JobStatus.STOPPED.value)
+
+    job = document.jobs[job_id]
+    assert update.changed is True
+    assert job.status == JobStatus.STOPPED
+    assert job.failure_reason == FailureReason.WALLTIME
+
+
 def test_cluster_stopped_status_is_terminal_and_clears_active_run(tmp_path: Path) -> None:
     service, document = _document(tmp_path)
     job_id = make_job("stopped-cluster-job", service=service, document=document).id

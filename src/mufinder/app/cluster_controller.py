@@ -204,13 +204,11 @@ class ClusterController(QObject):
         # GUI-thread mirror of the runner's active tracked-job ids, maintained
         # from the signals/calls this controller already sees. The runner's own
         # ``_tracked_jobs`` live on the worker thread and must not be read from
-        # the GUI thread; this set lets the job watchdog ask "is this cluster job
-        # still being tracked?" without crossing threads. It is deliberately NOT
+        # the GUI thread; this set lets the dashboard ask "is this cluster job
+        # being monitored?" without crossing threads. It is deliberately NOT
         # cleared on disconnect: the runner keeps its tracked jobs across a
-        # disconnect (only ``clear_tracked_jobs`` drops them, on project switch),
-        # so clearing here would make the watchdog stop live jobs after a
-        # reconnect. The watchdog never flags cluster jobs while disconnected, so
-        # retaining the mirror across a disconnect is safe.
+        # disconnect (only ``clear_tracked_jobs`` drops them, on project switch)
+        # and polls them again after a reconnect.
         self._tracked_active_job_ids: set[UUID] = set()
 
         # Forward worker signals to the GUI thread. These cross-thread
@@ -257,14 +255,19 @@ class ClusterController(QObject):
     def tracked_active_job_ids(self) -> frozenset[UUID]:
         """Return the ids of cluster jobs the runner is actively tracking.
 
-        A GUI-thread mirror of the runner's non-terminal ``_tracked_jobs``. Used
-        by the job watchdog to detect active cluster jobs the runner has silently
-        stopped tracking. Conservative by construction: a job is only dropped
-        when a terminal ``status_changed`` is observed for it, so an in-flight
-        job is never briefly absent.
+        A GUI-thread mirror of the runner's non-terminal ``_tracked_jobs``. The
+        dashboard uses it to mark active cluster jobs that nothing is
+        monitoring. Conservative by construction: a job is only dropped when a
+        terminal ``status_changed`` is observed for it, so an in-flight job is
+        never briefly absent.
         """
 
         return frozenset(self._tracked_active_job_ids)
+
+    def is_tracking(self, job_id: UUID) -> bool:
+        """Return whether the runner is actively tracking the cluster job ``job_id``."""
+
+        return job_id in self._tracked_active_job_ids
 
     @Slot(object, object)
     def _mirror_status_changed(self, job_id: Any, status_value: Any) -> None:
@@ -371,7 +374,7 @@ class ClusterController(QObject):
         Fast, but must run on the worker thread because it mutates state the poll
         loop also touches. Queued (never blocking) so switching projects can never
         freeze the GUI while the worker is mid-retrieval. The GUI mirror is cleared
-        synchronously here so the watchdog sees the drop at once; any subsequent
+        synchronously here so the dashboard sees the drop at once; any subsequent
         ``track_existing_job`` calls queue *after* this op on the same worker, so
         re-registration is never wiped by a late clear.
 

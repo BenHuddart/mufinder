@@ -7,12 +7,13 @@ from functools import partial
 
 import pytest
 
-from mufinder.domain.enums import JobStatus
+from mufinder.domain.enums import FailureReason, JobStatus
 from mufinder.services.job_monitoring import (
     STALENESS_THRESHOLD_SECONDS,
     is_cluster_job,
     job_staleness,
     job_where_text,
+    unretrieved_output_note,
 )
 from tests.support.jobs import make_job
 
@@ -100,3 +101,49 @@ def test_job_where_text_names_the_cluster_and_its_job_id(target, remote_id, expe
     job = make_job(execution_target=target, remote_job_id=remote_id)
 
     assert job_where_text(job) == expected
+
+
+def test_untracked_job_on_a_connected_cluster_says_it_is_not_monitored() -> None:
+    job = _job(last_checked_at=_NOW, remote_job_id="4127731")
+    marker = job_staleness(job, now=_NOW, cluster_connected=True, tracked=False)
+    assert marker == "MuFinder is not monitoring this job"
+
+
+def test_untracked_job_without_a_scheduler_id_says_why() -> None:
+    job = _job(last_checked_at=_NOW)
+    marker = job_staleness(job, now=_NOW, cluster_connected=True, tracked=False)
+    assert marker == "MuFinder is not monitoring this job: no scheduler job ID was recorded"
+
+
+def test_untracked_job_on_a_disconnected_cluster_reads_as_disconnected() -> None:
+    marker = job_staleness(_job(), now=_NOW, cluster_connected=False, tracked=False)
+    assert marker == "cluster disconnected"
+
+
+def test_a_job_still_being_submitted_is_not_reported_as_unmonitored() -> None:
+    # The runner holds a job only once the scheduler has returned its ID.
+    job = _job(status=JobStatus.SUBMITTING, submitted_at=_NOW - timedelta(seconds=20))
+    assert job_staleness(job, now=_NOW, cluster_connected=True, tracked=False) is None
+
+    stuck = _job(status=JobStatus.SUBMITTING, submitted_at=_NOW - timedelta(minutes=10))
+    marker = job_staleness(stuck, now=_NOW, cluster_connected=True, tracked=False)
+    assert marker == "MuFinder is not monitoring this job: no scheduler job ID was recorded"
+
+
+def _orphaned(label: str) -> object:
+    return _job(
+        label=label,
+        status=JobStatus.STOPPED,
+        failure_reason=FailureReason.INTERRUPTED,
+        remote_directory=f"/remote/{label}",
+    )
+
+
+def test_unretrieved_note_says_its_only_when_the_prompt_is_about_one_job() -> None:
+    job = _orphaned("a")
+    assert unretrieved_output_note([job]).startswith("Its output may still be on scarf")
+    # The same job dismissed in a prompt that also cancels others.
+    note = unretrieved_output_note([job], prompt_job_count=3)
+    assert note.startswith("The output of 1 of these jobs may still be on scarf")
+    assert note.endswith("to keep the result.")
+    assert unretrieved_output_note([_job(status=JobStatus.FAILED)]) == ""

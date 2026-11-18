@@ -3540,3 +3540,220 @@ def test_energy_barrier_draft_limit_survives_a_dashboard_flush(
     window._request_dashboard_flush(failure_message="Autosave failed")
     window._flush_dashboard()
     assert edit.text() == "2.5"
+
+
+def _orphaned_cluster_job(service, doc, label="o0"):
+    """A cluster job the job watchdog stopped although it has a remote folder."""
+
+    job = _add_dashboard_job(service, doc, label, JobStatus.STOPPED)
+    job.failure_reason = FailureReason.INTERRUPTED
+    job.execution_target = "SCARF"
+    job.remote_job_id = "4127731"
+    job.remote_directory = f"/remote/{label}"
+    return job
+
+
+def _connect_to_scarf(window) -> None:
+    window._cluster_runner._connected = True
+    window._cluster_runner._connected_cluster_name = "SCARF"
+
+
+def test_dashboard_offers_retrieval_for_a_cluster_job_mufinder_lost_track_of(main_window, tmp_path):
+    window = main_window
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "orphaned.mufinder", "Orphaned")
+    _orphaned_cluster_job(service, doc)
+    window._document = doc
+    _connect_to_scarf(window)
+
+    window._refresh_jobs_table()
+
+    assert action_button(window).text() == "Retry retrieval"
+    window.close()
+
+
+def test_dismissing_a_job_with_unretrieved_output_says_so(main_window, tmp_path, monkeypatch):
+    window = main_window
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "dismiss_orphan.mufinder", "DismissOrphan")
+    job = _orphaned_cluster_job(service, doc)
+    window._document = doc
+    window._refresh_jobs_table()
+    prompts: list[tuple[str, ...]] = []
+    monkeypatch.setattr(
+        workflow_table_utils,
+        "confirm_destructive",
+        lambda _parent, *prompt, **_k: prompts.append(prompt) or False,
+    )
+
+    window._run_dashboard_menu_action("dismiss", [job.id])
+
+    assert prompts == [
+        (
+            "Dismiss job",
+            "Dismiss job 'o0' from the dashboard?",
+            "The job stays in the project; its workflow row can still resubmit it.\n\n"
+            "Its output may still be on SCARF and has not been retrieved. Dismissing "
+            "does not retrieve it; use Retry retrieval first to keep the result.",
+            "Dismiss job",
+        )
+    ]
+    assert job.dismissed_at is None
+    window.close()
+
+
+def test_cancelling_a_cluster_job_nothing_tracks_cancels_it_in_the_project(main_window, tmp_path):
+    # The runner cannot cancel a job it does not hold, so the row would
+    # otherwise stay active with no way out.
+    window = main_window
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "cancel_untracked.mufinder", "CancelUntracked")
+    job = _add_dashboard_job(service, doc, "u0", JobStatus.DEFINED)
+    job.execution_target = "SCARF"
+    service.submit_job(job)
+    job.submitted_at = datetime.now(UTC) - timedelta(minutes=10)
+    window._document = doc
+    window._refresh_jobs_table()
+
+    window._cancel_jobs([job])
+
+    assert job.status == JobStatus.CANCELLED
+    assert window.statusBar().currentMessage() == (
+        "Cancelled 1 job in the project; SCARF was not contacted for jobs MuFinder is not "
+        "monitoring"
+    )
+    window.close()
+
+
+def test_cancelling_a_job_that_is_still_being_submitted_goes_to_the_cluster(
+    main_window, tmp_path, monkeypatch
+):
+    # The scheduler has not answered yet, so the runner does not hold the job.
+    # Cancelling it in the project alone would leave the submission to run.
+    window = main_window
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "cancel_submitting.mufinder", "CancelSubmitting")
+    job = _add_dashboard_job(service, doc, "s0", JobStatus.DEFINED)
+    job.execution_target = "SCARF"
+    service.submit_job(job)
+    window._document = doc
+    requested: list[object] = []
+    monkeypatch.setattr(window._cluster_runner, "cancel", requested.append)
+
+    window._cancel_jobs([job])
+
+    assert requested == [job.id]
+    assert job.status == JobStatus.SUBMITTING
+    assert window.statusBar().currentMessage() == "Cancellation requested for 1 job"
+    window.close()
+
+
+def test_cancel_reports_monitored_and_unmonitored_jobs_separately(
+    main_window, tmp_path, monkeypatch
+):
+    window = main_window
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "cancel_mixed.mufinder", "CancelMixed")
+    old = datetime.now(UTC) - timedelta(minutes=10)
+    jobs = []
+    for label in ("m0", "m1", "u0"):
+        job = _add_dashboard_job(service, doc, label, JobStatus.DEFINED)
+        job.execution_target = "SCARF"
+        service.submit_job(job)
+        job.submitted_at = old
+        jobs.append(job)
+    for job in jobs[:2]:
+        window._cluster_runner._tracked_active_job_ids.add(job.id)
+    window._document = doc
+    monkeypatch.setattr(window._cluster_runner, "cancel", lambda _job_id: None)
+
+    window._cancel_jobs(jobs)
+
+    assert window.statusBar().currentMessage() == (
+        "Cancellation requested for 2 jobs; cancelled 1 job in the project (SCARF was not "
+        "contacted for jobs MuFinder is not monitoring)"
+    )
+    window.close()
+
+
+def test_a_finished_cluster_job_whose_result_cannot_be_recorded_fails_with_the_reason(
+    main_window, tmp_path, monkeypatch
+):
+    # The runner has already dropped the job as finished. If recording the
+    # result raises, the job must not stay active with nothing tracking it.
+    window = main_window
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "record_fails.mufinder", "RecordFails")
+    job = _add_dashboard_job(service, doc, "f0", JobStatus.DEFINED)
+    job.execution_target = "SCARF"
+    job.remote_job_id = "4127731"
+    job.remote_directory = "/remote/f0"
+    service.submit_job(job)
+    service.start_job(job)
+    service.mark_job_retrieving(job)
+    window._document = doc
+    window._refresh_jobs_table()
+
+    def _raise(*_args, **_kwargs):
+        raise RuntimeError("unexpected output layout")
+
+    monkeypatch.setattr(main_window_module, "merge_controller_result", _raise)
+
+    window._on_cluster_job_finished(
+        job.id, main_window_module.CastepResult(completed=True, total_energy=-1.0)
+    )
+
+    assert job.status == JobStatus.FAILED
+    assert job.error_message == (
+        "The job's output was retrieved, but MuFinder could not record the result: "
+        "unexpected output layout"
+    )
+    assert doc.results == {}
+    assert all(run.result_id is None for run in doc.runs.values())
+    window.close()
+
+
+def test_an_error_after_a_job_completed_keeps_its_result(main_window, tmp_path, monkeypatch):
+    # Whatever raises once the result is stored must not strip it from a
+    # completed job.
+    window = main_window
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "late_error.mufinder", "LateError")
+    job = _add_dashboard_job(service, doc, "c0", JobStatus.DEFINED)
+    service.submit_job(job)
+    service.start_job(job)
+    window._document = doc
+
+    def _raise(*_args, **_kwargs):
+        raise RuntimeError("flush failed")
+
+    monkeypatch.setattr(window, "_request_dashboard_flush", _raise)
+
+    window._on_local_job_finished(
+        job.id, main_window_module.CastepResult(completed=True, total_energy=-1.0)
+    )
+
+    assert job.status == JobStatus.COMPLETED
+    assert len(doc.results) == 1
+    window.close()
+
+
+def test_dashboard_buttons_follow_the_cluster_connecting_and_disconnecting(main_window, tmp_path):
+    # Retrieval needs a connection, so the button changes with it, without
+    # waiting for a queue poll to redraw the table.
+    window = main_window
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "connects.mufinder", "Connects")
+    _orphaned_cluster_job(service, doc)
+    window._document = doc
+    window._refresh_jobs_table()
+    assert action_button(window).text() == "Inspect…"
+
+    _connect_to_scarf(window)
+    window._on_cluster_connection_status_changed(True)
+    assert action_button(window).text() == "Retry retrieval"
+
+    window._cluster_runner._connected = False
+    window._on_cluster_connection_status_changed(False)
+    assert action_button(window).text() == "Inspect…"
+    window.close()

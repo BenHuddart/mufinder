@@ -14,6 +14,7 @@ from mufinder.domain.enums import ACTIVE_JOB_STATUSES, FailureReason, JobStatus
 from mufinder.domain.models import CalculationRun, Job, Result, utc_now
 from mufinder.services.failure_diagnosis import (
     MISSING_SCHEDULER_ENTRY_FAILURE_MESSAGE,
+    RESULT_NOT_RECORDED_PREFIX,
     FailureDiagnosis,
     diagnose_failure,
     failure_reason_summary,
@@ -666,6 +667,30 @@ class JobExecutionController:
         )
         return diagnose_failure(message, log_files, not_before=job.submitted_at)
 
+    def fail_unrecorded_finish(
+        self, job_id: UUID, error: Exception, *, results_before: frozenset[UUID]
+    ) -> LifecycleUpdate:
+        """Fail a finished job whose result could not be recorded.
+
+        A runner reports a finished job once and then lets go of it, so a job
+        still active after ``error`` would have nothing left to end it. Such a
+        job fails with the reason, the results added since ``results_before``
+        are removed, and no run keeps pointing at one of them. A job that had
+        already completed keeps its result and is left as it is.
+        """
+
+        document = self._document_getter()
+        job = self._job_for_id(job_id)
+        if document is None or job is None or job.status not in ACTIVE_JOB_STATUSES:
+            return LifecycleUpdate(job=job)
+        removed = set(document.results) - results_before
+        for result_id in removed:
+            del document.results[result_id]
+        for run in document.runs.values():
+            if run.result_id in removed:
+                run.result_id = None
+        return self.fail_job(job_id, f"{RESULT_NOT_RECORDED_PREFIX}: {error}")
+
     def cancel_job(self, job_id: UUID) -> LifecycleUpdate:
         """Mark a job as cancelled and record a terminal provenance event."""
 
@@ -715,13 +740,12 @@ class JobExecutionController:
                 self._project_service.start_job(job)
             elif mapped == JobStatus.RETRIEVING and job.status == JobStatus.RUNNING:
                 self._project_service.mark_job_retrieving(job)
-            elif mapped == JobStatus.STOPPED and job.status in {
-                JobStatus.RUNNING,
-                JobStatus.RETRIEVING,
-            }:
+            elif mapped == JobStatus.STOPPED and job.status in ACTIVE_JOB_STATUSES:
                 # The cluster runner reports ``stopped`` only for a walltime
                 # stop: the scheduler's TIMEOUT state, or a time-limit kill in
-                # the scheduler log of a run with incomplete output.
+                # the scheduler log of a run with incomplete output. The job may
+                # have run and stopped between two polls, so the document can
+                # still hold it as submitting or queued.
                 self._project_service.stop_job(
                     job,
                     failure_reason_summary(FailureReason.WALLTIME),
