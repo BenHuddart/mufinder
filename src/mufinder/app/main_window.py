@@ -359,7 +359,6 @@ from mufinder.services.job_monitoring import (
     unretrieved_output_note,
 )
 from mufinder.services.job_progress import JobProgressMonitor, job_reports_geometry_progress
-from mufinder.services.job_watchdog import StuckJobWatchdog
 from mufinder.services.local_runner import LocalJobRunner
 from mufinder.app import workflow_table_utils
 from mufinder.app.selection_snapshot import (
@@ -662,24 +661,17 @@ class MainWindow(QMainWindow):
         # without re-arming (and thereby postponing) an already-pending deadline.
         self._dashboard_last_flush_at: float | None = None
         self._dashboard_flush_deadline: float | None = None
-        # Jobs stopped by the most recent orphaned-local-job reconciliation on
-        # project open; surfaced as a status-bar message by _open_project_from_path.
-        self._reconciled_orphaned_local_jobs: list[Job] = []
         self._dashboard_flush_timer = QTimer(self)
         self._dashboard_flush_timer.setSingleShot(True)
         self._dashboard_flush_timer.setInterval(self._DASHBOARD_FLUSH_DEBOUNCE_MS)
         self._dashboard_flush_timer.timeout.connect(self._flush_dashboard)
-        # Active-job watchdog: every minute, look for jobs left active with no
-        # runner tracking them (a dead local QProcess, an untracked cluster job)
-        # and stop them so they cannot linger in the dashboard forever. Findings
-        # are two-tick confirmed inside StuckJobWatchdog to ride out in-flight
-        # runner signals. The timer runs unconditionally; the handler is cheap
-        # when there are no active jobs.
-        self._stuck_job_watchdog = StuckJobWatchdog()
-        self._job_watchdog_timer = QTimer(self)
-        self._job_watchdog_timer.setInterval(60_000)
-        self._job_watchdog_timer.timeout.connect(self._on_job_watchdog_tick)
-        self._job_watchdog_timer.start()
+        # Every minute, check each active local job against the local runner
+        # and its output folder, so a job nothing will report on cannot stay
+        # active. The handler is cheap when no local job is active.
+        self._job_check_timer = QTimer(self)
+        self._job_check_timer.setInterval(60_000)
+        self._job_check_timer.timeout.connect(self._on_job_check_tick)
+        self._job_check_timer.start()
         self._cluster_elapsed_seconds_by_job: dict[UUID, int] = {}
         self._cluster_elapsed_checked_at: datetime | None = None
         self._shutting_down = False
@@ -1435,9 +1427,9 @@ class MainWindow(QMainWindow):
         dashboard_flush_timer = getattr(self, "_dashboard_flush_timer", None)
         if dashboard_flush_timer is not None:
             dashboard_flush_timer.stop()
-        job_watchdog_timer = getattr(self, "_job_watchdog_timer", None)
-        if job_watchdog_timer is not None:
-            job_watchdog_timer.stop()
+        job_check_timer = getattr(self, "_job_check_timer", None)
+        if job_check_timer is not None:
+            job_check_timer.stop()
         if self._document is not None and self.isVisible():
             answer = self._answer_for_saving_on_close()
             if answer == "cancel":
@@ -1530,9 +1522,9 @@ class MainWindow(QMainWindow):
         # orphaned until the next job.
         self._flush_dashboard()
         self._sync_job_runtime_timer()
-        job_watchdog_timer = getattr(self, "_job_watchdog_timer", None)
-        if job_watchdog_timer is not None:
-            job_watchdog_timer.start()
+        job_check_timer = getattr(self, "_job_check_timer", None)
+        if job_check_timer is not None:
+            job_check_timer.start()
 
     def _shutdown_embedded_structure_viewers(self) -> None:
         viewers = self.findChildren(AtomicStructureViewer)
@@ -1985,6 +1977,8 @@ class MainWindow(QMainWindow):
 
         self._record_recent_project(project_root)
         self._remember_dialog_path(project_root, "open_project")
+        # Shown first: the refresh below reports any local job it had to stop.
+        self.statusBar().showMessage(f"Opened project {self._document.project.name}")
         self._refresh_ui_after_project_change()
 
         integrity_warnings = self._document.ui_state.get("_integrity_warnings", [])
@@ -1995,15 +1989,6 @@ class MainWindow(QMainWindow):
                 "Project loaded with integrity warnings:\n\n"
                 + "\n".join(f"- {warning}" for warning in integrity_warnings),
             )
-        reconciled = self._reconciled_orphaned_local_jobs
-        if reconciled:
-            count = len(reconciled)
-            self.statusBar().showMessage(
-                f"{plural(count, 'local job was', 'local jobs were')} stopped because MuFinder closed "
-                f"while {'it was' if count == 1 else 'they were'} in progress"
-            )
-        else:
-            self.statusBar().showMessage(f"Opened project {self._document.project.name}")
         self._focus_project_navigator()
         return True
 
@@ -2307,19 +2292,10 @@ class MainWindow(QMainWindow):
         self._queue_refreshes_pending = 0
         self._cluster_queue_checked_label.setText("Queue last checked: never")
 
-        # Reconcile local jobs that were still in progress when MuFinder closed.
-        # This must run BEFORE the jobs table is rebuilt below so the user never
-        # sees phantom "running" rows for local jobs with no live process.
-        self._reconciled_orphaned_local_jobs = self._project_service.reconcile_orphaned_local_jobs(
-            self._document
-        )
-        if self._reconciled_orphaned_local_jobs:
-            self._request_dashboard_flush(
-                failure_message=(
-                    "Local jobs left running when MuFinder closed were stopped, but saving "
-                    "the project failed."
-                )
-            )
+        # Local jobs that were in progress when MuFinder closed have no process
+        # now. This runs before the jobs table is rebuilt, so no such job is
+        # ever shown as running.
+        self._on_job_check_tick()
 
     def _apply_project_change_titles(self) -> None:
         assert self._document is not None
@@ -6958,53 +6934,33 @@ class MainWindow(QMainWindow):
             return []
         return monitored_cluster_names(self._document.jobs.values())
 
-    def _on_job_watchdog_tick(self) -> None:
-        """Stop active jobs that no runner is tracking (two-tick confirmed).
+    def _on_job_check_tick(self) -> None:
+        """Check active local jobs against the local runner and their output folders.
 
-        Runs off a 60 s timer. Collects live introspection snapshots from the
-        local runner and the cluster controller's tracked-id mirror, asks the
-        watchdog for confirmed stuck jobs, stops each via
-        ``JobExecutionController.stop_stuck_job``, and coalesces the dashboard
-        refresh/autosave. Cheap when there are no active jobs.
+        Runs on project open and off a 60 s timer. A job the runner holds no
+        process for is completed from complete output, and stopped otherwise.
         """
 
         if self._document is None:
             return
-
-        active_jobs = [
-            job for job in self._document.jobs.values() if job.status in ACTIVE_JOB_STATUSES
-        ]
-        if not active_jobs:
-            # Nothing active: keep the two-tick state from accumulating stale
-            # strikes and return early.
-            self._stuck_job_watchdog.reset()
-            return
-
-        confirmed = self._stuck_job_watchdog.evaluate(
-            active_jobs,
-            local_active_ids=self._local_runner.active_job_ids(),
-            local_pending_ids=self._local_runner.pending_job_ids(),
-            now=utc_now(),
-        )
-        if not confirmed:
-            return
-
         stopped = 0
-        for job, message in confirmed:
-            update = self._job_execution.stop_stuck_job(job.id, message)
-            if update.changed:
+        for update in self._job_execution.check_local_jobs():
+            if update.job is None:
+                continue
+            if update.finished is not None:
+                self._on_local_job_finished(
+                    update.job.id, update.finished.parsed, update.finished.artifacts
+                )
+            elif update.job.status == JobStatus.STOPPED:
                 stopped += 1
-                self._stuck_job_watchdog.forget(job.id)
-
         if stopped == 0:
             return
-
         self._request_dashboard_flush(
-            failure_message="Jobs were stopped by the watchdog, but autosave failed."
+            failure_message="Local jobs with no process were stopped, but autosave failed."
         )
         self.statusBar().showMessage(
-            f"{plural(stopped, 'job was', 'jobs were')} stopped by the job watchdog because no runner "
-            f"was tracking {'it' if stopped == 1 else 'them'}"
+            f"{plural(stopped, 'local job was', 'local jobs were')} stopped: MuFinder has no "
+            f"process for {'it' if stopped == 1 else 'them'}"
         )
 
     def _sync_cluster_tracking_from_document(self) -> None:

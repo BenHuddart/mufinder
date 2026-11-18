@@ -372,9 +372,9 @@ Compatibility ledger
        ``execution_target`` and ``num_processes`` drive resubmission and
        dashboard columns; ``remote_job_id`` and ``remote_directory`` are the
        metadata that lets the main window re-register persisted active
-       cluster jobs with the cluster runner after a project is reopened. Orphaned
-       local-job reconciliation also reads ``execution_target`` to decide which
-       active jobs to stop on project open.
+       cluster jobs with the cluster runner after a project is reopened. The
+       local job check also reads ``execution_target`` to decide which active
+       jobs it looks at.
      - Current job data, not deprecated. Renaming or removing any of these
        fields breaks reload of saved projects and cluster re-attachment, so it
        requires a schema-version bump with a migration entry (and an update to
@@ -384,7 +384,7 @@ Compatibility ledger
      - ``Job`` (``mufinder.domain.models``) / job entity files
      - Persisted monitor metadata, not deprecation shims. ``last_checked_at``
        records when a job's status was last confirmed (scheduler poll, local
-       runner event, reconciliation, or watchdog); ``last_status_source`` names
+       runner event, or the local job check); ``last_status_source`` names
        that origin; ``last_status_message`` carries non-failure context such as
        the raw scheduler state or retrieval-retry progress. The dashboard uses
        them to distinguish "still queued" from "not checked recently" and to
