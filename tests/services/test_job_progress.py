@@ -213,6 +213,16 @@ def test_reader_reports_no_backlog_when_a_read_returns_nothing() -> None:
     assert not reader.has_backlog("job")
 
 
+def test_reader_reports_no_backlog_when_the_file_shrinks_to_the_bytes_already_read() -> None:
+    reader = GeometryProgressReader()
+    reader.read("job", size=100, read_from=lambda _offset: b"x" * 40)
+    assert reader.has_backlog("job")
+
+    reader.read("job", size=40, read_from=lambda _offset: b"")
+
+    assert not reader.has_backlog("job")
+
+
 class _Recorder:
     def __init__(self) -> None:
         self.remote_requests: list[list] = []

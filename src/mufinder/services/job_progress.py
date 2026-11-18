@@ -131,6 +131,7 @@ class GeometryProgressReader:
                 cursor = _Cursor(source=source)
                 self._cursors[key] = cursor
             if size <= cursor.offset:
+                cursor.backlog = False
                 return cursor.progress
             offset, pending, lines, progress = (
                 cursor.offset,
