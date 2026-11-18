@@ -4109,3 +4109,29 @@ def test_magnetic_field_widget_shows_host_spin_components_as_moment(qapp, tmp_pa
     assert summary.rowCount() == 2
     assert summary.item(0, 1).text() == "Moment"
     widget.close()
+
+
+def test_generated_uep_coordinate_warning_appears_in_site_summary(qapp, tmp_path) -> None:
+    from mufinder.domain.models import MuonSite
+    from mufinder.services.site_generation_service import UEP_COORDINATE_WARNING
+    from tests.support.magnetic_field_sites import uep_cluster_document
+
+    document = uep_cluster_document(tmp_path)
+    saved = MuonSite(
+        label="Saved UEP start",
+        generation_method="uep_cluster",
+        initial_fractional_position=[0.25, 0.25, 0.25],
+    )
+    document.sites[saved.id] = saved
+    host = document.structures[document.project.host_structure_id]
+    site = next(s for s in uep_cluster_muon_site_options(document, host) if s.label == saved.label)
+    widget = MagneticFieldWidget()
+    widget.set_document(document)
+    widget._selected_muon_site = site
+    widget._refresh_site_summary()
+    assert UEP_COORDINATE_WARNING in widget._site_summary.text()
+    state = widget.collect_state()
+    state["selected_muon_site"]["properties"].pop("coordinate_warning")
+    widget.set_form_state(state)
+    assert UEP_COORDINATE_WARNING in widget._site_summary.text()
+    widget.close()
