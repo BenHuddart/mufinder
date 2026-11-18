@@ -26,9 +26,15 @@ from uuid import UUID
 
 from mufinder.domain.enums import FailureReason, JobStatus
 from mufinder.domain.models import Job
+from mufinder.services.job_monitoring import is_cluster_job
 
 #: Prefix of the cluster runner's message when output download or parsing fails.
 RETRIEVAL_FAILURE_PREFIX = "Failed to retrieve or parse remote output"
+
+#: Start of the failure message for a finished job whose result could not be stored.
+RESULT_NOT_RECORDED_PREFIX = (
+    "The job's output was retrieved, but MuFinder could not record the result"
+)
 
 #: Message for a scheduler-missing job that exhausts its retrieval attempts.
 MISSING_SCHEDULER_ENTRY_FAILURE_MESSAGE = (
@@ -52,7 +58,7 @@ FAILURE_REASON_LABELS: dict[FailureReason, str] = {
     FailureReason.NODE_FAILURE: "node fail",
     FailureReason.CASTEP_ERROR: "CASTEP",
     FailureReason.OUTPUT_UNAVAILABLE: "no output",
-    FailureReason.INTERRUPTED: "orphaned",
+    FailureReason.INTERRUPTED: "lost track",
     FailureReason.SUBMISSION: "submit",
 }
 
@@ -327,7 +333,10 @@ def failed_job_report(
         output_directory if output_directory is not None and output_directory.is_dir() else None
     )
     if folder is None:
-        notes.append("The job's output folder was not found, so there are no logs to show.")
+        notes.append(
+            "The job's output folder was not found, so there are no logs to show."
+            + _remote_logs_hint(job)
+        )
     return FailedJobReport(
         job_id=job.id,
         label=job.label,
@@ -350,6 +359,18 @@ def group_reports_by_headline(
     return list(groups.items())
 
 
+def _remote_logs_hint(job: Job) -> str:
+    """Return where a cluster job's logs may still be, as a sentence with a leading space.
+
+    Empty for a local job or one with no remote directory recorded.
+    """
+
+    remote_directory = (job.remote_directory or "").strip()
+    if not is_cluster_job(job) or not remote_directory:
+        return ""
+    return f" They may still be on {job.execution_target.strip()} in {remote_directory}."
+
+
 def failure_log_files(job: Job, output_dir: Path, seed_name: str) -> list[Path]:
     """Return ``job``'s scheduler and CASTEP error logs in ``output_dir``."""
 
@@ -361,6 +382,11 @@ def failure_log_excerpt(job: Job, output_dir: Path, seed_name: str) -> str:
 
     candidates = failure_log_files(job, output_dir, seed_name)
     if not candidates:
+        hint = _remote_logs_hint(job)
+        if hint:
+            return (
+                f"No error or scheduler log files have been retrieved to the output folder.{hint}"
+            )
         return "No .err or SLURM output files were found in the output folder."
     return "\n\n".join(f"[{path.name}]\n{read_error_contexts(path)}" for path in candidates)
 

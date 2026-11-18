@@ -629,7 +629,9 @@ During polling:
   nothing; the runner turns the result into signals. Retrieval or parsing
   failure becomes ``failed``. Parsed incomplete CASTEP output becomes
   ``stopped`` when the downloaded scheduler log shows a walltime kill;
-  otherwise it becomes ``failed``. Parsed completed output emits
+  otherwise it becomes ``failed``. A reported ``stopped`` stops the job from
+  any active state: a job that ran and hit its walltime between two polls is
+  still ``submitting`` or ``queued`` in the document. Parsed completed output emits
   ``job_finished`` and ``completed``. The secondary outputs (``-out.cell`` /
   ``.phonon`` / ``.ts``) are parsed once here on the worker thread via
   :func:`~mufinder.services.job_artifacts.collect_job_artifacts` and carried to
@@ -769,12 +771,16 @@ The dashboard displays active states plus ``failed``, ``stopped``, and
 out. The ``Status`` cell's tooltip carries the relative age of
 ``last_checked_at``, ``last_status_source``, ``last_status_message`` and the
 staleness reason, and the row gets a stale icon for active cluster jobs whose
-cluster is disconnected or whose last check is older than the
-``services.job_monitoring`` threshold. Each row has one action button for its
+cluster is disconnected, whose last check is older than the
+``services.job_monitoring`` threshold, or that the cluster runner does not
+hold. Each row has one action button for its
 state and a ``⋯`` menu; the button is ``Cancel`` for active jobs, ``Inspect…`` for
-``failed`` and ``stopped``, ``Retry retrieval`` when the job's failure reason is
-``output_unavailable`` and retrying is possible, and ``Resubmit…`` for
-``cancelled``. Delete and Backspace cancel active jobs and dismiss the rest; they
+``failed`` and ``stopped``, ``Retry retrieval`` when
+``services.job_monitoring.has_unretrieved_cluster_output`` holds (a failed or
+stopped cluster job with a remote directory whose failure reason is
+``output_unavailable`` or ``interrupted``) and retrying is possible, and
+``Resubmit…`` for ``cancelled``. The table is redrawn when the cluster
+connection opens or closes, since the button and the stale icon depend on it. Delete and Backspace cancel active jobs and dismiss the rest; they
 change nothing else. Actions apply as follows:
 
 - ``Resubmit``: ``failed``, ``stopped``, and ``cancelled`` (relaxations first ask
@@ -786,7 +792,11 @@ change nothing else. Actions apply as follows:
   ``ClusterJobRunner.retrieve_outputs_for``) instead of resubmitting a
   duplicate scheduler job, moving the job back to ``retrieving`` under a
   fresh ``CalculationRun``.
-- ``Cancel``: ``submitting``, ``queued``, ``running``, and ``retrieving``.
+- ``Cancel``: ``submitting``, ``queued``, ``running``, and ``retrieving``. The
+  cluster runner cancels only jobs it holds, so an active cluster job that
+  ``is_unmonitored_cluster_job`` reports is cancelled in the document directly,
+  without contacting the cluster, and the status bar says so. A job still being
+  submitted goes to the runner like a tracked one.
 - ``Inspect``: ``failed`` and ``stopped`` (the failed-job dialog, see
   :ref:`job-failure-reasons`), and ``running``
   pristine and muon relaxations (the geometry-optimisation progress dialog; see
@@ -801,7 +811,19 @@ change nothing else. Actions apply as follows:
   status transition, so the job record, runs, results, and provenance all
   remain in the document. There is no un-dismiss *action* — the stamp is
   cleared only by ``reset_failed_job``, which the job's own workflow row now
-  triggers on its next submit (see below).
+  triggers on its next submit (see below). When a job to dismiss satisfies
+  ``has_unretrieved_cluster_output``, the confirmation adds
+  ``services.job_monitoring.unretrieved_output_note``: its output may still be
+  on the cluster and dismissing does not retrieve it.
+
+A finished job is reported by its runner once. If building or storing its
+result raises while the job is still active,
+``JobExecutionController.fail_unrecorded_finish`` fails it with the message
+*"The job's output was retrieved, but MuFinder could not record the result:
+<error>"*, removes any result the attempt added, clears a run's reference to
+it, and the traceback is logged. The job is then an ordinary failed job:
+``Retry retrieval`` records it again from the cluster. A job that had already
+completed when the error was raised keeps its result.
 
 .. _per-row-reset-affordance:
 
@@ -968,35 +990,28 @@ Active-job watchdog
 ~~~~~~~~~~~~~~~~~~~
 
 Orphaned-local reconciliation (safeguard 1) only covers the app-restart
-case. A running session can still leave a job active with nothing executing it:
-a local ``QProcess`` that died without a finish event, a cluster job the runner
-silently stopped tracking, or a queue entry that never reached a runner. A
-once-a-minute watchdog closes this gap.
+case. A running session can still leave a local job active with nothing
+executing it: a ``QProcess`` that died without a finish event, or a queue
+entry that never reached the runner. A once-a-minute watchdog closes this gap.
 
 The detection core, ``mufinder.services.job_watchdog.detect_stuck_jobs``, is a
-pure, Qt-free function. Given the project's jobs plus runner-introspection
-snapshots, it flags:
+pure, Qt-free function. Given the project's jobs plus the local runner's
+introspection snapshots, it flags:
 
 - a local ``queued`` job absent from both the local runner's pending and
   active id sets;
 - a local ``running`` job absent from the local runner's active id set;
 - a local ``submitting`` job older than a 120-second grace period (by
   ``submitted_at``; skipped when ``submitted_at`` is ``None``) and absent from
-  the pending and active id sets;
-- a cluster job in an active state whose id is not in the cluster controller's
-  tracked-id mirror, **only** when the connected cluster is the one that job
-  targets. When the cluster is disconnected, cluster jobs are never flagged —
-  that is the staleness marker's responsibility (safeguards 2–3), not the
-  watchdog's.
+  the pending and active id sets.
+
+Cluster jobs are never flagged. For a local job, the absence of a process is
+evidence that it ended. A cluster job that the cluster runner does not hold may
+still be queued, running or finished on the cluster, so it stays active and the
+dashboard marks it as not monitored instead (safeguard 3).
 
 Runner introspection is exposed by ``LocalJobRunner.active_job_ids()`` /
-``pending_job_ids()`` and, on the GUI thread, by
-``ClusterController.tracked_active_job_ids()`` — a mirror of the runner's
-non-terminal ``_tracked_jobs`` maintained from the ``status_changed`` stream
-plus ``track_existing_job``/``clear_tracked_jobs``. The mirror is deliberately
-retained across a disconnect (the runner keeps its tracked jobs across a
-disconnect, and the watchdog never flags cluster jobs while disconnected), so
-reconnecting cannot trigger a false positive.
+``pending_job_ids()``.
 
 To ride out an in-flight runner signal that has not yet reached the document, a
 finding is acted on only when it is confirmed in **two consecutive**
@@ -1010,7 +1025,7 @@ journal event, and stamps the monitor bookkeeping fields
 like a walltime stop.
 
 ``MainWindow`` owns the 60-second ``QTimer`` (services must not create widgets)
-and a single handler that snapshots the runners, runs the watchdog, applies
+and a single handler that snapshots the local runner, runs the watchdog, applies
 ``stop_stuck_job`` per confirmed finding, requests a coalesced dashboard flush,
 and shows *"N job(s) were stopped by the job watchdog because no runner was
 tracking them."* when any were stopped. The handler is cheap when no jobs are
@@ -1045,8 +1060,8 @@ dashboard indefinitely. Each entry records the behavior and where it lives.
    above (which re-registers active cluster jobs, including ``submitting``, that
    still carry a remote job id and directory). Cluster jobs that lack enough metadata to re-register —
    missing remote id, remote directory, cluster config, or local output
-   directory — are surfaced by the staleness marker and the active-job
-   watchdog (safeguards 2–3 and 7).
+   directory — stay active and are surfaced by the staleness marker
+   (safeguards 2–3).
 
 2. Persist monitor metadata and last-observed status.
    ``Job`` carries ``last_checked_at``, ``last_status_source``, and
@@ -1062,9 +1077,15 @@ dashboard indefinitely. Each entry records the behavior and where it lives.
    A queue poll failure still disconnects the runner and deliberately leaves
    job state untouched; staleness is derived, not stored.
    ``services.job_monitoring.job_staleness`` marks an active cluster job stale
-   when its cluster is disconnected or its last check is older than the
-   threshold (180 s), and the dashboard renders a stale icon with the reason
-   in the tooltip.
+   when its cluster is disconnected, when the cluster runner does not hold it
+   (*"MuFinder is not monitoring this job"*, with *"no scheduler job ID was
+   recorded"* when that is why), or when its last check is older than the
+   threshold (180 s). ``is_unmonitored_cluster_job`` decides the second case:
+   a job still ``submitting`` within 180 s of its submission does not count,
+   because the runner holds a job only once the scheduler has returned its ID. The dashboard renders a stale icon with the reason in the
+   tooltip. ``ClusterController.tracked_active_job_ids()`` reports which jobs
+   the runner holds: a GUI-thread mirror of the runner's non-terminal tracked
+   jobs, kept across a disconnect.
 
 4. Add a retry-retrieval action for stopped/failed cluster jobs.
    A ``Retry retrieval`` dashboard action re-attempts output retrieval for a
@@ -1098,11 +1119,9 @@ dashboard indefinitely. Each entry records the behavior and where it lives.
 
 7. Add an active-job watchdog.
    A once-a-minute watchdog (``mufinder.services.job_watchdog``) detects
-   active jobs with no runner tracking them — ``queued``/``running``/
+   active local jobs with no process behind them — ``queued``/``running``/
    ``submitting`` local jobs missing from the local runner's pending/active
-   sets, and active cluster jobs missing from the cluster controller's
-   tracked-id mirror while their cluster is connected — and, after two-tick
-   confirmation, stops them via ``JobExecutionController.stop_stuck_job``
+   sets — and, after two-tick confirmation, stops them via ``JobExecutionController.stop_stuck_job``
    (through ``ProjectService.stop_job``) with a diagnostic message and
    ``last_status_source = "watchdog"``. See "Active-job watchdog" above.
 

@@ -9,6 +9,7 @@ import pytest
 from mufinder.domain.enums import FailureReason, JobStatus, WorkflowStage
 from mufinder.domain.models import Job
 from mufinder.services.failure_diagnosis import (
+    failure_log_excerpt,
     EXCERPT_TAIL_BYTES,
     FAILURE_REASON_LABELS,
     FAILURE_REASON_SUMMARIES,
@@ -344,3 +345,37 @@ def test_evidence_taken_from_the_recorded_message_is_not_repeated(tmp_path: Path
 )
 def test_failure_status_reason_is_the_message_or_the_short_label(reason, message, expected) -> None:
     assert failure_status_reason(reason, message) == expected
+
+
+def test_excerpt_for_a_cluster_job_points_at_the_remote_folder(tmp_path: Path) -> None:
+    # Nothing was retrieved, so the logs can only be on the cluster.
+    job = _job()
+    job.execution_target = "SCARF"
+    job.remote_directory = "/work/user/job_failed"
+
+    excerpt = failure_log_excerpt(job, tmp_path, job.label)
+
+    assert excerpt == (
+        "No error or scheduler log files have been retrieved to the output folder. "
+        "They may still be on SCARF in /work/user/job_failed."
+    )
+
+
+def test_report_for_a_cluster_job_without_an_output_folder_points_at_the_remote_folder(
+    tmp_path: Path,
+) -> None:
+    job = _job()
+    job.execution_target = "SCARF"
+    job.remote_directory = "/work/user/job_failed"
+
+    report = failed_job_report(job, FailureDiagnosis(), tmp_path / "missing", job.label)
+
+    assert report.notes == (
+        "The job's output folder was not found, so there are no logs to show. "
+        "They may still be on SCARF in /work/user/job_failed.",
+    )
+
+
+def test_a_job_mufinder_lost_track_of_says_so_in_plain_words() -> None:
+    assert failure_reason_label(FailureReason.INTERRUPTED) == "lost track"
+    assert failure_status_reason(FailureReason.INTERRUPTED, "any message") == "lost track"

@@ -351,7 +351,13 @@ from mufinder.services.job_results import (
     max_stress_for_job,
     total_energy_for_job,
 )
-from mufinder.services.job_monitoring import job_staleness, job_where_text
+from mufinder.services.job_monitoring import (
+    has_unretrieved_cluster_output,
+    is_unmonitored_cluster_job,
+    job_staleness,
+    job_where_text,
+    unretrieved_output_note,
+)
 from mufinder.services.job_progress import JobProgressMonitor, job_reports_geometry_progress
 from mufinder.services.job_watchdog import StuckJobWatchdog
 from mufinder.services.local_runner import LocalJobRunner
@@ -450,7 +456,7 @@ from mufinder.workflow.quantum import (
 
 _LOG = logging.getLogger(__name__)
 
-# Stopped jobs (walltime, orphaned) are resubmittable like failed ones: the
+# Stopped jobs (walltime, lost track) are resubmittable like failed ones: the
 # submit script is regenerated, so a longer walltime takes effect.
 _RESUBMITTABLE_JOB_STATES = {JobStatus.FAILED, JobStatus.STOPPED, JobStatus.CANCELLED}
 _VISIBLE_DASHBOARD_STATES = ACTIVE_JOB_STATUSES | {JobStatus.STOPPED} | _RESUBMITTABLE_JOB_STATES
@@ -2294,7 +2300,7 @@ class MainWindow(QMainWindow):
         # cluster worker thread and return immediately (never blocking the GUI,
         # even mid-retrieval); FIFO ordering guarantees the clear runs before the
         # re-registrations, and the GUI-side tracked-id mirror is cleared eagerly
-        # inside clear_tracked_jobs so the watchdog observes the drop at once.
+        # inside clear_tracked_jobs so the dashboard sees the drop at once.
         self._cluster_runner.clear_tracked_jobs()
         self._sync_cluster_tracking_from_document()
         self._cluster_lost_names.clear()
@@ -2309,7 +2315,10 @@ class MainWindow(QMainWindow):
         )
         if self._reconciled_orphaned_local_jobs:
             self._request_dashboard_flush(
-                failure_message=("Reconciled orphaned local jobs, but saving the project failed.")
+                failure_message=(
+                    "Local jobs left running when MuFinder closed were stopped, but saving "
+                    "the project failed."
+                )
             )
 
     def _apply_project_change_titles(self) -> None:
@@ -2738,9 +2747,7 @@ class MainWindow(QMainWindow):
             return "cancel", "Cancel"
         if job.status == JobStatus.CANCELLED:
             return "resubmit", "Resubmit…"
-        if job.failure_reason == FailureReason.OUTPUT_UNAVAILABLE and self._can_retry_retrieval(
-            job
-        ):
+        if has_unretrieved_cluster_output(job) and self._can_retry_retrieval(job):
             return "retry_retrieval", "Retry retrieval"
         return "inspect", "Inspect…"
 
@@ -3088,7 +3095,10 @@ class MainWindow(QMainWindow):
             progress = self._job_progress.progress_for(job.id)
             detail = progress_status_text(progress)
         stale_reason = job_staleness(
-            job, now=now, cluster_connected=self._is_cluster_connected_for_job(job)
+            job,
+            now=now,
+            cluster_connected=self._is_cluster_connected_for_job(job),
+            tracked=self._cluster_runner.is_tracking(job.id),
         )
         check_lines = self._last_check_lines(job, stale_reason, now=now)
         if check_lines:
@@ -3942,7 +3952,13 @@ class MainWindow(QMainWindow):
         clicked_label = clicked_job.label if clicked_job is not None else str(job_id)
         single_confirmations = {
             "cancel": lambda: self._confirm_cancel_and_dismiss([clicked_label], []),
-            "dismiss": lambda: self._confirm_cancel_and_dismiss([], [clicked_label]),
+            "dismiss": lambda: self._confirm_cancel_and_dismiss(
+                [],
+                [clicked_label],
+                unretrieved_note=unretrieved_output_note(
+                    [clicked_job] if clicked_job is not None else []
+                ),
+            ),
         }
 
         target_ids = resolve_target_keys(
@@ -4195,15 +4211,16 @@ class MainWindow(QMainWindow):
         # Cancel and Dismiss act immediately, so they are confirmed here; Reset
         # asks its own clean-up question, which has a Cancel.
         if kind in {"cancel", "dismiss"} and self._document is not None:
-            labels = [
-                job.label
-                for job_id in job_ids
-                if (job := self._document.jobs.get(job_id)) is not None
+            jobs = [
+                job for job_id in job_ids if (job := self._document.jobs.get(job_id)) is not None
             ]
+            labels = [job.label for job in jobs]
             confirmed = (
                 self._confirm_cancel_and_dismiss(labels, [])
                 if kind == "cancel"
-                else self._confirm_cancel_and_dismiss([], labels)
+                else self._confirm_cancel_and_dismiss(
+                    [], labels, unretrieved_note=unretrieved_output_note(jobs)
+                )
             )
             if not confirmed:
                 return
@@ -4295,7 +4312,11 @@ class MainWindow(QMainWindow):
         if not active_jobs and not dismissable_jobs:
             return
         if not self._confirm_cancel_and_dismiss(
-            [job.label for job in active_jobs], [job.label for job in dismissable_jobs]
+            [job.label for job in active_jobs],
+            [job.label for job in dismissable_jobs],
+            unretrieved_note=unretrieved_output_note(
+                dismissable_jobs, prompt_job_count=len(active_jobs) + len(dismissable_jobs)
+            ),
         ):
             return
         # Each action reports in the status bar; together, report both.
@@ -4316,9 +4337,20 @@ class MainWindow(QMainWindow):
             status_bar.showMessage(reports[0])
 
     def _confirm_cancel_and_dismiss(
-        self, cancel_labels: Sequence[str], dismiss_labels: Sequence[str]
+        self,
+        cancel_labels: Sequence[str],
+        dismiss_labels: Sequence[str],
+        *,
+        unretrieved_note: str = "",
     ) -> bool:
-        """Ask once before cancelling and dismissing dashboard jobs; a lone job is named."""
+        """Ask once before cancelling and dismissing dashboard jobs; a lone job is named.
+
+        ``unretrieved_note`` warns that some of the jobs to dismiss have output
+        still on the cluster (:func:`~mufinder.services.job_monitoring.unretrieved_output_note`).
+        """
+
+        def with_note(detail: str) -> str:
+            return f"{detail}\n\n{unretrieved_note}" if unretrieved_note else detail
 
         if len(cancel_labels) + len(dismiss_labels) == 1:
             if cancel_labels:
@@ -4334,7 +4366,7 @@ class MainWindow(QMainWindow):
                 self,
                 "Dismiss job",
                 f"Dismiss job '{dismiss_labels[0]}' from the dashboard?",
-                "The job stays in the project; its workflow row can still resubmit it.",
+                with_note("The job stays in the project; its workflow row can still resubmit it."),
                 "Dismiss job",
             )
         cancel_phrase = plural(len(cancel_labels), "job")
@@ -4356,14 +4388,14 @@ class MainWindow(QMainWindow):
                 self,
                 "Dismiss jobs",
                 f"Dismiss {dismiss_phrase} from the dashboard?",
-                dismiss_note,
+                with_note(dismiss_note),
                 f"Dismiss {dismiss_phrase}",
             )
         return workflow_table_utils.confirm_destructive(
             self,
             "Cancel and dismiss jobs",
             f"Cancel {cancel_phrase} and dismiss {dismiss_phrase} from the dashboard?",
-            dismiss_note,
+            with_note(dismiss_note),
             f"Cancel {len(cancel_labels)}, dismiss {len(dismiss_labels)}",
             "Keep them",
         )
@@ -5448,11 +5480,25 @@ class MainWindow(QMainWindow):
             return
 
         cancelled = 0
+        uncontacted: dict[str, str] = {}
+        project_only = 0
+        now = utc_now()
         for job in jobs:
             if job.status not in ACTIVE_JOB_STATUSES:
                 continue
             if job.execution_target == "local":
                 self._local_runner.cancel(job.id)
+            elif is_unmonitored_cluster_job(
+                job, tracked=self._cluster_runner.is_tracking(job.id), now=now
+            ):
+                # The cluster runner cancels only jobs it holds. One it does not
+                # hold is cancelled in the project, or the row could never leave
+                # its active state.
+                self._on_cluster_job_cancelled(job.id)
+                target = job.execution_target.strip()
+                uncontacted.setdefault(target.casefold(), target)
+                project_only += 1
+                continue
             else:
                 try:
                     self._cluster_runner.cancel(job.id)
@@ -5466,8 +5512,18 @@ class MainWindow(QMainWindow):
                     continue
             cancelled += 1
 
-        if cancelled:
-            self.statusBar().showMessage(f"Cancellation requested for {plural(cancelled, 'job')}")
+        requested = f"Cancellation requested for {plural(cancelled, 'job')}"
+        if project_only:
+            where = " or ".join(uncontacted.values())
+            in_project = f"ancelled {plural(project_only, 'job')} in the project"
+            not_contacted = f"{where} was not contacted for jobs MuFinder is not monitoring"
+            self.statusBar().showMessage(
+                f"{requested}; c{in_project} ({not_contacted})"
+                if cancelled
+                else f"C{in_project}; {not_contacted}"
+            )
+        elif cancelled:
+            self.statusBar().showMessage(requested)
 
     def _inspect_failed_jobs(self, jobs: list[Job]) -> None:
         if self._document is None:
@@ -6436,6 +6492,30 @@ class MainWindow(QMainWindow):
         job = self._document.jobs.get(job_id)
         if job is None:
             return
+        results_before = frozenset(self._document.results)
+        try:
+            self._record_finished_job(job, parsed, artifacts)
+        except Exception as error:  # noqa: BLE001 - a job must not stay active on any error
+            _LOG.exception("Could not record the result of finished job %s", job.label)
+            update = self._job_execution.fail_unrecorded_finish(
+                job_id, error, results_before=results_before
+            )
+            if update.changed:
+                self._request_dashboard_flush(
+                    failure_message="Failed job state was recorded, but autosave failed.",
+                )
+                self.statusBar().showMessage(f"Could not record the result of {job.label}")
+
+    def _record_finished_job(
+        self,
+        job: Job,
+        parsed: CastepResult,
+        artifacts: ParsedJobArtifacts | None,
+    ) -> None:
+        """Build and store ``job``'s result from its parsed output, and complete it."""
+
+        assert self._document is not None
+        job_id = job.id
 
         # The runner worker thread parses the secondary outputs (relaxed cell /
         # phonon / transition state) exactly once and delivers them here as
@@ -6597,7 +6677,8 @@ class MainWindow(QMainWindow):
         if self._document is None:
             return
         job = self._document.jobs.get(job_id)
-        if job is not None:
+        # Recording the result can fail the job instead; that path reports itself.
+        if job is not None and job.status == JobStatus.COMPLETED:
             self.statusBar().showMessage(f"Completed cluster job {job.label}")
 
     def _on_cluster_job_failed(self, job_id: UUID, message: str) -> None:
@@ -6627,6 +6708,10 @@ class MainWindow(QMainWindow):
             self._cluster_elapsed_seconds_by_job = {}
             self._cluster_elapsed_checked_at = None
         self._sync_cluster_status_widgets()
+        # Each row's action and stale marker depend on the connection, so the
+        # table follows it at once instead of waiting for the next queue poll.
+        if self._document is not None:
+            self._refresh_jobs_table()
 
     def _sync_cluster_status_widgets(self) -> None:
         """Show the cluster widgets only while the project has cluster jobs to follow."""
@@ -6899,10 +6984,7 @@ class MainWindow(QMainWindow):
             active_jobs,
             local_active_ids=self._local_runner.active_job_ids(),
             local_pending_ids=self._local_runner.pending_job_ids(),
-            cluster_tracked_ids=self._cluster_runner.tracked_active_job_ids(),
-            cluster_connected=self._cluster_runner.is_connected,
             now=utc_now(),
-            connected_cluster_name=self._cluster_runner.connected_cluster_name,
         )
         if not confirmed:
             return

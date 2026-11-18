@@ -9,13 +9,17 @@ checked recently" without inventing a new ``JobStatus``.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import UTC, datetime
 
-from mufinder.domain.enums import ACTIVE_JOB_STATUSES
+from mufinder.domain.enums import ACTIVE_JOB_STATUSES, FailureReason, JobStatus
 from mufinder.domain.models import Job
 
 STALENESS_THRESHOLD_SECONDS = 180
 """Age beyond which a last check counts as stale (three 60 s poll cycles)."""
+
+#: Staleness reason for an active cluster job the cluster runner does not hold.
+NOT_MONITORED_REASON = "MuFinder is not monitoring this job"
 
 
 def is_cluster_job(job: Job) -> bool:
@@ -49,11 +53,34 @@ def _age_seconds(now: datetime, then: datetime) -> float:
     return (now - then).total_seconds()
 
 
+def is_unmonitored_cluster_job(
+    job: Job,
+    *,
+    tracked: bool,
+    now: datetime,
+    submission_grace_seconds: int = STALENESS_THRESHOLD_SECONDS,
+) -> bool:
+    """Return whether ``job`` is an active cluster job that nothing will check or end.
+
+    ``tracked`` says whether the cluster runner holds the job. A job that is
+    still ``submitting`` within ``submission_grace_seconds`` of its submission
+    does not count: the runner holds a job only once the scheduler has
+    returned its ID, so it is expected to be untracked for that long.
+    """
+
+    if tracked or job.status not in ACTIVE_JOB_STATUSES or not is_cluster_job(job):
+        return False
+    if job.status == JobStatus.SUBMITTING and job.submitted_at is not None:
+        return _age_seconds(now, job.submitted_at) > submission_grace_seconds
+    return True
+
+
 def job_staleness(
     job: Job,
     *,
     now: datetime,
     cluster_connected: bool,
+    tracked: bool = True,
     threshold_seconds: int = STALENESS_THRESHOLD_SECONDS,
 ) -> str | None:
     """Return a short reason the job's displayed status may be out of date.
@@ -61,13 +88,19 @@ def job_staleness(
     Only active cluster jobs can be stale; everything else returns ``None``.
     ``cluster_connected`` must describe the cluster *this job* targets: pass
     ``connected_cluster_name == job.execution_target``, not merely "some
-    cluster is connected".
+    cluster is connected". ``tracked`` says whether the cluster runner holds
+    the job for queue polls; a job it does not hold is never checked, however
+    recent its last stamp (see :func:`is_unmonitored_cluster_job`).
     """
 
     if job.status not in ACTIVE_JOB_STATUSES or not is_cluster_job(job):
         return None
     if not cluster_connected:
         return "cluster disconnected"
+    if is_unmonitored_cluster_job(job, tracked=tracked, now=now):
+        if not (job.remote_job_id or "").strip():
+            return f"{NOT_MONITORED_REASON}: no scheduler job ID was recorded"
+        return NOT_MONITORED_REASON
     if job.last_checked_at is not None:
         age = _age_seconds(now, job.last_checked_at)
         if age > threshold_seconds:
@@ -76,3 +109,56 @@ def job_staleness(
     if job.submitted_at is not None and _age_seconds(now, job.submitted_at) > threshold_seconds:
         return "not checked since submission"
     return None
+
+
+#: Failure reasons under which a cluster job's output was never brought back.
+_UNRETRIEVED_OUTPUT_REASONS = frozenset(
+    {FailureReason.OUTPUT_UNAVAILABLE, FailureReason.INTERRUPTED}
+)
+
+
+def has_unretrieved_cluster_output(job: Job) -> bool:
+    """Return whether ``job`` ended without its output being retrieved from the cluster.
+
+    True for a failed or stopped cluster job that kept its remote folder and
+    whose recorded cause is a failed retrieval or MuFinder losing track of it.
+    The calculation itself may have finished, so retrieval is worth trying
+    before the job is resubmitted or dismissed.
+    """
+
+    return (
+        job.status in {JobStatus.FAILED, JobStatus.STOPPED}
+        and is_cluster_job(job)
+        and job.failure_reason in _UNRETRIEVED_OUTPUT_REASONS
+        and bool((job.remote_directory or "").strip())
+    )
+
+
+def unretrieved_output_note(jobs: Sequence[Job], *, prompt_job_count: int | None = None) -> str:
+    """Return the dismissal warning for the jobs in ``jobs`` with unretrieved output.
+
+    Empty when none has any. Names the clusters involved, first seen first.
+    ``prompt_job_count`` is how many jobs the confirmation is about when it
+    covers more than ``jobs`` (the jobs it also cancels); the note says "Its
+    output" only when the prompt is about a single job.
+    """
+
+    unretrieved = [job for job in jobs if has_unretrieved_cluster_output(job)]
+    if not unretrieved:
+        return ""
+    clusters: dict[str, str] = {}
+    for job in unretrieved:
+        target = job.execution_target.strip()
+        clusters.setdefault(target.casefold(), target)
+    where = " or ".join(clusters.values())
+    if (len(jobs) if prompt_job_count is None else prompt_job_count) == 1:
+        return (
+            f"Its output may still be on {where} and has not been retrieved. Dismissing "
+            "does not retrieve it; use Retry retrieval first to keep the result."
+        )
+    count = len(unretrieved)
+    return (
+        f"The output of {count} of these jobs may still be on {where} and has not been "
+        "retrieved. Dismissing does not retrieve it; use Retry retrieval first to keep "
+        f"the {'result' if count == 1 else 'results'}."
+    )

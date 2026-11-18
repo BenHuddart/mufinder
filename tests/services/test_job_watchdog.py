@@ -6,6 +6,8 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import UUID, uuid4
 
+import pytest
+
 from mufinder.domain.enums import FailureReason, JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationRun, Job
 from mufinder.services.job_execution_controller import JobExecutionController
@@ -21,11 +23,6 @@ _NOW = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
 _LOCAL_MESSAGE_TEMPLATE = (
     "MuFinder's records say this job is {status}, but no local process is "
     "tracking it. The job watchdog stopped it; reset or resubmit it."
-)
-_CLUSTER_MESSAGE_TEMPLATE = (
-    "MuFinder's records say this job is {status}, but the connected cluster "
-    "session is not tracking it. The job watchdog stopped it; reset or "
-    "resubmit it."
 )
 
 
@@ -46,10 +43,7 @@ def _detect(jobs, **overrides):
     kwargs = {
         "local_active_ids": frozenset(),
         "local_pending_ids": frozenset(),
-        "cluster_tracked_ids": frozenset(),
-        "cluster_connected": True,
         "now": _NOW,
-        "connected_cluster_name": "scarf",
     }
     kwargs.update(overrides)
     return detect_stuck_jobs(jobs, **kwargs)
@@ -138,41 +132,16 @@ def test_naive_submitted_at_is_treated_as_utc() -> None:
 
 
 # ----------------------------------------------------------------------------
-# Cluster detection rules
+# Cluster jobs
 # ----------------------------------------------------------------------------
-def test_cluster_untracked_while_connected_is_stuck() -> None:
-    job = _cluster_job(JobStatus.RUNNING)
-    findings = _detect([job])
-    assert findings == [(job, _CLUSTER_MESSAGE_TEMPLATE.format(status="running"))]
-
-
-def test_cluster_tracked_is_not_stuck() -> None:
-    job = _cluster_job(JobStatus.RUNNING)
-    assert _detect([job], cluster_tracked_ids=frozenset({job.id})) == []
-
-
-def test_cluster_disconnected_is_never_flagged() -> None:
-    job = _cluster_job(JobStatus.RUNNING)
-    assert _detect([job], cluster_connected=False, connected_cluster_name=None) == []
-
-
-def test_cluster_job_targeting_other_cluster_is_not_flagged() -> None:
-    # Connected to "scarf" but the job targets "young": not our concern.
-    job = _cluster_job(JobStatus.RUNNING, cluster="young")
-    assert _detect([job], connected_cluster_name="scarf") == []
-
-
-def test_cluster_job_matches_connected_cluster_case_insensitively() -> None:
-    job = _cluster_job(JobStatus.QUEUED, cluster="SCARF")
-    findings = _detect([job], connected_cluster_name="scarf")
-    assert findings == [(job, _CLUSTER_MESSAGE_TEMPLATE.format(status="queued"))]
-
-
-def test_cluster_blank_connected_name_is_wildcard() -> None:
-    # Some connect paths may not carry the cluster name; a blank name matches.
-    job = _cluster_job(JobStatus.RUNNING, cluster="scarf")
-    findings = _detect([job], connected_cluster_name="")
-    assert findings == [(job, _CLUSTER_MESSAGE_TEMPLATE.format(status="running"))]
+@pytest.mark.parametrize(
+    "status",
+    [JobStatus.SUBMITTING, JobStatus.QUEUED, JobStatus.RUNNING, JobStatus.RETRIEVING],
+)
+def test_cluster_jobs_are_never_stuck(status: JobStatus) -> None:
+    # No runner holds the job, yet it may be queued, running or finished on the
+    # cluster: losing track of it is not evidence that it ended.
+    assert _detect([_cluster_job(status)]) == []
 
 
 # ----------------------------------------------------------------------------
@@ -196,10 +165,7 @@ def _evaluate(watchdog: StuckJobWatchdog, jobs, **overrides):
     kwargs = {
         "local_active_ids": frozenset(),
         "local_pending_ids": frozenset(),
-        "cluster_tracked_ids": frozenset(),
-        "cluster_connected": True,
         "now": _NOW,
-        "connected_cluster_name": "scarf",
     }
     kwargs.update(overrides)
     return watchdog.evaluate(jobs, **kwargs)

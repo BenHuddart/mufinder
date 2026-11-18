@@ -214,3 +214,32 @@ def test_watchdog_handler_noop_without_active_jobs(main_window, tmp_path: Path) 
     # No active jobs: the handler returns early and does not raise.
     window._on_job_watchdog_tick()
     window._on_job_watchdog_tick()
+
+
+def test_watchdog_handler_leaves_an_untracked_cluster_job_active(
+    main_window, tmp_path: Path
+) -> None:
+    # The cluster is connected and nothing tracks the job. It may be queued,
+    # running or finished there, so MuFinder does not end it.
+    window = main_window
+    service = ProjectService()
+    document = service.create_project(tmp_path / "watchdog_cluster.mufinder", "Watchdog Cluster")
+    window._document = document
+    window._refresh_ui_after_project_change()
+    job = service.add_job(
+        document,
+        label="untracked-cluster",
+        workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF,
+        calc_type="castep_cutoff",
+    )
+    job.execution_target = "SCARF"
+    service.submit_job(job)
+    service.start_job(job)
+    window._cluster_runner._connected = True
+    window._cluster_runner._connected_cluster_name = "SCARF"
+
+    window._on_job_watchdog_tick()
+    window._on_job_watchdog_tick()
+
+    assert document.jobs[job.id].status == JobStatus.RUNNING
+    assert document.jobs[job.id].failure_reason is None
