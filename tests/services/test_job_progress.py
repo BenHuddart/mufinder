@@ -16,6 +16,7 @@ from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.domain.models import Job
 from mufinder.services.job_progress import (
     MIN_ON_DEMAND_REFRESH_SECONDS,
+    REMOTE_READ_CHUNK_BYTES,
     GeometryProgressReader,
     JobProgressMonitor,
     castep_output_names,
@@ -165,6 +166,61 @@ def test_reader_fetches_only_appended_bytes_over_sftp() -> None:
     assert first.latest.iteration == 3
     assert second == parse_geometry_progress(BFGS)
     assert ssh.reads == [(path, 0), (path, half)]
+
+
+def test_reader_reads_a_large_remote_file_in_bounded_chunks() -> None:
+    ssh = GrowingOutputSSH()
+    path = "/work/seed/seed.castep"
+    # The filler's length is not a divisor of the chunk size, so chunks split lines.
+    data = b" filler line of CASTEP output\n" * 150_000 + BFGS.read_bytes()
+    ssh.remote_files[path] = data
+    reader = GeometryProgressReader()
+    assert not reader.has_backlog("job")
+
+    while True:
+        progress = reader.read_remote("job", ssh, (path,))
+        if not reader.has_backlog("job"):
+            break
+
+    assert progress == parse_geometry_progress(BFGS)
+    assert ssh.reads == [(path, offset) for offset in range(0, len(data), REMOTE_READ_CHUNK_BYTES)]
+    assert len(ssh.reads) > 2
+
+
+def test_reader_starts_again_when_the_file_is_replaced_part_way_through_a_large_read() -> None:
+    ssh = GrowingOutputSSH()
+    path = "/work/seed/seed.castep"
+    ssh.remote_files[path] = b" filler line of CASTEP output\n" * 150_000 + BFGS.read_bytes()
+    reader = GeometryProgressReader()
+    reader.read_remote("job", ssh, (path,))
+    assert reader.has_backlog("job")
+
+    # A resubmission replaced the output with a new, shorter one.
+    ssh.remote_files[path] = LBFGS_CONTINUED.read_bytes()
+    progress = reader.read_remote("job", ssh, (path,))
+
+    assert progress == parse_geometry_progress(LBFGS_CONTINUED)
+    assert not reader.has_backlog("job")
+    assert ssh.reads[-1] == (path, 0)
+
+
+def test_reader_reports_no_backlog_when_a_read_returns_nothing() -> None:
+    reader = GeometryProgressReader()
+
+    # The file shrank between the size check and the read.
+    reader.read("job", size=100, read_from=lambda _offset: b"")
+
+    assert not reader.has_backlog("job")
+
+
+def test_reader_reports_no_backlog_when_the_file_shrinks_to_the_bytes_already_read() -> None:
+    reader = GeometryProgressReader()
+    reader.read("job", size=100, read_from=lambda _offset: b"x" * 40)
+    assert reader.has_backlog("job")
+
+    reader.read("job", size=40, read_from=lambda _offset: b"")
+
+    assert not reader.has_backlog("job")
 
 
 class _Recorder:

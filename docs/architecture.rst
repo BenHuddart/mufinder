@@ -587,7 +587,9 @@ defined by two of these modules, and a pinned count may only fall.
        (``job_reports_geometry_progress``), where their ``.castep`` is
        (``castep_output_names``, ``remote_castep_candidates``), following a
        growing output locally or over SFTP so each read fetches only what CASTEP
-       appended (``GeometryProgressReader``), and when to read it
+       appended, at most ``REMOTE_READ_CHUNK_BYTES`` per cluster read
+       (``GeometryProgressReader``, whose ``has_backlog`` says when more is
+       waiting), and when to read it
        (``JobProgressMonitor``: a slow periodic refresh while the dashboard is
        visible, rate-limited on-demand reads, local files on a background thread
        and cluster files through the cluster runner's SSH worker). Parsing the

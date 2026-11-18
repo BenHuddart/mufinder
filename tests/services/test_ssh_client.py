@@ -74,9 +74,17 @@ class _FakeStdin:
 
 
 class _FakeSFTPFile:
+    """A remote file that, like Paramiko's, serves a prefetched range in one batch.
+
+    ``requests`` counts round trips: one for ``stat``, one for a prefetched
+    range, and one per 8 KiB for a read that was not prefetched.
+    """
+
     def __init__(self, data: bytes) -> None:
         self._data = data
         self._position = 0
+        self._prefetched_to = 0
+        self.requests = 0
 
     def __enter__(self):
         return self
@@ -84,11 +92,24 @@ class _FakeSFTPFile:
     def __exit__(self, *args):
         return False
 
+    def stat(self):
+        self.requests += 1
+        return type("Attr", (), {"st_size": len(self._data)})()
+
     def seek(self, offset: int) -> None:
         self._position = offset
 
-    def read(self) -> bytes:
-        return self._data[self._position :]
+    def prefetch(self, file_size: int) -> None:
+        self.requests += 1
+        self._prefetched_to = file_size
+
+    def read(self, size: int | None = None) -> bytes:
+        end = len(self._data) if size is None else min(len(self._data), self._position + size)
+        unfetched = end - max(self._position, self._prefetched_to)
+        self.requests += max(0, -(-unfetched // 8192))
+        data = self._data[self._position : end]
+        self._position = end
+        return data
 
 
 class _FakeSFTP:
@@ -98,6 +119,7 @@ class _FakeSFTP:
         # Symlink path -> target path.
         self.links: dict[str, str] = {}
         self.chmod_calls: list[tuple[str, int]] = []
+        self.opened: list[_FakeSFTPFile] = []
 
     def close(self) -> None:
         return
@@ -129,7 +151,8 @@ class _FakeSFTP:
         return sorted(set(entries))
 
     def open(self, path: str, _mode: str):
-        return _FakeSFTPFile(self.files.get(path, b""))
+        self.opened.append(_FakeSFTPFile(self.files.get(path, b"")))
+        return self.opened[-1]
 
     def put(self, local_path: str, remote_path: str) -> None:
         self.files[remote_path] = Path(local_path).read_bytes()
@@ -671,22 +694,32 @@ def test_ssh_connection_mkdir_reraises_when_not_exist_ok(monkeypatch: pytest.Mon
         connection.mkdir("/blocked/dir", exist_ok=False)
 
 
-def test_ssh_connection_read_text_accepts_a_text_payload(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_ssh_connection_reads_a_large_file_in_one_pipelined_batch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     connection, fake_paramiko = _connected(monkeypatch)
+    sftp = fake_paramiko._client._sftp
+    data = bytes(range(256)) * 4096  # 1 MiB: 128 round trips if read 8 KiB at a time
+    sftp.files["/remote/seed.castep"] = data
 
-    class _TextFile:
-        def __enter__(self):
-            return self
+    assert connection.read_bytes("/remote/seed.castep") == data
+    assert connection.read_bytes("/remote/seed.castep", 1000) == data[1000:]
+    assert connection.read_text("/remote/seed.castep") == data.decode("utf-8", errors="replace")
 
-        def __exit__(self, *args):
-            return False
+    # Each read is a stat and one prefetched range, whatever the file's size.
+    assert [handle.requests for handle in sftp.opened] == [2, 2, 2]
 
-        def read(self):
-            return "already-text"
 
-    monkeypatch.setattr(fake_paramiko._client._sftp, "open", lambda _path, _mode: _TextFile())
+def test_ssh_connection_read_bytes_stops_at_max_bytes(monkeypatch: pytest.MonkeyPatch) -> None:
+    connection, fake_paramiko = _connected(monkeypatch)
+    sftp = fake_paramiko._client._sftp
+    sftp.files["/remote/seed.castep"] = b"0123456789"
 
-    assert connection.read_text("/remote/file.txt") == "already-text"
+    assert connection.read_bytes("/remote/seed.castep", 2, max_bytes=5) == b"23456"
+    assert connection.read_bytes("/remote/seed.castep", 8, max_bytes=5) == b"89"
+    assert connection.read_bytes("/remote/seed.castep", 10, max_bytes=5) == b""
+    assert connection.read_bytes("/remote/seed.castep", 12) == b""
+    assert [handle.requests for handle in sftp.opened] == [2, 2, 1, 1]
 
 
 def test_ssh_connection_exec_command(monkeypatch: pytest.MonkeyPatch) -> None:

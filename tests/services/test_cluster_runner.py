@@ -22,7 +22,9 @@ from mufinder.services.cluster_runner import ClusterJobRunner
 from mufinder.services.job_artifacts import ParsedJobArtifacts, RetrievalFlags
 from mufinder.services.scheduler import SchedulerJobInfo
 from mufinder.services.ssh_client import SSHCredentials
+from mufinder.services.job_progress import REMOTE_READ_CHUNK_BYTES
 from tests.support.cluster_ssh import FakeSSH, GrowingOutputSSH, OutputUnavailableSSH
+from tests.support.qt import pump_until
 
 
 class _FakeScheduler:
@@ -2358,8 +2360,104 @@ def test_cluster_runner_reads_geometry_progress_of_tracked_jobs(qapp, tmp_path: 
 
     runner.read_geometry_progress([farmed, missing, untracked])
 
-    assert results == [{farmed: parse_geometry_progress(fixture), missing: None, untracked: None}]
+    # One job is read per turn of the event loop, and each reports when it is done.
+    assert pump_until(lambda: len(results) == 3)
+    assert results == [
+        {farmed: parse_geometry_progress(fixture)},
+        {missing: None},
+        {untracked: None},
+    ]
     assert ssh.reads == [("/remote/farmed/seed_farm001.castep", 0)]
+
+
+def _runner_following_a_large_log(tmp_path: Path):
+    fixture = Path(__file__).resolve().parents[1] / "fixtures" / "geometry" / "Si2_bfgs.castep"
+    runner = ClusterJobRunner()
+    ssh = GrowingOutputSSH()
+    ssh.remote_files["/remote/job/seed.castep"] = (
+        b" filler line of CASTEP output\n" * 200_000 + fixture.read_bytes()
+    )
+    assert len(ssh.remote_files["/remote/job/seed.castep"]) > 2 * REMOTE_READ_CHUNK_BYTES
+    runner._ssh = ssh
+    job_id = uuid4()
+    runner._tracked_jobs[job_id] = cluster_runner_module._TrackedClusterJob(
+        job_id=job_id,
+        remote_job_id="1",
+        remote_dir="/remote/job",
+        seed_name="seed",
+        local_output_dir=tmp_path,
+        status=JobStatus.RUNNING,
+    )
+    results: list[dict] = []
+    runner.geometry_progress_read.connect(results.append)
+    return runner, ssh, job_id, results, parse_geometry_progress(fixture)
+
+
+def test_cluster_runner_reads_a_large_log_in_bounded_turns(qapp, tmp_path: Path) -> None:
+    runner, ssh, job_id, results, expected = _runner_following_a_large_log(tmp_path)
+
+    runner.read_geometry_progress([job_id])
+
+    # The first call read one chunk and reported nothing: the log is not read yet.
+    assert ssh.reads == [("/remote/job/seed.castep", 0)]
+    assert results == []
+    assert pump_until(lambda: results)
+    assert results == [{job_id: expected}]
+    assert ssh.reads == [
+        ("/remote/job/seed.castep", offset)
+        for offset in range(
+            0, len(ssh.remote_files["/remote/job/seed.castep"]), REMOTE_READ_CHUNK_BYTES
+        )
+    ]
+
+
+def test_cluster_runner_stops_reading_a_large_log_when_the_job_is_no_longer_tracked(
+    qapp, tmp_path: Path
+) -> None:
+    runner, ssh, job_id, results, _expected = _runner_following_a_large_log(tmp_path)
+
+    runner.read_geometry_progress([job_id])
+    runner.clear_tracked_jobs()
+
+    assert pump_until(lambda: results)
+    assert results == [{job_id: None}]
+    assert len(ssh.reads) == 1
+
+
+def test_cluster_runner_stops_reading_a_large_log_after_a_disconnect(qapp, tmp_path: Path) -> None:
+    runner, ssh, job_id, results, expected = _runner_following_a_large_log(tmp_path)
+
+    runner.read_geometry_progress([job_id])
+    ssh.is_connected = False
+    assert pump_until(lambda: results)
+    assert results == [{job_id: None}]
+    assert len(ssh.reads) == 1
+
+    # After a reconnect the next refresh carries on from where the read stopped.
+    ssh.is_connected = True
+    runner.read_geometry_progress([job_id])
+    assert pump_until(lambda: len(results) == 2)
+    assert results[1] == {job_id: expected}
+    assert ssh.reads[1] == ("/remote/job/seed.castep", REMOTE_READ_CHUNK_BYTES)
+
+
+def test_cluster_runner_reports_no_progress_when_a_read_fails_part_way(
+    qapp, tmp_path: Path
+) -> None:
+    runner, ssh, job_id, results, _expected = _runner_following_a_large_log(tmp_path)
+    read_bytes = ssh.read_bytes
+
+    def failing_second_read(remote_path, offset=0, max_bytes=None):
+        if offset:
+            raise OSError("SFTP read failed")
+        return read_bytes(remote_path, offset, max_bytes)
+
+    ssh.read_bytes = failing_second_read
+
+    runner.read_geometry_progress([job_id])
+
+    assert pump_until(lambda: results)
+    assert results == [{job_id: None}]
 
 
 def test_cluster_runner_reports_no_geometry_progress_while_disconnected(

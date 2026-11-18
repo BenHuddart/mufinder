@@ -183,6 +183,20 @@ is built from remote-file primitives:
   dialog from opening. A recorded remote directory that no longer exists on the
   cluster reports ``absent``.
 
+The probe shares the SSH worker with the geometry-progress reads of running
+relaxations, which fetch each job's ``.castep`` output. So that the probe (or a
+queue check, or a submission) never waits for a large accumulated output:
+
+- ``SSHConnection.read_bytes`` requests a byte range in one pipelined SFTP batch
+  and returns at most the ``max_bytes`` it is given.
+- ``ClusterJobRunner.read_geometry_progress`` does one read of at most
+  ``REMOTE_READ_CHUNK_BYTES`` (2 MiB) of one job per turn of the worker's event
+  loop, then queues the rest of its work behind whatever is already waiting. A
+  job's progress is emitted through ``geometry_progress_read`` once its output
+  has been read to the end, one job per emission. A job that is no longer
+  tracked, a disconnect or a failed read ends that job's read with ``None``; the
+  next refresh carries on from the bytes already read.
+
 A local job is probed with a plain ``pathlib.Path`` check for ``{seed}.check``
 in its job directory, reporting ``found`` or ``absent`` (or ``unavailable``
 when the job's output directory cannot be resolved).
