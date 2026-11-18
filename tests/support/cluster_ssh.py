@@ -80,17 +80,26 @@ class GrowingOutputSSH(FakeSSH):
     """A fake whose remote files can be stat-ed and read from an offset.
 
     ``reads`` records each ``(path, offset)`` read, so a test can check that a
-    reader following a growing file fetches only what was appended.
+    reader following a growing file fetches only what was appended. ``calls``
+    records every ``read_bytes`` and ``is_file`` call in order, so a test can
+    check how reads and file probes interleave.
     """
 
     def __init__(self) -> None:
         super().__init__()
         self.reads: list[tuple[str, int]] = []
+        self.calls: list[tuple[str, str]] = []
 
     def stat(self, remote_path: str):
         data = self.remote_files.get(remote_path)
         return None if data is None else SimpleNamespace(st_size=len(data))
 
-    def read_bytes(self, remote_path: str, offset: int = 0) -> bytes:
+    def is_file(self, remote_path: str) -> bool:
+        self.calls.append(("is_file", remote_path))
+        return remote_path in self.remote_files
+
+    def read_bytes(self, remote_path: str, offset: int = 0, max_bytes: int | None = None) -> bytes:
         self.reads.append((remote_path, offset))
-        return self.remote_files[remote_path][offset:]
+        self.calls.append(("read_bytes", remote_path))
+        end = None if max_bytes is None else offset + max_bytes
+        return self.remote_files[remote_path][offset:end]

@@ -7,14 +7,18 @@ only the lines the progress parser needs
 (:func:`~mufinder.castep_io.geometry_progress.is_geometry_progress_line`), so
 each refresh fetches only what CASTEP appended since the last one. It reads a
 local file from disk and a cluster file over SFTP from the same cursor logic.
+One cluster read fetches at most :data:`REMOTE_READ_CHUNK_BYTES`;
+:meth:`GeometryProgressReader.has_backlog` says whether more is waiting, so the
+cluster runner can read a large accumulated output in turns and let other work
+use the SSH worker in between.
 
 :class:`JobProgressMonitor` decides when to read. It follows the running
 geometry-optimisation jobs it is given, refreshes them at a slow fixed rate
 while refreshing is enabled (the dashboard is visible), and refreshes chosen
 jobs on demand, rate-limited per job. Local files are read on a background
 thread; cluster files are read by the cluster runner on its SSH worker thread,
-which the monitor asks through a callable and which reports back through
-:meth:`JobProgressMonitor.accept_remote_progress`. The monitor never touches
+which the monitor asks through a callable and which reports back, a job at a
+time, through :meth:`JobProgressMonitor.accept_remote_progress`. The monitor never touches
 the UI; it emits :attr:`JobProgressMonitor.progress_changed`.
 """
 
@@ -48,6 +52,8 @@ if TYPE_CHECKING:
 PROGRESS_REFRESH_INTERVAL_MS = 60_000
 #: Shortest gap between two on-demand reads of the same job's output.
 MIN_ON_DEMAND_REFRESH_SECONDS = 10.0
+#: Most bytes one read of a cluster job's output fetches.
+REMOTE_READ_CHUNK_BYTES = 2 * 1024 * 1024
 
 
 def job_reports_geometry_progress(job: Job) -> bool:
@@ -77,6 +83,8 @@ class _Cursor:
     pending: bytes = b""
     lines: tuple[str, ...] = ()
     progress: GeometryProgress | None = None
+    #: Whether the last read stopped short of the end of the file.
+    backlog: bool = False
 
 
 class GeometryProgressReader:
@@ -110,7 +118,8 @@ class GeometryProgressReader:
         ``size`` is the file's current size, ``None`` when it does not exist;
         ``read_from(offset)`` returns the file's bytes from ``offset`` on;
         ``source`` names the file, so a key that moves to another file starts
-        again from its beginning.
+        again from its beginning. ``read_from`` may return less than the rest
+        of the file; :meth:`has_backlog` then reports that more is waiting.
         """
 
         with self._lock:
@@ -144,7 +153,17 @@ class GeometryProgressReader:
                 cursor.pending = rest
                 cursor.lines = lines
                 cursor.progress = progress
+                # A read that returned nothing is not a backlog: asking again
+                # at once would not get further.
+                cursor.backlog = bool(data) and cursor.offset < size
         return progress
+
+    def has_backlog(self, key: Hashable) -> bool:
+        """Return whether the last read of ``key`` left part of its file unread."""
+
+        with self._lock:
+            cursor = self._cursors.get(key)
+            return cursor is not None and cursor.backlog
 
     def read_local(self, key: Hashable, candidates: Sequence[Path]) -> GeometryProgress | None:
         """Read the first of ``candidates`` that exists on this machine."""
@@ -166,7 +185,11 @@ class GeometryProgressReader:
     def read_remote(
         self, key: Hashable, ssh: SSHConnection, candidates: Sequence[str]
     ) -> GeometryProgress | None:
-        """Read the first of ``candidates`` that exists on the cluster, over SFTP."""
+        """Read the first of ``candidates`` that exists on the cluster, over SFTP.
+
+        Fetches at most :data:`REMOTE_READ_CHUNK_BYTES`. While :meth:`has_backlog`
+        holds, the progress returned covers only the part read so far.
+        """
 
         for remote_path in candidates:
             attributes = ssh.stat(remote_path)
@@ -177,7 +200,7 @@ class GeometryProgressReader:
                 key,
                 size=int(size),
                 read_from=lambda offset, remote_path=remote_path: ssh.read_bytes(
-                    remote_path, offset
+                    remote_path, offset, REMOTE_READ_CHUNK_BYTES
                 ),
                 source=remote_path,
             )

@@ -13,12 +13,19 @@ from __future__ import annotations
 import threading
 import time
 from collections.abc import Iterator
+from pathlib import Path
+from uuid import uuid4
 
 import pytest
 from PySide6.QtCore import QObject, QThread, Signal
 
 from mufinder.app import cluster_controller
 from mufinder.app.cluster_controller import ClusterController
+from mufinder.castep_io.geometry_progress import parse_geometry_progress
+from mufinder.domain.enums import JobStatus
+from mufinder.services.cluster_runner import _TrackedClusterJob
+from mufinder.services.job_progress import REMOTE_READ_CHUNK_BYTES
+from tests.support.cluster_ssh import GrowingOutputSSH
 from tests.support.qt import pump_until
 
 
@@ -715,3 +722,44 @@ def test_run_submit_batch_refuses_to_delete_a_running_jobs_directory(controller)
             "scheduler job 777 is still queued or running, so its directory /old was not deleted",
         )
     ]
+
+
+def test_checkpoint_probe_is_not_held_up_by_progress_reads_of_large_logs(qapp, tmp_path) -> None:
+    # Several resumed relaxations with large accumulated logs are sent for their
+    # first progress read, then a checkpoint probe is queued behind them.
+    fixture = Path(__file__).resolve().parents[1] / "fixtures" / "geometry" / "Si2_bfgs.castep"
+    log = b" filler line of CASTEP output\n" * 200_000 + fixture.read_bytes()
+    assert len(log) > 2 * REMOTE_READ_CHUNK_BYTES
+    ssh = GrowingOutputSSH()
+    ctrl = ClusterController(settings=None)
+    try:
+        runner = ctrl._runner
+        runner._ssh = ssh
+        job_ids = [uuid4() for _ in range(3)]
+        for index, job_id in enumerate(job_ids):
+            ssh.remote_files[f"/remote/job{index}/seed.castep"] = log
+            runner._tracked_jobs[job_id] = _TrackedClusterJob(
+                job_id=job_id,
+                remote_job_id=str(index),
+                remote_dir=f"/remote/job{index}",
+                seed_name="seed",
+                local_output_dir=tmp_path,
+                status=JobStatus.RUNNING,
+            )
+        ssh.remote_files["/remote/job0/seed.check"] = b"checkpoint"
+        progress: dict = {}
+        ctrl.geometry_progress_read.connect(progress.update)
+        probes: list[dict] = []
+        ctrl.remote_files_checked.connect(probes.append)
+
+        ctrl.read_geometry_progress(job_ids)
+        ctrl.check_remote_files([(job_ids[0], "/remote/job0/seed.check")])
+
+        assert pump_until(lambda: probes and len(progress) == 3, timeout=20.0)
+    finally:
+        ctrl.shutdown()
+
+    # The probe waited for one bounded read, not for three whole logs.
+    assert ssh.calls.index(("is_file", "/remote/job0/seed.check")) == 1
+    assert probes[0]["existing"] == ["/remote/job0/seed.check"]
+    assert progress == dict.fromkeys(job_ids, parse_geometry_progress(fixture))

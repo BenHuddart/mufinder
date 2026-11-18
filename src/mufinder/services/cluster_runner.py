@@ -453,30 +453,43 @@ class ClusterJobRunner(QObject):
         """Read tracked jobs' geometry-optimisation progress from their remote output.
 
         Fetches only what CASTEP appended since the previous read of each job.
-        Emits :attr:`geometry_progress_read` with an entry for every requested
-        job: ``None`` when the job is not tracked on the connected cluster, the
-        cluster is disconnected, or the output cannot be read.
+        Emits :attr:`geometry_progress_read` once per requested job, when its
+        output is read to the end: ``None`` when the job is not tracked on the
+        connected cluster, the cluster is disconnected, or the output cannot be
+        read.
+
+        Each call does one bounded read of the first job and queues the rest of
+        the work behind whatever else is waiting for this thread, so reading
+        large accumulated outputs never holds up a queue check, a submission or
+        a checkpoint probe for longer than one read.
         """
 
-        results: dict[UUID, Any] = {}
+        remaining = list(job_ids)
+        if not remaining:
+            return
+        job_id = remaining[0]
         ssh = self._ssh if self.is_connected else None
-        for job_id in job_ids:
-            entry = self._tracked_jobs.get(job_id)
-            progress = None
-            if (
-                ssh is not None
-                and entry is not None
-                and self._tracked_job_matches_connected_cluster(entry)
-            ):
-                candidates = remote_castep_candidates(
-                    entry.remote_dir, entry.seed_name, entry.retrieval.farm_count
-                )
-                try:
-                    progress = self._progress_reader.read_remote(job_id, ssh, candidates)
-                except Exception:  # noqa: BLE001 - a failed read keeps the last progress shown
-                    progress = None
-            results[job_id] = progress
-        self.geometry_progress_read.emit(results)
+        entry = self._tracked_jobs.get(job_id)
+        progress = None
+        more_to_read = False
+        if (
+            ssh is not None
+            and entry is not None
+            and self._tracked_job_matches_connected_cluster(entry)
+        ):
+            candidates = remote_castep_candidates(
+                entry.remote_dir, entry.seed_name, entry.retrieval.farm_count
+            )
+            try:
+                progress = self._progress_reader.read_remote(job_id, ssh, candidates)
+                more_to_read = self._progress_reader.has_backlog(job_id)
+            except Exception:  # noqa: BLE001 - a failed read keeps the last progress shown
+                progress = None
+        if not more_to_read:
+            del remaining[0]
+            self.geometry_progress_read.emit({job_id: progress})
+        if remaining:
+            QTimer.singleShot(0, self, lambda: self.read_geometry_progress(remaining))
 
     def stop_watching(self, job_ids: list[UUID]) -> None:
         """End the reappearance watch of each of ``job_ids``; other entries are untouched.

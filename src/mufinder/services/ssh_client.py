@@ -493,26 +493,31 @@ class SSHConnection:
         return list(sftp.listdir(remote_path))
 
     def read_text(self, remote_path: str) -> str:
-        sftp = self._require_sftp()
-        with sftp.open(remote_path, "rb") as handle:
-            data = handle.read()
-        if isinstance(data, bytes):
-            return data.decode("utf-8", errors="replace")
-        return str(data)
+        return self.read_bytes(remote_path).decode("utf-8", errors="replace")
 
-    def read_bytes(self, remote_path: str, offset: int = 0) -> bytes:
+    def read_bytes(self, remote_path: str, offset: int = 0, max_bytes: int | None = None) -> bytes:
         """Return the remote file's bytes from ``offset`` to its current end.
 
         Lets a reader that follows a growing file fetch only what was appended
-        since its last read.
+        since its last read. ``max_bytes`` caps how much one call returns, so a
+        caller can fetch a large file in turns.
+
+        The range is requested in one pipelined batch (Paramiko's ``prefetch``).
+        A plain ``handle.read()`` waits for the answer to each small request
+        before sending the next, which makes a file of several megabytes take
+        tens of seconds.
         """
 
         sftp = self._require_sftp()
         with sftp.open(remote_path, "rb") as handle:
-            if offset:
-                handle.seek(offset)
-            data = handle.read()
-        return data if isinstance(data, bytes) else str(data).encode("utf-8")
+            end = int(handle.stat().st_size)
+            if max_bytes is not None:
+                end = min(end, offset + max_bytes)
+            if end <= offset:
+                return b""
+            handle.seek(offset)
+            handle.prefetch(end)
+            return handle.read(end - offset)
 
     def put(self, local_path: Path, remote_path: str) -> None:
         sftp = self._require_sftp()
