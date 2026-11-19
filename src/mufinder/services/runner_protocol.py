@@ -1,12 +1,16 @@
-"""Structural contract shared by the local and cluster job runners.
+"""Structural contract of a runner that holds the jobs it runs.
 
-This module codifies -- for type-checking and documentation -- the surface that
-callers (:class:`mufinder.services.job_execution_controller.JobExecutionController`
-and the ``MainWindow`` signal wiring) rely on from both
-:class:`mufinder.services.local_runner.LocalJobRunner` and
-:class:`mufinder.services.cluster_runner.ClusterJobRunner`. It adds no runtime
-behavior; the runner classes are *not* changed to inherit from it. Conformance is
+:class:`mufinder.services.local_runner.LocalJobRunner` holds a process for each
+job and reports its lifecycle through the signals below;
+:class:`mufinder.services.job_execution_controller.JobExecutionController` and
+the ``MainWindow`` signal wiring rely on that surface. The protocol adds no
+runtime behavior and the runner does not inherit from it. Conformance is
 structural and is verified in ``tests/services/test_runner_protocol.py``.
+
+:class:`mufinder.services.cluster_runner.ClusterJobRunner` is deliberately not a
+``JobRunner``. It holds no job: a check reports what the cluster shows as
+evidence (``job_checked``), and
+:func:`mufinder.services.job_reconcile.reconcile` decides the state from it.
 
 State authority (who may mutate what)
 -------------------------------------
@@ -14,14 +18,15 @@ State authority (who may mutate what)
 Job state transitions are owned **exclusively** by ``ProjectService`` primitives
 (``submit_job``, ``mark_job_queued``, ``start_job``, ``mark_job_retrieving``,
 ``complete_job``, ``stop_job``, ``fail_job``, ``cancel_job``,
-``reset_failed_job``). ``JobExecutionController`` mutates only bookkeeping fields
-on the ``Job`` (``execution_target``, ``num_processes``, remote metadata clears)
-and routes every status change through the service.
+``reactivate_job``, ``reset_failed_job``). ``JobExecutionController`` mutates
+only bookkeeping fields on the ``Job`` (``execution_target``,
+``num_processes``, remote metadata clears, monitor stamps) and routes every
+status change through the service.
 
-**Runners never touch ``Job`` objects.** They operate on their own in-memory
-tracking state and communicate solely by emitting signals keyed by job id. The
-controller translates those signals into ``ProjectService`` calls. A runner that
-mutated a ``Job`` would violate this contract.
+**Runners never touch ``Job`` objects.** They communicate solely by emitting
+signals keyed by job id. The controller translates those signals into
+``ProjectService`` calls. A runner that mutated a ``Job`` would violate this
+contract.
 
 Submit error contracts (deliberately different per runner)
 ----------------------------------------------------------
@@ -38,28 +43,14 @@ contracts, and this difference is intentional -- it is not a bug to be unified:
   "validation failures are reported via the ``job_failed`` signal, not raised".
 
 - :meth:`ClusterJobRunner.submit` **may raise** (``ConnectionError`` and similar)
-  because it performs blocking SSH/SFTP work. Its two callers convert the
-  exception rather than letting it escape:
+  because it performs blocking SSH/SFTP work, and returns the scheduler job ID.
+  Its two callers convert the exception rather than letting it escape:
 
   * ``JobExecutionController.submit_cluster_job`` catches the exception and
     returns a failed ``ClusterJobSubmissionOutcome`` (via
     ``fail_cluster_submission``).
   * ``ClusterController._run_submit_batch`` catches per job and emits
     ``job_submit_finished(job_id, None, str(exc))``.
-
-``cancel`` is identical on both runners: ``cancel(job_id)`` cancels a tracked
-non-terminal job and returns ``None``.
-
-Modeling note
--------------
-
-``submit`` is modeled loosely as ``submit(self, **kwargs: Any) -> Any`` because
-the two implementations take materially different keyword arguments and return
-different types (``LocalJobRunner.submit`` returns ``None``;
-``ClusterJobRunner.submit`` returns the remote scheduler id ``str``). Forcing a
-single concrete signature would be dishonest; the per-implementation contracts
-above are the real specification. ``cancel`` is modeled precisely because both
-runners share the exact ``cancel(self, job_id: UUID) -> None`` signature.
 """
 
 from __future__ import annotations
@@ -72,7 +63,7 @@ from PySide6.QtCore import Signal
 
 @runtime_checkable
 class JobRunner(Protocol):
-    """Common signal-and-method surface of the local and cluster runners.
+    """Signal-and-method surface of a runner that holds its jobs.
 
     The five signals below are what ``MainWindow`` connects and what the
     lifecycle depends on; see the module docstring for the state-authority and
@@ -97,12 +88,11 @@ class JobRunner(Protocol):
     def submit(self, **kwargs: Any) -> Any:
         """Submit one job for execution.
 
-        Signature and return type are per-implementation (see module docstring):
-        the local runner never raises and returns ``None``; the cluster runner
-        may raise and returns the remote scheduler id.
+        The local runner never raises and returns ``None`` (see the module
+        docstring for the cluster runner's different contract).
         """
         ...
 
     def cancel(self, job_id: UUID) -> None:
-        """Cancel a tracked, non-terminal job. Identical on both runners."""
+        """Cancel a job the runner holds."""
         ...

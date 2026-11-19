@@ -29,6 +29,9 @@ _job = partial(
 )
 
 
+_tracked = partial(_job, remote_job_id="4127731")
+
+
 @pytest.mark.parametrize(
     "target,expected",
     [
@@ -66,25 +69,25 @@ def test_disconnected_cluster_marks_active_job_stale() -> None:
 
 def test_recent_check_is_fresh_and_old_check_is_stale() -> None:
     fresh = _NOW - timedelta(seconds=STALENESS_THRESHOLD_SECONDS - 1)
-    assert job_staleness(_job(last_checked_at=fresh), now=_NOW, cluster_connected=True) is None
+    assert job_staleness(_tracked(last_checked_at=fresh), now=_NOW, cluster_connected=True) is None
 
     old = _NOW - timedelta(minutes=6)
-    marker = job_staleness(_job(last_checked_at=old), now=_NOW, cluster_connected=True)
+    marker = job_staleness(_tracked(last_checked_at=old), now=_NOW, cluster_connected=True)
     assert marker == "not checked for 6 min"
 
 
 def test_never_checked_job_falls_back_to_submission_age() -> None:
     recent = _NOW - timedelta(seconds=30)
-    assert job_staleness(_job(submitted_at=recent), now=_NOW, cluster_connected=True) is None
+    assert job_staleness(_tracked(submitted_at=recent), now=_NOW, cluster_connected=True) is None
 
     old = _NOW - timedelta(minutes=10)
-    marker = job_staleness(_job(submitted_at=old), now=_NOW, cluster_connected=True)
+    marker = job_staleness(_tracked(submitted_at=old), now=_NOW, cluster_connected=True)
     assert marker == "not checked since submission"
 
 
 def test_naive_last_checked_stamp_is_treated_as_utc() -> None:
     naive_old = datetime(2026, 7, 4, 11, 0)  # 60 min before _NOW, no tzinfo
-    marker = job_staleness(_job(last_checked_at=naive_old), now=_NOW, cluster_connected=True)
+    marker = job_staleness(_tracked(last_checked_at=naive_old), now=_NOW, cluster_connected=True)
     assert marker == "not checked for 60 min"
 
 
@@ -103,31 +106,30 @@ def test_job_where_text_names_the_cluster_and_its_job_id(target, remote_id, expe
     assert job_where_text(job) == expected
 
 
-def test_untracked_job_on_a_connected_cluster_says_it_is_not_monitored() -> None:
-    job = _job(last_checked_at=_NOW, remote_job_id="4127731")
-    marker = job_staleness(job, now=_NOW, cluster_connected=True, tracked=False)
-    assert marker == "MuFinder is not monitoring this job"
+def test_the_marker_of_the_last_check_outranks_its_age() -> None:
+    job = _tracked(last_checked_at=_NOW)
+    marker = job_staleness(job, now=_NOW, cluster_connected=True, marker="lost track: gone")
+    assert marker == "lost track: gone"
 
 
-def test_untracked_job_without_a_scheduler_id_says_why() -> None:
-    job = _job(last_checked_at=_NOW)
-    marker = job_staleness(job, now=_NOW, cluster_connected=True, tracked=False)
-    assert marker == "MuFinder is not monitoring this job: no scheduler job ID was recorded"
+def test_job_without_a_scheduler_id_says_so() -> None:
+    marker = job_staleness(_job(last_checked_at=_NOW), now=_NOW, cluster_connected=True)
+    assert marker == "no scheduler job ID was recorded"
 
 
-def test_untracked_job_on_a_disconnected_cluster_reads_as_disconnected() -> None:
-    marker = job_staleness(_job(), now=_NOW, cluster_connected=False, tracked=False)
+def test_job_on_a_disconnected_cluster_reads_as_disconnected_whatever_else_holds() -> None:
+    marker = job_staleness(_job(), now=_NOW, cluster_connected=False, marker="lost track: gone")
     assert marker == "cluster disconnected"
 
 
-def test_a_job_still_being_submitted_is_not_reported_as_unmonitored() -> None:
-    # The runner holds a job only once the scheduler has returned its ID.
-    job = _job(status=JobStatus.SUBMITTING, submitted_at=_NOW - timedelta(seconds=20))
-    assert job_staleness(job, now=_NOW, cluster_connected=True, tracked=False) is None
+def test_a_job_still_being_submitted_is_not_stale() -> None:
+    # The scheduler has not returned its ID yet.
+    job = _job(status=JobStatus.SUBMITTING, submitted_at=_NOW - timedelta(minutes=10))
 
-    stuck = _job(status=JobStatus.SUBMITTING, submitted_at=_NOW - timedelta(minutes=10))
-    marker = job_staleness(stuck, now=_NOW, cluster_connected=True, tracked=False)
-    assert marker == "MuFinder is not monitoring this job: no scheduler job ID was recorded"
+    assert job_staleness(job, now=_NOW, cluster_connected=True, submitting=True) is None
+    assert job_staleness(job, now=_NOW, cluster_connected=True) == (
+        "no scheduler job ID was recorded"
+    )
 
 
 def _orphaned(label: str) -> object:

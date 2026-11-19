@@ -371,22 +371,22 @@ Compatibility ledger
      - Load-bearing persisted job-contract state, not deprecation shims.
        ``execution_target`` and ``num_processes`` drive resubmission and
        dashboard columns; ``remote_job_id`` and ``remote_directory`` are the
-       metadata that lets the main window re-register persisted active
-       cluster jobs with the cluster runner after a project is reopened. The
+       metadata each cluster check uses to ask the scheduler about a job and
+       to look at its remote folder, including after a project is reopened. The
        local job check also reads ``execution_target`` to decide which active
        jobs it looks at.
      - Current job data, not deprecated. Renaming or removing any of these
-       fields breaks reload of saved projects and cluster re-attachment, so it
+       fields breaks reload of saved projects and cluster checks, so it
        requires a schema-version bump with a migration entry (and an update to
-       the persistence codec and the reconciliation/tracking call sites).
+       the persistence codec and the check call sites).
    * - ``last_checked_at`` / ``last_status_source`` /
        ``last_status_message`` job fields
      - ``Job`` (``mufinder.domain.models``) / job entity files
      - Persisted monitor metadata, not deprecation shims. ``last_checked_at``
-       records when a job's status was last confirmed (scheduler poll, local
+       records when a job's status was last confirmed (cluster check, local
        runner event, or the local job check); ``last_status_source`` names
        that origin; ``last_status_message`` carries non-failure context such as
-       the raw scheduler state or retrieval-retry progress. The dashboard uses
+       the raw scheduler state or what the job's folder held. The dashboard uses
        them to distinguish "still queued" from "not checked recently" and to
        render stale/offline markers. All three are optional and default to
        ``None``, so projects saved before their introduction load unchanged.
@@ -1196,6 +1196,32 @@ read it and it has no replacement.
   cluster submission saves its settings, so no shim or schema migration is
   needed. Code that built ``ClusterSubmissionConfig`` drops the argument; the
   fields after ``username`` move up one place, so pass them by keyword.
+
+The job-lifecycle helpers below were removed without a deprecation period.
+They were service methods with no documented import path, called only by
+MuFinder's own application code and tests, and nothing they wrote is
+persisted differently, so projects need no migration. A job's state is decided
+by ``mufinder.services.job_reconcile.reconcile`` and applied by
+``JobExecutionController.apply_evidence`` (see :doc:`/job_lifecycle`).
+
+- ``ProjectService.reconcile_orphaned_local_jobs``, the
+  ``mufinder.services.job_watchdog`` module and
+  ``JobExecutionController.stop_stuck_job``: use
+  ``JobExecutionController.check_local_jobs``.
+- ``ProjectService.retry_job_retrieval`` and
+  ``ProjectService.resume_reappeared_job``: use
+  ``ProjectService.reactivate_job``.
+- ``JobExecutionController.prepare_retry_retrieval``,
+  ``mark_cluster_status_changed``, ``resume_reappeared_cluster_job``,
+  ``mark_queue_checked`` and ``stale_reappearance_watches``, and
+  ``awaits_scheduler_reappearance``: use ``apply_evidence`` and
+  ``check_cluster_jobs``.
+- ``ClusterJobRunner.track_existing_job``, ``retrieve_outputs_for``,
+  ``stop_watching``, ``clear_tracked_jobs`` and ``refresh_queue``, and the
+  ``job_started``, ``job_finished``, ``job_failed``, ``status_changed`` and
+  ``job_reappeared`` signals: use ``check_jobs`` and ``job_checked``.
+- ``services.job_monitoring.is_unmonitored_cluster_job``: use
+  ``JobExecutionController.staleness``.
 
 The private forwarders below were removed without a deprecation period. They
 were one-line ``MainWindow`` methods, not part of any public import path, and

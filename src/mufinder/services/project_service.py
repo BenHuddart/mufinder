@@ -1896,43 +1896,22 @@ class ProjectService:
         self._assert_transition(job.status, JobStatus.RETRIEVING)
         job.status = JobStatus.RETRIEVING
 
-    def retry_job_retrieval(self, job: Job) -> None:
-        """Re-enter the RETRIEVING stage to re-attempt output retrieval.
+    def reactivate_job(self, job: Job, status: JobStatus) -> None:
+        """Return a failed, stopped or cancelled job to an active ``status``.
 
-        This primitive exists for the dashboard "Retry retrieval" action: a
-        cluster job whose scheduler run finished but whose output retrieval or
-        parsing failed keeps its remote metadata (``remote_job_id`` /
-        ``remote_directory``), so retrieval can be re-attempted without
-        resubmitting a duplicate scheduler job. The FAILED/STOPPED -> RETRIEVING
-        edges are validated by :meth:`_assert_transition`; the caller
-        (``JobExecutionController.prepare_retry_retrieval``) enforces the
-        failed/stopped-only and remote-metadata preconditions before calling
-        this. The remote metadata is deliberately preserved so the runner can
-        re-download from the same remote directory.
-        """
-
-        self._assert_transition(job.status, JobStatus.RETRIEVING)
-        job.status = JobStatus.RETRIEVING
-        job.error_message = None
-        job.failure_reason = None
-
-    def resume_reappeared_job(self, job: Job, status: JobStatus) -> None:
-        """Return a failed job to ``status`` because the scheduler lists it again.
-
-        This primitive backs the recovery of a cluster job failed for a missing
-        scheduler entry (the queue and accounting both stopped listing it)
-        that the scheduler later reports as queued, running, or completed:
-        ``status`` is ``QUEUED``, ``RUNNING``, or ``RETRIEVING`` for a completed
-        job whose output is still to be fetched. The FAILED -> QUEUED / RUNNING
-        / RETRIEVING edges are validated by :meth:`_assert_transition`; the
-        caller (``JobExecutionController.resume_reappeared_cluster_job``)
-        enforces that the job failed for a missing scheduler entry. The failure
-        stamps are cleared and the remote metadata is kept, so polling resumes
-        against the same scheduler job.
+        Evidence can show that a job MuFinder ended is alive or has output
+        after all: the scheduler lists it as queued or running, or its folder
+        holds complete output still to be recorded. ``status`` is ``QUEUED``,
+        ``RUNNING``, or ``RETRIEVING`` for a job whose output is being
+        recorded. The failure stamps are cleared and the remote metadata is
+        kept, so checks carry on against the same scheduler job. The caller
+        (``JobExecutionController.apply_evidence``) decides when this applies.
         """
 
         if status not in {JobStatus.QUEUED, JobStatus.RUNNING, JobStatus.RETRIEVING}:
-            raise ValueError(f"A reappeared job cannot resume as {status.value}.")
+            raise ValueError(f"A job cannot be reactivated as {status.value}.")
+        if job.status not in TERMINAL_RECOVERABLE_JOB_STATUSES:
+            raise ValueError("Only failed, stopped, or cancelled jobs can be reactivated.")
         self._assert_transition(job.status, status)
         job.status = status
         job.completed_at = None
@@ -2412,15 +2391,12 @@ class ProjectService:
                 JobStatus.FAILED,
                 JobStatus.CANCELLED,
             },
-            # FAILED/STOPPED -> RETRIEVING supports the dashboard
-            # "Retry retrieval" action: a cluster job whose scheduler run
-            # finished but whose output retrieval failed keeps its remote
-            # metadata, so retrieval can be re-attempted without resubmitting.
-            # FAILED -> QUEUED/RUNNING/RETRIEVING also resumes a job failed for
-            # a missing scheduler entry that the scheduler lists again
-            # (``resume_reappeared_job``).
+            # An ended job returns to QUEUED, RUNNING or RETRIEVING when
+            # evidence shows it is alive or has output (``reactivate_job``).
             JobStatus.STOPPED: {
                 JobStatus.SUBMITTING,
+                JobStatus.QUEUED,
+                JobStatus.RUNNING,
                 JobStatus.RETRIEVING,
                 JobStatus.CANCELLED,
             },
@@ -2432,7 +2408,12 @@ class ProjectService:
                 JobStatus.RETRIEVING,
                 JobStatus.CANCELLED,
             },
-            JobStatus.CANCELLED: {JobStatus.SUBMITTING},
+            JobStatus.CANCELLED: {
+                JobStatus.SUBMITTING,
+                JobStatus.QUEUED,
+                JobStatus.RUNNING,
+                JobStatus.RETRIEVING,
+            },
         }
         if target not in allowed[current]:
             raise ValueError(f"Invalid job transition from {current.value} to {target.value}")

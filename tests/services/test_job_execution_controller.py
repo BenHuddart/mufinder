@@ -10,17 +10,24 @@ import pytest
 from mufinder.domain.models import CalculationRun
 from mufinder.domain.enums import FailureReason, JobStatus
 from mufinder.domain.models import Result, utc_now
-from mufinder.services.job_artifacts import RetrievalFlags
-from mufinder.services.failure_diagnosis import MISSING_SCHEDULER_ENTRY_FAILURE_MESSAGE
+from mufinder.services.job_artifacts import ParsedJobArtifacts, RetrievalFlags
 from mufinder.services.job_execution_controller import (
     ClusterJobSubmission,
     JobExecutionController,
+    LifecycleUpdate,
     LOCAL_SUBMISSION_CORES_KEY,
-    awaits_scheduler_reappearance,
     remember_local_cores,
     remembered_local_cores,
 )
-from mufinder.services.job_reconcile import NO_LOCAL_PROCESS_MESSAGE
+from mufinder.castep_io.output_parser import CastepResult
+from mufinder.services.cluster_runner import CheckTarget
+from mufinder.services.failure_diagnosis import failure_reason_summary
+from mufinder.services.job_reconcile import (
+    NO_LOCAL_PROCESS_MESSAGE,
+    JobEvidence,
+    OutputState,
+    SchedulerState,
+)
 from mufinder.services.project_service import ProjectDocument, ProjectService
 from tests.support.jobs import make_job
 
@@ -48,7 +55,27 @@ class FakeLocalRunner:
 
 
 class FakeClusterRunner:
+    #: The cluster the fake is connected to; ``None`` when disconnected.
+    connected_cluster_name: str | None = None
+
+    @property
+    def is_connected(self) -> bool:
+        return self.connected_cluster_name is not None
+
+    def is_submitting(self, job_id: object) -> bool:
+        return job_id in self.submitting
+
+    def read_geometry_progress(self, targets: list) -> None:
+        self.progress_requests.append(list(targets))
+
+    def check_jobs(self, targets: list, *, skip_if_busy: bool = False) -> bool:
+        self.checks.append((list(targets), skip_if_busy))
+        return True
+
     def __init__(self, *, fail_message: str | None = None) -> None:
+        self.submitting: set = set()
+        self.checks: list[tuple[list, bool]] = []
+        self.progress_requests: list[list] = []
         self.fail_message = fail_message
         self.submitted: list[dict[str, object]] = []
 
@@ -623,87 +650,6 @@ def test_cluster_submission_rejects_jobs_outside_the_eligible_statuses(tmp_path:
     assert job.status == JobStatus.RUNNING
 
 
-def test_cluster_stop_reported_for_a_queued_job_stops_it(tmp_path: Path) -> None:
-    # The job ran and hit its walltime between two polls, or while MuFinder was
-    # disconnected, so the runner reports ``stopped`` for a job the document
-    # still holds as queued.
-    service, document = _document(tmp_path)
-    job_id = make_job("queued-then-stopped", service=service, document=document).id
-    controller = _controller(
-        document=document,
-        service=service,
-        cluster_runner=FakeClusterRunner(),
-        output_dir=tmp_path / "queued-then-stopped",
-    )
-    controller.submit_cluster_job(
-        ClusterJobSubmission(
-            job=document.jobs[job_id],
-            output_dir=tmp_path / "queued-then-stopped",
-            seed_name="queued-then-stopped",
-            remote_target="/remote/queued-then-stopped",
-            execution_target="test-cluster",
-            num_processes=8,
-            walltime="01:00:00",
-            working_directory="/remote",
-            template_script_path="",
-            cores_per_node=4,
-        )
-    )
-    assert document.jobs[job_id].status in {JobStatus.SUBMITTING, JobStatus.QUEUED}
-
-    # A retrieval pass announces itself first; the document is not running, so
-    # it has no ``retrieving`` edge to take.
-    controller.mark_cluster_status_changed(job_id, JobStatus.RETRIEVING.value)
-    update = controller.mark_cluster_status_changed(job_id, JobStatus.STOPPED.value)
-
-    job = document.jobs[job_id]
-    assert update.changed is True
-    assert job.status == JobStatus.STOPPED
-    assert job.failure_reason == FailureReason.WALLTIME
-
-
-def test_cluster_stopped_status_is_terminal_and_clears_active_run(tmp_path: Path) -> None:
-    service, document = _document(tmp_path)
-    job_id = make_job("stopped-cluster-job", service=service, document=document).id
-    controller = _controller(
-        document=document,
-        service=service,
-        cluster_runner=FakeClusterRunner(),
-        output_dir=tmp_path / "stopped-cluster-job",
-    )
-    controller.submit_cluster_job(
-        ClusterJobSubmission(
-            job=document.jobs[job_id],
-            output_dir=tmp_path / "stopped-cluster-job",
-            seed_name="stopped-cluster-job",
-            remote_target="/remote/stopped-cluster-job",
-            execution_target="test-cluster",
-            num_processes=8,
-            walltime="01:00:00",
-            working_directory="/remote",
-            template_script_path="",
-            cores_per_node=4,
-        )
-    )
-    controller.mark_cluster_status_changed(job_id, JobStatus.RUNNING.value)
-
-    update = controller.mark_cluster_status_changed(job_id, JobStatus.STOPPED.value)
-
-    job = document.jobs[job_id]
-    run = controller.run_for_job(job_id)
-    assert update.changed is True
-    assert update.journal_changed is True
-    assert job.status == JobStatus.STOPPED
-    # The runner reports ``stopped`` only for walltime stops, so the cause is
-    # recorded even when no scheduler log could be downloaded.
-    assert job.failure_reason == FailureReason.WALLTIME
-    assert job.error_message == "The scheduler stopped the job when it reached its walltime limit."
-    assert run is not None
-    assert run.status == JobStatus.STOPPED
-    assert controller.active_run_by_job == {}
-    assert document.provenance[-1].action == "job_stopped"
-
-
 def _tracked_run(
     controller: JobExecutionController, document: ProjectDocument, job, status: JobStatus
 ):
@@ -722,13 +668,13 @@ def _tracked_run(
             job_id, JobStatus.QUEUED.value
         ),
         lambda controller, job_id: controller.mark_started(job_id),
-        lambda controller, job_id: controller.mark_cluster_status_changed(
-            job_id, JobStatus.RUNNING.value
+        lambda controller, job_id: controller.apply_evidence(
+            job_id, JobEvidence(checked_at=utc_now(), scheduler=SchedulerState.RUNNING)
         ),
         lambda controller, job_id: controller.fail_job(job_id, "boom"),
         lambda controller, job_id: controller.cancel_job(job_id),
     ],
-    ids=["local-status", "started", "cluster-status", "fail", "cancel"],
+    ids=["local-status", "started", "evidence", "fail", "cancel"],
 )
 def test_lifecycle_notifications_ignore_unknown_jobs(tmp_path: Path, notify) -> None:
     service, document = _document(tmp_path)
@@ -754,22 +700,28 @@ def test_local_status_change_only_acts_on_queued(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
-    "notify",
+    ("target", "notify"),
     [
-        lambda controller, job_id: controller.mark_local_status_changed(
-            job_id, JobStatus.QUEUED.value
+        (
+            "local",
+            lambda controller, job_id: controller.mark_local_status_changed(
+                job_id, JobStatus.QUEUED.value
+            ),
         ),
-        lambda controller, job_id: controller.mark_cluster_status_changed(
-            job_id, JobStatus.QUEUED.value
+        (
+            "scarf",
+            lambda controller, job_id: controller.apply_evidence(
+                job_id, JobEvidence(checked_at=utc_now(), scheduler=SchedulerState.PENDING)
+            ),
         ),
     ],
     ids=["local", "cluster"],
 )
 def test_queued_notification_is_unchanged_when_the_project_rejects_it(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, notify
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, target, notify
 ) -> None:
     service, document = _document(tmp_path)
-    job = make_job("queued-error", service=service, document=document)
+    job = make_job("queued-error", service=service, document=document, execution_target=target)
     service.submit_job(job)
     calls: list[object] = []
 
@@ -874,58 +826,6 @@ def test_cancel_job_closes_the_active_run(tmp_path: Path) -> None:
     assert document.provenance[-1].action == "job_cancelled"
 
 
-@pytest.mark.parametrize(
-    "status",
-    ["definitely-not-a-status", JobStatus.RETRIEVING.value],
-    ids=["unmapped", "not-applicable"],
-)
-def test_cluster_status_change_ignores_statuses_that_do_not_apply(
-    tmp_path: Path, status: str
-) -> None:
-    service, document = _document(tmp_path)
-    job = make_job("cluster-noop", service=service, document=document)
-    controller = _controller(document=document, service=service, output_dir=tmp_path)
-
-    update = controller.mark_cluster_status_changed(job.id, status)
-
-    assert update.job is job
-    assert update.changed is False
-    assert job.status == JobStatus.DEFINED
-
-
-def test_cluster_status_change_moves_a_running_job_to_retrieving(tmp_path: Path) -> None:
-    service, document = _document(tmp_path)
-    job = make_job("cluster-retrieving", service=service, document=document)
-    service.submit_job(job)
-    service.mark_job_queued(job, remote_job_id="r1")
-    service.start_job(job)
-    controller = _controller(document=document, service=service, output_dir=tmp_path)
-    run = _tracked_run(controller, document, job, JobStatus.RUNNING)
-
-    update = controller.mark_cluster_status_changed(job.id, JobStatus.RETRIEVING.value)
-
-    assert update.changed is True
-    assert update.journal_changed is False
-    assert job.status == JobStatus.RETRIEVING
-    assert run.status == JobStatus.RETRIEVING
-
-
-def test_cluster_status_change_to_running_stamps_the_run_start_time(tmp_path: Path) -> None:
-    service, document = _document(tmp_path)
-    job = make_job("cluster-running", service=service, document=document)
-    service.submit_job(job)
-    service.mark_job_queued(job, remote_job_id="r1")
-    controller = _controller(document=document, service=service, output_dir=tmp_path)
-    run = _tracked_run(controller, document, job, JobStatus.QUEUED)
-
-    update = controller.mark_cluster_status_changed(job.id, JobStatus.RUNNING.value)
-
-    assert update.changed is True
-    assert job.status == JobStatus.RUNNING
-    assert run.status == JobStatus.RUNNING
-    assert run.started_at is not None
-
-
 def test_fail_job_diagnoses_castep_error_files(tmp_path: Path) -> None:
     service, document = _document(tmp_path)
     controller = _controller(document=document, service=service, output_dir=tmp_path)
@@ -970,62 +870,6 @@ def test_fail_job_keeps_an_explicit_reason(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 # Monitor-metadata stamping (job-lifecycle hardening, rec #2).
 # ---------------------------------------------------------------------------
-
-
-def test_mark_queue_checked_stamps_observed_jobs(tmp_path: Path) -> None:
-    from datetime import UTC, datetime
-    from types import SimpleNamespace
-    from uuid import uuid4
-
-    service, document = _document(tmp_path)
-    observed_id = make_job("observed", service=service, document=document).id
-    unobserved_id = make_job("unobserved", service=service, document=document).id
-    controller = _controller(document=document, service=service, output_dir=tmp_path)
-
-    checked_at = datetime(2026, 7, 4, 12, 0, tzinfo=UTC)
-    snapshot = SimpleNamespace(
-        checked_at=checked_at,
-        observations_by_job_id={
-            observed_id: "scheduler reports RUNNING",
-            uuid4(): "not in this document",
-        },
-    )
-
-    assert controller.mark_queue_checked(snapshot) is True
-
-    observed = document.jobs[observed_id]
-    assert observed.last_checked_at == checked_at
-    assert observed.last_status_source == "scheduler_poll"
-    assert observed.last_status_message == "scheduler reports RUNNING"
-    # No status transition and no run mutation happened.
-    assert observed.status == JobStatus.DEFINED
-    assert controller.run_for_job(observed_id) is None
-
-    unobserved = document.jobs[unobserved_id]
-    assert unobserved.last_checked_at is None
-    assert unobserved.last_status_source is None
-    assert unobserved.last_status_message is None
-
-
-def test_mark_queue_checked_tolerates_malformed_snapshots(tmp_path: Path) -> None:
-    from datetime import UTC, datetime
-    from types import SimpleNamespace
-
-    service, document = _document(tmp_path)
-    job_id = make_job("untouched", service=service, document=document).id
-    controller = _controller(document=document, service=service, output_dir=tmp_path)
-
-    # Legacy emissions may pass a bare datetime instead of a snapshot object.
-    assert controller.mark_queue_checked(datetime(2026, 7, 4, tzinfo=UTC)) is False
-    # A snapshot without a datetime stamp is ignored too.
-    assert (
-        controller.mark_queue_checked(
-            SimpleNamespace(checked_at=None, observations_by_job_id={job_id: "x"})
-        )
-        is False
-    )
-    assert document.jobs[job_id].last_checked_at is None
-    assert document.jobs[job_id].last_status_source is None
 
 
 def _cluster_running_job(service, document, label: str):
@@ -1360,152 +1204,6 @@ def test_local_submission_forwards_retrieval_flags_to_the_runner(tmp_path: Path)
     )
 
 
-# ---------------------------------------------------------------------------
-# Resuming a job failed for a missing scheduler entry (issue #183)
-# ---------------------------------------------------------------------------
-
-
-def _queued_cluster_job_failed_as_missing(service, document, controller, label: str):
-    """Return a queued cluster job the runner failed because the scheduler stopped listing it."""
-
-    job = _cluster_running_job(service, document, label)
-    job.status = JobStatus.QUEUED
-    job.remote_job_id = "4242"
-    failed_run = _tracked_run(controller, document, job, JobStatus.QUEUED)
-    controller.fail_job(job.id, MISSING_SCHEDULER_ENTRY_FAILURE_MESSAGE)
-    return job, failed_run
-
-
-@pytest.mark.parametrize(
-    ("reported", "resumed"),
-    [
-        (JobStatus.QUEUED.value, JobStatus.QUEUED),
-        (JobStatus.RUNNING.value, JobStatus.RUNNING),
-        (JobStatus.COMPLETED.value, JobStatus.RETRIEVING),
-    ],
-)
-def test_resume_reappeared_cluster_job_resumes_with_a_fresh_run(
-    tmp_path: Path, reported: str, resumed: JobStatus
-) -> None:
-    service, document = _document(tmp_path)
-    controller = _controller(document=document, service=service, output_dir=tmp_path)
-    job, failed_run = _queued_cluster_job_failed_as_missing(service, document, controller, "late")
-    assert job.status == JobStatus.FAILED
-    assert awaits_scheduler_reappearance(job) is True
-
-    update = controller.resume_reappeared_cluster_job(job.id, reported)
-
-    assert update.changed is True
-    assert job.status == resumed
-    assert job.error_message is None
-    assert job.failure_reason is None
-    assert awaits_scheduler_reappearance(job) is False
-    assert job.last_status_source == "scheduler_poll"
-    assert (
-        job.last_status_message == f"scheduler reports {reported.upper()} again; tracking resumed"
-    )
-    # The failed run keeps its outcome; a new run tracks the resumed job.
-    assert failed_run.status == JobStatus.FAILED
-    run = controller.run_for_job(job.id)
-    assert run is not None and run.id != failed_run.id
-    assert run.status == resumed
-    assert run.run_index == 2
-    assert (run.started_at is not None) is (resumed == JobStatus.RUNNING)
-
-
-def test_resumed_job_completes_on_its_new_run(tmp_path: Path) -> None:
-    service, document = _document(tmp_path)
-    controller = _controller(document=document, service=service, output_dir=tmp_path)
-    job, failed_run = _queued_cluster_job_failed_as_missing(service, document, controller, "finish")
-
-    controller.resume_reappeared_cluster_job(job.id, JobStatus.QUEUED.value)
-    controller.mark_cluster_status_changed(job.id, JobStatus.RUNNING.value)
-    controller.mark_started(job.id)
-    controller.mark_cluster_status_changed(job.id, JobStatus.RETRIEVING.value)
-    result = Result(result_type="castep_cutoff", data={"total_energy": -1.0})
-    controller.complete_job_with_result(job, result=result, warnings=[], convergence_achieved=True)
-
-    assert job.status == JobStatus.COMPLETED
-    assert failed_run.status == JobStatus.FAILED
-    completed_run = next(run for run in document.runs.values() if run.result_id == result.id)
-    assert completed_run.id != failed_run.id
-    assert completed_run.status == JobStatus.COMPLETED
-
-
-@pytest.mark.parametrize(
-    "disqualify",
-    [
-        lambda job: setattr(
-            job, "error_message", "Failed to retrieve or parse remote output: boom"
-        ),
-        lambda job: setattr(job, "dismissed_at", utc_now()),
-        lambda job: setattr(job, "execution_target", "local"),
-        lambda job: setattr(job, "remote_job_id", None),
-        lambda job: setattr(job, "status", JobStatus.DEFINED),
-    ],
-    ids=["other-failure", "dismissed", "local", "no-remote-id", "reset"],
-)
-def test_resume_reappeared_cluster_job_ignores_other_jobs(tmp_path: Path, disqualify) -> None:
-    service, document = _document(tmp_path)
-    controller = _controller(document=document, service=service, output_dir=tmp_path)
-    job, _failed_run = _queued_cluster_job_failed_as_missing(service, document, controller, "other")
-    disqualify(job)
-    status = job.status
-    runs = len(document.runs)
-
-    update = controller.resume_reappeared_cluster_job(job.id, JobStatus.RUNNING.value)
-
-    assert update.changed is False
-    assert job.status == status
-    assert len(document.runs) == runs
-
-
-def test_resume_reappeared_cluster_job_ignores_unknown_reports(tmp_path: Path) -> None:
-    service, document = _document(tmp_path)
-    controller = _controller(document=document, service=service, output_dir=tmp_path)
-    job, _failed_run = _queued_cluster_job_failed_as_missing(service, document, controller, "odd")
-
-    assert (
-        controller.resume_reappeared_cluster_job(job.id, JobStatus.CANCELLED.value).changed is False
-    )
-    assert (
-        controller.resume_reappeared_cluster_job(uuid4(), JobStatus.QUEUED.value).changed is False
-    )
-    assert job.status == JobStatus.FAILED
-
-
-def test_stale_reappearance_watches_and_their_observations(tmp_path: Path) -> None:
-    from types import SimpleNamespace
-
-    service, document = _document(tmp_path)
-    controller = _controller(document=document, service=service, output_dir=tmp_path)
-    waiting, _ = _queued_cluster_job_failed_as_missing(service, document, controller, "waiting")
-    reset, _ = _queued_cluster_job_failed_as_missing(service, document, controller, "reset")
-    service.reset_failed_job(reset)
-    dismissed, _ = _queued_cluster_job_failed_as_missing(service, document, controller, "dismissed")
-    service.dismiss_job(dismissed)
-    resumed, _ = _queued_cluster_job_failed_as_missing(service, document, controller, "resumed")
-    controller.resume_reappeared_cluster_job(resumed.id, JobStatus.RUNNING.value)
-    deleted_id = uuid4()
-    watched = (waiting.id, reset.id, dismissed.id, resumed.id, deleted_id)
-    snapshot = SimpleNamespace(
-        checked_at=utc_now(),
-        observations_by_job_id={job_id: "watching" for job_id in watched},
-        watched_job_ids=frozenset(watched),
-    )
-
-    assert sorted(controller.stale_reappearance_watches(snapshot)) == sorted(
-        [reset.id, dismissed.id, deleted_id]
-    )
-
-    controller.mark_queue_checked(snapshot)
-    # A reset job's cleared monitor metadata is not stamped by its old watch.
-    assert reset.last_status_message is None
-    assert dismissed.last_status_message != "watching"
-    assert waiting.last_status_message == "watching"
-    assert resumed.last_status_message == "watching"
-
-
 def test_local_cores_are_remembered_in_the_project_ui_state() -> None:
     ui_state: dict[str, object] = {}
     assert remembered_local_cores(ui_state) is None
@@ -1638,3 +1336,637 @@ def test_local_check_without_a_document_does_nothing(tmp_path: Path) -> None:
     controller = _controller(document=None, service=ProjectService(), output_dir=tmp_path)
 
     assert controller.check_local_jobs() == []
+
+
+# --- Cluster jobs: applying what a check saw ----------------------------------
+
+_REMOTE_ID = "4242"
+_REMOTE_DIR = "/remote/work/job"
+_COMPLETE = CastepResult(completed=True, total_energy=-1.0)
+
+
+def _cluster_setup(tmp_path: Path, status: JobStatus, *, connected: str | None = "scarf"):
+    """Return ``(controller, runner, document, job, run)`` for one cluster job in ``status``."""
+
+    service, document = _document(tmp_path)
+    runner = FakeClusterRunner()
+    runner.connected_cluster_name = connected
+    controller = _controller(
+        document=document, service=service, cluster_runner=runner, output_dir=tmp_path
+    )
+    job = make_job("on-cluster", service=service, document=document, execution_target="scarf")
+    job.status = status
+    job.remote_job_id = _REMOTE_ID
+    job.remote_directory = _REMOTE_DIR
+    run = _tracked_run(controller, document, job, status)
+    return controller, runner, document, job, run
+
+
+def _seen(scheduler: SchedulerState, output: OutputState = OutputState.NOT_LOOKED, **fields):
+    fields.setdefault("remote_job_id", _REMOTE_ID)
+    fields.setdefault("remote_directory", _REMOTE_DIR)
+    return JobEvidence(checked_at=utc_now(), scheduler=scheduler, output=output, **fields)
+
+
+def test_evidence_about_an_unknown_job_changes_nothing(tmp_path: Path) -> None:
+    controller, _runner, _document_, _job, _run = _cluster_setup(tmp_path, JobStatus.QUEUED)
+
+    assert controller.apply_evidence(uuid4(), _seen(SchedulerState.RUNNING)) == LifecycleUpdate()
+
+
+def test_scheduler_running_starts_a_queued_cluster_job(tmp_path: Path) -> None:
+    controller, _runner, _document_, job, run = _cluster_setup(tmp_path, JobStatus.QUEUED)
+    evidence = _seen(SchedulerState.RUNNING)
+
+    update = controller.apply_evidence(job.id, evidence)
+
+    assert update.changed
+    assert controller.take_check_summary(1) == "Cluster job started running: on-cluster"
+    assert job.status == JobStatus.RUNNING and job.started_at is not None
+    assert run.status == JobStatus.RUNNING and run.started_at is not None
+    assert job.last_checked_at == evidence.checked_at
+    assert (job.last_status_source, job.last_status_message) == (
+        "scheduler_poll",
+        "scheduler reports RUNNING",
+    )
+
+
+def test_an_unchanged_job_still_records_that_it_was_checked(tmp_path: Path) -> None:
+    controller, _runner, _document_, job, _run = _cluster_setup(tmp_path, JobStatus.RUNNING)
+    evidence = _seen(SchedulerState.RUNNING)
+
+    update = controller.apply_evidence(job.id, evidence)
+
+    assert (update.changed, update.stamped) == (False, True)
+    assert controller.take_check_summary(1) == ""
+    assert job.last_checked_at == evidence.checked_at
+
+
+def test_scheduler_pending_queues_a_submitting_cluster_job(tmp_path: Path) -> None:
+    controller, _runner, _document_, job, run = _cluster_setup(tmp_path, JobStatus.SUBMITTING)
+
+    update = controller.apply_evidence(job.id, _seen(SchedulerState.PENDING))
+
+    assert update.changed
+    assert (job.status, run.status) == (JobStatus.QUEUED, JobStatus.QUEUED)
+    assert job.remote_job_id == _REMOTE_ID
+
+
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    [(JobStatus.RUNNING, JobStatus.RETRIEVING), (JobStatus.QUEUED, JobStatus.QUEUED)],
+)
+def test_a_finished_job_reads_as_retrieving_while_its_output_is_fetched(
+    tmp_path: Path, status: JobStatus, expected: JobStatus
+) -> None:
+    # Only a running job has a transition to retrieving.
+    controller, _runner, _document_, job, run = _cluster_setup(tmp_path, status)
+
+    update = controller.apply_evidence(job.id, _seen(SchedulerState.COMPLETED))
+
+    assert update.changed is (expected != status)
+    assert (job.status, run.status) == (expected, expected)
+
+
+@pytest.mark.parametrize("status", [JobStatus.QUEUED, JobStatus.RUNNING, JobStatus.RETRIEVING])
+def test_complete_output_is_handed_back_for_the_result_to_be_recorded(
+    tmp_path: Path, status: JobStatus
+) -> None:
+    controller, _runner, _document_, job, _run = _cluster_setup(tmp_path, status)
+    artifacts = ParsedJobArtifacts()
+    evidence = _seen(
+        SchedulerState.NOT_LISTED, OutputState.COMPLETE, parsed=_COMPLETE, artifacts=artifacts
+    )
+
+    update = controller.apply_evidence(job.id, evidence)
+
+    assert update.finished is not None
+    assert update.finished.parsed is _COMPLETE and update.finished.artifacts is artifacts
+    assert not update.changed
+    assert job.status == status
+
+
+@pytest.mark.parametrize("status", [JobStatus.SUBMITTING, JobStatus.QUEUED, JobStatus.RUNNING])
+def test_a_walltime_stop_ends_the_job_from_any_active_status(
+    tmp_path: Path, status: JobStatus
+) -> None:
+    # The job may have run and hit its walltime between two checks.
+    controller, _runner, document, job, run = _cluster_setup(tmp_path, status)
+
+    update = controller.apply_evidence(
+        job.id, _seen(SchedulerState.TIMED_OUT, OutputState.INCOMPLETE)
+    )
+
+    assert update.changed and update.journal_changed
+    assert controller.take_check_summary(1) == (
+        "Cluster job stopped at its walltime limit: on-cluster"
+    )
+    assert job.status == JobStatus.STOPPED
+    assert job.failure_reason == FailureReason.WALLTIME
+    assert job.error_message == failure_reason_summary(FailureReason.WALLTIME)
+    assert run.status == JobStatus.STOPPED and run.completed_at is not None
+    assert controller.active_run_by_job == {}
+    assert document.provenance[-1].action == "job_stopped"
+
+
+def test_a_scheduler_failure_fails_the_job_with_the_scheduler_state(tmp_path: Path) -> None:
+    controller, _runner, document, job, run = _cluster_setup(tmp_path, JobStatus.RUNNING)
+
+    update = controller.apply_evidence(
+        job.id,
+        _seen(SchedulerState.FAILED, OutputState.ABSENT, scheduler_detail="NODE_FAIL"),
+    )
+
+    assert update.changed
+    assert controller.take_check_summary(1) == "Cluster job failed (node fail): on-cluster"
+    assert job.status == JobStatus.FAILED
+    assert job.error_message == "Scheduler reported the job as NODE_FAIL."
+    assert job.failure_reason == FailureReason.NODE_FAILURE
+    assert job.last_status_source == "retrieval"
+    assert run.status == JobStatus.FAILED
+    assert document.provenance[-1].action == "job_failed"
+
+
+def test_output_that_cannot_be_parsed_fails_the_job_as_output_unavailable(tmp_path: Path) -> None:
+    controller, _runner, _document_, job, _run = _cluster_setup(tmp_path, JobStatus.RUNNING)
+
+    controller.apply_evidence(
+        job.id, _seen(SchedulerState.COMPLETED, OutputState.UNREADABLE, output_detail="boom")
+    )
+
+    assert job.status == JobStatus.FAILED
+    assert job.failure_reason == FailureReason.OUTPUT_UNAVAILABLE
+    assert job.error_message == "Failed to retrieve or parse remote output: boom"
+
+
+def test_scheduler_cancelled_cancels_the_job(tmp_path: Path) -> None:
+    controller, _runner, document, job, run = _cluster_setup(tmp_path, JobStatus.RUNNING)
+
+    update = controller.apply_evidence(job.id, _seen(SchedulerState.CANCELLED))
+
+    assert update.changed
+    assert controller.take_check_summary(1) == "Cluster job cancelled: on-cluster"
+    assert (job.status, run.status) == (JobStatus.CANCELLED, JobStatus.CANCELLED)
+    assert document.provenance[-1].action == "job_cancelled"
+
+
+@pytest.mark.parametrize("status", [JobStatus.SUBMITTING, JobStatus.QUEUED, JobStatus.RUNNING])
+def test_a_job_the_scheduler_lost_stays_active_and_carries_a_marker(
+    tmp_path: Path, status: JobStatus
+) -> None:
+    controller, _runner, document, job, run = _cluster_setup(tmp_path, status)
+    records = len(document.provenance)
+
+    update = controller.apply_evidence(job.id, _seen(SchedulerState.NOT_LISTED, OutputState.ABSENT))
+
+    assert (update.changed, update.stamped) == (False, True)
+    assert (job.status, run.status) == (status, status)
+    assert job.failure_reason is None and job.error_message is None
+    assert len(document.provenance) == records
+    marker = controller.staleness(job, now=utc_now())
+    assert marker is not None and marker.startswith("lost track: the scheduler does not list")
+
+    # The scheduler lists it again: the marker goes with the next check.
+    controller.apply_evidence(job.id, _seen(SchedulerState.RUNNING))
+    assert controller.staleness(job, now=utc_now()) is None
+
+
+def test_a_job_still_being_submitted_is_left_alone_and_is_not_stale(tmp_path: Path) -> None:
+    controller, runner, _document_, job, _run = _cluster_setup(tmp_path, JobStatus.SUBMITTING)
+    job.remote_job_id = None
+    runner.submitting.add(job.id)
+
+    update = controller.apply_evidence(
+        job.id, _seen(SchedulerState.FAILED, OutputState.ABSENT, remote_job_id="")
+    )
+
+    assert update == LifecycleUpdate(job=job)
+    assert job.status == JobStatus.SUBMITTING
+    assert controller.staleness(job, now=utc_now()) is None
+
+    runner.submitting.clear()
+    assert controller.staleness(job, now=utc_now()) == "no scheduler job ID was recorded"
+
+
+def test_evidence_about_an_earlier_submission_is_dropped(tmp_path: Path) -> None:
+    controller, _runner, _document_, job, _run = _cluster_setup(tmp_path, JobStatus.QUEUED)
+
+    update = controller.apply_evidence(
+        job.id, _seen(SchedulerState.FAILED, OutputState.ABSENT, remote_job_id="1111")
+    )
+
+    assert update == LifecycleUpdate(job=job)
+    assert job.status == JobStatus.QUEUED and job.last_checked_at is None
+
+
+def test_staleness_reads_disconnected_when_another_cluster_is_connected(tmp_path: Path) -> None:
+    controller, runner, _document_, job, _run = _cluster_setup(tmp_path, JobStatus.RUNNING)
+    runner.connected_cluster_name = "other"
+
+    assert controller.staleness(job, now=utc_now()) == "cluster disconnected"
+
+
+# --- Ended cluster jobs the user asks to have checked --------------------------
+
+
+def _ended_cluster_setup(tmp_path: Path, status: JobStatus = JobStatus.FAILED):
+    controller, runner, document, job, run = _cluster_setup(tmp_path, JobStatus.RUNNING)
+    if status == JobStatus.CANCELLED:
+        controller.cancel_job(job.id)
+    else:
+        controller.fail_job(job.id, "Failed to retrieve or parse remote output: boom")
+        job.status = status
+    return controller, runner, document, job, run
+
+
+@pytest.mark.parametrize("status", [JobStatus.FAILED, JobStatus.STOPPED, JobStatus.CANCELLED])
+def test_complete_output_of_an_ended_job_is_recorded_on_a_fresh_run(
+    tmp_path: Path, status: JobStatus
+) -> None:
+    controller, _runner, document, job, ended_run = _ended_cluster_setup(tmp_path, status)
+    ended_status = ended_run.status
+    evidence = _seen(
+        SchedulerState.COMPLETED, OutputState.COMPLETE, parsed=_COMPLETE, on_request=True
+    )
+
+    update = controller.apply_evidence(job.id, evidence)
+
+    assert update.changed and update.finished is not None
+    assert job.status == JobStatus.RETRIEVING
+    assert job.error_message is None and job.failure_reason is None
+    fresh_run = controller.run_for_job(job.id)
+    assert fresh_run is not None and fresh_run is not ended_run
+    assert fresh_run.run_index == ended_run.run_index + 1
+
+    result = Result(calculation_run_id=fresh_run.id, result_type=job.calc_type, data={})
+    document.results[result.id] = result
+    controller.complete_job_with_result(job, result=result, warnings=[], convergence_achieved=None)
+
+    assert job.status == JobStatus.COMPLETED
+    assert fresh_run.status == JobStatus.COMPLETED and fresh_run.result_id == result.id
+    # The ended run keeps its outcome.
+    assert ended_run.status == ended_status and ended_run.result_id is None
+
+
+@pytest.mark.parametrize(
+    ("scheduler", "status"),
+    [(SchedulerState.PENDING, JobStatus.QUEUED), (SchedulerState.RUNNING, JobStatus.RUNNING)],
+)
+def test_an_ended_job_the_scheduler_lists_again_resumes_on_a_fresh_run(
+    tmp_path: Path, scheduler: SchedulerState, status: JobStatus
+) -> None:
+    controller, _runner, _document_, job, ended_run = _ended_cluster_setup(tmp_path)
+
+    update = controller.apply_evidence(job.id, _seen(scheduler, on_request=True))
+
+    assert update.changed
+    assert job.status == status
+    assert job.error_message is None and job.completed_at is None
+    assert (job.remote_job_id, job.remote_directory) == (_REMOTE_ID, _REMOTE_DIR)
+    fresh_run = controller.run_for_job(job.id)
+    assert fresh_run is not ended_run and fresh_run.status == status
+    assert (fresh_run.started_at is not None) is (status == JobStatus.RUNNING)
+    assert ended_run.status == JobStatus.FAILED
+
+
+def test_an_ended_job_keeps_its_failure_when_the_check_finds_nothing_new(tmp_path: Path) -> None:
+    controller, _runner, _document_, job, _run = _ended_cluster_setup(tmp_path)
+    message = job.error_message
+
+    update = controller.apply_evidence(
+        job.id, _seen(SchedulerState.NOT_LISTED, OutputState.INCOMPLETE, on_request=True)
+    )
+
+    assert (update.changed, update.stamped) == (False, True)
+    assert (job.status, job.error_message) == (JobStatus.FAILED, message)
+    assert job.last_status_message == "checked; no complete output found"
+
+
+def test_an_ended_job_ignores_evidence_the_user_did_not_ask_for(tmp_path: Path) -> None:
+    controller, _runner, _document_, job, _run = _ended_cluster_setup(tmp_path)
+
+    update = controller.apply_evidence(
+        job.id, _seen(SchedulerState.COMPLETED, OutputState.COMPLETE, parsed=_COMPLETE)
+    )
+
+    assert update.finished is None and not update.changed
+    assert job.status == JobStatus.FAILED
+
+
+# --- Asking the cluster --------------------------------------------------------
+
+
+def test_check_asks_about_every_active_job_on_the_connected_cluster(tmp_path: Path) -> None:
+    controller, runner, document, job, _run = _cluster_setup(tmp_path, JobStatus.RUNNING)
+    service = controller._project_service
+    elsewhere = make_job("elsewhere", service=service, document=document, execution_target="b")
+    elsewhere.status = JobStatus.RUNNING
+    elsewhere.remote_job_id, elsewhere.remote_directory = "9", "/remote/elsewhere"
+    ended = make_job("ended", service=service, document=document, execution_target="SCARF")
+    ended.status = JobStatus.FAILED
+    ended.remote_job_id, ended.remote_directory = "8", "/remote/ended"
+    submitting = make_job("sub", service=service, document=document, execution_target="scarf")
+    submitting.status = JobStatus.SUBMITTING
+    submitting.remote_directory = "/remote/sub"
+    runner.submitting.add(submitting.id)
+    local = make_job("local", service=service, document=document, execution_target="local")
+    local.status = JobStatus.RUNNING
+
+    no_id = make_job("no-id", service=service, document=document, execution_target="scarf")
+    no_id.status = JobStatus.SUBMITTING
+    no_id.remote_directory = "/remote/no-id"
+
+    assert controller.check_cluster_jobs(skip_if_busy=True) == 1
+
+    targets, skip_if_busy = runner.checks[0]
+    assert skip_if_busy is True
+    assert targets == [
+        CheckTarget(
+            job_id=job.id,
+            remote_job_id=_REMOTE_ID,
+            remote_dir=_REMOTE_DIR,
+            seed_name="on-cluster",
+            local_output_dir=tmp_path,
+            cluster_name="scarf",
+        )
+    ]
+
+
+def test_check_on_request_includes_the_ended_jobs_named(tmp_path: Path) -> None:
+    controller, runner, _document_, job, _run = _ended_cluster_setup(tmp_path)
+
+    assert controller.check_cluster_jobs([job.id]) == 0
+    assert runner.checks == []
+
+    assert controller.check_cluster_jobs([job.id], on_request=True) == 1
+    targets, skip_if_busy = runner.checks[0]
+    assert [(target.job_id, target.on_request) for target in targets] == [(job.id, True)]
+    assert skip_if_busy is False
+
+
+def test_check_asks_nothing_while_no_cluster_is_connected(tmp_path: Path) -> None:
+    controller, runner, _document_, _job, _run = _cluster_setup(
+        tmp_path, JobStatus.RUNNING, connected=None
+    )
+
+    assert controller.check_cluster_jobs() == 0
+    assert runner.checks == []
+
+
+def test_check_with_nothing_to_ask_still_reports_a_pass(tmp_path: Path) -> None:
+    controller, runner, _document_, job, _run = _cluster_setup(tmp_path, JobStatus.RUNNING)
+    job.status = JobStatus.COMPLETED
+
+    assert controller.check_cluster_jobs() == 0
+    assert runner.checks == [([], False)]
+
+
+def test_check_target_uses_the_job_s_retrieval_flags_and_inferred_folder(tmp_path: Path) -> None:
+    service, document = _document(tmp_path)
+    flags = RetrievalFlags(retrieve_out_cell=True)
+    controller = JobExecutionController(
+        document_getter=lambda: document,
+        project_service=service,
+        local_runner=FakeLocalRunner(),
+        cluster_runner=FakeClusterRunner(),
+        job_output_directory=lambda _job: tmp_path,
+        job_seed_name=lambda job: job.label,
+        retrieval_for_job=lambda _job: flags,
+        remote_directory_for_job=lambda job: f"/work/{job.label}",
+    )
+    job = make_job("legacy", service=service, document=document, execution_target="scarf")
+    job.remote_job_id = "77"
+
+    target = controller.check_target(job)
+
+    assert target is not None
+    assert (target.remote_dir, target.retrieval) == ("/work/legacy", flags)
+    assert job.remote_directory == "/work/legacy"
+    assert controller.check_targets_for([job.id, uuid4()]) == [target]
+
+
+def test_check_target_needs_somewhere_to_look(tmp_path: Path) -> None:
+    controller, _runner, document, job, _run = _cluster_setup(tmp_path, JobStatus.SUBMITTING)
+
+    job.remote_job_id = None
+    with_folder = controller.check_target(job)
+    assert with_folder is not None and with_folder.remote_job_id == ""
+
+    job.remote_directory = None
+    assert controller.check_target(job) is None
+
+    local = make_job(
+        "local", service=controller._project_service, document=document, execution_target="local"
+    )
+    assert controller.check_target(local) is None
+
+
+def test_check_target_needs_a_local_output_folder(tmp_path: Path) -> None:
+    service, document = _document(tmp_path)
+    controller = _controller(document=document, service=service, output_dir=None)
+    job = _cluster_running_job(service, document, "nowhere")
+    job.remote_job_id, job.remote_directory = "1", "/remote/nowhere"
+
+    assert controller.check_target(job) is None
+
+
+@pytest.mark.parametrize(
+    ("status", "folder", "connected", "submitting", "expected"),
+    [
+        (JobStatus.RUNNING, _REMOTE_DIR, "scarf", False, True),
+        (JobStatus.FAILED, _REMOTE_DIR, "SCARF", False, True),
+        (JobStatus.CANCELLED, _REMOTE_DIR, "scarf", False, True),
+        (JobStatus.COMPLETED, _REMOTE_DIR, "scarf", False, False),
+        (JobStatus.DEFINED, _REMOTE_DIR, "scarf", False, False),
+        (JobStatus.FAILED, None, "scarf", False, False),
+        (JobStatus.FAILED, _REMOTE_DIR, "other", False, False),
+        (JobStatus.FAILED, _REMOTE_DIR, None, False, False),
+        (JobStatus.SUBMITTING, _REMOTE_DIR, "scarf", True, False),
+    ],
+)
+def test_check_now_is_offered_for_a_cluster_job_with_somewhere_to_look(
+    tmp_path: Path, status, folder, connected, submitting, expected
+) -> None:
+    controller, runner, _document_, job, _run = _cluster_setup(
+        tmp_path, status, connected=connected
+    )
+    job.remote_directory = folder
+    if submitting:
+        runner.submitting.add(job.id)
+
+    assert controller.can_check_now(job) is expected
+
+
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    [
+        (JobStatus.FAILED, True),
+        (JobStatus.STOPPED, True),
+        (JobStatus.CANCELLED, True),
+        (JobStatus.RUNNING, False),
+        (JobStatus.COMPLETED, False),
+    ],
+)
+def test_check_now_is_offered_for_a_local_job_that_ended(tmp_path: Path, status, expected) -> None:
+    service, document = _document(tmp_path)
+    controller = _controller(document=document, service=service, output_dir=tmp_path)
+    job = make_job("local", service=service, document=document, execution_target="local")
+    job.status = status
+
+    assert controller.can_check_now(job) is expected
+
+
+def test_check_now_decides_a_local_job_at_once_and_asks_about_cluster_jobs(
+    tmp_path: Path,
+) -> None:
+    controller, runner, document, cluster_job, _run = _ended_cluster_setup(tmp_path)
+    service = controller._project_service
+    finished = make_job("finished", service=service, document=document, execution_target="local")
+    finished.status = JobStatus.STOPPED
+    (tmp_path / "finished.castep").write_bytes(_COMPLETE_OUTPUT.read_bytes())
+    unfinished = make_job("unfinished", service=service, document=document)
+    unfinished.execution_target = "local"
+    unfinished.status = JobStatus.FAILED
+    running = make_job("running", service=service, document=document, execution_target="local")
+    running.status = JobStatus.RUNNING
+
+    updates, requested = controller.check_now(
+        [finished.id, unfinished.id, running.id, cluster_job.id, finished.id, uuid4()]
+    )
+
+    assert requested == 1
+    assert [target.job_id for target in runner.checks[0][0]] == [cluster_job.id]
+    assert [update.job for update in updates] == [finished, unfinished]
+    assert updates[0].finished is not None and finished.status == JobStatus.RETRIEVING
+    assert updates[1].finished is None and unfinished.status == JobStatus.FAILED
+
+
+@pytest.mark.parametrize(
+    ("remote_id", "connected", "submitting", "expected"),
+    [
+        (_REMOTE_ID, "scarf", False, True),
+        (None, "scarf", False, False),
+        (_REMOTE_ID, None, False, False),
+        (_REMOTE_ID, "other", False, False),
+        (None, "scarf", True, True),
+    ],
+)
+def test_a_cancel_reaches_the_cluster_only_for_a_job_it_can_name(
+    tmp_path: Path, remote_id, connected, submitting, expected
+) -> None:
+    controller, runner, _document_, job, _run = _cluster_setup(
+        tmp_path, JobStatus.RUNNING, connected=connected
+    )
+    job.remote_job_id = remote_id
+    if submitting:
+        runner.submitting.add(job.id)
+
+    assert controller.can_cancel_on_cluster(job) is expected
+
+
+# --- One status-bar line per check ---------------------------------------------
+
+
+def test_check_summary_counts_what_several_jobs_came_to(tmp_path: Path) -> None:
+    controller, _runner, document, stopped, _run = _cluster_setup(tmp_path, JobStatus.QUEUED)
+    service = controller._project_service
+
+    def another(label: str, status: JobStatus):
+        job = make_job(label, service=service, document=document, execution_target="scarf")
+        job.status = status
+        job.remote_job_id, job.remote_directory = _REMOTE_ID, _REMOTE_DIR
+        return job
+
+    started = another("started", JobStatus.QUEUED)
+    also_started = another("also-started", JobStatus.QUEUED)
+    finished = another("finished", JobStatus.RUNNING)
+    unchanged = another("unchanged", JobStatus.RUNNING)
+    controller.apply_evidence(stopped.id, _seen(SchedulerState.TIMED_OUT, OutputState.ABSENT))
+    controller.apply_evidence(started.id, _seen(SchedulerState.RUNNING))
+    controller.apply_evidence(also_started.id, _seen(SchedulerState.RUNNING))
+    controller.apply_evidence(unchanged.id, _seen(SchedulerState.RUNNING))
+    update = controller.apply_evidence(
+        finished.id, _seen(SchedulerState.COMPLETED, OutputState.COMPLETE, parsed=_COMPLETE)
+    )
+    # The caller records the result, which completes the job.
+    assert update.finished is not None
+    service.complete_job(finished)
+
+    assert controller.take_check_summary(5) == (
+        "Checked 5 cluster jobs: 1 stopped at its walltime limit, 2 started running, 1 completed"
+    )
+    # Taking the summary starts afresh.
+    assert controller.take_check_summary(5) == ""
+
+
+def test_check_summary_names_a_single_completed_job(tmp_path: Path) -> None:
+    controller, _runner, _document_, job, _run = _cluster_setup(tmp_path, JobStatus.RUNNING)
+    controller.apply_evidence(
+        job.id, _seen(SchedulerState.COMPLETED, OutputState.COMPLETE, parsed=_COMPLETE)
+    )
+    controller._project_service.complete_job(job)
+
+    assert controller.take_check_summary(1) == "Completed cluster job on-cluster"
+
+
+def test_check_summary_leaves_out_a_job_still_being_retrieved(tmp_path: Path) -> None:
+    controller, _runner, _document_, job, _run = _cluster_setup(tmp_path, JobStatus.RUNNING)
+    controller.apply_evidence(job.id, _seen(SchedulerState.COMPLETED))
+
+    assert job.status == JobStatus.RETRIEVING
+    assert controller.take_check_summary(1) == ""
+
+
+def test_check_summary_leaves_out_local_jobs_and_jobs_since_removed(tmp_path: Path) -> None:
+    controller, _runner, document, job, _run = _cluster_setup(tmp_path, JobStatus.QUEUED)
+    controller.apply_evidence(job.id, _seen(SchedulerState.RUNNING))
+    del document.jobs[job.id]
+    local, _ = _active_local_job(controller._project_service, document, "local", JobStatus.RUNNING)
+    controller.check_local_jobs()
+
+    assert local.status == JobStatus.STOPPED
+    assert controller.take_check_summary(1) == ""
+
+
+def test_a_job_with_no_scheduler_id_is_asked_about_only_on_request(tmp_path: Path) -> None:
+    controller, runner, _document_, job, _run = _cluster_setup(tmp_path, JobStatus.SUBMITTING)
+    job.remote_job_id = None
+
+    assert controller.check_cluster_jobs() == 0
+    assert runner.checks == [([], False)]
+
+    assert controller.check_cluster_jobs([job.id], on_request=True) == 1
+    assert [target.remote_job_id for target in runner.checks[-1][0]] == [""]
+
+    # Complete output found by that check completes the job.
+    update = controller.apply_evidence(
+        job.id,
+        _seen(
+            SchedulerState.NO_JOB_ID,
+            OutputState.COMPLETE,
+            parsed=_COMPLETE,
+            remote_job_id="",
+            on_request=True,
+        ),
+    )
+    assert update.finished is not None
+
+
+def test_progress_is_requested_for_jobs_with_somewhere_to_look(tmp_path: Path) -> None:
+    controller, runner, _document_, job, _run = _cluster_setup(tmp_path, JobStatus.RUNNING)
+    nowhere = make_job(
+        "nowhere",
+        service=controller._project_service,
+        document=_document_,
+        execution_target="scarf",
+    )
+    nowhere.status = JobStatus.RUNNING
+    gone = uuid4()
+
+    unasked = controller.read_cluster_progress([job.id, nowhere.id, gone])
+
+    # The caller is told which jobs will get no answer from the worker.
+    assert unasked == [nowhere.id, gone]
+    assert [[target.job_id for target in batch] for batch in runner.progress_requests] == [[job.id]]
+    assert controller.read_cluster_progress([nowhere.id]) == [nowhere.id]
+    assert len(runner.progress_requests) == 1

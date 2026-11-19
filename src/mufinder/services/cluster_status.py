@@ -14,11 +14,10 @@ from enum import Enum
 
 from mufinder.domain.enums import ACTIVE_JOB_STATUSES
 from mufinder.domain.models import Job
-from mufinder.services.job_execution_controller import awaits_scheduler_reappearance
 from mufinder.services.job_monitoring import is_cluster_job
 
-NO_CLUSTER_JOBS_TOOLTIP = "There is nothing to poll: the project has no active cluster jobs."
-NO_REMOTE_IDS_TOOLTIP = "There is nothing to poll yet: no active cluster job has a remote job ID."
+NO_CLUSTER_JOBS_TOOLTIP = "There is nothing to check: the project has no active cluster jobs."
+NO_REMOTE_IDS_TOOLTIP = "There is nothing to check yet: no active cluster job has a scheduler job ID or a remote folder."
 REFRESH_TOOLTIP = "Check the cluster queue now, reconnecting if the connection is closed."
 
 
@@ -42,14 +41,9 @@ class ClusterStatus:
 
 
 def is_monitored_cluster_job(job: Job) -> bool:
-    """Return whether queue polls follow ``job``: an active cluster job or a watched one.
+    """Return whether queue checks follow ``job``: an active cluster job."""
 
-    A job awaiting scheduler reappearance is polled like an active one.
-    """
-
-    return is_cluster_job(job) and (
-        job.status in ACTIVE_JOB_STATUSES or awaits_scheduler_reappearance(job)
-    )
+    return is_cluster_job(job) and job.status in ACTIVE_JOB_STATUSES
 
 
 def monitored_cluster_names(jobs: Iterable[Job]) -> list[str]:
@@ -100,7 +94,10 @@ def cluster_status(
         else:
             not_connected.append(name)
 
-    can_poll = any((job.remote_job_id or "").strip() for job in monitored)
+    can_poll = any(
+        (job.remote_job_id or "").strip() or (job.remote_directory or "").strip()
+        for job in monitored
+    )
     if lost:
         tone = ClusterConnectionTone.LOST
     elif connected:

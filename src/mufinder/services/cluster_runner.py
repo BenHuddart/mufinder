@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, replace
 from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
@@ -16,21 +16,12 @@ from PySide6.QtCore import QObject, QTimer, Signal
 from mufinder.domain.cluster import ClusterConfig
 from mufinder.domain.enums import JobStatus
 from mufinder.domain.models import utc_now
-from mufinder.services.cluster_retrieval import (
-    RetrievalOutcome,
-    queue_observation,
-    retrieve_error_files,
-    retrieve_job_outputs,
-)
+from mufinder.services.cluster_retrieval import retrieve_job_outputs
 from mufinder.services.cluster_queues import ProcessPlacement
 from mufinder.services.cluster_security import invalid_remote_job_labels
-from mufinder.services.failure_diagnosis import (
-    MISSING_SCHEDULER_ENTRY_FAILURE_MESSAGE,
-    RETRIEVAL_FAILURE_PREFIX,
-    RETRY_RETRIEVAL_NOT_CONNECTED_MESSAGE,
-)
 from mufinder.services.job_artifacts import RetrievalFlags
 from mufinder.services.job_progress import GeometryProgressReader, remote_castep_candidates
+from mufinder.services.job_reconcile import JobEvidence, OutputState, SchedulerState, wants_output
 from mufinder.services.scheduler import (
     Scheduler,
     SchedulerJobInfo,
@@ -40,16 +31,18 @@ from mufinder.services.scheduler import (
 from mufinder.services.script_template import render_job_script
 from mufinder.services.ssh_client import SSHConnection, SSHCredentials
 
-MISSING_ENTRY_RETRIEVAL_ATTEMPTS = 3
-"""Polls a scheduler-missing job may fail output retrieval before it is failed.
+#: The scheduler evidence each mapped scheduler status stands for.
+_SCHEDULER_STATE_BY_STATUS = {
+    JobStatus.QUEUED: SchedulerState.PENDING,
+    JobStatus.RUNNING: SchedulerState.RUNNING,
+    JobStatus.COMPLETED: SchedulerState.COMPLETED,
+    JobStatus.CANCELLED: SchedulerState.CANCELLED,
+    JobStatus.STOPPED: SchedulerState.TIMED_OUT,
+    JobStatus.FAILED: SchedulerState.FAILED,
+}
 
-Only a retry-eligible failure counts against this limit; see
-:class:`~mufinder.services.cluster_retrieval.RetrievalFailure`.
-"""
-
-
-_ACTIVE_TRACKED_STATUSES = frozenset(
-    {JobStatus.SUBMITTING, JobStatus.QUEUED, JobStatus.RUNNING, JobStatus.RETRIEVING}
+_REPORTED_FINISHED = frozenset(
+    {SchedulerState.COMPLETED, SchedulerState.TIMED_OUT, SchedulerState.FAILED}
 )
 
 
@@ -78,41 +71,33 @@ def _same_credential_target(previous: ClusterConfig, current: ClusterConfig) -> 
     )
 
 
-@dataclass(slots=True)
-class _TrackedClusterJob:
+@dataclass(frozen=True, slots=True)
+class CheckTarget:
+    """One cluster job to look at, with where its scheduler entry and files are.
+
+    ``remote_job_id`` is empty for a job that never recorded a scheduler job
+    ID; its folder can still be looked at. ``on_request`` marks a check the
+    user asked for, which looks at the output even of a cancelled job.
+    """
+
     job_id: UUID
     remote_job_id: str
     remote_dir: str
     seed_name: str
     local_output_dir: Path
     cluster_name: str = ""
-    status: JobStatus = JobStatus.QUEUED
-    terminal: bool = False
     retrieval: RetrievalFlags = RetrievalFlags()
-    #: Consecutive polls where this job was missing from the scheduler queue
-    #: and its output could not be downloaded. Reset when the job reappears.
-    missing_retrieval_attempts: int = 0
-    #: The job was failed because neither the queue nor accounting listed it.
-    #: It stays terminal but is still polled, so ``job_reappeared`` can report
-    #: it if the scheduler lists it again.
-    watch_for_recovery: bool = False
+    on_request: bool = False
 
 
 @dataclass(frozen=True, slots=True)
 class QueueCheckSnapshot:
-    """Summary emitted after one queue polling pass."""
+    """Summary emitted after one pass over a list of check targets."""
 
     checked_at: datetime
     elapsed_by_job_id: dict[UUID, str]
-    #: Short human-readable statement of what the scheduler reported for each
-    #: polled job this cycle (e.g. "scheduler reports RUNNING"). Consumed by
-    #: ``JobExecutionController.mark_queue_checked`` to stamp per-job monitor
-    #: metadata on the document.
-    observations_by_job_id: dict[UUID, str] = field(default_factory=dict)
-    #: Jobs this poll checked only as reappearance watches (see
-    #: ``ClusterJobRunner.job_reappeared``), so the GUI can end a watch whose
-    #: job no longer awaits reappearance.
-    watched_job_ids: frozenset[UUID] = frozenset()
+    #: The jobs this pass looked at.
+    job_ids: tuple[UUID, ...] = ()
 
 
 class CheckpointProbeStatus(StrEnum):
@@ -168,18 +153,11 @@ class CheckpointProbeResult:
 class ClusterJobRunner(QObject):
     """Run CASTEP jobs on a remote scheduler over SSH."""
 
-    job_started = Signal(object)
-    #: ``(job_id, CastepResult, ParsedJobArtifacts)``. The third payload carries
-    #: the secondary outputs (relaxed cell, phonon, transition state) parsed on
-    #: this worker thread so the GUI handler never re-parses them.
-    job_finished = Signal(object, object, object)
-    job_failed = Signal(object, str)
     job_cancelled = Signal(object)
-    status_changed = Signal(object, object)
-    #: ``(job_id, status_value)``: a job failed for a missing scheduler entry is
-    #: listed again as queued, running or completed. The runner has stopped
-    #: watching it; the GUI recovers the job and re-tracks it.
-    job_reappeared = Signal(object, object)
+    #: ``(job_id, JobEvidence)``: what one check saw of a job. A job whose
+    #: output is about to be downloaded is reported twice, first with the
+    #: scheduler's answer alone.
+    job_checked = Signal(object, object)
 
     connection_status_changed = Signal(bool)
     queue_checked = Signal(object)
@@ -193,13 +171,11 @@ class ClusterJobRunner(QObject):
         self._config: ClusterConfig | None = None
         self._ssh: SSHConnection | None = None
         self._scheduler: Scheduler | None = None
-        self._tracked_jobs: dict[UUID, _TrackedClusterJob] = {}
         self._credential_cache: SSHCredentials | None = None
         self._progress_reader = GeometryProgressReader()
-
-        self._poll_timer = QTimer(self)
-        self._poll_timer.setInterval(60_000)
-        self._poll_timer.timeout.connect(self._poll_queue)
+        # Bumped by forget_progress, so a read continuing in turns can tell
+        # that it belongs to a project that is no longer open.
+        self._progress_generation = 0
 
     @property
     def is_connected(self) -> bool:
@@ -258,13 +234,10 @@ class ClusterJobRunner(QObject):
         )
         self._credential_cache = resolved_credentials
         self.connection_status_changed.emit(True)
-        if self._has_active_jobs_for_connected_cluster() and not self._poll_timer.isActive():
-            self._poll_timer.start()
 
     def disconnect(self) -> None:
-        """Disconnect from cluster and stop polling."""
+        """Disconnect from the cluster."""
 
-        self._poll_timer.stop()
         if self._ssh is not None:
             self._ssh.disconnect()
         self._ssh = None
@@ -295,11 +268,12 @@ class ClusterJobRunner(QObject):
         allow_existing_remote_directory: bool = False,
         **retrieval: Any,
     ) -> str:
-        """Upload files, submit scheduler script, and start tracking the remote job.
+        """Upload files, submit the scheduler script, and return the scheduler job ID.
 
         ``retrieval`` holds the :class:`~mufinder.services.job_artifacts.RetrievalFlags`
-        fields as keywords (``retrieve_den_fmt``, ``task_farming_enabled``, ...),
-        as in :meth:`track_existing_job` and :meth:`retrieve_outputs_for`.
+        fields as keywords (``retrieve_den_fmt``, ``task_farming_enabled``, ...).
+        They are accepted so one set of submission keywords serves both runners;
+        the cluster runner keeps nothing about a submitted job.
 
         ``reuse_existing_files`` skips only the ``.cell``/``.param`` upload, so a
         resubmission into an existing remote directory preserves the remote
@@ -398,264 +372,219 @@ class ClusterJobRunner(QObject):
             comment=comment,
             processes_per_node=processes_per_node,
         )
-        remote_job_id = scheduler.submit(ssh, request)
+        return scheduler.submit(ssh, request)
 
-        self._track(
-            job_id,
-            remote_job_id=remote_job_id,
-            remote_dir=remote_dir,
-            seed_name=seed_name,
-            local_output_dir=local_dir,
-            cluster_name=cluster_name,
-            status=JobStatus.QUEUED,
-            retrieval=retrieval,
-        )
+    def cancel(self, job_id: UUID, remote_job_id: str = "") -> None:
+        """Cancel scheduler job ``remote_job_id`` and report ``job_id`` cancelled.
 
-        self.status_changed.emit(job_id, JobStatus.QUEUED.value)
-
-        if not self._poll_timer.isActive():
-            self._poll_timer.start()
-
-        return remote_job_id
-
-    def cancel(self, job_id: UUID) -> None:
-        """Cancel a tracked remote job."""
+        A job with no scheduler job ID has nothing to cancel on the cluster,
+        so nothing is reported for it.
+        """
 
         ssh = self._require_ssh()
         scheduler = self._require_scheduler()
-
-        tracked = self._tracked_jobs.get(job_id)
-        if tracked is None or tracked.terminal:
+        if not remote_job_id.strip():
             return
-
-        scheduler.cancel(ssh, tracked.remote_job_id)
-        tracked.terminal = True
-        tracked.status = JobStatus.CANCELLED
+        scheduler.cancel(ssh, remote_job_id.strip())
         self.job_cancelled.emit(job_id)
-        self.status_changed.emit(job_id, JobStatus.CANCELLED.value)
 
-    def refresh_queue(self) -> None:
-        """Manually trigger one queue poll."""
-
-        self._poll_queue()
-
-    def clear_tracked_jobs(self) -> None:
-        """Drop all in-memory tracked jobs.
-
-        This is used when switching projects so stale runtime state does not leak
-        across documents.
-        """
-
-        self._tracked_jobs.clear()
-        self._progress_reader.forget_all_except(())
-
-    def read_geometry_progress(self, job_ids: list[UUID]) -> None:
-        """Read tracked jobs' geometry-optimisation progress from their remote output.
+    def read_geometry_progress(
+        self, targets: list[CheckTarget], _generation: int | None = None
+    ) -> None:
+        """Read jobs' geometry-optimisation progress from their remote output.
 
         Fetches only what CASTEP appended since the previous read of each job.
-        Emits :attr:`geometry_progress_read` once per requested job, when its
-        output is read to the end: ``None`` when the job is not tracked on the
-        connected cluster, the cluster is disconnected, or the output cannot be
-        read.
+        Emits :attr:`geometry_progress_read` once per target, when its output
+        is read to the end: ``None`` when the job is not on the connected
+        cluster, the cluster is disconnected, the output cannot be read, or
+        :meth:`forget_progress` was called while it was being read.
 
-        Each call does one bounded read of the first job and queues the rest of
-        the work behind whatever else is waiting for this thread, so reading
+        Each call does one bounded read of the first target and queues the rest
+        of the work behind whatever else is waiting for this thread, so reading
         large accumulated outputs never holds up a queue check, a submission or
         a checkpoint probe for longer than one read.
         """
 
-        remaining = list(job_ids)
+        remaining = list(targets)
         if not remaining:
             return
-        job_id = remaining[0]
+        generation = self._progress_generation if _generation is None else _generation
+        target = remaining[0]
         ssh = self._ssh if self.is_connected else None
-        entry = self._tracked_jobs.get(job_id)
         progress = None
         more_to_read = False
         if (
             ssh is not None
-            and entry is not None
-            and self._tracked_job_matches_connected_cluster(entry)
+            and generation == self._progress_generation
+            and self._on_connected_cluster(target)
         ):
             candidates = remote_castep_candidates(
-                entry.remote_dir, entry.seed_name, entry.retrieval.farm_count
+                target.remote_dir, target.seed_name, target.retrieval.farm_count
             )
             try:
-                progress = self._progress_reader.read_remote(job_id, ssh, candidates)
-                more_to_read = self._progress_reader.has_backlog(job_id)
+                progress = self._progress_reader.read_remote(target.job_id, ssh, candidates)
+                more_to_read = self._progress_reader.has_backlog(target.job_id)
             except Exception:  # noqa: BLE001 - a failed read keeps the last progress shown
                 progress = None
         if not more_to_read:
             del remaining[0]
-            self.geometry_progress_read.emit({job_id: progress})
+            self.geometry_progress_read.emit({target.job_id: progress})
         if remaining:
-            QTimer.singleShot(0, self, lambda: self.read_geometry_progress(remaining))
+            QTimer.singleShot(0, self, lambda: self.read_geometry_progress(remaining, generation))
 
-    def stop_watching(self, job_ids: list[UUID]) -> None:
-        """End the reappearance watch of each of ``job_ids``; other entries are untouched.
+    def forget_progress(self) -> None:
+        """Drop the progress read positions and end reads in flight.
 
-        The GUI calls this for a watched job the user has since reset,
-        dismissed, or otherwise moved on from, so it is no longer polled.
+        Called when another project is opened: a large output still being read
+        in turns belongs to the project that was closed.
         """
 
-        for job_id in job_ids:
-            tracked = self._tracked_jobs.get(job_id)
-            if tracked is not None:
-                tracked.watch_for_recovery = False
+        self._progress_generation += 1
+        self._progress_reader.forget_all_except(())
 
-    def track_existing_job(
-        self,
-        *,
-        job_id: UUID,
-        remote_job_id: str,
-        remote_dir: str,
-        seed_name: str,
-        local_output_dir: Path,
-        cluster_name: str,
-        status: JobStatus,
-        watch_for_recovery: bool = False,
-        **retrieval: Any,
-    ) -> None:
-        """Register a persisted cluster job for queue polling and retrieval.
+    def check_jobs(self, targets: list[CheckTarget]) -> None:
+        """Look at each of ``targets`` on the connected cluster and report what is seen.
 
-        ``watch_for_recovery`` registers a job failed for a missing scheduler
-        entry: it is polled only to emit ``job_reappeared`` if the scheduler
-        lists it again. ``retrieval`` holds the
-        :class:`~mufinder.services.job_artifacts.RetrievalFlags` fields as
-        keywords.
+        One queue command covers every target, and one accounting command
+        those the queue does not list. Each job is reported through
+        :attr:`job_checked`; a job the scheduler no longer runs has its output
+        folder looked at first. Targets of another cluster are skipped. The
+        pass ends with :attr:`queue_checked`, or with :attr:`poll_failed` when
+        the connection is gone or the queue command fails.
         """
 
-        if not remote_job_id.strip() or not remote_dir.strip():
+        if not self.is_connected:
+            if self._ssh is not None:
+                # The transport died under an open connection. Close it so the
+                # connection state stops reporting a live link.
+                cluster_name = self._config.name if self._config is not None else "the cluster"
+                self.disconnect()
+                if targets:
+                    self.poll_failed.emit(
+                        f"Queue polling failed for {cluster_name}: the connection was lost."
+                    )
             return
 
-        tracked = self._track(
-            job_id,
-            remote_job_id=remote_job_id,
-            remote_dir=remote_dir,
-            seed_name=seed_name,
-            local_output_dir=local_output_dir,
-            cluster_name=cluster_name,
-            status=status,
-            retrieval=retrieval,
-        )
-        tracked.watch_for_recovery = tracked.terminal and watch_for_recovery
-        if self.is_connected and self._is_polled(tracked) and not self._poll_timer.isActive():
-            self._poll_timer.start()
-
-    def retrieve_outputs_for(
-        self,
-        job_id: UUID,
-        *,
-        remote_job_id: str,
-        remote_directory: str,
-        seed_name: str,
-        local_output_dir: Path,
-        cluster_name: str = "",
-        **retrieval: Any,
-    ) -> None:
-        """Re-attempt output retrieval for a scheduler-completed job on demand.
-
-        Backs the dashboard "Retry retrieval" action: it (re-)registers a tracked
-        entry from the persisted remote metadata and performs one retrieval pass
-        through the same :meth:`_retrieve_results` used by the poll loop, so the
-        normal signal flow (``status_changed`` -> retrieving, then
-        ``job_finished`` + completed / ``job_failed`` + failed / stopped) reaches
-        the GUI unchanged.
-
-        If the cluster is not connected (or does not match this job's cluster) a
-        retrieval pass would strand the job in RETRIEVING, so that case, and any
-        error raised before retrieval reports a result, is resolved to
-        ``failed`` via ``job_failed`` + ``status_changed`` instead.
-
-        ``retrieval`` holds the :class:`~mufinder.services.job_artifacts.RetrievalFlags`
-        fields as keywords.
-        """
-
-        tracked = self._track(
-            job_id,
-            remote_job_id=remote_job_id,
-            remote_dir=remote_directory,
-            seed_name=seed_name,
-            local_output_dir=local_output_dir,
-            cluster_name=cluster_name,
-            status=JobStatus.RETRIEVING,
-            retrieval=retrieval,
-        )
-
-        if not self.is_connected or not self._tracked_job_matches_connected_cluster(tracked):
-            self._fail(tracked, RETRY_RETRIEVAL_NOT_CONNECTED_MESSAGE)
+        ssh = self._require_ssh()
+        scheduler = self._require_scheduler()
+        checked = [target for target in targets if self._on_connected_cluster(target)]
+        listed_ids = [target.remote_job_id for target in checked if target.remote_job_id]
+        checked_at = utc_now()
+        try:
+            statuses = scheduler.status(ssh, listed_ids) if listed_ids else {}
+        except Exception as exc:  # noqa: BLE001
+            cluster_name = self._config.name if self._config is not None else "the cluster"
+            for target in checked:
+                self.job_checked.emit(
+                    target.job_id,
+                    self._evidence(target, checked_at, SchedulerState.UNAVAILABLE, detail=str(exc)),
+                )
+            self.disconnect()
+            self.poll_failed.emit(f"Queue polling failed for {cluster_name}: {exc}")
             return
+
+        history = self._scheduler_history(
+            ssh, scheduler, [job_id for job_id in listed_ids if job_id not in statuses]
+        )
+
+        elapsed_by_job_id: dict[UUID, str] = {}
+        for target in checked:
+            info = statuses.get(target.remote_job_id)
+            from_accounting = info is None
+            if info is None:
+                info = history.get(target.remote_job_id)
+            if info is not None and info.elapsed_runtime:
+                elapsed_by_job_id[target.job_id] = info.elapsed_runtime
+
+            if not target.remote_job_id:
+                state, detail = SchedulerState.NO_JOB_ID, ""
+            elif info is None:
+                state, detail = SchedulerState.NOT_LISTED, ""
+            else:
+                state = _SCHEDULER_STATE_BY_STATUS[scheduler.map_to_job_status(info.state)]
+                detail = scheduler.state_name(info.state)
+            evidence = self._evidence(
+                target,
+                checked_at,
+                state,
+                detail=detail,
+                from_accounting=from_accounting and info is not None,
+            )
+            if wants_output(state, on_request=target.on_request) and target.remote_dir:
+                if state in _REPORTED_FINISHED:
+                    # Reported before the download, so the job reads as
+                    # retrieving while its output is fetched.
+                    self.job_checked.emit(target.job_id, evidence)
+                evidence = self._with_output(ssh, target, evidence)
+            self.job_checked.emit(target.job_id, evidence)
+
+        self.queue_checked.emit(
+            QueueCheckSnapshot(
+                checked_at=utc_now(),
+                elapsed_by_job_id=elapsed_by_job_id,
+                job_ids=tuple(target.job_id for target in checked),
+            )
+        )
+
+    @staticmethod
+    def _evidence(
+        target: CheckTarget,
+        checked_at: datetime,
+        state: SchedulerState,
+        *,
+        detail: str = "",
+        from_accounting: bool = False,
+    ) -> JobEvidence:
+        return JobEvidence(
+            checked_at=checked_at,
+            scheduler=state,
+            scheduler_detail=detail,
+            from_accounting=from_accounting,
+            remote_job_id=target.remote_job_id,
+            remote_directory=target.remote_dir,
+            on_request=target.on_request,
+        )
+
+    @staticmethod
+    def _with_output(ssh: SSHConnection, target: CheckTarget, evidence: JobEvidence) -> JobEvidence:
+        """Return ``evidence`` with what the job's remote folder holds."""
 
         try:
-            self._retrieve_results(tracked)
-        except Exception as exc:  # noqa: BLE001 - resolve rather than strand in RETRIEVING
-            self._fail(tracked, f"{RETRIEVAL_FAILURE_PREFIX}: {exc}")
+            result = retrieve_job_outputs(
+                ssh,
+                remote_job_id=target.remote_job_id,
+                remote_dir=target.remote_dir,
+                seed_name=target.seed_name,
+                local_output_dir=target.local_output_dir,
+                retrieval=target.retrieval,
+            )
+        except Exception as exc:  # noqa: BLE001 - one job's folder must not end the pass
+            return replace(evidence, output=OutputState.UNREACHABLE, output_detail=str(exc))
+        return replace(
+            evidence,
+            output=result.output,
+            output_detail=result.detail,
+            walltime_seen=result.walltime_seen,
+            parsed=result.parsed,
+            artifacts=result.artifacts,
+        )
 
     def shutdown(self) -> None:
         """Best-effort shutdown during application close."""
 
         self.disconnect()
 
-    def _track(
-        self,
-        job_id: UUID,
-        *,
-        remote_job_id: str,
-        remote_dir: str,
-        seed_name: str,
-        local_output_dir: Path,
-        cluster_name: str,
-        status: JobStatus,
-        retrieval: dict[str, Any],
-    ) -> _TrackedClusterJob:
-        """Register (or replace) the tracked entry for ``job_id`` and return it.
-
-        ``retrieval`` is the caller's :class:`RetrievalFlags` keywords. An entry
-        whose status is not one of the four active ones is tracked as terminal.
-        """
-
-        tracked = _TrackedClusterJob(
-            job_id=job_id,
-            remote_job_id=remote_job_id.strip(),
-            remote_dir=remote_dir.strip(),
-            seed_name=seed_name,
-            local_output_dir=Path(local_output_dir),
-            cluster_name=cluster_name.strip(),
-            status=status,
-            terminal=status not in _ACTIVE_TRACKED_STATUSES,
-            retrieval=RetrievalFlags(**retrieval),
-        )
-        self._tracked_jobs[job_id] = tracked
-        return tracked
-
-    def _fail(self, entry: _TrackedClusterJob, message: str) -> None:
-        """Mark ``entry`` terminal and report it: ``job_failed`` then ``status_changed``."""
-
-        entry.terminal = True
-        self.job_failed.emit(entry.job_id, message)
-        self.status_changed.emit(entry.job_id, JobStatus.FAILED.value)
-
-    def _tracked_job_matches_connected_cluster(self, entry: _TrackedClusterJob) -> bool:
+    def _on_connected_cluster(self, target: CheckTarget) -> bool:
         connected_cluster_key = (
             self._config.name.strip().casefold()
             if self._config is not None and self._config.name.strip()
             else ""
         )
         return (
-            not entry.cluster_name.strip()
+            not target.cluster_name.strip()
             or not connected_cluster_key
-            or entry.cluster_name.strip().casefold() == connected_cluster_key
+            or target.cluster_name.strip().casefold() == connected_cluster_key
         )
-
-    def _has_active_jobs_for_connected_cluster(self) -> bool:
-        return any(self._is_polled(entry) for entry in self._tracked_jobs.values())
-
-    def _is_polled(self, entry: _TrackedClusterJob) -> bool:
-        """Return whether queue polls check ``entry``: active or watched, on this cluster."""
-
-        return (
-            not entry.terminal or entry.watch_for_recovery
-        ) and self._tracked_job_matches_connected_cluster(entry)
 
     @staticmethod
     def remote_job_directory(*, working_directory: str, seed_name: str) -> str:
@@ -709,92 +638,14 @@ class ClusterJobRunner(QObject):
             info = scheduler.history(ssh, [remote_job_id]).get(remote_job_id)
         return info is not None and not scheduler.is_terminal(info.state)
 
-    def _poll_queue(self) -> None:
-        if not self.is_connected:
-            self._poll_timer.stop()
-            if self._ssh is not None:
-                # The transport died under an open connection. Close it so the
-                # connection state stops reporting a live link.
-                cluster_name = self._config.name if self._config is not None else "the cluster"
-                has_polled_jobs = self._has_active_jobs_for_connected_cluster()
-                self.disconnect()
-                if has_polled_jobs:
-                    self.poll_failed.emit(
-                        f"Queue polling failed for {cluster_name}: the connection was lost."
-                    )
-            return
-
-        ssh = self._require_ssh()
-        scheduler = self._require_scheduler()
-
-        polled = [entry for entry in self._tracked_jobs.values() if self._is_polled(entry)]
-        if not polled:
-            self.queue_checked.emit(QueueCheckSnapshot(checked_at=utc_now(), elapsed_by_job_id={}))
-            return
-
-        try:
-            statuses = scheduler.status(ssh, [entry.remote_job_id for entry in polled])
-        except Exception as exc:  # noqa: BLE001
-            cluster_name = self._config.name if self._config is not None else "the cluster"
-            self.disconnect()
-            self.poll_failed.emit(f"Queue polling failed for {cluster_name}: {exc}")
-            return
-
-        history = self._scheduler_history(
-            ssh,
-            scheduler,
-            [entry.remote_job_id for entry in polled if entry.remote_job_id not in statuses],
-        )
-
-        observations_by_job_id: dict[UUID, str] = {}
-        elapsed_by_job_id: dict[UUID, str] = {}
-        watched_job_ids = frozenset(entry.job_id for entry in polled if entry.watch_for_recovery)
-        for entry in polled:
-            info = statuses.get(entry.remote_job_id)
-            missing_from_queue = info is None
-            if info is None:
-                info = history.get(entry.remote_job_id)
-
-            if entry.watch_for_recovery:
-                observations_by_job_id[entry.job_id] = self._check_reappearance(
-                    entry, info, scheduler
-                )
-                continue
-
-            if info is not None and info.elapsed_runtime:
-                elapsed_by_job_id[entry.job_id] = info.elapsed_runtime
-
-            if info is None:
-                # Neither the queue nor accounting lists the job: usually
-                # completion with expired history, so retrieval is attempted,
-                # but output-unavailable errors are retried across a short
-                # grace window instead of failing the job immediately.
-                observations_by_job_id[entry.job_id] = self._retrieve_results(
-                    entry, missing_from_queue=True
-                )
-                continue
-
-            observations_by_job_id[entry.job_id] = self._apply_scheduler_state(
-                entry, info, scheduler, missing_from_queue=missing_from_queue
-            )
-
-        self.queue_checked.emit(
-            QueueCheckSnapshot(
-                checked_at=utc_now(),
-                elapsed_by_job_id=elapsed_by_job_id,
-                observations_by_job_id=observations_by_job_id,
-                watched_job_ids=watched_job_ids,
-            )
-        )
-
     @staticmethod
     def _scheduler_history(
         ssh, scheduler: Scheduler, job_ids: list[str]
     ) -> dict[str, SchedulerJobInfo]:
         """Return accounting records for ``job_ids``, or none if the lookup fails.
 
-        The queue poll already succeeded, so a failed accounting lookup leaves
-        the jobs unknown rather than disconnecting.
+        The queue command already succeeded, so a failed accounting lookup
+        leaves the jobs unlisted rather than disconnecting.
         """
 
         if not job_ids:
@@ -803,157 +654,6 @@ class ClusterJobRunner(QObject):
             return scheduler.history(ssh, job_ids)
         except Exception:  # noqa: BLE001 - accounting is a best-effort fallback
             return {}
-
-    def _apply_scheduler_state(
-        self,
-        entry: _TrackedClusterJob,
-        info: SchedulerJobInfo,
-        scheduler: Scheduler,
-        *,
-        missing_from_queue: bool,
-    ) -> str:
-        """Act on the scheduler state ``info`` reports for ``entry`` and return the observation.
-
-        ``missing_from_queue`` marks a state read from accounting because the
-        queue did not list the job.
-        """
-
-        mapped = scheduler.map_to_job_status(info.state)
-
-        if mapped == JobStatus.COMPLETED:
-            entry.status = mapped
-            return self._retrieve_results(
-                entry, missing_from_queue=missing_from_queue, accounted=missing_from_queue
-            )
-
-        # The job is listed as unfinished, so any earlier grace window restarts.
-        entry.missing_retrieval_attempts = 0
-        source = "scheduler accounting" if missing_from_queue else "scheduler"
-        observation = queue_observation(
-            f"{source} reports {mapped.value.upper()}", missing_from_queue=missing_from_queue
-        )
-        if mapped == entry.status:
-            return observation
-        if mapped == JobStatus.QUEUED and entry.status == JobStatus.RUNNING:
-            # No transition leads back to queued: a running job SLURM suspends
-            # or requeues stays running, and starting again is not a new start.
-            return observation
-
-        previous = entry.status
-        entry.status = mapped
-        if mapped in (JobStatus.QUEUED, JobStatus.RUNNING):
-            self.status_changed.emit(entry.job_id, mapped.value)
-            if mapped == JobStatus.RUNNING and previous in (JobStatus.SUBMITTING, JobStatus.QUEUED):
-                self.job_started.emit(entry.job_id)
-            return observation
-        if mapped == JobStatus.CANCELLED:
-            entry.terminal = True
-            self.job_cancelled.emit(entry.job_id)
-            self.status_changed.emit(entry.job_id, JobStatus.CANCELLED.value)
-            return observation
-        if mapped in (JobStatus.STOPPED, JobStatus.FAILED):
-            entry.terminal = True
-            # Download the error files and scheduler log, so a stop can be
-            # diagnosed and inspected like a failure.
-            retrieve_error_files(
-                self._require_ssh(),
-                remote_job_id=entry.remote_job_id,
-                remote_dir=entry.remote_dir,
-                seed_name=entry.seed_name,
-                local_output_dir=entry.local_output_dir,
-            )
-            if mapped == JobStatus.STOPPED:
-                self.status_changed.emit(entry.job_id, JobStatus.STOPPED.value)
-            else:
-                self._fail(
-                    entry, f"Scheduler reported the job as {scheduler.state_name(info.state)}."
-                )
-        return observation
-
-    def _check_reappearance(
-        self,
-        entry: _TrackedClusterJob,
-        info: SchedulerJobInfo | None,
-        scheduler: Scheduler,
-    ) -> str:
-        """Check a watched job against this poll and return the observation.
-
-        Any scheduler record ends the watch. A queued, running or completed job
-        is reported through ``job_reappeared``; any other state leaves the job
-        failed.
-        """
-
-        if info is None:
-            return queue_observation(
-                "not in scheduler accounting; watching for the job to reappear",
-                missing_from_queue=True,
-            )
-
-        entry.watch_for_recovery = False
-        mapped = scheduler.map_to_job_status(info.state)
-        if mapped in (JobStatus.QUEUED, JobStatus.RUNNING, JobStatus.COMPLETED):
-            self.job_reappeared.emit(entry.job_id, mapped.value)
-            return f"scheduler reports {mapped.value.upper()} again; tracking resumed"
-        return f"scheduler reports {scheduler.state_name(info.state)}"
-
-    def _retrieve_results(
-        self,
-        entry: _TrackedClusterJob,
-        *,
-        missing_from_queue: bool = False,
-        accounted: bool = False,
-    ) -> str:
-        """Run one retrieval pass for ``entry``, emit its outcome, and return the observation.
-
-        :func:`~mufinder.services.cluster_retrieval.retrieve_job_outputs` decides
-        the outcome. A retry-eligible failure is retried for up to
-        ``MISSING_ENTRY_RETRIEVAL_ATTEMPTS`` polls before the job is failed.
-        ``accounted`` marks a job that scheduler accounting reports as completed:
-        it fails with the retrieval error. Otherwise the scheduler listed the
-        job nowhere, so it fails as a missing scheduler entry and stays watched
-        for the scheduler listing it again.
-        """
-
-        ssh = self._require_ssh()
-        self.status_changed.emit(entry.job_id, JobStatus.RETRIEVING.value)
-        result = retrieve_job_outputs(
-            ssh,
-            remote_job_id=entry.remote_job_id,
-            remote_dir=entry.remote_dir,
-            seed_name=entry.seed_name,
-            local_output_dir=entry.local_output_dir,
-            retrieval=entry.retrieval,
-            missing_from_queue=missing_from_queue,
-        )
-        failure = result.failure
-        if failure is not None and failure.retry_eligible:
-            entry.missing_retrieval_attempts += 1
-            attempts = entry.missing_retrieval_attempts
-            if attempts < MISSING_ENTRY_RETRIEVAL_ATTEMPTS:
-                detail = (
-                    f"waiting for output (attempt {attempts} of {MISSING_ENTRY_RETRIEVAL_ATTEMPTS})"
-                )
-                return queue_observation(detail, missing_from_queue=True)
-            if accounted:
-                self._fail(entry, failure.message)
-            else:
-                self._fail(entry, MISSING_SCHEDULER_ENTRY_FAILURE_MESSAGE)
-                entry.watch_for_recovery = True
-            detail = (
-                f"output could not be retrieved after {MISSING_ENTRY_RETRIEVAL_ATTEMPTS} checks"
-            )
-            return queue_observation(detail, missing_from_queue=True)
-        if failure is not None:
-            self._fail(entry, failure.message)
-            return result.observation
-
-        entry.terminal = True
-        if result.outcome is RetrievalOutcome.COMPLETED:
-            self.job_finished.emit(entry.job_id, result.parsed, result.artifacts)
-            self.status_changed.emit(entry.job_id, JobStatus.COMPLETED.value)
-        else:
-            self.status_changed.emit(entry.job_id, JobStatus.STOPPED.value)
-        return result.observation
 
     def _require_ssh(self) -> SSHConnection:
         if self._ssh is None or not self._ssh.is_connected:

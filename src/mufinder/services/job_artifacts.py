@@ -152,10 +152,9 @@ class RetrievalFlags:
     ``<seed>_farmNNN.<ext>``. The local runner reads but never downloads
     ``.den_fmt``, so it ignores ``retrieve_den_fmt``.
 
-    The field names are also the runners' keyword names: ``submit``,
-    ``track_existing_job`` and ``retrieve_outputs_for`` take the fields as
-    keywords and rebuild the value with ``RetrievalFlags(**kwargs)``, and
-    :meth:`as_kwargs` produces them. Construction normalises the values, so two
+    The field names are also the runners' ``submit`` keyword names: the local
+    runner rebuilds the value with ``RetrievalFlags(**kwargs)``, and
+    :meth:`as_kwargs` produces them. A cluster check carries the value whole. Construction normalises the values, so two
     equal requests always compare equal.
     """
 

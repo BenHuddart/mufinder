@@ -1,29 +1,24 @@
-"""Output retrieval for a cluster job the scheduler no longer runs.
+"""Look at the output of a cluster job the scheduler no longer runs.
 
 The functions here download and classify one job's remote output over an open
-:class:`~mufinder.services.ssh_client.SSHConnection`. They report what happened
-as a :class:`RetrievalResult` and emit nothing: the cluster runner owns the
-signals, the tracked-job state and the missing-entry retry counter, and turns
-each result into its signal sequence.
+:class:`~mufinder.services.ssh_client.SSHConnection`. They report what the
+folder holds as a :class:`RetrievalResult` and decide nothing about the job:
+:func:`~mufinder.services.job_reconcile.reconcile` does that.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from enum import StrEnum
 from pathlib import Path
 import posixpath
 import re
 
 from mufinder.castep_io.output_parser import CastepResult, parse_castep_output
 from mufinder.domain.enums import FailureReason
-from mufinder.services.failure_diagnosis import (
-    RETRIEVAL_FAILURE_PREFIX,
-    diagnose_failure,
-    find_failure_log_files,
-)
+from mufinder.services.failure_diagnosis import diagnose_failure, find_failure_log_files
 from mufinder.services.job_artifacts import ParsedJobArtifacts, RetrievalFlags
+from mufinder.services.job_reconcile import OutputState
 from mufinder.services.ssh_client import SSHConnection
 
 REMOTE_STALE_OUTPUT_SLACK_SECONDS = 5.0
@@ -40,45 +35,21 @@ old, so a few seconds of slack costs nothing.
 _SAFE_REMOTE_JOB_ID = re.compile(r"[A-Za-z0-9_.-]+")
 
 
-class RetrievalOutcome(StrEnum):
-    """How one retrieval pass ended."""
-
-    COMPLETED = "completed"
-    STOPPED = "stopped"
-    FAILED = "failed"
-
-
-@dataclass(frozen=True, slots=True)
-class RetrievalFailure:
-    """Why a retrieval pass failed.
-
-    ``retry_eligible`` is set only for an output-unavailable failure (download
-    error, missing remote ``.castep``, or a ``.castep`` older than this
-    submission) of a job that was missing from the scheduler queue. Such a job
-    has usually just finished and its output may not be flushed yet, so the
-    runner retries it on later polls before failing it. Every other failure —
-    including unreadable output that did download — is final.
-    """
-
-    message: str
-    retry_eligible: bool = False
-
-
 @dataclass(frozen=True, slots=True)
 class RetrievalResult:
-    """Outcome of one retrieval pass and the observation the poll records."""
+    """What one look at a job's remote folder found.
 
-    outcome: RetrievalOutcome
-    observation: str
+    ``detail`` is CASTEP's error message for incomplete output, and the error
+    for output that could not be parsed or a folder that could not be read.
+    ``walltime_seen`` marks incomplete output whose scheduler log shows a
+    walltime kill.
+    """
+
+    output: OutputState
+    detail: str = ""
+    walltime_seen: bool = False
     parsed: CastepResult | None = None
     artifacts: ParsedJobArtifacts | None = None
-    failure: RetrievalFailure | None = None
-
-
-def queue_observation(detail: str, *, missing_from_queue: bool) -> str:
-    """Return the poll observation for ``detail``, marking a missing queue entry."""
-
-    return f"missing from scheduler queue; {detail}" if missing_from_queue else detail
 
 
 def retrieve_job_outputs(
@@ -89,23 +60,18 @@ def retrieve_job_outputs(
     seed_name: str,
     local_output_dir: Path,
     retrieval: RetrievalFlags,
-    missing_from_queue: bool = False,
 ) -> RetrievalResult:
     """Download, parse and classify one job's remote output.
 
-    ``missing_from_queue`` distinguishes retrieval triggered because the
-    scheduler no longer lists the job (usually completion, but possibly
-    expired history or a filtered queue command) from retrieval for a job the
-    scheduler explicitly reported as completed. In the missing case an
-    output-unavailable failure is marked ``retry_eligible``; parse failures of
-    successfully downloaded output are final in both cases.
+    The result is ``absent`` when the folder holds no ``.castep`` written by
+    this submission, and ``unreachable`` when the folder could not be read.
 
     A continuation run reuses its remote directory, so the *previous* run's
     ``.castep`` and ``-out.cell`` are still sitting there and neither one's
     existence proves this run wrote it. Retrieval therefore orders both
     against the ``{seed}.param`` uploaded at submission — see
     :func:`submission_marker_mtime` and :func:`remote_output_predates_submission`.
-    A stale primary ``.castep`` aborts retrieval (the alternative is completing
+    A stale primary ``.castep`` counts as no output (the alternative is completing
     the job on the previous run's success banner); a stale ``-out.cell`` is
     simply not downloaded, which leaves the local copy carrying its
     previous-retrieval mtime so the workflow controllers' local stale-output
@@ -117,9 +83,6 @@ def retrieve_job_outputs(
     is the primary output, and the transition-state band is read from
     ``<seed>_farm001.ts``.
     """
-
-    def observe(detail: str) -> str:
-        return queue_observation(detail, missing_from_queue=missing_from_queue)
 
     def path(name: str) -> tuple[str, Path]:
         return posixpath.join(remote_dir, name), local_output_dir / name
@@ -152,18 +115,16 @@ def retrieve_job_outputs(
         )
         use_farm = farm_count > 1 and ssh.exists(remote_farm_castep)
         primary_remote = remote_farm_castep if use_farm else remote_castep
-        if remote_output_predates_submission(ssh, primary_remote, submitted_at):
-            # The run wrote nothing at all into the reused directory (it
-            # failed to start, or died before CASTEP opened its log). The
-            # surviving .castep is the PREVIOUS run's — including its
-            # success banner — so parsing it would complete this job on the
-            # old geometry under parameters that were never applied. Treat
-            # it exactly like an unavailable output: the runner's grace
-            # window applies when the trigger was a missing queue entry.
-            raise ConnectionError(
-                f"{posixpath.basename(primary_remote)} predates this submission: "
-                "the run produced no new output in the reused remote directory."
-            )
+        if not ssh.exists(primary_remote) or remote_output_predates_submission(
+            ssh, primary_remote, submitted_at
+        ):
+            # A missing .castep, or one older than this submission: the run
+            # wrote nothing into the folder (it has not started, failed to
+            # start, or died before CASTEP opened its log). A surviving
+            # .castep is the PREVIOUS run's, success banner included, so
+            # parsing it would complete this job on the old geometry under
+            # parameters that were never applied.
+            return RetrievalResult(OutputState.ABSENT)
         if use_farm:
             if ssh.exists(remote_castep):
                 ssh.get(remote_castep, local_castep)
@@ -197,47 +158,26 @@ def retrieve_job_outputs(
             and not remote_output_predates_submission(ssh, remote_magres, submitted_at)
         ):
             ssh.get(remote_magres, local_magres)
-    except Exception as exc:  # noqa: BLE001
-        # Output-unavailable failure (SFTP download error, missing remote
-        # .castep, connection hiccup). For a scheduler-missing job the output
-        # may simply not exist yet, so the runner may retry on later polls.
-        return RetrievalResult(
-            RetrievalOutcome.FAILED,
-            observe("output retrieval failed"),
-            failure=RetrievalFailure(
-                f"{RETRIEVAL_FAILURE_PREFIX}: {exc}", retry_eligible=missing_from_queue
-            ),
-        )
+    except Exception as exc:  # noqa: BLE001 - reported as an unreachable folder
+        return RetrievalResult(OutputState.UNREACHABLE, detail=str(exc))
 
     try:
         parsed = parse_castep_output(primary_output)
-    except Exception as exc:  # noqa: BLE001
-        # The output was downloaded but is unreadable: a real failure in
-        # both trigger modes, so no grace window applies.
-        return RetrievalResult(
-            RetrievalOutcome.FAILED,
-            observe("output parsing failed"),
-            failure=RetrievalFailure(f"{RETRIEVAL_FAILURE_PREFIX}: {exc}"),
-        )
+    except Exception as exc:  # noqa: BLE001 - reported as unreadable output
+        return RetrievalResult(OutputState.UNREADABLE, detail=str(exc))
 
     if not parsed.completed:
-        if _stopped_at_walltime(
-            parsed,
-            remote_job_id=remote_job_id,
-            seed_name=seed_name,
-            local_output_dir=local_output_dir,
-            logs_fetched_from=logs_fetched_from,
-        ):
-            return RetrievalResult(
-                RetrievalOutcome.STOPPED, observe("output incomplete; stopped (walltime)"), parsed
-            )
         return RetrievalResult(
-            RetrievalOutcome.FAILED,
-            observe("output incomplete; job failed"),
-            parsed,
-            failure=RetrievalFailure(
-                parsed.error_message or "CASTEP did not report successful completion."
+            OutputState.INCOMPLETE,
+            detail=parsed.error_message or "",
+            walltime_seen=_stopped_at_walltime(
+                parsed,
+                remote_job_id=remote_job_id,
+                seed_name=seed_name,
+                local_output_dir=local_output_dir,
+                logs_fetched_from=logs_fetched_from,
             ),
+            parsed=parsed,
         )
 
     # Parse the secondary outputs (relaxed cell / phonon / transition state)
@@ -246,9 +186,7 @@ def retrieve_job_outputs(
     # the owning controller consumes the pre-parsed data — neither re-reads
     # disk. Errors are captured on the carrier, never raised.
     artifacts = retrieval.collect(local_output_dir, seed_name)
-    return RetrievalResult(
-        RetrievalOutcome.COMPLETED, observe("output retrieved and parsed"), parsed, artifacts
-    )
+    return RetrievalResult(OutputState.COMPLETE, parsed=parsed, artifacts=artifacts)
 
 
 def submission_marker_mtime(ssh: SSHConnection, remote_param: str) -> float | None:

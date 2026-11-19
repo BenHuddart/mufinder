@@ -7,18 +7,14 @@ from uuid import uuid4
 
 import pytest
 
-import mufinder.services.cluster_retrieval as cluster_retrieval_module
 import mufinder.services.cluster_runner as cluster_runner_module
 from mufinder.castep_io.geometry_progress import parse_geometry_progress
 from mufinder.castep_io.output_parser import CastepResult
 from mufinder.domain.cluster import ClusterConfig
 from mufinder.domain.enums import JobStatus
-from mufinder.services.cluster_retrieval import (
-    RetrievalFailure,
-    RetrievalOutcome,
-    RetrievalResult,
-)
-from mufinder.services.cluster_runner import ClusterJobRunner
+from mufinder.services.cluster_retrieval import RetrievalResult
+from mufinder.services.cluster_runner import CheckTarget, ClusterJobRunner, QueueCheckSnapshot
+from mufinder.services.job_reconcile import JobEvidence, OutputState, SchedulerState
 from mufinder.services.job_artifacts import ParsedJobArtifacts, RetrievalFlags
 from mufinder.services.scheduler import SchedulerJobInfo
 from mufinder.services.ssh_client import SSHCredentials
@@ -99,13 +95,9 @@ def _template_file(tmp_path: Path) -> Path:
     return template
 
 
-def test_cluster_runner_polls_queue_once_per_minute(qapp) -> None:
-    runner = ClusterJobRunner()
-
-    assert runner._poll_timer.interval() == 60_000
-
-
-def test_cluster_runner_submit_uploads_files_and_emits_queued(qapp, tmp_path: Path) -> None:
+def test_cluster_runner_submit_uploads_files_and_returns_the_scheduler_id(
+    qapp, tmp_path: Path
+) -> None:
     runner = ClusterJobRunner()
     runner._ssh = FakeSSH()
     runner._scheduler = _FakeScheduler()
@@ -114,9 +106,6 @@ def test_cluster_runner_submit_uploads_files_and_emits_queued(qapp, tmp_path: Pa
     seed = "conv_ecut_300"
     job_dir = _prepare_local_job(tmp_path, seed)
     template = _template_file(tmp_path)
-
-    statuses: list[tuple[object, object]] = []
-    runner.status_changed.connect(lambda jid, status: statuses.append((jid, status)))
 
     remote_job_id = runner.submit(
         job_id=job_id,
@@ -130,7 +119,6 @@ def test_cluster_runner_submit_uploads_files_and_emits_queued(qapp, tmp_path: Pa
     )
 
     assert remote_job_id == "12345"
-    assert statuses[-1] == (job_id, JobStatus.QUEUED.value)
     assert any(cmd[0] == "put" and str(cmd[1]).endswith(".cell") for cmd in runner._ssh.commands)
     assert any(cmd[0] == "put" and str(cmd[1]).endswith(".param") for cmd in runner._ssh.commands)
     uploaded_runner = next(
@@ -181,117 +169,6 @@ def test_cluster_runner_submit_can_reuse_existing_remote_files(qapp, tmp_path: P
     assert request.script_path == remote_script
 
 
-def test_cluster_runner_poll_moves_running_and_completed(
-    qapp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    runner = ClusterJobRunner()
-    runner._ssh = FakeSSH()
-    scheduler = _FakeScheduler()
-    runner._scheduler = scheduler
-
-    job_id = uuid4()
-    seed = "conv_ecut_360"
-    job_dir = _prepare_local_job(tmp_path, seed)
-    template = _template_file(tmp_path)
-
-    runner.submit(
-        job_id=job_id,
-        local_job_dir=job_dir,
-        seed_name=seed,
-        num_processes=8,
-        walltime="01:00:00",
-        working_directory="/remote/work",
-        template_script_path=str(template),
-        cores_per_node=32,
-    )
-
-    scheduler._states["12345"] = "R"
-    status_events: list[tuple[object, object]] = []
-    finished: list[tuple[object, object]] = []
-    runner.status_changed.connect(lambda jid, status: status_events.append((jid, status)))
-    runner.job_finished.connect(lambda jid, parsed: finished.append((jid, parsed)))
-
-    monkeypatch.setattr(
-        cluster_retrieval_module,
-        "parse_castep_output",
-        lambda _path: CastepResult(completed=True, total_energy=-1.0),
-    )
-
-    # First poll: running
-    runner._poll_queue()
-    assert (job_id, JobStatus.RUNNING.value) in status_events
-
-    # Second poll: completion triggers retrieval and finish
-    scheduler._states["12345"] = "CD"
-    runner._poll_queue()
-    assert any(status == JobStatus.RETRIEVING.value for _jid, status in status_events)
-    assert any(status == JobStatus.COMPLETED.value for _jid, status in status_events)
-    assert len(finished) == 1
-
-
-def test_cluster_runner_poll_marks_timeout_as_stopped(qapp, tmp_path: Path) -> None:
-    runner = ClusterJobRunner()
-    runner._ssh = FakeSSH()
-    scheduler = _FakeScheduler()
-    runner._scheduler = scheduler
-
-    job_id = uuid4()
-    seed = "conv_ecut_420"
-    job_dir = _prepare_local_job(tmp_path, seed)
-    template = _template_file(tmp_path)
-
-    runner.submit(
-        job_id=job_id,
-        local_job_dir=job_dir,
-        seed_name=seed,
-        num_processes=8,
-        walltime="01:00:00",
-        working_directory="/remote/work",
-        template_script_path=str(template),
-        cores_per_node=32,
-    )
-
-    scheduler._states["12345"] = "TO"
-    status_events: list[tuple[object, object]] = []
-    runner.status_changed.connect(lambda jid, status: status_events.append((jid, status)))
-
-    runner._poll_queue()
-
-    assert (job_id, JobStatus.STOPPED.value) in status_events
-
-
-def test_cluster_runner_cancel_emits_cancelled(qapp, tmp_path: Path) -> None:
-    runner = ClusterJobRunner()
-    runner._ssh = FakeSSH()
-    runner._scheduler = _FakeScheduler()
-
-    job_id = uuid4()
-    seed = "conv_ecut_480"
-    job_dir = _prepare_local_job(tmp_path, seed)
-    template = _template_file(tmp_path)
-
-    runner.submit(
-        job_id=job_id,
-        local_job_dir=job_dir,
-        seed_name=seed,
-        num_processes=8,
-        walltime="01:00:00",
-        working_directory="/remote/work",
-        template_script_path=str(template),
-        cores_per_node=32,
-    )
-
-    cancelled: list[object] = []
-    statuses: list[tuple[object, object]] = []
-    runner.job_cancelled.connect(lambda jid: cancelled.append(jid))
-    runner.status_changed.connect(lambda jid, status: statuses.append((jid, status)))
-
-    runner.cancel(job_id)
-
-    assert cancelled == [job_id]
-    assert statuses[-1] == (job_id, JobStatus.CANCELLED.value)
-
-
 def test_cluster_runner_connect_disconnect_emits_status(
     qapp, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -339,146 +216,6 @@ def test_cluster_runner_connect_disconnect_emits_status(
     assert events[-1] is False
 
 
-def test_cluster_runner_poll_handles_scheduler_failure(qapp, tmp_path: Path) -> None:
-    runner = ClusterJobRunner()
-    runner._ssh = FakeSSH()
-    runner._scheduler = _RaisingScheduler()
-    runner._config = cluster_runner_module.ClusterConfig(
-        name="alpha",
-        hostname="alpha.example",
-        username="alice",
-    )
-
-    job_id = uuid4()
-    runner._tracked_jobs[job_id] = cluster_runner_module._TrackedClusterJob(
-        job_id=job_id,
-        remote_job_id="123",
-        remote_dir="/remote/job",
-        seed_name="seed",
-        local_output_dir=tmp_path,
-    )
-
-    events: list[bool] = []
-    failures: list[str] = []
-    runner.connection_status_changed.connect(lambda connected: events.append(connected))
-    runner.poll_failed.connect(lambda message: failures.append(message))
-
-    runner._poll_queue()
-
-    assert events[-1] is False
-    assert failures[-1].startswith("Queue polling failed for alpha:")
-    assert runner.is_connected is False
-    assert runner._scheduler is None
-    assert runner._config is None
-
-
-def test_cluster_runner_poll_handles_cancelled_and_failed_states(qapp, tmp_path: Path) -> None:
-    runner = ClusterJobRunner()
-    runner._ssh = FakeSSH()
-    scheduler = _FakeScheduler()
-    runner._scheduler = scheduler
-
-    cancel_job = uuid4()
-    fail_job = uuid4()
-    runner._tracked_jobs[cancel_job] = cluster_runner_module._TrackedClusterJob(
-        job_id=cancel_job,
-        remote_job_id="101",
-        remote_dir="/remote/job_a",
-        seed_name="a",
-        local_output_dir=tmp_path,
-    )
-    runner._tracked_jobs[fail_job] = cluster_runner_module._TrackedClusterJob(
-        job_id=fail_job,
-        remote_job_id="102",
-        remote_dir="/remote/job_b",
-        seed_name="b",
-        local_output_dir=tmp_path,
-    )
-    scheduler._states["101"] = "CA"
-    scheduler._states["102"] = "F"
-
-    cancelled: list[object] = []
-    failed: list[tuple[object, str]] = []
-    runner.job_cancelled.connect(lambda jid: cancelled.append(jid))
-    runner.job_failed.connect(lambda jid, message: failed.append((jid, message)))
-
-    runner._poll_queue()
-
-    assert cancelled == [cancel_job]
-    assert failed[0][0] == fail_job
-
-
-def test_cluster_runner_poll_failed_downloads_numbered_error_files(qapp, tmp_path: Path) -> None:
-    runner = ClusterJobRunner()
-    ssh = FakeSSH()
-    runner._ssh = ssh
-    scheduler = _FakeScheduler()
-    runner._scheduler = scheduler
-
-    job_id = uuid4()
-    runner._tracked_jobs[job_id] = cluster_runner_module._TrackedClusterJob(
-        job_id=job_id,
-        remote_job_id="102",
-        remote_dir="/remote/job",
-        seed_name="seed",
-        local_output_dir=tmp_path,
-    )
-    scheduler._states["102"] = "F"
-    ssh.remote_files["/remote/job/seed.0001.err"] = b"numbered error"
-    ssh.remote_files["/remote/job/seed.other.err"] = b"not selected"
-
-    runner._poll_queue()
-
-    assert (tmp_path / "seed.0001.err").read_bytes() == b"numbered error"
-    assert not (tmp_path / "seed.other.err").exists()
-
-
-def test_cluster_runner_poll_failed_downloads_slurm_output(qapp, tmp_path: Path) -> None:
-    runner = ClusterJobRunner()
-    ssh = FakeSSH()
-    runner._ssh = ssh
-    scheduler = _FakeScheduler()
-    runner._scheduler = scheduler
-
-    job_id = uuid4()
-    runner._tracked_jobs[job_id] = cluster_runner_module._TrackedClusterJob(
-        job_id=job_id,
-        remote_job_id="771300",
-        remote_dir="/remote/job",
-        seed_name="seed",
-        local_output_dir=tmp_path,
-    )
-    scheduler._states["771300"] = "F"
-    ssh.remote_files["/remote/job/slurm-771300.out"] = b"slurm failure details"
-
-    runner._poll_queue()
-
-    assert (tmp_path / "slurm-771300.out").read_bytes() == b"slurm failure details"
-
-
-def test_cluster_runner_poll_failed_downloads_scheduler_job_output(qapp, tmp_path: Path) -> None:
-    runner = ClusterJobRunner()
-    ssh = FakeSSH()
-    runner._ssh = ssh
-    scheduler = _FakeScheduler()
-    runner._scheduler = scheduler
-
-    job_id = uuid4()
-    runner._tracked_jobs[job_id] = cluster_runner_module._TrackedClusterJob(
-        job_id=job_id,
-        remote_job_id="703535",
-        remote_dir="/remote/job",
-        seed_name="positivemuon_Random_Site_20",
-        local_output_dir=tmp_path,
-    )
-    scheduler._states["703535"] = "F"
-    ssh.remote_files["/remote/job/castep.mpi-703535.out"] = b"scheduler failure details"
-
-    runner._poll_queue()
-
-    assert (tmp_path / "castep.mpi-703535.out").read_bytes() == b"scheduler failure details"
-
-
 def test_cluster_runner_addqueue_submission_uploads_the_staleness_marker(
     qapp, tmp_path: Path
 ) -> None:
@@ -518,56 +255,6 @@ def test_cluster_runner_addqueue_submission_uploads_the_staleness_marker(
     uploads = [str(command[1]) for command in runner._ssh.commands if command[0] == "put"]
     assert "/remote/work/seed/seed.param" in uploads
     assert all(not upload.endswith("run.sh") for upload in uploads)
-
-
-def test_cluster_runner_poll_names_the_scheduler_failure_state(qapp, tmp_path: Path) -> None:
-    runner = ClusterJobRunner()
-    runner._ssh = FakeSSH()
-    scheduler = _FakeScheduler()
-    runner._scheduler = scheduler
-    job_id = uuid4()
-    runner._tracked_jobs[job_id] = cluster_runner_module._TrackedClusterJob(
-        job_id=job_id,
-        remote_job_id="140",
-        remote_dir="/remote/job",
-        seed_name="seed",
-        local_output_dir=tmp_path,
-    )
-    scheduler._states["140"] = "OOM"
-
-    failures: list[str] = []
-    runner.job_failed.connect(lambda _jid, message: failures.append(message))
-
-    runner._poll_queue()
-
-    assert failures == ["Scheduler reported the job as OUT_OF_MEMORY."]
-
-
-def test_cluster_runner_poll_timeout_downloads_scheduler_log(qapp, tmp_path: Path) -> None:
-    """A TIMEOUT stop downloads the scheduler log so the stop can be diagnosed."""
-
-    runner = ClusterJobRunner()
-    runner._ssh = FakeSSH()
-    scheduler = _FakeScheduler()
-    runner._scheduler = scheduler
-    job_id = uuid4()
-    runner._tracked_jobs[job_id] = cluster_runner_module._TrackedClusterJob(
-        job_id=job_id,
-        remote_job_id="150",
-        remote_dir="/remote/job",
-        seed_name="seed",
-        local_output_dir=tmp_path,
-    )
-    runner._ssh.remote_files["/remote/job/slurm-150.out"] = b"DUE TO TIME LIMIT"
-    scheduler._states["150"] = "TO"
-
-    statuses: list[str] = []
-    runner.status_changed.connect(lambda _jid, status: statuses.append(status))
-
-    runner._poll_queue()
-
-    assert statuses == [JobStatus.STOPPED.value]
-    assert (tmp_path / "slurm-150.out").read_bytes() == b"DUE TO TIME LIMIT"
 
 
 def test_cluster_runner_connect_to_same_config_is_noop(
@@ -673,80 +360,6 @@ def test_cluster_runner_submit_validation_errors(qapp, tmp_path: Path) -> None:
         )
 
 
-def test_cluster_runner_poll_no_connection_and_no_active_jobs(qapp) -> None:
-    runner = ClusterJobRunner()
-
-    # No connection branch
-    runner._poll_queue()
-
-    # Connected but nothing active branch
-    runner._ssh = FakeSSH()
-    runner._scheduler = _FakeScheduler()
-    checked: list[object] = []
-    runner.queue_checked.connect(lambda value: checked.append(value))
-    runner._poll_queue()
-
-    assert len(checked) == 1
-    assert hasattr(checked[0], "checked_at")
-
-
-def test_cluster_runner_queue_snapshot_includes_elapsed_runtime(qapp, tmp_path: Path) -> None:
-    runner = ClusterJobRunner()
-    runner._ssh = FakeSSH()
-    scheduler = _FakeScheduler()
-    runner._scheduler = scheduler
-
-    job_id = uuid4()
-    entry = cluster_runner_module._TrackedClusterJob(
-        job_id=job_id,
-        remote_job_id="200",
-        remote_dir="/remote/job",
-        seed_name="seed",
-        local_output_dir=tmp_path,
-        status=JobStatus.RUNNING,
-    )
-    runner._tracked_jobs[job_id] = entry
-    scheduler._states["200"] = "R"
-    scheduler._elapsed["200"] = "00:12:34"
-
-    checked: list[object] = []
-    runner.queue_checked.connect(lambda value: checked.append(value))
-    runner._poll_queue()
-
-    assert checked
-    assert checked[-1].elapsed_by_job_id == {job_id: "00:12:34"}
-
-
-def test_cluster_runner_poll_queued_state_and_same_state(qapp, tmp_path: Path) -> None:
-    runner = ClusterJobRunner()
-    runner._ssh = FakeSSH()
-    scheduler = _FakeScheduler()
-    runner._scheduler = scheduler
-
-    job_id = uuid4()
-    entry = cluster_runner_module._TrackedClusterJob(
-        job_id=job_id,
-        remote_job_id="200",
-        remote_dir="/remote/job",
-        seed_name="seed",
-        local_output_dir=tmp_path,
-        status=JobStatus.SUBMITTING,
-    )
-    runner._tracked_jobs[job_id] = entry
-    scheduler._states["200"] = "PD"
-
-    statuses: list[str] = []
-    runner.status_changed.connect(lambda _jid, status: statuses.append(status))
-    runner._poll_queue()
-
-    assert statuses[-1] == JobStatus.QUEUED.value
-
-    # Same-state branch should not emit anything new
-    statuses_before = list(statuses)
-    runner._poll_queue()
-    assert statuses == statuses_before
-
-
 def test_cluster_runner_helper_guards(qapp) -> None:
     runner = ClusterJobRunner()
 
@@ -756,34 +369,6 @@ def test_cluster_runner_helper_guards(qapp) -> None:
     runner._ssh = FakeSSH()
     with pytest.raises(ConnectionError, match="not configured"):
         runner._require_scheduler()
-
-
-def test_cluster_runner_cancel_ignores_terminal_job(qapp, tmp_path: Path) -> None:
-    runner = ClusterJobRunner()
-    runner._ssh = FakeSSH()
-    runner._scheduler = _FakeScheduler()
-
-    job_id = uuid4()
-    runner._tracked_jobs[job_id] = cluster_runner_module._TrackedClusterJob(
-        job_id=job_id,
-        remote_job_id="301",
-        remote_dir="/remote/job",
-        seed_name="seed",
-        local_output_dir=tmp_path,
-        terminal=True,
-    )
-
-    runner.cancel(job_id)
-
-
-def test_cluster_runner_refresh_queue_calls_poll(qapp, monkeypatch: pytest.MonkeyPatch) -> None:
-    runner = ClusterJobRunner()
-    calls: list[str] = []
-    monkeypatch.setattr(runner, "_poll_queue", lambda: calls.append("poll"))
-
-    runner.refresh_queue()
-
-    assert calls == ["poll"]
 
 
 def test_cluster_runner_submit_uses_builtin_scarf_template_when_unset(
@@ -1236,574 +821,6 @@ def test_cluster_runner_refuses_an_impossible_placement_before_uploading(
     assert scheduler.submit_requests == []
 
 
-def test_cluster_runner_track_existing_job_registers_active_entry(qapp, tmp_path: Path) -> None:
-    runner = ClusterJobRunner()
-
-    job_id = uuid4()
-    output_dir = tmp_path / "tracked"
-    output_dir.mkdir(parents=True, exist_ok=True)
-    runner.track_existing_job(
-        job_id=job_id,
-        remote_job_id="661111",
-        remote_dir="/remote/work/tracked",
-        seed_name="tracked",
-        local_output_dir=output_dir,
-        cluster_name="Redwood",
-        status=JobStatus.RUNNING,
-    )
-
-    tracked = runner._tracked_jobs[job_id]
-    assert tracked.remote_job_id == "661111"
-    assert tracked.remote_dir == "/remote/work/tracked"
-    assert tracked.cluster_name == "Redwood"
-    assert tracked.terminal is False
-
-
-def test_cluster_runner_track_existing_job_starts_polling_when_connected(
-    qapp, tmp_path: Path
-) -> None:
-    runner = ClusterJobRunner()
-    runner._ssh = FakeSSH()
-    runner._config = cluster_runner_module.ClusterConfig(
-        name="Redwood",
-        hostname="redwood.example",
-        username="alice",
-        auth_method="key",
-        key_path="",
-        default_working_directory="/remote/work",
-        queue_system="slurm",
-        cores_per_node=32,
-        default_walltime="01:00:00",
-        template_script_path="builtin:slurm-basic",
-    )
-
-    output_dir = tmp_path / "tracked_connected"
-    output_dir.mkdir(parents=True, exist_ok=True)
-    runner.track_existing_job(
-        job_id=uuid4(),
-        remote_job_id="661112",
-        remote_dir="/remote/work/tracked_connected",
-        seed_name="tracked_connected",
-        local_output_dir=output_dir,
-        cluster_name="Redwood",
-        status=JobStatus.RUNNING,
-    )
-
-    assert runner._poll_timer.isActive() is True
-    runner._poll_timer.stop()
-
-
-def test_cluster_runner_connect_starts_polling_for_existing_active_jobs(
-    qapp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    runner = ClusterJobRunner()
-    fake_ssh = FakeSSH()
-    fake_scheduler = _FakeScheduler()
-
-    monkeypatch.setattr(
-        cluster_runner_module, "SSHConnection", lambda config, settings=None: fake_ssh
-    )
-    monkeypatch.setattr(
-        cluster_runner_module, "create_scheduler", lambda *args, **kwargs: fake_scheduler
-    )
-
-    output_dir = tmp_path / "tracked_preconnect"
-    output_dir.mkdir(parents=True, exist_ok=True)
-    runner.track_existing_job(
-        job_id=uuid4(),
-        remote_job_id="661113",
-        remote_dir="/remote/work/tracked_preconnect",
-        seed_name="tracked_preconnect",
-        local_output_dir=output_dir,
-        cluster_name="Redwood",
-        status=JobStatus.RUNNING,
-    )
-
-    config = cluster_runner_module.ClusterConfig(
-        name="Redwood",
-        hostname="redwood.example",
-        username="alice",
-        auth_method="key",
-        key_path="",
-        default_working_directory="/remote/work",
-        queue_system="slurm",
-        cores_per_node=32,
-        default_walltime="01:00:00",
-        template_script_path="builtin:slurm-basic",
-    )
-
-    runner.connect_to_cluster(config)
-
-    assert runner._poll_timer.isActive() is True
-    runner._poll_timer.stop()
-
-
-def test_cluster_runner_poll_only_updates_jobs_for_connected_cluster(qapp, tmp_path: Path) -> None:
-    runner = ClusterJobRunner()
-    runner._ssh = FakeSSH()
-    scheduler = _FakeScheduler()
-    runner._scheduler = scheduler
-    runner._config = cluster_runner_module.ClusterConfig(
-        name="Redwood",
-        hostname="redwood.example",
-        username="alice",
-        auth_method="key",
-        key_path="",
-        default_working_directory="/remote/work",
-        queue_system="slurm",
-        cores_per_node=32,
-        default_walltime="01:00:00",
-        template_script_path="builtin:slurm-basic",
-    )
-
-    tracked_redwood = uuid4()
-    tracked_scarf = uuid4()
-    runner._tracked_jobs[tracked_redwood] = cluster_runner_module._TrackedClusterJob(
-        job_id=tracked_redwood,
-        remote_job_id="661200",
-        remote_dir="/remote/work/redwood_job",
-        seed_name="redwood_job",
-        local_output_dir=tmp_path,
-        cluster_name="Redwood",
-        status=JobStatus.QUEUED,
-    )
-    runner._tracked_jobs[tracked_scarf] = cluster_runner_module._TrackedClusterJob(
-        job_id=tracked_scarf,
-        remote_job_id="771300",
-        remote_dir="/remote/work/scarf_job",
-        seed_name="scarf_job",
-        local_output_dir=tmp_path,
-        cluster_name="SCARF",
-        status=JobStatus.QUEUED,
-    )
-
-    scheduler._states["661200"] = "R"
-    scheduler._states["771300"] = "R"
-
-    status_events: list[tuple[object, object]] = []
-    runner.status_changed.connect(lambda jid, status: status_events.append((jid, status)))
-
-    runner._poll_queue()
-
-    assert (tracked_redwood, JobStatus.RUNNING.value) in status_events
-    assert all(event_job_id != tracked_scarf for event_job_id, _status in status_events)
-    assert runner._tracked_jobs[tracked_redwood].status == JobStatus.RUNNING
-    assert runner._tracked_jobs[tracked_scarf].status == JobStatus.QUEUED
-
-
-# ---------------------------------------------------------------------------
-# Retrieval signal flow: each RetrievalResult becomes one signal sequence.
-# ---------------------------------------------------------------------------
-
-
-def _runner_with_canned_retrieval(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, result: RetrievalResult
-) -> tuple[ClusterJobRunner, object, list[dict[str, object]]]:
-    runner = ClusterJobRunner()
-    runner._ssh = FakeSSH()
-    runner._scheduler = _FakeScheduler()
-    entry = cluster_runner_module._TrackedClusterJob(
-        job_id=uuid4(),
-        remote_job_id="120",
-        remote_dir="/remote/job",
-        seed_name="seed",
-        local_output_dir=tmp_path,
-        retrieval=RetrievalFlags(retrieve_out_cell=True),
-    )
-    calls: list[dict[str, object]] = []
-
-    def _retrieve(_ssh, **fields):
-        calls.append(fields)
-        return result
-
-    monkeypatch.setattr(cluster_runner_module, "retrieve_job_outputs", _retrieve)
-    return runner, entry, calls
-
-
-def _record_signals(runner: ClusterJobRunner) -> dict[str, list[object]]:
-    events: dict[str, list[object]] = {"status": [], "failed": [], "finished": []}
-    runner.status_changed.connect(lambda _jid, status: events["status"].append(status))
-    runner.job_failed.connect(lambda _jid, message: events["failed"].append(message))
-    runner.job_finished.connect(
-        lambda _jid, parsed, artifacts: events["finished"].append((parsed, artifacts))
-    )
-    return events
-
-
-def test_cluster_runner_retrieval_passes_the_tracked_fields(
-    qapp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    result = RetrievalResult(RetrievalOutcome.STOPPED, "stopped")
-    runner, entry, calls = _runner_with_canned_retrieval(monkeypatch, tmp_path, result)
-
-    runner._retrieve_results(entry, missing_from_queue=True)
-
-    assert calls == [
-        {
-            "remote_job_id": "120",
-            "remote_dir": "/remote/job",
-            "seed_name": "seed",
-            "local_output_dir": tmp_path,
-            "retrieval": RetrievalFlags(retrieve_out_cell=True),
-            "missing_from_queue": True,
-        }
-    ]
-
-
-def test_cluster_runner_completed_retrieval_emits_finished_then_completed(
-    qapp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    parsed = CastepResult(completed=True, total_energy=-1.0)
-    artifacts = ParsedJobArtifacts()
-    result = RetrievalResult(
-        RetrievalOutcome.COMPLETED, "output retrieved and parsed", parsed, artifacts
-    )
-    runner, entry, _calls = _runner_with_canned_retrieval(monkeypatch, tmp_path, result)
-    events = _record_signals(runner)
-
-    observation = runner._retrieve_results(entry)
-
-    assert observation == "output retrieved and parsed"
-    assert events["status"] == [JobStatus.RETRIEVING.value, JobStatus.COMPLETED.value]
-    assert events["finished"] == [(parsed, artifacts)]
-    assert events["failed"] == []
-    assert entry.terminal is True
-
-
-def test_cluster_runner_stopped_retrieval_emits_stopped_without_failure(
-    qapp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    result = RetrievalResult(RetrievalOutcome.STOPPED, "output incomplete; stopped (walltime)")
-    runner, entry, _calls = _runner_with_canned_retrieval(monkeypatch, tmp_path, result)
-    events = _record_signals(runner)
-
-    observation = runner._retrieve_results(entry)
-
-    assert observation == "output incomplete; stopped (walltime)"
-    assert events["status"] == [JobStatus.RETRIEVING.value, JobStatus.STOPPED.value]
-    assert events["failed"] == []
-    assert events["finished"] == []
-    assert entry.terminal is True
-
-
-def test_cluster_runner_final_retrieval_failure_fails_immediately(
-    qapp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    result = RetrievalResult(
-        RetrievalOutcome.FAILED,
-        "missing from scheduler queue; output parsing failed",
-        failure=RetrievalFailure("Failed to retrieve or parse remote output: boom"),
-    )
-    runner, entry, _calls = _runner_with_canned_retrieval(monkeypatch, tmp_path, result)
-    events = _record_signals(runner)
-
-    observation = runner._retrieve_results(entry, missing_from_queue=True)
-
-    assert observation == "missing from scheduler queue; output parsing failed"
-    assert events["failed"] == ["Failed to retrieve or parse remote output: boom"]
-    assert events["status"] == [JobStatus.RETRIEVING.value, JobStatus.FAILED.value]
-    assert entry.terminal is True
-    assert entry.missing_retrieval_attempts == 0
-
-
-def test_cluster_runner_retry_eligible_failure_counts_attempts_then_fails(
-    qapp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    result = RetrievalResult(
-        RetrievalOutcome.FAILED,
-        "missing from scheduler queue; output retrieval failed",
-        failure=RetrievalFailure(
-            "Failed to retrieve or parse remote output: gone", retry_eligible=True
-        ),
-    )
-    runner, entry, _calls = _runner_with_canned_retrieval(monkeypatch, tmp_path, result)
-    events = _record_signals(runner)
-    limit = cluster_runner_module.MISSING_ENTRY_RETRIEVAL_ATTEMPTS
-
-    observations = [runner._retrieve_results(entry, missing_from_queue=True) for _ in range(limit)]
-
-    assert observations[:-1] == [
-        f"missing from scheduler queue; waiting for output (attempt {attempt} of {limit})"
-        for attempt in range(1, limit)
-    ]
-    assert observations[-1] == (
-        f"missing from scheduler queue; output could not be retrieved after {limit} checks"
-    )
-    assert events["failed"] == [cluster_runner_module.MISSING_SCHEDULER_ENTRY_FAILURE_MESSAGE]
-    assert events["status"] == [JobStatus.RETRIEVING.value] * limit + [JobStatus.FAILED.value]
-    assert entry.missing_retrieval_attempts == limit
-    assert entry.terminal is True
-
-
-# ---------------------------------------------------------------------------
-# Missing-scheduler-entry grace window (job-lifecycle hardening, rec #5) and
-# per-job poll observations (rec #2).
-# ---------------------------------------------------------------------------
-
-
-def _submitted_runner(
-    tmp_path: Path, seed: str, *, ssh: FakeSSH | None = None
-) -> tuple[ClusterJobRunner, _FakeScheduler, object]:
-    runner = ClusterJobRunner()
-    runner._ssh = ssh or FakeSSH()
-    scheduler = _FakeScheduler()
-    runner._scheduler = scheduler
-    job_id = uuid4()
-    job_dir = _prepare_local_job(tmp_path, seed)
-    template = _template_file(tmp_path)
-    runner.submit(
-        job_id=job_id,
-        local_job_dir=job_dir,
-        seed_name=seed,
-        num_processes=8,
-        walltime="01:00:00",
-        working_directory="/remote/work",
-        template_script_path=str(template),
-        cores_per_node=32,
-    )
-    return runner, scheduler, job_id
-
-
-def test_cluster_runner_missing_entry_defers_failure_within_grace_window(
-    qapp, tmp_path: Path
-) -> None:
-    runner, scheduler, job_id = _submitted_runner(
-        tmp_path, "grace_seed", ssh=OutputUnavailableSSH()
-    )
-    scheduler._states["12345"] = "MISSING"
-
-    failed: list[tuple[object, str]] = []
-    snapshots: list[object] = []
-    runner.job_failed.connect(lambda jid, message: failed.append((jid, message)))
-    runner.queue_checked.connect(lambda snapshot: snapshots.append(snapshot))
-
-    # Attempts 1 and 2: output unavailable, but the job is NOT failed yet.
-    runner._poll_queue()
-    assert failed == []
-    assert runner._tracked_jobs[job_id].terminal is False
-    assert runner._tracked_jobs[job_id].missing_retrieval_attempts == 1
-    assert snapshots[-1].observations_by_job_id[job_id] == (
-        "missing from scheduler queue; waiting for output (attempt 1 of 3)"
-    )
-
-    runner._poll_queue()
-    assert failed == []
-    assert runner._tracked_jobs[job_id].terminal is False
-    assert snapshots[-1].observations_by_job_id[job_id] == (
-        "missing from scheduler queue; waiting for output (attempt 2 of 3)"
-    )
-
-    # Third failed attempt: the diagnostic failure is emitted verbatim.
-    status_events: list[tuple[object, object]] = []
-    runner.status_changed.connect(lambda jid, status: status_events.append((jid, status)))
-    runner._poll_queue()
-    assert len(failed) == 1
-    assert failed[0][0] == job_id
-    assert failed[0][1] == (
-        "Job disappeared from the scheduler queue and its output could not be "
-        "retrieved after 3 checks. The scheduler history may have expired, the "
-        "queue status command may be filtered, or a different cluster may be "
-        "connected. Retry retrieval or resubmit."
-    )
-    assert runner._tracked_jobs[job_id].terminal is True
-    assert (job_id, JobStatus.FAILED.value) in status_events
-    assert snapshots[-1].observations_by_job_id[job_id] == (
-        "missing from scheduler queue; output could not be retrieved after 3 checks"
-    )
-
-
-def test_cluster_runner_missing_entry_reappearance_resets_counter(qapp, tmp_path: Path) -> None:
-    runner, scheduler, job_id = _submitted_runner(
-        tmp_path, "reappear_seed", ssh=OutputUnavailableSSH()
-    )
-    snapshots: list[object] = []
-    runner.queue_checked.connect(lambda snapshot: snapshots.append(snapshot))
-
-    scheduler._states["12345"] = "MISSING"
-    runner._poll_queue()
-    assert runner._tracked_jobs[job_id].missing_retrieval_attempts == 1
-
-    # The job reappears in the scheduler queue: the counter resets.
-    scheduler._states["12345"] = "R"
-    runner._poll_queue()
-    assert runner._tracked_jobs[job_id].missing_retrieval_attempts == 0
-    assert snapshots[-1].observations_by_job_id[job_id] == "scheduler reports RUNNING"
-
-    # Vanishing again starts a fresh grace window.
-    scheduler._states["12345"] = "MISSING"
-    runner._poll_queue()
-    assert runner._tracked_jobs[job_id].missing_retrieval_attempts == 1
-    assert snapshots[-1].observations_by_job_id[job_id] == (
-        "missing from scheduler queue; waiting for output (attempt 1 of 3)"
-    )
-    assert runner._tracked_jobs[job_id].terminal is False
-
-
-def test_cluster_runner_missing_entry_parse_failure_fails_immediately(
-    qapp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    runner, scheduler, job_id = _submitted_runner(tmp_path, "parse_fail_seed")
-    scheduler._states["12345"] = "MISSING"
-
-    def _raise(_path: Path) -> CastepResult:
-        raise ValueError("bad output")
-
-    monkeypatch.setattr(cluster_retrieval_module, "parse_castep_output", _raise)
-
-    failed: list[tuple[object, str]] = []
-    snapshots: list[object] = []
-    runner.job_failed.connect(lambda jid, message: failed.append((jid, message)))
-    runner.queue_checked.connect(lambda snapshot: snapshots.append(snapshot))
-
-    runner._poll_queue()
-
-    # Downloaded-but-unreadable output is a real failure: no grace window.
-    assert failed == [(job_id, "Failed to retrieve or parse remote output: bad output")]
-    assert runner._tracked_jobs[job_id].terminal is True
-    assert snapshots[-1].observations_by_job_id[job_id] == (
-        "missing from scheduler queue; output parsing failed"
-    )
-
-
-def test_cluster_runner_missing_entry_successful_retrieval_completes(
-    qapp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    runner, scheduler, job_id = _submitted_runner(tmp_path, "late_success_seed")
-    scheduler._states["12345"] = "MISSING"
-    monkeypatch.setattr(
-        cluster_retrieval_module,
-        "parse_castep_output",
-        lambda _path: CastepResult(completed=True, total_energy=-1.0),
-    )
-
-    finished: list[tuple[object, object]] = []
-    snapshots: list[object] = []
-    runner.job_finished.connect(lambda jid, parsed: finished.append((jid, parsed)))
-    runner.queue_checked.connect(lambda snapshot: snapshots.append(snapshot))
-
-    runner._poll_queue()
-
-    assert len(finished) == 1
-    assert finished[0][0] == job_id
-    assert runner._tracked_jobs[job_id].terminal is True
-    assert snapshots[-1].observations_by_job_id[job_id] == (
-        "missing from scheduler queue; output retrieved and parsed"
-    )
-
-
-def test_cluster_runner_snapshot_observations_and_utc_checked_at(qapp, tmp_path: Path) -> None:
-    runner, scheduler, job_id = _submitted_runner(tmp_path, "observed_seed")
-    scheduler._states["12345"] = "R"
-
-    snapshots: list[object] = []
-    runner.queue_checked.connect(lambda snapshot: snapshots.append(snapshot))
-
-    runner._poll_queue()
-    assert snapshots[-1].checked_at.tzinfo is not None
-    assert snapshots[-1].observations_by_job_id[job_id] == "scheduler reports RUNNING"
-
-    # Unchanged scheduler state emits no status event but is still observed.
-    runner._poll_queue()
-    assert snapshots[-1].observations_by_job_id[job_id] == "scheduler reports RUNNING"
-
-    scheduler._states["12345"] = "PD"
-    runner._poll_queue()
-    assert snapshots[-1].observations_by_job_id[job_id] == "scheduler reports QUEUED"
-
-
-def test_cluster_runner_poll_failure_leaves_tracked_jobs_untouched(qapp, tmp_path: Path) -> None:
-    # Rec #3: a poll failure disconnects and emits poll_failed, but must not
-    # mutate tracked job state or emit any job lifecycle signal — staleness is
-    # derived by the dashboard from last_checked_at plus the disconnect.
-    runner, _scheduler, job_id = _submitted_runner(tmp_path, "poll_fail_seed")
-    runner._scheduler = _RaisingScheduler()
-
-    job_events: list[tuple[str, object]] = []
-    poll_failures: list[str] = []
-    runner.job_failed.connect(lambda jid, message: job_events.append(("failed", jid)))
-    runner.job_finished.connect(lambda jid, parsed: job_events.append(("finished", jid)))
-    runner.job_cancelled.connect(lambda jid: job_events.append(("cancelled", jid)))
-    runner.status_changed.connect(lambda jid, status: job_events.append(("status", jid)))
-    runner.poll_failed.connect(poll_failures.append)
-
-    runner._poll_queue()
-
-    assert len(poll_failures) == 1
-    assert job_events == []
-    entry = runner._tracked_jobs[job_id]
-    assert entry.terminal is False
-    assert entry.status == JobStatus.QUEUED
-    assert entry.missing_retrieval_attempts == 0
-
-
-def test_cluster_runner_poll_reports_a_transport_that_died(qapp, tmp_path: Path) -> None:
-    # A dead transport leaves ``_ssh`` set but ``is_connected`` false. The poll must
-    # say so rather than stop silently, or the connection state stays "connected".
-    runner, _scheduler, _job_id = _submitted_runner(tmp_path, "dead_transport_seed")
-    runner._config = ClusterConfig(
-        name="SCARF",
-        hostname="host",
-        username="user",
-        auth_method="key",
-        key_path="",
-        default_working_directory="/work",
-        queue_system="SLURM",
-        cores_per_node=24,
-        default_walltime="",
-        template_script_path="",
-    )
-
-    class _DeadSSH:
-        is_connected = False
-
-        def disconnect(self) -> None:
-            pass
-
-    runner._ssh = _DeadSSH()
-    connection_states: list[bool] = []
-    poll_failures: list[str] = []
-    runner.connection_status_changed.connect(connection_states.append)
-    runner.poll_failed.connect(poll_failures.append)
-
-    runner._poll_queue()
-
-    assert connection_states == [False]
-    assert poll_failures == ["Queue polling failed for SCARF: the connection was lost."]
-    assert runner._ssh is None
-
-
-def test_cluster_runner_poll_closes_a_dead_idle_connection_without_a_warning(qapp) -> None:
-    runner = ClusterJobRunner()
-
-    class _DeadSSH:
-        is_connected = False
-
-        def disconnect(self) -> None:
-            pass
-
-    runner._ssh = _DeadSSH()
-    connection_states: list[bool] = []
-    poll_failures: list[str] = []
-    runner.connection_status_changed.connect(connection_states.append)
-    runner.poll_failed.connect(poll_failures.append)
-
-    runner._poll_queue()
-
-    assert connection_states == [False]
-    assert poll_failures == []
-    assert runner._ssh is None
-
-
-def test_cluster_runner_poll_is_silent_when_never_connected(qapp) -> None:
-    runner = ClusterJobRunner()
-    poll_failures: list[str] = []
-    runner.poll_failed.connect(poll_failures.append)
-
-    runner._poll_queue()
-
-    assert poll_failures == []
-
-
 def _submit_scarf_job(
     tmp_path: Path,
     *,
@@ -2060,426 +1077,6 @@ def test_scheduler_job_is_active_propagates_an_accounting_failure(qapp) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _record_lifecycle(runner: ClusterJobRunner) -> list[tuple[str, object]]:
-    """Record the runner's lifecycle signals in emission order."""
-
-    events: list[tuple[str, object]] = []
-    runner.status_changed.connect(lambda _jid, status: events.append(("status", status)))
-    runner.job_started.connect(lambda _jid: events.append(("started", None)))
-    runner.job_failed.connect(lambda _jid, message: events.append(("failed", message)))
-    runner.job_reappeared.connect(lambda _jid, status: events.append(("reappeared", status)))
-    return events
-
-
-def test_cluster_runner_pending_job_hidden_from_queue_is_never_failed(qapp, tmp_path: Path) -> None:
-    runner, scheduler, job_id = _submitted_runner(
-        tmp_path, "long_queue_seed", ssh=OutputUnavailableSSH()
-    )
-    events = _record_lifecycle(runner)
-    snapshots: list[object] = []
-    runner.queue_checked.connect(lambda snapshot: snapshots.append(snapshot))
-    scheduler._states["12345"] = "MISSING"
-    scheduler._history["12345"] = "PD"
-
-    limit = cluster_runner_module.MISSING_ENTRY_RETRIEVAL_ATTEMPTS
-    for _ in range(limit + 2):
-        runner._poll_queue()
-
-    # Accounting reports the job pending, so no retrieval is attempted and the
-    # grace window never runs out, however long the job waits.
-    assert events == []
-    assert scheduler.history_queries == [["12345"]] * (limit + 2)
-    tracked = runner._tracked_jobs[job_id]
-    assert tracked.terminal is False
-    assert tracked.missing_retrieval_attempts == 0
-    assert not any(action == "get" for action, _path in runner._ssh.commands)
-    assert snapshots[-1].observations_by_job_id[job_id] == (
-        "missing from scheduler queue; scheduler accounting reports QUEUED"
-    )
-
-    # The job starts: accounting reports it running.
-    scheduler._history["12345"] = "R"
-    runner._poll_queue()
-
-    assert events == [("status", JobStatus.RUNNING.value), ("started", None)]
-    assert tracked.status == JobStatus.RUNNING
-
-
-def test_cluster_runner_queue_lookup_skips_accounting_when_every_job_is_listed(
-    qapp, tmp_path: Path
-) -> None:
-    runner, scheduler, _job_id = _submitted_runner(tmp_path, "listed_seed")
-
-    runner._poll_queue()
-
-    assert scheduler.history_queries == []
-
-
-def test_cluster_runner_queued_to_running_emits_job_started_once(qapp, tmp_path: Path) -> None:
-    runner, scheduler, _job_id = _submitted_runner(tmp_path, "start_seed")
-    events = _record_lifecycle(runner)
-
-    runner._poll_queue()
-    scheduler._states["12345"] = "R"
-    runner._poll_queue()
-    runner._poll_queue()
-
-    assert events == [("status", JobStatus.RUNNING.value), ("started", None)]
-
-
-def test_cluster_runner_hidden_job_failed_after_grace_window_recovers_when_it_runs(
-    qapp, tmp_path: Path
-) -> None:
-    runner, scheduler, job_id = _submitted_runner(
-        tmp_path, "recover_seed", ssh=OutputUnavailableSSH()
-    )
-    events = _record_lifecycle(runner)
-    snapshots: list[object] = []
-    runner.queue_checked.connect(lambda snapshot: snapshots.append(snapshot))
-    # Neither the queue nor accounting lists the pending job.
-    scheduler._states["12345"] = "MISSING"
-
-    limit = cluster_runner_module.MISSING_ENTRY_RETRIEVAL_ATTEMPTS
-    for _ in range(limit):
-        runner._poll_queue()
-
-    tracked = runner._tracked_jobs[job_id]
-    assert ("failed", cluster_runner_module.MISSING_SCHEDULER_ENTRY_FAILURE_MESSAGE) in events
-    assert tracked.terminal is True
-    assert tracked.watch_for_recovery is True
-
-    # Still missing: the failed job stays watched without another retrieval.
-    events.clear()
-    downloads = len(runner._ssh.commands)
-    runner._poll_queue()
-    runner._poll_queue()
-    assert events == []
-    assert len(runner._ssh.commands) == downloads
-    assert snapshots[-1].observations_by_job_id[job_id] == (
-        "missing from scheduler queue; not in scheduler accounting; watching for the job to reappear"
-    )
-
-    # SLURM starts the job: the runner reports it once and ends the watch.
-    scheduler._states["12345"] = "R"
-    runner._poll_queue()
-    runner._poll_queue()
-
-    assert events == [("reappeared", JobStatus.RUNNING.value)]
-    assert tracked.watch_for_recovery is False
-    assert tracked.terminal is True
-    assert snapshots[-2].observations_by_job_id[job_id] == (
-        "scheduler reports RUNNING again; tracking resumed"
-    )
-    assert job_id not in snapshots[-1].observations_by_job_id
-
-
-@pytest.mark.parametrize(
-    ("history_state", "reappeared"),
-    [("PD", JobStatus.QUEUED.value), ("CD", JobStatus.COMPLETED.value), ("CA", None)],
-)
-def test_cluster_runner_watched_job_follows_accounting(
-    qapp, tmp_path: Path, history_state: str, reappeared: str | None
-) -> None:
-    runner = ClusterJobRunner()
-    runner._ssh = FakeSSH()
-    scheduler = _FakeScheduler()
-    runner._scheduler = scheduler
-    job_id = uuid4()
-    runner.track_existing_job(
-        job_id=job_id,
-        remote_job_id="777",
-        remote_dir="/remote/work/watched",
-        seed_name="watched",
-        local_output_dir=tmp_path,
-        cluster_name="",
-        status=JobStatus.FAILED,
-        watch_for_recovery=True,
-    )
-    events = _record_lifecycle(runner)
-    snapshots: list[object] = []
-    runner.queue_checked.connect(lambda snapshot: snapshots.append(snapshot))
-    scheduler._states["777"] = "MISSING"
-    scheduler._history["777"] = history_state
-
-    runner._poll_queue()
-
-    expected = [] if reappeared is None else [("reappeared", reappeared)]
-    assert events == expected
-    assert runner._tracked_jobs[job_id].watch_for_recovery is False
-    if reappeared is None:
-        # Accounting confirms the job ended another way: it stays failed.
-        assert snapshots[-1].observations_by_job_id[job_id] == "scheduler reports CA"
-
-
-def test_cluster_runner_accounted_completion_with_unavailable_output_fails_without_watch(
-    qapp, tmp_path: Path
-) -> None:
-    runner, scheduler, job_id = _submitted_runner(
-        tmp_path, "accounted_seed", ssh=OutputUnavailableSSH()
-    )
-    events = _record_lifecycle(runner)
-    scheduler._states["12345"] = "MISSING"
-    scheduler._history["12345"] = "CD"
-
-    limit = cluster_runner_module.MISSING_ENTRY_RETRIEVAL_ATTEMPTS
-    for _ in range(limit):
-        runner._poll_queue()
-
-    # Accounting says the job completed, so the failure is the retrieval error
-    # itself, retryable with Retry retrieval; the job is not watched.
-    failures = [payload for kind, payload in events if kind == "failed"]
-    assert len(failures) == 1
-    assert str(failures[0]).startswith("Failed to retrieve or parse remote output")
-    assert runner._tracked_jobs[job_id].watch_for_recovery is False
-
-
-def test_cluster_runner_accounting_error_falls_back_to_the_grace_window(
-    qapp, tmp_path: Path
-) -> None:
-    runner, scheduler, job_id = _submitted_runner(
-        tmp_path, "sacct_error_seed", ssh=OutputUnavailableSSH()
-    )
-
-    def _broken_history(_ssh, _job_ids):
-        raise RuntimeError("sacct timed out")
-
-    scheduler.history = _broken_history
-    scheduler._states["12345"] = "MISSING"
-    disconnected: list[bool] = []
-    runner.connection_status_changed.connect(disconnected.append)
-
-    runner._poll_queue()
-
-    assert disconnected == []
-    assert runner._tracked_jobs[job_id].missing_retrieval_attempts == 1
-
-
-def test_cluster_runner_track_existing_job_watches_only_failed_jobs(qapp, tmp_path: Path) -> None:
-    runner = ClusterJobRunner()
-    runner._ssh = FakeSSH()
-    runner._scheduler = _FakeScheduler()
-    failed_id, running_id = uuid4(), uuid4()
-    for job_id, status in ((failed_id, JobStatus.FAILED), (running_id, JobStatus.RUNNING)):
-        runner.track_existing_job(
-            job_id=job_id,
-            remote_job_id=str(job_id.int % 1000),
-            remote_dir="/remote/work/job",
-            seed_name="job",
-            local_output_dir=tmp_path,
-            cluster_name="",
-            status=status,
-            watch_for_recovery=True,
-        )
-
-    assert runner._tracked_jobs[failed_id].watch_for_recovery is True
-    # An active job is polled normally; the flag only applies to failed jobs.
-    assert runner._tracked_jobs[running_id].watch_for_recovery is False
-    assert runner._poll_timer.isActive() is True
-
-
-def test_cluster_runner_suspended_running_job_stays_running(qapp, tmp_path: Path) -> None:
-    runner, scheduler, job_id = _submitted_runner(tmp_path, "suspend_seed")
-    events = _record_lifecycle(runner)
-    snapshots: list[object] = []
-    runner.queue_checked.connect(lambda snapshot: snapshots.append(snapshot))
-
-    for state in ("R", "S", "R"):
-        scheduler._states["12345"] = state
-        runner._poll_queue()
-        if state == "S":
-            assert snapshots[-1].observations_by_job_id[job_id] == "scheduler reports QUEUED"
-
-    # Resuming after a suspension is not a second start.
-    assert events == [("status", JobStatus.RUNNING.value), ("started", None)]
-    assert runner._tracked_jobs[job_id].status == JobStatus.RUNNING
-
-
-def test_cluster_runner_stop_watching_drops_the_job_from_polls(qapp, tmp_path: Path) -> None:
-    runner = ClusterJobRunner()
-    runner._ssh = FakeSSH()
-    scheduler = _FakeScheduler()
-    runner._scheduler = scheduler
-    watched_id, other_id = uuid4(), uuid4()
-    for job_id, remote_id, status in (
-        (watched_id, "801", JobStatus.FAILED),
-        (other_id, "802", JobStatus.QUEUED),
-    ):
-        runner.track_existing_job(
-            job_id=job_id,
-            remote_job_id=remote_id,
-            remote_dir="/remote/work/job",
-            seed_name="job",
-            local_output_dir=tmp_path,
-            cluster_name="",
-            status=status,
-            watch_for_recovery=True,
-        )
-    scheduler._states["801"] = "MISSING"
-    queried: list[list[str]] = []
-    original_status = scheduler.status
-    scheduler.status = lambda ssh, ids: queried.append(list(ids)) or original_status(ssh, ids)
-    snapshots: list[object] = []
-    runner.queue_checked.connect(lambda snapshot: snapshots.append(snapshot))
-
-    runner._poll_queue()
-    assert snapshots[-1].watched_job_ids == frozenset({watched_id})
-
-    # The user reset the job: the GUI ends its watch, and polls skip it.
-    runner.stop_watching([watched_id, other_id, uuid4()])
-    runner._poll_queue()
-
-    assert queried[-1] == ["802"]
-    assert snapshots[-1].watched_job_ids == frozenset()
-    assert runner._tracked_jobs[other_id].terminal is False
-
-
-def test_cluster_runner_reads_geometry_progress_of_tracked_jobs(qapp, tmp_path: Path) -> None:
-    fixture = Path(__file__).resolve().parents[1] / "fixtures" / "geometry" / "Si2_bfgs.castep"
-    runner = ClusterJobRunner()
-    ssh = GrowingOutputSSH()
-    ssh.remote_files["/remote/farmed/seed_farm001.castep"] = fixture.read_bytes()
-    runner._ssh = ssh
-    runner._config = ClusterConfig(name="alpha", hostname="alpha.example", username="alice")
-    farmed, missing, untracked = uuid4(), uuid4(), uuid4()
-    for job_id, remote_dir, retrieval in (
-        (farmed, "/remote/farmed", RetrievalFlags(task_farming_enabled=True, num_farms=2)),
-        (missing, "/remote/missing", RetrievalFlags()),
-    ):
-        runner._tracked_jobs[job_id] = cluster_runner_module._TrackedClusterJob(
-            job_id=job_id,
-            remote_job_id="1",
-            remote_dir=remote_dir,
-            seed_name="seed",
-            local_output_dir=tmp_path,
-            cluster_name="alpha",
-            status=JobStatus.RUNNING,
-            retrieval=retrieval,
-        )
-    results: list[dict] = []
-    runner.geometry_progress_read.connect(results.append)
-
-    runner.read_geometry_progress([farmed, missing, untracked])
-
-    # One job is read per turn of the event loop, and each reports when it is done.
-    assert pump_until(lambda: len(results) == 3)
-    assert results == [
-        {farmed: parse_geometry_progress(fixture)},
-        {missing: None},
-        {untracked: None},
-    ]
-    assert ssh.reads == [("/remote/farmed/seed_farm001.castep", 0)]
-
-
-def _runner_following_a_large_log(tmp_path: Path):
-    fixture = Path(__file__).resolve().parents[1] / "fixtures" / "geometry" / "Si2_bfgs.castep"
-    runner = ClusterJobRunner()
-    ssh = GrowingOutputSSH()
-    ssh.remote_files["/remote/job/seed.castep"] = (
-        b" filler line of CASTEP output\n" * 200_000 + fixture.read_bytes()
-    )
-    assert len(ssh.remote_files["/remote/job/seed.castep"]) > 2 * REMOTE_READ_CHUNK_BYTES
-    runner._ssh = ssh
-    job_id = uuid4()
-    runner._tracked_jobs[job_id] = cluster_runner_module._TrackedClusterJob(
-        job_id=job_id,
-        remote_job_id="1",
-        remote_dir="/remote/job",
-        seed_name="seed",
-        local_output_dir=tmp_path,
-        status=JobStatus.RUNNING,
-    )
-    results: list[dict] = []
-    runner.geometry_progress_read.connect(results.append)
-    return runner, ssh, job_id, results, parse_geometry_progress(fixture)
-
-
-def test_cluster_runner_reads_a_large_log_in_bounded_turns(qapp, tmp_path: Path) -> None:
-    runner, ssh, job_id, results, expected = _runner_following_a_large_log(tmp_path)
-
-    runner.read_geometry_progress([job_id])
-
-    # The first call read one chunk and reported nothing: the log is not read yet.
-    assert ssh.reads == [("/remote/job/seed.castep", 0)]
-    assert results == []
-    assert pump_until(lambda: results)
-    assert results == [{job_id: expected}]
-    assert ssh.reads == [
-        ("/remote/job/seed.castep", offset)
-        for offset in range(
-            0, len(ssh.remote_files["/remote/job/seed.castep"]), REMOTE_READ_CHUNK_BYTES
-        )
-    ]
-
-
-def test_cluster_runner_stops_reading_a_large_log_when_the_job_is_no_longer_tracked(
-    qapp, tmp_path: Path
-) -> None:
-    runner, ssh, job_id, results, _expected = _runner_following_a_large_log(tmp_path)
-
-    runner.read_geometry_progress([job_id])
-    runner.clear_tracked_jobs()
-
-    assert pump_until(lambda: results)
-    assert results == [{job_id: None}]
-    assert len(ssh.reads) == 1
-
-
-def test_cluster_runner_stops_reading_a_large_log_after_a_disconnect(qapp, tmp_path: Path) -> None:
-    runner, ssh, job_id, results, expected = _runner_following_a_large_log(tmp_path)
-
-    runner.read_geometry_progress([job_id])
-    ssh.is_connected = False
-    assert pump_until(lambda: results)
-    assert results == [{job_id: None}]
-    assert len(ssh.reads) == 1
-
-    # After a reconnect the next refresh carries on from where the read stopped.
-    ssh.is_connected = True
-    runner.read_geometry_progress([job_id])
-    assert pump_until(lambda: len(results) == 2)
-    assert results[1] == {job_id: expected}
-    assert ssh.reads[1] == ("/remote/job/seed.castep", REMOTE_READ_CHUNK_BYTES)
-
-
-def test_cluster_runner_reports_no_progress_when_a_read_fails_part_way(
-    qapp, tmp_path: Path
-) -> None:
-    runner, ssh, job_id, results, _expected = _runner_following_a_large_log(tmp_path)
-    read_bytes = ssh.read_bytes
-
-    def failing_second_read(remote_path, offset=0, max_bytes=None):
-        if offset:
-            raise OSError("SFTP read failed")
-        return read_bytes(remote_path, offset, max_bytes)
-
-    ssh.read_bytes = failing_second_read
-
-    runner.read_geometry_progress([job_id])
-
-    assert pump_until(lambda: results)
-    assert results == [{job_id: None}]
-
-
-def test_cluster_runner_reports_no_geometry_progress_while_disconnected(
-    qapp, tmp_path: Path
-) -> None:
-    runner = ClusterJobRunner()
-    job_id = uuid4()
-    runner._tracked_jobs[job_id] = cluster_runner_module._TrackedClusterJob(
-        job_id=job_id,
-        remote_job_id="1",
-        remote_dir="/remote/job",
-        seed_name="seed",
-        local_output_dir=tmp_path,
-    )
-    results: list[dict] = []
-    runner.geometry_progress_read.connect(results.append)
-
-    runner.read_geometry_progress([job_id])
-
-    assert results == [{job_id: None}]
-
-
 @pytest.mark.parametrize("queue_system", ["slurm", "addqueue"])
 def test_connect_passes_accounting_path_to_scheduler(qapp, monkeypatch, queue_system) -> None:
     ssh = FakeSSH()
@@ -2508,3 +1105,558 @@ def test_connect_passes_accounting_path_to_scheduler(qapp, monkeypatch, queue_sy
     assert runner.scheduler_job_is_active("123") is False
     assert len(commands) == 2
     runner.disconnect()
+
+
+# --- check_jobs: what one pass reports about each target ----------------------
+
+_REMOTE_DIR = "/remote/work/job"
+
+
+def _target(remote_job_id: str = "100", *, tmp_path: Path, **fields) -> CheckTarget:
+    fields.setdefault("job_id", uuid4())
+    fields.setdefault("remote_dir", _REMOTE_DIR)
+    fields.setdefault("seed_name", "job")
+    fields.setdefault("local_output_dir", tmp_path)
+    return CheckTarget(remote_job_id=remote_job_id, **fields)
+
+
+def _checking_runner(scheduler: _FakeScheduler | None = None, ssh: FakeSSH | None = None):
+    """Return a connected runner with the lists its signals fill."""
+
+    runner = ClusterJobRunner()
+    runner._ssh = ssh or FakeSSH()
+    runner._scheduler = scheduler or _FakeScheduler()
+    checked: list[tuple[object, JobEvidence]] = []
+    snapshots: list[QueueCheckSnapshot] = []
+    failures: list[str] = []
+    runner.job_checked.connect(lambda job_id, evidence: checked.append((job_id, evidence)))
+    runner.queue_checked.connect(snapshots.append)
+    runner.poll_failed.connect(failures.append)
+    return runner, checked, snapshots, failures
+
+
+def _retrieve_as(monkeypatch: pytest.MonkeyPatch, result: RetrievalResult) -> list[dict]:
+    """Make every look at a remote folder return ``result``; return the calls."""
+
+    calls: list[dict] = []
+
+    def _retrieve(_ssh, **kwargs) -> RetrievalResult:
+        calls.append(kwargs)
+        return result
+
+    monkeypatch.setattr(cluster_runner_module, "retrieve_job_outputs", _retrieve)
+    return calls
+
+
+@pytest.mark.parametrize(
+    ("queue_state", "state", "detail"),
+    [
+        ("PD", SchedulerState.PENDING, "PD"),
+        ("S", SchedulerState.PENDING, "S"),
+        ("R", SchedulerState.RUNNING, "R"),
+        ("CA", SchedulerState.CANCELLED, "CA"),
+    ],
+)
+def test_check_reports_a_listed_job_without_reading_its_folder(
+    qapp, tmp_path: Path, monkeypatch, queue_state: str, state: SchedulerState, detail: str
+) -> None:
+    scheduler = _FakeScheduler()
+    scheduler._states["100"] = queue_state
+    runner, checked, snapshots, _failures = _checking_runner(scheduler)
+    looks = _retrieve_as(monkeypatch, RetrievalResult(OutputState.COMPLETE))
+    target = _target(tmp_path=tmp_path)
+
+    runner.check_jobs([target])
+
+    assert looks == []
+    assert [job_id for job_id, _ in checked] == [target.job_id]
+    evidence = checked[0][1]
+    assert (evidence.scheduler, evidence.scheduler_detail) == (state, detail)
+    assert (evidence.output, evidence.from_accounting) == (OutputState.NOT_LOOKED, False)
+    assert (evidence.remote_job_id, evidence.remote_directory) == ("100", _REMOTE_DIR)
+    assert evidence.checked_at.utcoffset() is not None
+    assert snapshots[0].job_ids == (target.job_id,)
+
+
+@pytest.mark.parametrize(
+    ("queue_state", "state", "detail"),
+    [
+        ("CD", SchedulerState.COMPLETED, "CD"),
+        ("TO", SchedulerState.TIMED_OUT, "TIMEOUT"),
+        ("OOM", SchedulerState.FAILED, "OUT_OF_MEMORY"),
+    ],
+)
+def test_check_reads_the_folder_of_a_job_the_scheduler_reports_finished(
+    qapp, tmp_path: Path, monkeypatch, queue_state: str, state: SchedulerState, detail: str
+) -> None:
+    scheduler = _FakeScheduler()
+    scheduler._states["100"] = queue_state
+    runner, checked, _snapshots, _failures = _checking_runner(scheduler)
+    parsed = CastepResult(completed=True, total_energy=-1.0)
+    artifacts = ParsedJobArtifacts()
+    flags = RetrievalFlags(retrieve_out_cell=True)
+    looks = _retrieve_as(
+        monkeypatch, RetrievalResult(OutputState.COMPLETE, parsed=parsed, artifacts=artifacts)
+    )
+    target = _target(tmp_path=tmp_path, retrieval=flags)
+
+    runner.check_jobs([target])
+
+    assert looks == [
+        {
+            "remote_job_id": "100",
+            "remote_dir": _REMOTE_DIR,
+            "seed_name": "job",
+            "local_output_dir": tmp_path,
+            "retrieval": flags,
+        }
+    ]
+    # Reported once before the download, so the job reads as retrieving, and
+    # once with what the folder held.
+    first, second = (evidence for _job_id, evidence in checked)
+    assert (first.scheduler, first.output) == (state, OutputState.NOT_LOOKED)
+    assert (second.scheduler, second.scheduler_detail) == (state, detail)
+    assert second.output is OutputState.COMPLETE
+    assert second.parsed is parsed and second.artifacts is artifacts
+
+
+def test_check_carries_incomplete_output_and_the_walltime_mark(
+    qapp, tmp_path: Path, monkeypatch
+) -> None:
+    scheduler = _FakeScheduler()
+    scheduler._states["100"] = "CD"
+    runner, checked, _snapshots, _failures = _checking_runner(scheduler)
+    _retrieve_as(
+        monkeypatch,
+        RetrievalResult(OutputState.INCOMPLETE, detail="SCF failed", walltime_seen=True),
+    )
+
+    runner.check_jobs([_target(tmp_path=tmp_path)])
+
+    evidence = checked[-1][1]
+    assert (evidence.output, evidence.output_detail, evidence.walltime_seen) == (
+        OutputState.INCOMPLETE,
+        "SCF failed",
+        True,
+    )
+
+
+def test_check_reads_accounting_for_a_job_the_queue_does_not_list(
+    qapp, tmp_path: Path, monkeypatch
+) -> None:
+    # A pending job in a partition the queue command hides: accounting still
+    # knows it, so it is reported as pending and its folder is left alone.
+    scheduler = _FakeScheduler()
+    scheduler._states["100"] = "MISSING"
+    scheduler._history["100"] = "PD"
+    runner, checked, _snapshots, _failures = _checking_runner(scheduler)
+    looks = _retrieve_as(monkeypatch, RetrievalResult(OutputState.ABSENT))
+
+    runner.check_jobs([_target(tmp_path=tmp_path)])
+
+    assert scheduler.history_queries == [["100"]]
+    assert looks == []
+    evidence = checked[0][1]
+    assert (evidence.scheduler, evidence.from_accounting) == (SchedulerState.PENDING, True)
+
+
+def test_check_skips_accounting_when_the_queue_lists_every_job(qapp, tmp_path: Path) -> None:
+    scheduler = _FakeScheduler()
+    scheduler._states["100"] = "R"
+    runner, _checked, _snapshots, _failures = _checking_runner(scheduler)
+
+    runner.check_jobs([_target(tmp_path=tmp_path)])
+
+    assert scheduler.history_queries == []
+
+
+def test_check_reports_a_job_listed_nowhere_with_what_its_folder_holds(
+    qapp, tmp_path: Path, monkeypatch
+) -> None:
+    scheduler = _FakeScheduler()
+    scheduler._states["100"] = "MISSING"
+    runner, checked, _snapshots, _failures = _checking_runner(scheduler)
+    _retrieve_as(monkeypatch, RetrievalResult(OutputState.ABSENT))
+
+    runner.check_jobs([_target(tmp_path=tmp_path)])
+
+    # No report ahead of the look: nothing says the job finished.
+    assert len(checked) == 1
+    evidence = checked[0][1]
+    assert (evidence.scheduler, evidence.from_accounting) == (SchedulerState.NOT_LISTED, False)
+    assert evidence.output is OutputState.ABSENT
+
+
+def test_check_treats_a_failed_accounting_lookup_as_not_listed(
+    qapp, tmp_path: Path, monkeypatch
+) -> None:
+    class _BrokenAccounting(_FakeScheduler):
+        def history(self, _ssh, _job_ids):
+            raise RuntimeError("sacct: command not found")
+
+    scheduler = _BrokenAccounting()
+    scheduler._states["100"] = "MISSING"
+    runner, checked, snapshots, failures = _checking_runner(scheduler)
+    _retrieve_as(monkeypatch, RetrievalResult(OutputState.COMPLETE))
+
+    runner.check_jobs([_target(tmp_path=tmp_path)])
+
+    assert checked[-1][1].scheduler is SchedulerState.NOT_LISTED
+    assert checked[-1][1].output is OutputState.COMPLETE
+    assert failures == [] and len(snapshots) == 1
+    assert runner.is_connected
+
+
+def test_check_reads_the_folder_of_a_job_with_no_scheduler_id_only_on_request(
+    qapp, tmp_path: Path, monkeypatch
+) -> None:
+    class _NoQueries(_FakeScheduler):
+        def status(self, _ssh, job_ids):
+            raise AssertionError(f"queue asked about {job_ids}")
+
+    runner, checked, _snapshots, _failures = _checking_runner(_NoQueries())
+    looks = _retrieve_as(monkeypatch, RetrievalResult(OutputState.INCOMPLETE))
+
+    runner.check_jobs([_target("", tmp_path=tmp_path)])
+    assert looks == []
+    assert (checked[0][1].scheduler, checked[0][1].output) == (
+        SchedulerState.NO_JOB_ID,
+        OutputState.NOT_LOOKED,
+    )
+
+    runner.check_jobs([_target("", tmp_path=tmp_path, on_request=True)])
+
+    assert len(looks) == 1
+    evidence = checked[1][1]
+    assert (evidence.scheduler, evidence.output) == (
+        SchedulerState.NO_JOB_ID,
+        OutputState.INCOMPLETE,
+    )
+    assert evidence.remote_job_id == ""
+
+
+def test_check_reads_a_cancelled_jobs_folder_only_when_the_user_asked(
+    qapp, tmp_path: Path, monkeypatch
+) -> None:
+    scheduler = _FakeScheduler()
+    scheduler._states["100"] = "CA"
+    runner, checked, _snapshots, _failures = _checking_runner(scheduler)
+    looks = _retrieve_as(monkeypatch, RetrievalResult(OutputState.COMPLETE))
+
+    runner.check_jobs([_target(tmp_path=tmp_path)])
+    runner.check_jobs([_target(tmp_path=tmp_path, on_request=True)])
+
+    assert len(looks) == 1
+    assert [evidence.output for _job_id, evidence in checked] == [
+        OutputState.NOT_LOOKED,
+        OutputState.COMPLETE,
+    ]
+    assert [evidence.on_request for _job_id, evidence in checked] == [False, True]
+
+
+def test_check_reports_a_folder_that_raises_as_unreachable(
+    qapp, tmp_path: Path, monkeypatch
+) -> None:
+    scheduler = _FakeScheduler()
+    scheduler._states["100"] = "MISSING"
+    scheduler._states["101"] = "R"
+    runner, checked, snapshots, _failures = _checking_runner(scheduler)
+
+    def _raise(_ssh, **_kwargs):
+        raise OSError("channel closed")
+
+    monkeypatch.setattr(cluster_runner_module, "retrieve_job_outputs", _raise)
+
+    runner.check_jobs([_target(tmp_path=tmp_path), _target("101", tmp_path=tmp_path)])
+
+    # One job's folder does not end the pass for the others.
+    first, second = (evidence for _job_id, evidence in checked)
+    assert (first.output, first.output_detail) == (OutputState.UNREACHABLE, "channel closed")
+    assert second.scheduler is SchedulerState.RUNNING
+    assert len(snapshots) == 1
+
+
+def test_check_downloads_output_and_logs_of_a_failed_job(qapp, tmp_path: Path) -> None:
+    ssh = FakeSSH()
+    ssh.remote_files[f"{_REMOTE_DIR}/job.castep"] = b"partial"
+    ssh.remote_files[f"{_REMOTE_DIR}/job.0001.err"] = b"Error in parameters"
+    ssh.remote_files[f"{_REMOTE_DIR}/slurm-100.out"] = b"oom-kill"
+    scheduler = _FakeScheduler()
+    scheduler._states["100"] = "F"
+    runner, checked, _snapshots, _failures = _checking_runner(scheduler, ssh)
+
+    runner.check_jobs([_target(tmp_path=tmp_path)])
+
+    assert (tmp_path / "job.0001.err").read_bytes() == b"Error in parameters"
+    assert (tmp_path / "slurm-100.out").read_bytes() == b"oom-kill"
+    evidence = checked[-1][1]
+    assert (evidence.scheduler, evidence.scheduler_detail) == (SchedulerState.FAILED, "FAILED")
+    assert evidence.output is OutputState.INCOMPLETE
+
+
+def test_check_reports_no_output_when_the_download_fails(qapp, tmp_path: Path) -> None:
+    ssh = OutputUnavailableSSH()
+    ssh.remote_files[f"{_REMOTE_DIR}/job.castep"] = b"castep output"
+    scheduler = _FakeScheduler()
+    scheduler._states["100"] = "CD"
+    runner, checked, _snapshots, _failures = _checking_runner(scheduler, ssh)
+
+    runner.check_jobs([_target(tmp_path=tmp_path)])
+
+    assert checked[-1][1].output is OutputState.UNREACHABLE
+
+
+def test_check_snapshot_carries_elapsed_runtimes_and_the_jobs_checked(qapp, tmp_path: Path) -> None:
+    scheduler = _FakeScheduler()
+    scheduler._states.update({"100": "R", "101": "PD"})
+    scheduler._elapsed["100"] = "01:02:03"
+    runner, _checked, snapshots, _failures = _checking_runner(scheduler)
+    running = _target(tmp_path=tmp_path)
+    queued = _target("101", tmp_path=tmp_path)
+
+    runner.check_jobs([running, queued])
+
+    assert snapshots[0].elapsed_by_job_id == {running.job_id: "01:02:03"}
+    assert snapshots[0].job_ids == (running.job_id, queued.job_id)
+    assert snapshots[0].checked_at.utcoffset() is not None
+
+
+def test_check_with_no_targets_still_reports_the_pass(qapp) -> None:
+    runner, checked, snapshots, _failures = _checking_runner()
+
+    runner.check_jobs([])
+
+    assert checked == []
+    assert snapshots[0].job_ids == () and snapshots[0].elapsed_by_job_id == {}
+
+
+def test_check_skips_targets_of_another_cluster(qapp, tmp_path: Path) -> None:
+    scheduler = _FakeScheduler()
+    scheduler._states.update({"100": "R", "200": "R"})
+    runner, checked, snapshots, _failures = _checking_runner(scheduler)
+    runner._config = ClusterConfig(name="alpha", hostname="alpha.example")
+    here = _target(tmp_path=tmp_path, cluster_name="Alpha")
+    elsewhere = _target("200", tmp_path=tmp_path, cluster_name="beta")
+
+    runner.check_jobs([here, elsewhere])
+
+    assert [job_id for job_id, _ in checked] == [here.job_id]
+    assert snapshots[0].job_ids == (here.job_id,)
+
+
+def test_check_whose_queue_command_fails_disconnects_and_ends_no_job(qapp, tmp_path: Path) -> None:
+    runner, checked, snapshots, failures = _checking_runner(_RaisingScheduler())
+    runner._config = ClusterConfig(name="alpha", hostname="alpha.example")
+    target = _target(tmp_path=tmp_path)
+
+    runner.check_jobs([target])
+
+    assert [(job_id, evidence.scheduler) for job_id, evidence in checked] == [
+        (target.job_id, SchedulerState.UNAVAILABLE)
+    ]
+    assert checked[0][1].scheduler_detail == "connection dropped"
+    assert failures == ["Queue polling failed for alpha: connection dropped"]
+    assert snapshots == []
+    assert not runner.is_connected
+
+
+def test_check_reports_a_transport_that_died(qapp, tmp_path: Path) -> None:
+    runner, checked, snapshots, failures = _checking_runner()
+    runner._config = ClusterConfig(name="alpha", hostname="alpha.example")
+    runner._ssh.is_connected = False
+    connection_events: list[bool] = []
+    runner.connection_status_changed.connect(connection_events.append)
+
+    runner.check_jobs([_target(tmp_path=tmp_path)])
+
+    assert failures == ["Queue polling failed for alpha: the connection was lost."]
+    assert connection_events == [False]
+    assert checked == [] and snapshots == []
+
+
+def test_check_closes_a_dead_connection_without_a_warning_when_nothing_was_asked(qapp) -> None:
+    runner, _checked, _snapshots, failures = _checking_runner()
+    runner._ssh.is_connected = False
+
+    runner.check_jobs([])
+
+    assert failures == []
+    assert runner._ssh is None
+
+
+def test_check_is_silent_when_never_connected(qapp, tmp_path: Path) -> None:
+    runner = ClusterJobRunner()
+    events: list[object] = []
+    runner.job_checked.connect(lambda *args: events.append(args))
+    runner.queue_checked.connect(events.append)
+    runner.poll_failed.connect(events.append)
+    runner.connection_status_changed.connect(events.append)
+
+    runner.check_jobs([_target(tmp_path=tmp_path)])
+
+    assert events == []
+
+
+# --- cancel and geometry progress ----------------------------------------------
+
+
+def test_cancel_asks_the_scheduler_and_reports_the_job(qapp) -> None:
+    cancelled_remote: list[str] = []
+
+    class _Recording(_FakeScheduler):
+        def cancel(self, _ssh, job_id: str) -> None:
+            cancelled_remote.append(job_id)
+
+    runner, _checked, _snapshots, _failures = _checking_runner(_Recording())
+    cancelled: list[object] = []
+    runner.job_cancelled.connect(cancelled.append)
+    job_id = uuid4()
+
+    runner.cancel(job_id, " 100 ")
+
+    assert cancelled_remote == ["100"]
+    assert cancelled == [job_id]
+
+
+def test_cancel_without_a_scheduler_id_reports_nothing(qapp) -> None:
+    runner, _checked, _snapshots, _failures = _checking_runner()
+    cancelled: list[object] = []
+    runner.job_cancelled.connect(cancelled.append)
+
+    runner.cancel(uuid4())
+
+    assert cancelled == []
+
+
+def test_cancel_requires_a_connection(qapp) -> None:
+    with pytest.raises(ConnectionError):
+        ClusterJobRunner().cancel(uuid4(), "100")
+
+
+def test_reads_geometry_progress_of_its_targets(qapp, tmp_path: Path) -> None:
+    fixture = Path(__file__).parents[1] / "fixtures" / "geometry" / "Si2_bfgs.castep"
+    ssh = GrowingOutputSSH()
+    ssh.remote_files["/remote/farmed/seed_farm001.castep"] = fixture.read_bytes()
+    runner, _checked, _snapshots, _failures = _checking_runner(ssh=ssh)
+    runner._config = ClusterConfig(name="alpha", hostname="alpha.example")
+    results: list[dict] = []
+    runner.geometry_progress_read.connect(results.append)
+    farmed = _target(
+        tmp_path=tmp_path,
+        remote_dir="/remote/farmed",
+        seed_name="seed",
+        cluster_name="alpha",
+        retrieval=RetrievalFlags(task_farming_enabled=True, num_farms=2),
+    )
+    missing = _target(tmp_path=tmp_path, remote_dir="/remote/missing", seed_name="seed")
+    elsewhere = _target(tmp_path=tmp_path, cluster_name="beta")
+
+    runner.read_geometry_progress([farmed, missing, elsewhere])
+
+    # One job is read per turn of the event loop, and each reports when it is done.
+    assert pump_until(lambda: len(results) == 3)
+    assert results == [
+        {farmed.job_id: parse_geometry_progress(fixture)},
+        {missing.job_id: None},
+        {elsewhere.job_id: None},
+    ]
+    assert ssh.reads == [("/remote/farmed/seed_farm001.castep", 0)]
+
+
+def _runner_following_a_large_log(tmp_path: Path):
+    fixture = Path(__file__).resolve().parents[1] / "fixtures" / "geometry" / "Si2_bfgs.castep"
+    runner = ClusterJobRunner()
+    ssh = GrowingOutputSSH()
+    ssh.remote_files["/remote/job/seed.castep"] = (
+        b" filler line of CASTEP output\n" * 200_000 + fixture.read_bytes()
+    )
+    assert len(ssh.remote_files["/remote/job/seed.castep"]) > 2 * REMOTE_READ_CHUNK_BYTES
+    runner._ssh = ssh
+    target = CheckTarget(
+        job_id=uuid4(),
+        remote_job_id="1",
+        remote_dir="/remote/job",
+        seed_name="seed",
+        local_output_dir=tmp_path,
+    )
+    results: list[dict] = []
+    runner.geometry_progress_read.connect(results.append)
+    return runner, ssh, target, results, parse_geometry_progress(fixture)
+
+
+def test_cluster_runner_reads_a_large_log_in_bounded_turns(qapp, tmp_path: Path) -> None:
+    runner, ssh, target, results, expected = _runner_following_a_large_log(tmp_path)
+
+    runner.read_geometry_progress([target])
+
+    # The first call read one chunk and reported nothing: the log is not read yet.
+    assert ssh.reads == [("/remote/job/seed.castep", 0)]
+    assert results == []
+    assert pump_until(lambda: results)
+    assert results == [{target.job_id: expected}]
+    assert ssh.reads == [
+        ("/remote/job/seed.castep", offset)
+        for offset in range(
+            0, len(ssh.remote_files["/remote/job/seed.castep"]), REMOTE_READ_CHUNK_BYTES
+        )
+    ]
+
+
+def test_cluster_runner_stops_reading_a_large_log_when_progress_is_forgotten(
+    qapp, tmp_path: Path
+) -> None:
+    runner, ssh, target, results, _expected = _runner_following_a_large_log(tmp_path)
+
+    runner.read_geometry_progress([target])
+    runner.forget_progress()
+
+    assert pump_until(lambda: results)
+    assert results == [{target.job_id: None}]
+    assert len(ssh.reads) == 1
+
+
+def test_cluster_runner_stops_reading_a_large_log_after_a_disconnect(qapp, tmp_path: Path) -> None:
+    runner, ssh, target, results, expected = _runner_following_a_large_log(tmp_path)
+
+    runner.read_geometry_progress([target])
+    ssh.is_connected = False
+    assert pump_until(lambda: results)
+    assert results == [{target.job_id: None}]
+    assert len(ssh.reads) == 1
+
+    # After a reconnect the next refresh carries on from where the read stopped.
+    ssh.is_connected = True
+    runner.read_geometry_progress([target])
+    assert pump_until(lambda: len(results) == 2)
+    assert results[1] == {target.job_id: expected}
+    assert ssh.reads[1] == ("/remote/job/seed.castep", REMOTE_READ_CHUNK_BYTES)
+
+
+def test_cluster_runner_reports_no_progress_when_a_read_fails_part_way(
+    qapp, tmp_path: Path
+) -> None:
+    runner, ssh, target, results, _expected = _runner_following_a_large_log(tmp_path)
+    read_bytes = ssh.read_bytes
+
+    def failing_second_read(remote_path, offset=0, max_bytes=None):
+        if offset:
+            raise OSError("SFTP read failed")
+        return read_bytes(remote_path, offset, max_bytes)
+
+    ssh.read_bytes = failing_second_read
+
+    runner.read_geometry_progress([target])
+
+    assert pump_until(lambda: results)
+    assert results == [{target.job_id: None}]
+
+
+def test_reports_no_geometry_progress_while_disconnected(qapp, tmp_path: Path) -> None:
+    runner = ClusterJobRunner()
+    reads: list[dict] = []
+    runner.geometry_progress_read.connect(reads.append)
+    target = _target(tmp_path=tmp_path)
+
+    runner.read_geometry_progress([target])
+
+    assert reads == [{target.job_id: None}]

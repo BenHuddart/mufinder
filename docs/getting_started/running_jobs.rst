@@ -323,12 +323,16 @@ Each row has these columns:
    ``failed · SCF did not converge``, ``stopped · walltime``, ``running · step
    12 of 100``. Hold the pointer over the cell for the full explanation and for
    when and how the status was last checked. A small clock on the row means the
-   status of an active cluster job may be out of date, because the cluster is
-   not connected, has not been checked for a while, or MuFinder is not
-   monitoring the job; the tooltip says which. A job MuFinder is not monitoring
-   stays active, since it may still be queued or running on the cluster. This
-   happens when no scheduler job ID was recorded for it. ``Cancel`` ends it in
-   the project.
+   status of an active cluster job could not be confirmed; the tooltip says
+   why. The cluster is not connected, the job has not been checked for a
+   while, no scheduler job ID was recorded for it, or MuFinder lost track of
+   it: the scheduler no longer lists the job and its folder on the cluster
+   holds no output from this run. Such a job stays active, since it may still
+   be queued or running, and MuFinder never ends it on its own. A job
+   MuFinder lost track of is checked again every minute and completes as soon
+   as its output appears. A job with no scheduler job ID is looked at only
+   when you choose ``Check now``, which completes it when the output in its
+   folder is complete. ``Cancel`` ends either in the project.
 
 ``Where``
    ``local``, or the cluster and its scheduler job id (``SCARF #4127731``).
@@ -366,7 +370,10 @@ The ``Status`` column shows where each job is:
 
 ``running``
    CASTEP is running locally or on the selected cluster. When a queued cluster
-   job starts, the status bar reports *"Cluster job started running: <label>"*.
+   job starts, the status bar reports *"Cluster job started running: <label>"*
+   once the check that saw it ends. A check that changes several jobs reports
+   them together, for example *"Checked 5 cluster jobs: 1 completed, 1 stopped
+   at its walltime limit"*.
    A running relaxation shows its geometry-optimisation progress (see
    :ref:`geometry-optimisation-progress`).
 
@@ -380,10 +387,11 @@ The ``Status`` column shows where each job is:
 ``failed``
    The process, scheduler, retrieval, or parser reported a failure. Failed jobs
    remain in the dashboard so their diagnostics can be inspected with
-   ``Inspect…``. They can be resubmitted or reset. A cluster job that failed
-   only because the scheduler stopped listing it is still watched: if SLURM
-   later reports it queued, running, or completed, the job returns to the
-   dashboard's active states and the status bar says that tracking resumed.
+   ``Inspect…``. They can be resubmitted or reset. A cluster job fails when
+   the scheduler reports that it failed, or when the scheduler no longer runs
+   it and its CASTEP output is incomplete, unreadable or missing. A job the
+   scheduler reports as failed still completes when its CASTEP output is
+   complete.
 
 ``stopped``
    A cluster calculation reached its walltime limit before producing a
@@ -391,7 +399,7 @@ The ``Status`` column shows where each job is:
    the scheduler log downloaded with an incomplete output records a time-limit
    kill. A local job that was still active when MuFinder closed also ends up
    here, unless its CASTEP output is complete: then it is completed when the
-   project is opened. So do jobs MuFinder lost track of. Stopped jobs remain in the
+   project is opened. Stopped jobs remain in the
    dashboard and can be inspected, resubmitted, or reset.
 
 ``cancelled``
@@ -415,7 +423,7 @@ state:
      - ``Inspect…``
    * - ``failed`` or ``stopped`` on a cluster because its output could not be
        retrieved or MuFinder lost track of it, with its cluster connected
-     - ``Retry retrieval``
+     - ``Check now``
    * - ``cancelled``
      - ``Resubmit…``
 
@@ -426,20 +434,27 @@ to at least one selected job, acts on those jobs only, and carries the count
 when it is partial (``Reset… (2 of 3)``).
 
 ``Cancel``
-   Cancels an active job after asking for confirmation. A cluster job that
-   MuFinder is not monitoring is cancelled in the project only: the cluster is
-   not contacted, and the status bar says so.
+   Cancels an active job after asking for confirmation. A cluster job with
+   no scheduler job ID, or whose cluster is not connected, is cancelled in the
+   project only: the cluster is not contacted, and the status bar says so.
 
 ``Inspect…``
    Shows why a failed or stopped job failed (see `When a job fails`_). On a
    running relaxation it opens the progress dialog (see `Watching a
    relaxation`_).
 
-``Retry retrieval``
-   Failed or stopped cluster jobs that kept their remote metadata can fetch
-   their output again instead of being resubmitted, while their cluster is
-   connected. A calculation that finished on the cluster is completed from the
-   retrieved output, so its result is used without running it again.
+``Check now``
+   Looks at the job now instead of waiting for the next check, and applies
+   what it finds. For a cluster job with a folder on the cluster, while that
+   cluster is connected, MuFinder asks the scheduler about the job and, when
+   the scheduler no longer runs it, fetches its output. The row changes when
+   the answer arrives. It is offered for active jobs and for failed, stopped
+   and cancelled ones: a calculation that finished on the cluster is completed
+   from the retrieved output, so its result is used without running it again,
+   and a job the scheduler lists again returns to ``queued`` or ``running``.
+   For a failed, stopped or cancelled local job it reads the job's output
+   folder and completes the job when the CASTEP output there is complete. A
+   check that finds nothing new leaves the job as it was.
 
 ``Resubmit…``
    Available for failed, stopped and cancelled jobs. Relaxations ask first
@@ -662,12 +677,12 @@ first, are:
    * - ``CASTEP``
      - A CASTEP ``.err`` file has content; its first line is the evidence.
    * - ``no output``
-     - The output could not be downloaded or parsed, or the job left the queue
-       and its output never appeared.
+     - The output could not be parsed, or the scheduler reported the job
+       finished and its folder holds no output from this run.
    * - ``lost track``
      - MuFinder was closed while a local job ran, or a local job's process
        ended without reporting. A cluster job with this cause may have finished
-       on the cluster; ``Retry retrieval`` fetches its output.
+       on the cluster; ``Check now`` fetches its output.
    * - ``submit``
      - The local runner or the scheduler rejected the submission.
 
@@ -752,8 +767,9 @@ Starting again deletes only what belongs to the job:
   reasons are listed in ``Some jobs were not resubmitted``. The same check runs
   again just before anything is deleted.
 - **The previous run must have finished.** A job that has ended in the project
-  may still be running on the cluster: a cluster job cancelled while MuFinder
-  was not monitoring it is cancelled in the project only. Before deleting a
+  may still be running on the cluster: a cluster job cancelled while its
+  cluster was not connected, or with no scheduler job ID, is cancelled in the
+  project only. Before deleting a
   remote directory, MuFinder asks the scheduler
   about the job's previous scheduler id and refuses (the submission fails,
   nothing is deleted) while it is still queued or running, or when the

@@ -67,7 +67,6 @@ def test_open_project_stops_orphaned_local_job_and_shows_message(
     window = MainWindow()
     # Isolate cluster reattachment side-effects; the real cluster runner would
     # try to talk to SCARF otherwise.
-    monkeypatch.setattr(window._cluster_runner, "track_existing_job", lambda **kwargs: None)
     monkeypatch.setattr(window, "_job_output_directory", lambda job: tmp_path / "out" / job.label)
     monkeypatch.setattr(window, "_job_seed_name", lambda job: job.label)
 
@@ -105,7 +104,6 @@ def test_reopen_does_not_re_reconcile_already_stopped_job(qapp, tmp_path, monkey
     root, local_id, _ = _seed_project_with_jobs(tmp_path)
 
     window = MainWindow()
-    monkeypatch.setattr(window._cluster_runner, "track_existing_job", lambda **kwargs: None)
     monkeypatch.setattr(window, "_job_output_directory", lambda job: tmp_path / "out" / job.label)
     monkeypatch.setattr(window, "_job_seed_name", lambda job: job.label)
 
@@ -132,7 +130,6 @@ def test_reconciliation_runs_before_jobs_table_render(qapp, tmp_path, monkeypatc
     root, local_id, _ = _seed_project_with_jobs(tmp_path)
 
     window = MainWindow()
-    monkeypatch.setattr(window._cluster_runner, "track_existing_job", lambda **kwargs: None)
     monkeypatch.setattr(window, "_job_output_directory", lambda job: tmp_path / "out" / job.label)
     monkeypatch.setattr(window, "_job_seed_name", lambda job: job.label)
 
@@ -243,7 +240,6 @@ def test_open_project_without_orphans_shows_opened_message(qapp, tmp_path, monke
     service.save_project(document)
 
     window = MainWindow()
-    monkeypatch.setattr(window._cluster_runner, "track_existing_job", lambda **kwargs: None)
     monkeypatch.setattr(window, "_job_output_directory", lambda job: tmp_path / "out" / job.label)
     monkeypatch.setattr(window, "_job_seed_name", lambda job: job.label)
 
@@ -266,7 +262,6 @@ def test_open_project_completes_a_local_job_whose_output_is_complete(
     (output_dir / "local_running.castep").write_bytes(fixture.read_bytes())
 
     window = MainWindow()
-    monkeypatch.setattr(window._cluster_runner, "track_existing_job", lambda **kwargs: None)
     monkeypatch.setattr(window, "_job_output_directory", lambda job: tmp_path / "out" / job.label)
     monkeypatch.setattr(window, "_job_seed_name", lambda job: job.label)
     # The execution controller holds its own references to the two lookups.

@@ -53,19 +53,16 @@ ALLOWED: dict[JobStatus, set[JobStatus]] = {
         JobStatus.FAILED,
         JobStatus.CANCELLED,
     },
-    # Job-lifecycle hardening: FAILED/STOPPED -> RETRIEVING added so the
-    # dashboard "Retry retrieval" action can re-attempt output retrieval for a
-    # cluster job that finished on the scheduler but whose retrieval or parsing
-    # failed, without resubmitting a duplicate scheduler job.
+    # An ended job returns to QUEUED, RUNNING or RETRIEVING when evidence shows
+    # it is alive or has output (ProjectService.reactivate_job).
     JobStatus.STOPPED: {
         JobStatus.SUBMITTING,
+        JobStatus.QUEUED,
+        JobStatus.RUNNING,
         JobStatus.RETRIEVING,
         JobStatus.CANCELLED,
     },
     JobStatus.COMPLETED: set(),
-    # FAILED -> QUEUED/RUNNING resumes a job failed for a missing scheduler
-    # entry that the scheduler lists again (FAILED -> RETRIEVING when it lists
-    # the job as completed).
     JobStatus.FAILED: {
         JobStatus.SUBMITTING,
         JobStatus.QUEUED,
@@ -73,7 +70,12 @@ ALLOWED: dict[JobStatus, set[JobStatus]] = {
         JobStatus.RETRIEVING,
         JobStatus.CANCELLED,
     },
-    JobStatus.CANCELLED: {JobStatus.SUBMITTING},
+    JobStatus.CANCELLED: {
+        JobStatus.SUBMITTING,
+        JobStatus.QUEUED,
+        JobStatus.RUNNING,
+        JobStatus.RETRIEVING,
+    },
 }
 
 _ALL_STATUSES = tuple(JobStatus)
@@ -128,26 +130,6 @@ _PRIMITIVES = {
     "stop_job": (JobStatus.STOPPED, lambda s, j: s.stop_job(j)),
     "fail_job": (JobStatus.FAILED, lambda s, j: s.fail_job(j, "boom")),
     "cancel_job": (JobStatus.CANCELLED, lambda s, j: s.cancel_job(j)),
-    # retry_job_retrieval drives the same RETRIEVING target as mark_job_retrieving
-    # but exists for the dashboard "Retry retrieval" action (FAILED/STOPPED ->
-    # RETRIEVING). It only calls _assert_transition; the failed/stopped-only
-    # precondition is enforced by JobExecutionController, not this primitive, so
-    # the generic guard test exercises the shared RUNNING -> RETRIEVING edge.
-    "retry_job_retrieval": (JobStatus.RETRIEVING, lambda s, j: s.retry_job_retrieval(j)),
-    # resume_reappeared_job drives one of three targets; the missing-entry
-    # precondition is enforced by JobExecutionController.
-    "resume_reappeared_job[queued]": (
-        JobStatus.QUEUED,
-        lambda s, j: s.resume_reappeared_job(j, JobStatus.QUEUED),
-    ),
-    "resume_reappeared_job[running]": (
-        JobStatus.RUNNING,
-        lambda s, j: s.resume_reappeared_job(j, JobStatus.RUNNING),
-    ),
-    "resume_reappeared_job[retrieving]": (
-        JobStatus.RETRIEVING,
-        lambda s, j: s.resume_reappeared_job(j, JobStatus.RETRIEVING),
-    ),
 }
 
 
@@ -171,17 +153,22 @@ def test_primitive_invokes_transition_guard(name: str) -> None:
     assert job.status == disallowed_source
 
 
-@pytest.mark.parametrize("target", [JobStatus.QUEUED, JobStatus.RUNNING, JobStatus.RETRIEVING])
-def test_resume_reappeared_job_clears_the_failure_and_keeps_remote_metadata(
-    target: JobStatus,
+_ENDED = [JobStatus.FAILED, JobStatus.STOPPED, JobStatus.CANCELLED]
+_REACTIVATED = [JobStatus.QUEUED, JobStatus.RUNNING, JobStatus.RETRIEVING]
+
+
+@pytest.mark.parametrize("source", _ENDED)
+@pytest.mark.parametrize("target", _REACTIVATED)
+def test_reactivate_job_clears_the_failure_and_keeps_remote_metadata(
+    source: JobStatus, target: JobStatus
 ) -> None:
     service = _service()
-    job = make_job(status=JobStatus.FAILED, remote_job_id="4242", remote_directory="/remote/job")
+    job = make_job(status=source, remote_job_id="4242", remote_directory="/remote/job")
     job.error_message = "missing from the scheduler"
     job.failure_reason = FailureReason.OUTPUT_UNAVAILABLE
     job.completed_at = utc_now()
 
-    service.resume_reappeared_job(job, target)
+    service.reactivate_job(job, target)
 
     assert job.status == target
     assert job.error_message is None
@@ -192,12 +179,24 @@ def test_resume_reappeared_job_clears_the_failure_and_keeps_remote_metadata(
 
 
 @pytest.mark.parametrize("target", [JobStatus.COMPLETED, JobStatus.SUBMITTING, JobStatus.FAILED])
-def test_resume_reappeared_job_rejects_other_targets(target: JobStatus) -> None:
+def test_reactivate_job_rejects_other_targets(target: JobStatus) -> None:
     job = make_job(status=JobStatus.FAILED)
 
-    with pytest.raises(ValueError, match="cannot resume"):
-        _service().resume_reappeared_job(job, target)
+    with pytest.raises(ValueError, match="cannot be reactivated"):
+        _service().reactivate_job(job, target)
     assert job.status == JobStatus.FAILED
+
+
+@pytest.mark.parametrize(
+    "source",
+    [status for status in JobStatus if status not in _ENDED],
+)
+def test_reactivate_job_rejects_a_job_that_has_not_ended(source: JobStatus) -> None:
+    job = make_job(status=source)
+
+    with pytest.raises(ValueError, match="Only failed, stopped, or cancelled"):
+        _service().reactivate_job(job, JobStatus.RETRIEVING)
+    assert job.status == source
 
 
 def test_reset_failed_job_bypasses_assert_transition_and_targets_defined() -> None:

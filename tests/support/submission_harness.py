@@ -28,11 +28,12 @@ from PySide6.QtCore import QObject, Signal
 from mufinder.castep_io.output_parser import CastepResult
 from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.services.job_artifacts import ParsedJobArtifacts
-from mufinder.domain.models import Job, Result
+from mufinder.domain.models import utc_now, Job, Result
 from mufinder.services.job_execution_controller import (
     ClusterJobSubmission,
     JobExecutionController,
 )
+from mufinder.services.job_reconcile import JobEvidence, OutputState, SchedulerState
 from mufinder.services.project_service import ProjectDocument, ProjectService
 
 
@@ -57,11 +58,13 @@ class FakeLocalRunner(QObject):
 class FakeClusterRunner(QObject):
     """Fake cluster runner exposing the runner signals MainWindow connects."""
 
-    job_started = Signal(object)
-    job_finished = Signal(object, object, object)
-    job_failed = Signal(object, str)
     job_cancelled = Signal(object)
-    status_changed = Signal(object, object)
+    job_checked = Signal(object, object)
+    is_connected = True
+    connected_cluster_name = "test-cluster"
+
+    def is_submitting(self, _job_id: object) -> bool:
+        return False
 
     def __init__(self, *, fail_message: str | None = None) -> None:
         super().__init__()
@@ -154,20 +157,28 @@ class SubmissionHarness:
     def emit_local_finished(self, job_id: UUID, parsed: CastepResult) -> None:
         self.local_runner.job_finished.emit(job_id, parsed, ParsedJobArtifacts())
 
-    def emit_cluster_status(self, job_id: UUID, status: JobStatus) -> None:
-        self.cluster_runner.status_changed.emit(job_id, status.value)
+    def emit_cluster_checked(
+        self,
+        job_id: UUID,
+        scheduler: SchedulerState,
+        output: OutputState = OutputState.NOT_LOOKED,
+        **fields: object,
+    ) -> None:
+        """Report what a check saw of ``job_id``, as the cluster runner would."""
 
-    def emit_cluster_started(self, job_id: UUID) -> None:
-        self.cluster_runner.job_started.emit(job_id)
-
-    def emit_cluster_failed(self, job_id: UUID, message: str) -> None:
-        self.cluster_runner.job_failed.emit(job_id, message)
+        job = self.document.jobs[job_id]
+        evidence = JobEvidence(
+            checked_at=utc_now(),
+            scheduler=scheduler,
+            output=output,
+            remote_job_id=(job.remote_job_id or "").strip(),
+            remote_directory=(job.remote_directory or "").strip(),
+            **fields,
+        )
+        self.cluster_runner.job_checked.emit(job_id, evidence)
 
     def emit_cluster_cancelled(self, job_id: UUID) -> None:
         self.cluster_runner.job_cancelled.emit(job_id)
-
-    def emit_cluster_finished(self, job_id: UUID, parsed: CastepResult) -> None:
-        self.cluster_runner.job_finished.emit(job_id, parsed, ParsedJobArtifacts())
 
     # -- result materialization convenience ------------------------------
     def record_result(self, job: Job, *, result_type: str, data: dict[str, object]) -> Result:
@@ -257,15 +268,12 @@ def build_submission_harness(tmp_path: Path) -> SubmissionHarness:
     local_runner.job_cancelled.connect(lambda job_id: controller.cancel_job(job_id))
     local_runner.job_finished.connect(finished_handler)
 
-    cluster_runner.status_changed.connect(
-        lambda job_id, status_value: controller.mark_cluster_status_changed(job_id, status_value)
-    )
-    # MainWindow connects cluster job_started to mark_started (see
-    # _on_cluster_job_started); in practice the cluster runner advances jobs via
-    # status polling, but we wire it for fidelity so tests can emit it.
-    cluster_runner.job_started.connect(lambda job_id: controller.mark_started(job_id))
-    cluster_runner.job_failed.connect(lambda job_id, message: controller.fail_job(job_id, message))
+    def _on_cluster_checked(job_id: UUID, evidence: JobEvidence) -> None:
+        update = controller.apply_evidence(job_id, evidence)
+        if update.finished is not None:
+            finished_handler(job_id, update.finished.parsed, update.finished.artifacts)
+
+    cluster_runner.job_checked.connect(_on_cluster_checked)
     cluster_runner.job_cancelled.connect(lambda job_id: controller.cancel_job(job_id))
-    cluster_runner.job_finished.connect(finished_handler)
 
     return harness
