@@ -1,0 +1,22 @@
+{
+  "calc_type": "castep_singlepoint",
+  "completed_at": null,
+  "created_at": "2026-11-01T09:04:00+00:00",
+  "dismissed_at": null,
+  "error_message": null,
+  "execution_target": "scarf",
+  "failure_reason": null,
+  "id": "16cd3f00-b807-5109-b794-17b008856b7b",
+  "label": "retrieving",
+  "last_checked_at": null,
+  "last_status_message": null,
+  "last_status_source": null,
+  "num_processes": 4,
+  "remote_directory": "/home/user/mufinder/retrieving",
+  "remote_job_id": "1004",
+  "started_at": "2026-11-01T09:04:00+00:00",
+  "status": "retrieving",
+  "submitted_at": "2026-11-01T09:04:00+00:00",
+  "tags": [],
+  "workflow_stage": "convergence_cutoff"
+}

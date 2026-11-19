@@ -2175,6 +2175,25 @@ def test_schema_5_project_keeps_its_relaxed_spins_across_save_and_reload(tmp_pat
     assert reloaded.structures[_SCHEMA_5_RELAXED_ID].properties["atomic_spins"] == [2.2, 2.2]
 
 
+_SCHEMA_6_JOB_STATES_FIXTURE = (
+    Path(__file__).parents[1] / "fixtures" / "projects" / "schema_v6_job_states"
+)
+
+
+def test_schema_6_job_states_fixture_holds_every_stored_status_and_reason(tmp_path: Path) -> None:
+    root = tmp_path / "schema_v6.mufinder"
+    shutil.copytree(_SCHEMA_6_JOB_STATES_FIXTURE, root)
+
+    loaded = ProjectService().load_project(root)
+
+    jobs = list(loaded.jobs.values())
+    assert {job.status for job in jobs} == set(JobStatus)
+    for status in (JobStatus.STOPPED, JobStatus.FAILED):
+        reasons = {job.failure_reason for job in jobs if job.status == status}
+        assert reasons == {*FailureReason, None}
+    assert {run.status for run in loaded.runs.values()} == set(JobStatus) - {JobStatus.DEFINED}
+
+
 def test_register_convergence_kpoint_definition_records_the_simulation_cell(tmp_path: Path) -> None:
     service, doc, host = _document_with_host(tmp_path)
     # An output directory outside the project root is stored as an absolute path.

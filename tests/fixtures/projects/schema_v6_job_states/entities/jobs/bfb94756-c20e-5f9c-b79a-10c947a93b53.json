@@ -1,0 +1,22 @@
+{
+  "calc_type": "castep_singlepoint",
+  "completed_at": "2026-11-01T09:18:00+00:00",
+  "created_at": "2026-11-01T09:17:00+00:00",
+  "dismissed_at": null,
+  "error_message": "failed_castep_error message",
+  "execution_target": "scarf",
+  "failure_reason": "castep_error",
+  "id": "bfb94756-c20e-5f9c-b79a-10c947a93b53",
+  "label": "failed_castep_error",
+  "last_checked_at": null,
+  "last_status_message": null,
+  "last_status_source": null,
+  "num_processes": 4,
+  "remote_directory": "/home/user/mufinder/failed_castep_error",
+  "remote_job_id": "1017",
+  "started_at": "2026-11-01T09:17:00+00:00",
+  "status": "failed",
+  "submitted_at": "2026-11-01T09:17:00+00:00",
+  "tags": [],
+  "workflow_stage": "convergence_cutoff"
+}
