@@ -508,11 +508,17 @@ directory fails instead of resuming from the checkpoint it was meant to
 discard. The worker uploads and submits each job,
 emitting progress and per-job results that the GUI applies via
 ``finalize_cluster_submission``/``fail_cluster_submission``. A modal progress
-dialog reports progress and offers a Cancel button; jobs prepared but not yet
-submitted when cancelled are moved to ``cancelled``. When the worker reports no
-progress for three minutes the dialog stops waiting: it asks the worker to stop
-submitting, as Cancel does, and moves the jobs it has no result for to
-``cancelled``.
+dialog reports progress and offers a Cancel button: the job the worker has in
+hand finishes submitting and its result is applied, and jobs prepared but not
+yet submitted are moved to ``cancelled``. When the worker reports no progress
+for three minutes the dialog stops waiting: it gives the batch up through
+``ClusterController.abandon_batch``, which asks the worker to stop submitting
+as Cancel does, and moves the jobs it has no result for to ``cancelled``. If
+the worker then submits one of those jobs after all, the controller cancels
+that scheduler job through ``ClusterJobRunner.cancel_scheduler_job`` and leaves
+the project row as it is, so the cluster matches the ``cancelled`` row. If that
+cancel fails, the window warns with the job and its scheduler job ID so it can
+be cancelled on the cluster by hand; the project records nothing more.
 
 From ``submit_batch`` until a job's result arrives (or the batch ends)
 ``ClusterController.is_submitting`` holds for the job. Such a job has no
@@ -528,6 +534,8 @@ nothing, and it carries no staleness marker.
 - ``cancel(job_id, remote_job_id)`` sends the scheduler cancel command and
   emits ``job_cancelled``. With no scheduler job ID there is nothing to cancel
   and nothing is emitted.
+- ``cancel_scheduler_job(remote_job_id)`` sends the scheduler cancel command and
+  emits nothing; it serves a job the project already shows ``cancelled``.
 - ``check_jobs(targets)`` looks at each target and reports what it sees; see
   :ref:`cluster-checks`.
 

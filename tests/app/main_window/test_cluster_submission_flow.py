@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import dataclasses
+import threading
 from pathlib import Path
 from types import SimpleNamespace
+from uuid import uuid4
 
 import pytest
 from PySide6.QtGui import QAction
@@ -25,6 +27,7 @@ from tests.support.main_window import (
     patch_continuation_cluster_dialog,
     patch_continuation_cluster_runner,
 )
+from tests.support.qt import pump_until
 
 
 def test_main_window_submit_jobs_on_cluster_creates_run_and_calls_runner(
@@ -2390,28 +2393,82 @@ def test_main_window_batch_timeout_stops_the_worker_submitting(
     main_window, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     window = main_window
-    cancel_requests: list[bool] = []
+    requests: list[str] = []
     # The worker never reports progress, so the inactivity watchdog fires.
     monkeypatch.setattr(window._cluster_runner, "submit_batch", lambda _items: None)
-    monkeypatch.setattr(
-        window._cluster_runner, "cancel_batch", lambda: cancel_requests.append(True)
-    )
+    monkeypatch.setattr(window._cluster_runner, "abandon_batch", lambda: requests.append("abandon"))
+    monkeypatch.setattr(window._cluster_runner, "cancel_batch", lambda: requests.append("cancel"))
+    _use_a_fast_submission_watchdog(monkeypatch)
 
+    submitted, failed = window._run_cluster_submit_batch([{"job_id": None}], {})
+
+    assert submitted == []
+    # The watchdog gives the batch up before the unseen jobs are cancelled;
+    # closing the progress dialog then asks the worker to stop as Cancel does.
+    assert requests == ["abandon", "cancel"]
+    assert failed == [
+        "- Cluster submission stopped responding after 3 minutes; 1 pending job was cancelled."
+    ]
+    window.close()
+
+
+def _use_a_fast_submission_watchdog(monkeypatch: pytest.MonkeyPatch) -> None:
     class _FastTimer(main_window_module.QTimer):
         def setInterval(self, _msec: int) -> None:
             super().setInterval(10)
 
     monkeypatch.setattr(main_window_module, "QTimer", _FastTimer)
 
-    submitted, failed = window._run_cluster_submit_batch([{"job_id": None}], {})
 
-    assert submitted == []
-    # The watchdog asks the worker to stop before the unseen jobs are
-    # cancelled; closing the progress dialog then repeats the request.
-    assert cancel_requests == [True, True]
-    assert failed == [
-        "- Cluster submission stopped responding after 3 minutes; 1 pending job was cancelled."
-    ]
+def test_main_window_cancels_a_job_submitted_after_the_batch_timed_out(
+    main_window, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = main_window
+    runner = window._cluster_runner._runner
+    scheduler_cancels: list[str] = []
+    runner._ssh = SimpleNamespace(is_connected=True)
+    runner._scheduler = SimpleNamespace(
+        cancel=lambda _ssh, remote_job_id: scheduler_cancels.append(remote_job_id)
+    )
+    gate = threading.Event()
+
+    def stuck_submit(**_kwargs) -> str:
+        gate.wait(5.0)
+        return "4242"
+
+    monkeypatch.setattr(runner, "submit", stuck_submit)
+    _use_a_fast_submission_watchdog(monkeypatch)
+    job_id = uuid4()
+
+    # The submit outlasts the dialog's wait, then succeeds.
+    _submitted, failed = window._run_cluster_submit_batch(
+        [{"job_id": job_id, "label": "late", "submit_kwargs": {}}], {}
+    )
+    gate.set()
+
+    assert failed[-1].startswith("- Cluster submission stopped responding")
+    assert pump_until(lambda: scheduler_cancels == ["4242"])
+    window.close()
+
+
+def test_main_window_warns_when_a_late_submitted_job_cannot_be_cancelled(
+    main_window, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = main_window
+    warnings: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        main_window_module,
+        "show_detailed_warning",
+        lambda _parent, title, message, **_kwargs: warnings.append((title, message)),
+    )
+
+    window._cluster_runner.abandoned_job_cancel_failed.emit(uuid4(), "4242", "scancel failed")
+
+    assert len(warnings) == 1
+    title, message = warnings[0]
+    assert title == "Cluster cancellation failed"
+    assert "scheduler job 4242" in message
+    assert "scancel failed" in message
     window.close()
 
 

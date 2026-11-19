@@ -388,6 +388,15 @@ class ClusterJobRunner(QObject):
         scheduler.cancel(ssh, remote_job_id.strip())
         self.job_cancelled.emit(job_id)
 
+    def cancel_scheduler_job(self, remote_job_id: str) -> None:
+        """Cancel scheduler job ``remote_job_id`` without reporting any job cancelled.
+
+        For a job the project already shows cancelled, whose submission
+        answered after MuFinder stopped waiting for it.
+        """
+
+        self._require_scheduler().cancel(self._require_ssh(), remote_job_id.strip())
+
     def read_geometry_progress(
         self, targets: list[CheckTarget], _generation: int | None = None
     ) -> None:

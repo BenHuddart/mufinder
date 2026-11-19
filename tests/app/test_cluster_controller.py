@@ -67,6 +67,7 @@ class _FakeRunner(QObject):
         # test can prove a later GUI-thread call does not wait for it.
         self.block_worker: threading.Event | None = None
         self.check_should_raise = False
+        self.cancel_should_raise = False
 
     def connect_to_cluster(self, config, password=None, *, credentials=None) -> None:
         self.threads["connect"] = QThread.currentThread()
@@ -132,6 +133,12 @@ class _FakeRunner(QObject):
     def cancel(self, job_id, remote_job_id="") -> None:
         self.threads["cancel"] = QThread.currentThread()
         self.calls.append(("cancel", job_id, remote_job_id))
+
+    def cancel_scheduler_job(self, remote_job_id: str) -> None:
+        self.threads["cancel_scheduler_job"] = QThread.currentThread()
+        self.calls.append(("cancel_scheduler_job", remote_job_id))
+        if self.cancel_should_raise:
+            raise ConnectionError("scancel failed")
 
     def hold(self) -> str:
         """A long op that pins the worker thread until ``block_worker`` is set."""
@@ -326,6 +333,91 @@ def test_a_cancelled_batch_stops_counting_its_unsubmitted_jobs(controller) -> No
 
     assert pump_until(lambda: finished == [True])
     assert not ctrl.is_submitting("b")
+
+
+def _abandon_while_submitting(ctrl: ClusterController, fake: _FakeRunner) -> threading.Event:
+    """Submit a two-job batch and abandon it while the first submit is stuck."""
+
+    gate = threading.Event()
+    in_submit = threading.Event()
+
+    def stuck() -> None:
+        in_submit.set()
+        gate.wait(5.0)
+
+    fake.on_submit = stuck
+    ctrl.submit_batch(
+        [
+            {"job_id": "a", "label": "a", "submit_kwargs": {"seed_name": "a"}},
+            {"job_id": "b", "label": "b", "submit_kwargs": {"seed_name": "b"}},
+        ]
+    )
+    assert in_submit.wait(2.0)
+    ctrl.abandon_batch()
+    return gate
+
+
+def test_an_abandoned_job_submitted_late_is_cancelled_on_the_scheduler(controller) -> None:
+    ctrl, fake = controller
+    finished: list[bool] = []
+    ctrl.submit_batch_finished.connect(lambda: finished.append(True))
+    cancelled: list[object] = []
+    ctrl.job_cancelled.connect(cancelled.append)
+
+    gate = _abandon_while_submitting(ctrl, fake)
+    gate.set()
+
+    assert pump_until(lambda: ("cancel_scheduler_job", "JOB-1") in fake.calls)
+    assert fake.threads["cancel_scheduler_job"] is not QThread.currentThread()
+    # Only the job in hand reached the scheduler, and the project, which
+    # already shows it cancelled, is not told again.
+    assert [call for call in fake.calls if call[0] == "submit"] == [("submit", "a")]
+    assert not pump_until(lambda: bool(cancelled), timeout=0.2)
+    assert finished == [True]
+    assert not ctrl.is_submitting("a")
+
+
+def test_a_failed_late_cancel_is_reported(controller) -> None:
+    ctrl, fake = controller
+    fake.cancel_should_raise = True
+    failures: list[tuple] = []
+    ctrl.abandoned_job_cancel_failed.connect(
+        lambda job_id, remote_job_id, error: failures.append((job_id, remote_job_id, error))
+    )
+
+    gate = _abandon_while_submitting(ctrl, fake)
+    gate.set()
+
+    assert pump_until(lambda: failures == [("a", "JOB-1", "scancel failed")])
+
+
+def test_a_cancelled_batch_keeps_the_job_in_hand(controller) -> None:
+    ctrl, fake = controller
+    finished: list[bool] = []
+    ctrl.submit_batch_finished.connect(lambda: finished.append(True))
+    fake.on_submit = ctrl.cancel_batch
+
+    ctrl.submit_batch([{"job_id": "a", "label": "a", "submit_kwargs": {"seed_name": "a"}}])
+
+    assert pump_until(lambda: finished == [True])
+    assert not any(call[0] == "cancel_scheduler_job" for call in fake.calls)
+
+
+def test_a_job_submitted_again_after_an_abandoned_batch_is_not_cancelled(controller) -> None:
+    ctrl, fake = controller
+    finished: list[bool] = []
+    ctrl.submit_batch_finished.connect(lambda: finished.append(True))
+
+    gate = _abandon_while_submitting(ctrl, fake)
+    gate.set()
+    assert pump_until(lambda: finished == [True])
+    fake.on_submit = None
+    ctrl.submit_batch([{"job_id": "a", "label": "a", "submit_kwargs": {"seed_name": "a"}}])
+
+    assert pump_until(lambda: finished == [True, True])
+    assert [call for call in fake.calls if call[0] == "cancel_scheduler_job"] == [
+        ("cancel_scheduler_job", "JOB-1")
+    ]
 
 
 def test_geometry_progress_is_read_on_the_worker_and_reported_on_the_gui_thread(controller) -> None:
