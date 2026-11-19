@@ -154,3 +154,10 @@ def test_unretrieved_note_says_its_only_when_the_prompt_is_about_one_job() -> No
     assert note.startswith("The output of 1 of these jobs may still be on scarf")
     assert note.endswith("to keep the result.")
     assert unretrieved_output_note([_job(status="failed")]) == ""
+
+
+def test_unretrieved_note_names_the_action_it_warns_about() -> None:
+    jobs = [_orphaned("a"), _orphaned("b")]
+
+    assert "Dismissing does not retrieve it" in unretrieved_output_note(jobs)
+    assert "Resetting does not retrieve it" in unretrieved_output_note(jobs, action="Resetting")

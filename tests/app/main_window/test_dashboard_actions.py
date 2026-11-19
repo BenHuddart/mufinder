@@ -30,7 +30,7 @@ from mufinder.app import selection_snapshot as selection_snapshot_module
 from mufinder.app.selection_snapshot import SelectionScope
 from mufinder.app.journal_widget import JournalWidget
 from mufinder.app.main_window import MainWindow
-from mufinder.app.theme import _FOCUS_RING_NAME, apply_theme
+from mufinder.app.theme import _FOCUS_RING_NAME, apply_theme, muted_text_brush
 from mufinder.castep_setup import CastepSetup
 from mufinder.domain.cluster import ClusterConfig
 from mufinder.app.convergence_types import ConvergenceConfig
@@ -2555,7 +2555,7 @@ def test_dashboard_delete_keys_cancel_active_jobs_and_dismiss_the_rest(
         (
             "Cancel and dismiss jobs",
             "Cancel 2 jobs and dismiss 3 jobs from the dashboard?",
-            "Dismissed jobs stay in the project; their workflow rows can still resubmit them.",
+            "Dismissed jobs stay in the project. Show them again with Show dismissed.",
             "Cancel 2, dismiss 3",
             "Keep them",
         )
@@ -2590,7 +2590,7 @@ def test_dashboard_delete_keys_are_bound_to_both_keys(main_window) -> None:
             (
                 "Dismiss job",
                 "Dismiss job 'job_0_failed' from the dashboard?",
-                "The job stays in the project; its workflow row can still resubmit it.",
+                "The job stays in the project. Show it again with Show dismissed.",
                 "Dismiss job",
             ),
         ),
@@ -2903,7 +2903,7 @@ def test_main_window_dashboard_more_menu_dismiss_is_confirmed(
     assert prompts[0] == (
         "Dismiss job",
         "Dismiss job 'j0' from the dashboard?",
-        "The job stays in the project; its workflow row can still resubmit it.",
+        "The job stays in the project. Show it again with Show dismissed.",
         "Dismiss job",
     )
     window.close()
@@ -3636,7 +3636,7 @@ def test_dismissing_a_job_with_unretrieved_output_says_so(main_window, tmp_path,
         (
             "Dismiss job",
             "Dismiss job 'o0' from the dashboard?",
-            "The job stays in the project; its workflow row can still resubmit it.\n\n"
+            "The job stays in the project. Show it again with Show dismissed.\n\n"
             "Its output may still be on SCARF and has not been retrieved. Dismissing "
             "does not retrieve it; use Check now first to keep the result.",
             "Dismiss job",
@@ -3817,4 +3817,65 @@ def test_dashboard_buttons_follow_the_cluster_connecting_and_disconnecting(main_
     window._cluster_runner._connected = False
     window._on_cluster_connection_status_changed(False)
     assert action_button(window).text() == "Inspect…"
+    window.close()
+
+
+def _dashboard_labels(window) -> list[str]:
+    return [
+        window._jobs_table.item(row, window._JOB_LABEL_COLUMN).text()
+        for row in range(window._jobs_table.rowCount())
+    ]
+
+
+def test_show_dismissed_brings_dismissed_jobs_back_greyed_with_their_actions(main_window, tmp_path):
+    window = main_window
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "show_dismissed.mufinder", "ShowDismissed")
+    kept = _add_dashboard_job(service, doc, "kept", "failed")
+    hidden = _orphaned_cluster_job(service, doc)
+    service.dismiss_job(hidden)
+    window._document = doc
+    window._refresh_jobs_table()
+    box = window._show_dismissed_jobs_box
+
+    assert box.text() == "Show dismissed"
+    assert box.isChecked() is False
+    assert _dashboard_labels(window) == [kept.label]
+
+    box.setChecked(True)
+
+    assert sorted(_dashboard_labels(window)) == sorted([kept.label, hidden.label])
+    row = _dashboard_labels(window).index(hidden.label)
+    label = window._jobs_table.item(row, window._JOB_LABEL_COLUMN)
+    assert label.foreground() == muted_text_brush()
+    assert label.toolTip().startswith("Dismissed ")
+    kept_label = window._jobs_table.item(
+        _dashboard_labels(window).index(kept.label), window._JOB_LABEL_COLUMN
+    )
+    assert kept_label.toolTip() == ""
+    # A shown dismissed job keeps every action but Dismiss itself.
+    assert window._dashboard_action_applies("reset", hidden) is True
+    assert window._dashboard_action_applies("dismiss", hidden) is False
+    assert window._dashboard_action_applies("dismiss", kept) is True
+
+    box.setChecked(False)
+
+    assert _dashboard_labels(window) == [kept.label]
+    window.close()
+
+
+def test_a_dismissed_job_made_active_again_shows_without_show_dismissed(main_window, tmp_path):
+    window = main_window
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "reappeared.mufinder", "Reappeared")
+    job = _orphaned_cluster_job(service, doc)
+    service.dismiss_job(job)
+    window._document = doc
+    window._refresh_jobs_table()
+    assert _dashboard_labels(window) == []
+
+    service.mark_job_active(job, JobActivity.RETRIEVING)
+    window._refresh_jobs_table()
+
+    assert _dashboard_labels(window) == [job.label]
     window.close()

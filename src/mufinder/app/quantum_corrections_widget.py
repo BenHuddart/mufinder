@@ -19,7 +19,7 @@ from mufinder.app.pinned_sites_scope import PinnedSitesScopeBar
 from mufinder.app.theme import form_spacing, page_margins, style_section_title
 from mufinder.app.workflow_row_widget import RelaxedSiteSourceTableWidget
 from mufinder.app.workflow_steps import WorkflowSteps
-from mufinder.app.workflow_submission import READY_WORKFLOW_ROW_STATUSES
+from mufinder.app.workflow_submission import UNSUBMITTED_WORKFLOW_ROW_STATUSES
 from mufinder.app.workflow_table_utils import (
     RESET_FAILED_ACTION_TEXT,
     SelectionFeedback,
@@ -297,7 +297,9 @@ class QuantumCorrectionsWidget(RelaxedSiteSourceTableWidget):
             keys = self.selected_source_keys()
         else:
             keys = [
-                row.key for row in self._site_rows() if row.status in READY_WORKFLOW_ROW_STATUSES
+                row.key
+                for row in self._site_rows()
+                if row.status in UNSUBMITTED_WORKFLOW_ROW_STATUSES
             ] or [row.key for row in self._site_rows()]
         if keys:
             self.configure_requested.emit(keys)

@@ -139,8 +139,13 @@ def has_unretrieved_cluster_output(job: Job) -> bool:
     )
 
 
-def unretrieved_output_note(jobs: Sequence[Job], *, prompt_job_count: int | None = None) -> str:
-    """Return the dismissal warning for the jobs in ``jobs`` with unretrieved output.
+def unretrieved_output_note(
+    jobs: Sequence[Job], *, prompt_job_count: int | None = None, action: str = "Dismissing"
+) -> str:
+    """Return the warning for the jobs in ``jobs`` with unretrieved output.
+
+    ``action`` names what the prompt is about to do (``Dismissing`` or
+    ``Resetting``); neither retrieves the output.
 
     Empty when none has any. Names the clusters involved, first seen first.
     ``prompt_job_count`` is how many jobs the confirmation is about when it
@@ -158,12 +163,12 @@ def unretrieved_output_note(jobs: Sequence[Job], *, prompt_job_count: int | None
     where = " or ".join(clusters.values())
     if (len(jobs) if prompt_job_count is None else prompt_job_count) == 1:
         return (
-            f"Its output may still be on {where} and has not been retrieved. Dismissing "
+            f"Its output may still be on {where} and has not been retrieved. {action} "
             "does not retrieve it; use Check now first to keep the result."
         )
     count = len(unretrieved)
     return (
         f"The output of {count} of these jobs may still be on {where} and has not been "
-        "retrieved. Dismissing does not retrieve it; use Check now first to keep "
+        f"retrieved. {action} does not retrieve it; use Check now first to keep "
         f"the {'result' if count == 1 else 'results'}."
     )

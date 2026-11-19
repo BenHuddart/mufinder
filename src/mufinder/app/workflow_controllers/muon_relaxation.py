@@ -764,11 +764,9 @@ class MuonRelaxationController(WorkflowJobController):
         one label can be shared by two rows (one per charge state), so a bare
         label would be ambiguous here. Resolves the row's job through
         :meth:`jobs_for_keys` — never from a table's *displayed* status text,
-        which reads "not converged" for a completed-but-unconverged job and
-        "ready" for a dismissed failed job (see
-        ``mufinder.app.workflow_submission.effective_row_status``). Called live
-        at context-menu-open time (not cached), so a status change between
-        refreshes (e.g. a dashboard dismissal) is always reflected.
+        which reads "not converged" for a completed-but-unconverged job. Called
+        live at context-menu-open time (not cached), so a status change between
+        refreshes (e.g. a reset from the dashboard) is always reflected.
         """
 
         jobs = self.jobs_for_keys([key])

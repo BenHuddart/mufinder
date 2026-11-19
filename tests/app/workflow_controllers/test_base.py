@@ -231,11 +231,12 @@ def test_submit_grouped_override_forwards_extra_kwargs(tmp_path: Path) -> None:
 
 
 def test_submit_resets_dismissed_job_before_dispatch(tmp_path: Path) -> None:
-    """A dismissed terminal job is handed to the reset hook, then submitted.
+    """A dismissed ended job is handed to the reset hook, then submitted.
 
-    Its row projects "ready" (see ``effective_row_status``) even though the job
-    itself is still FAILED, so without the pre-dispatch reset it would be
-    dropped by the ``{DEFINED}`` gate in the submit backends.
+    Its row reads "failed", which is submittable, but the job itself is still
+    ended, so without the pre-dispatch reset it would be dropped by the
+    ``{DEFINED}`` gate in the submit backends. The reset also clears the
+    dismissal, so the resubmitted job shows on the dashboard again.
     """
 
     service = ProjectService()
@@ -260,7 +261,7 @@ def test_submit_resets_dismissed_job_before_dispatch(tmp_path: Path) -> None:
     )
     controller = _FakeController(
         context,
-        states={"a": FakeRowState("ready")},
+        states={"a": FakeRowState("failed")},
         existing={"a": dismissed},
         # The row keeps its bound job: materialize reuses it, it does not mint
         # a second job for the same row.
@@ -296,7 +297,7 @@ def test_submit_aborts_when_resubmission_preparation_is_cancelled(tmp_path: Path
     )
     controller = _FakeController(
         context,
-        states={"a": FakeRowState("ready")},
+        states={"a": FakeRowState("failed")},
         existing={"a": dismissed},
     )
 
@@ -309,12 +310,12 @@ def test_submit_aborts_when_resubmission_preparation_is_cancelled(tmp_path: Path
     assert controller.materialize_calls == [["a"]]  # no second pass after an abort
 
 
-def test_submit_never_prepares_a_non_dismissed_failed_job(tmp_path: Path) -> None:
-    """A mixed selection must not sweep a non-dismissed failure into the reset.
+def test_submit_resets_every_ended_job_dismissed_or_not(tmp_path: Path) -> None:
+    """Dismissal does not decide whether a row can be resubmitted: the job's state does.
 
     ``submission_plan`` calls ``jobs_for_values`` over *every* selected key, so
-    the plan holds the non-dismissed failed job too; only the dismissed one may
-    be reset, and the other keeps being dropped by the backend status gate.
+    the plan holds both ended jobs, and both go to the one reset prompt before
+    they are submitted once each.
     """
 
     service = ProjectService()
@@ -327,25 +328,33 @@ def test_submit_never_prepares_a_non_dismissed_failed_job(tmp_path: Path) -> Non
         "still-failed", service=service, document=document, calc_type="fake_calc"
     )
     service.submit_job(still_failed)
-    service.end_job(still_failed, EndReason.UNKNOWN, "boom")
+    service.end_job(still_failed, EndReason.WALLTIME, "walltime")
 
     prepared: list[list[Job]] = []
+
+    def _prepare(jobs) -> bool:
+        prepared.append(list(jobs))
+        for job in jobs:
+            service.reset_failed_job(job)
+        return True
+
     local = RecordingBackend()
-    context = make_context(
-        local_backend=local,
-        prepare_jobs_for_resubmission=lambda jobs: (prepared.append(list(jobs)), True)[1],
-    )
+    context = make_context(local_backend=local, prepare_jobs_for_resubmission=_prepare)
     controller = _FakeController(
         context,
-        states={"a": FakeRowState("ready"), "b": FakeRowState("failed")},
+        states={"a": FakeRowState("failed"), "b": FakeRowState("stopped")},
         existing={"a": dismissed, "b": still_failed},
+        materialized={"a": dismissed, "b": still_failed},
     )
 
     controller.submit(["a", "b"], target="local")
 
-    assert [[job.id for job in jobs] for jobs in prepared] == [[dismissed.id]]
-    assert job_status_word(still_failed) == "failed"
-    assert still_failed.dismissed_at is None
+    assert [[job.id for job in jobs] for jobs in prepared] == [[dismissed.id, still_failed.id]]
+    assert [[job.id for job in jobs] for jobs, _ in local.calls] == [
+        [dismissed.id, still_failed.id]
+    ]
+    assert len(document.jobs) == 2
+    assert dismissed.dismissed_at is None
 
 
 def test_submit_reports_rows_left_out_of_a_mixed_selection(tmp_path: Path) -> None:
@@ -436,7 +445,8 @@ def test_default_is_ready_uses_workflow_row_predicate() -> None:
     controller = _FakeController(context, states={})
     # Base default accepts the wider workflow-row status set.
     assert controller.is_ready({"k": FakeRowState("not generated")}, "k") is True
-    assert controller.is_ready({"k": FakeRowState("failed")}, "k") is False
+    assert controller.is_ready({"k": FakeRowState("failed")}, "k") is True
+    assert controller.is_ready({"k": FakeRowState("completed")}, "k") is False
 
 
 class _StagedFakeController(_FakeController):

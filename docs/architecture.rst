@@ -477,8 +477,8 @@ defined by two of these modules, and a pinned count may only fall.
        and labels, and the ``AdapterExpansion`` return shape (see Workflow
        adapters).
    * - ``mufinder.app.workflow_submission``
-     - Row submission planning, ``effective_row_status`` and the dismissed-row
-       rules.
+     - Row submission planning, ``effective_row_status`` and the submittable
+       row statuses.
    * - ``mufinder.app.workflow_controllers.base``
      - The submit, materialize, result and refresh cycle (see Workflow
        controllers), ``dedupe_jobs`` for the jobs a ``materialize`` or
@@ -1373,22 +1373,20 @@ Submission sequence
 
 ``submit`` runs ``pre_submit_check``, then ``build_states``, then builds the
 plan (ready keys and skipped rows), then ``materialize``, then the
-dismissed-job reset, then ``materialize`` again for the plan's ready keys, then
+ended-job reset, then ``materialize`` again for the plan's ready keys, then
 one backend call per ``submission_groups`` group, and finally ``refresh_view``
 with a status message naming the skipped count.
 
-The dismissed-job reset is the only step that mutates job state before
-dispatch. ``submit`` partitions the planned jobs with
-:func:`~mufinder.app.workflow_submission.job_is_resubmittable_after_dismissal`
-and, when any row's bound job was dismissed from the dashboard, calls the
-context's ``prepare_jobs_for_resubmission`` with exactly those jobs. The hook
+The ended-job reset is the only step that mutates job state before
+dispatch. When any planned job is ``ended`` (a row whose job failed, stopped
+or was cancelled, dismissed or not), ``submit`` calls the context's
+``prepare_jobs_for_resubmission`` with exactly those jobs. The hook
 runs the stale-output cleanup prompt and resets them to ``defined``; returning
 ``False`` (the user cancelled) aborts the submission silently. The second
 ``materialize`` pass exists because controllers only regenerate input
 directories for ``defined`` jobs and the first pass ran before the reset. Both
-steps act on the plan's own job objects, so a row never gains a duplicate job,
-and non-dismissed failed jobs are never passed to the hook (see
-:doc:`/job_lifecycle`, Dismissed rows stay resubmittable).
+steps act on the plan's own job objects, so a row never gains a duplicate job
+(see :doc:`/job_lifecycle`, Ended rows are submittable; Dismiss only hides).
 
 Task farming for the quantum-phonon and NEB stages is applied by the shared
 local submit backend, which resolves each job's farm count by calc type; the

@@ -57,8 +57,8 @@ def _answer_cleanup(monkeypatch: pytest.MonkeyPatch, answer: bool | None) -> lis
 
     asked: list[int] = []
 
-    def prompt(_self, job_count: int) -> bool | None:
-        asked.append(job_count)
+    def prompt(_self, jobs) -> bool | None:
+        asked.append(len(jobs))
         return answer
 
     monkeypatch.setattr(main_window_module.MainWindow, "_prompt_failed_job_cleanup", prompt)

@@ -65,8 +65,8 @@ from mufinder.workflow.types import JobSpec
 from mufinder.app.workflow_table_utils import RESET_FAILED_ACTION_TEXT
 from mufinder.app.workflow_submission import (
     WorkflowSubmissionCoordinator,
+    UNSUBMITTED_WORKFLOW_ROW_STATUSES,
     WorkflowSubmissionPlan,
-    job_is_resubmittable_after_dismissal,
     workflow_row_state_is_ready,
 )
 
@@ -87,10 +87,10 @@ class WorkflowControllerContext:
     submission_coordinator: WorkflowSubmissionCoordinator
     submit_jobs_locally: Callable[..., None]
     submit_jobs_on_cluster: Callable[..., None]
-    #: Reset dismissed terminal jobs back to ``defined`` so they clear the
-    #: ``{DEFINED}`` gate in the submit backends. Called by
+    #: Reset ended jobs back to ``defined`` so they clear the ``{DEFINED}``
+    #: gate in the submit backends. Called by
     #: :meth:`WorkflowJobController.submit` immediately before dispatch, with
-    #: the plan's dismissed jobs only. Returns ``False`` when the user cancels
+    #: the plan's ended jobs only. Returns ``False`` when the user cancels
     #: the stale-output cleanup prompt, which aborts the whole submission
     #: silently.
     prepare_jobs_for_resubmission: Callable[[Sequence[Job]], bool]
@@ -480,17 +480,13 @@ class WorkflowJobController:
         ``show_info(no_ready_message)`` → else submit each
         :meth:`submission_groups` group via the local/cluster backend.
 
-        One step is *not* a behavior-preserving move: a row whose bound job was
-        dismissed from the jobs dashboard projects a ready status (see
-        :func:`~mufinder.app.workflow_submission.effective_row_status`) but its
-        job is still terminal, so it would be dropped by the ``{DEFINED}`` gate
-        in the submit backends. Those jobs — and *only* those; a non-dismissed
-        failed job keeps its current, unsubmittable behavior — are reset back to
-        ``defined`` here via ``prepare_jobs_for_resubmission`` before dispatch,
-        after which :meth:`materialize` is re-run so the now-``defined`` jobs get
-        their input directories regenerated. Because both steps act on the very
-        job objects the plan already holds, no duplicate job is created for the
-        row.
+        A row whose job ended (failed, stopped or cancelled) is submittable,
+        but the submit backends take only ``defined`` jobs. Those jobs are reset
+        back to ``defined`` here via ``prepare_jobs_for_resubmission`` before
+        dispatch, after which :meth:`materialize` is re-run so the
+        now-``defined`` jobs get their input directories regenerated. Because
+        both steps act on the very job objects the plan already holds, no
+        duplicate job is created for the row.
         """
 
         keys = list(values)
@@ -510,11 +506,7 @@ class WorkflowJobController:
             return
 
         # Before any reset: a job left in another job's folder keeps its record as it is.
-        startable = [
-            job
-            for job in plan.jobs
-            if job.status == JobStatus.DEFINED or job_is_resubmittable_after_dismissal(job)
-        ]
+        startable = [job for job in plan.jobs if job.status in {JobStatus.DEFINED, JobStatus.ENDED}]
         free = {job.id for job in self._context.jobs_free_to_start(startable)}
         refused = {job.id for job in startable} - free
         if refused:
@@ -522,9 +514,9 @@ class WorkflowJobController:
             if not plan.has_jobs:
                 return
 
-        dismissed_jobs = [job for job in plan.jobs if job_is_resubmittable_after_dismissal(job)]
-        if dismissed_jobs:
-            if not self._context.prepare_jobs_for_resubmission(dismissed_jobs):
+        ended_jobs = [job for job in plan.jobs if job.status == JobStatus.ENDED]
+        if ended_jobs:
+            if not self._context.prepare_jobs_for_resubmission(ended_jobs):
                 return
             # Materialize ran while building the plan, when the reset jobs were
             # still terminal — and a controller only rewrites a job directory
@@ -562,7 +554,7 @@ class WorkflowJobController:
         Each requested row contributes at most one job to the plan, and the
         backends submit only ``DEFINED`` jobs, so the rows left out are those
         with no job in the plan (not ready, nothing to materialize) or whose
-        job is in another state (running, completed, failed and not dismissed).
+        job is in another state (active or completed, or ended and not reset).
         """
 
         submittable = sum(1 for job in plan.jobs if job.status == JobStatus.DEFINED)
@@ -634,11 +626,11 @@ def locked_configuration_reason(
     ``jobs`` are the rows' jobs and ``statuses`` their projected row statuses,
     in the same order; ``job_noun`` names the job ("phonon job"). The reason is
     one line naming what unlocks the first locked row; it is empty when every
-    row is ready.
+    row is unsubmitted.
     """
 
     for job, status in zip(jobs, statuses, strict=True):
-        if job is None or status in {"ready", "defined"}:
+        if job is None or status in UNSUBMITTED_WORKFLOW_ROW_STATUSES:
             continue
         if job.status == JobStatus.ACTIVE:
             return (

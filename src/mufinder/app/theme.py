@@ -1165,6 +1165,12 @@ def status_brush(status_value: str) -> QBrush:
     return QBrush(status_color(status_value))
 
 
+def muted_text_brush() -> QBrush:
+    """Return a text brush for an item shown but set aside, such as a dismissed job."""
+
+    return QBrush(QColor(current_palette().text_muted))
+
+
 def load_theme_mode(settings: QSettings) -> str:
     """Read persisted appearance mode from settings."""
 

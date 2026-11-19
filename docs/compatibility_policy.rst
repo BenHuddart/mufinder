@@ -396,18 +396,16 @@ Compatibility ledger
        persistence codec and dashboard rendering.
    * - ``dismissed_at`` job field
      - ``Job`` (``mufinder.domain.models``) / job entity files
-     - Persisted dismissal timestamp for terminal jobs (failed, stopped, or
-       cancelled) hidden from the dashboard via the Dismiss action. The job
-       record, its runs, results, and provenance remain in the project;
-       only dashboard visibility changes. Optional with a ``None`` default, so
-       older projects load unchanged and are fully visible. The app layer also
-       derives a submittable workflow-row status from the stamp (see
-       ``docs/job_lifecycle.rst``, Dismissed rows stay resubmittable) — a
-       read-time projection, not extra persisted state.
+     - Persisted dismissal timestamp for ended jobs hidden from the
+       dashboard via the Dismiss action. The job record, its runs, results,
+       and provenance remain in the project; only dashboard visibility
+       changes, and nothing else reads the stamp. Every change of state
+       clears it. Optional with a ``None`` default, so older projects load
+       unchanged and are fully visible.
      - Current job data, not deprecated. Removing the field un-dismisses jobs
        in existing projects, so it requires a schema-version bump with a
-       migration entry and an update to the persistence codec, the dashboard
-       visibility filter, and the workflow-row projection.
+       migration entry and an update to the persistence codec and the
+       dashboard visibility filter.
    * - ``end_reason`` job field
      - ``Job`` (``mufinder.domain.models``) / job entity files
      - Why an ``ended`` job did not finish (an ``EndReason`` value such as
@@ -1278,6 +1276,15 @@ and tests. Saved projects are migrated (see Saved-project schema migrations).
   compare with ``JobStatus.ACTIVE`` or ``JobStatus.ENDED``.
 - ``Scheduler.map_to_job_status``: use ``Scheduler.map_to_scheduler_state``,
   which returns a ``SchedulerState``.
+
+The helper below was removed without a deprecation period when Dismiss came to
+only hide a job from the dashboard. It was an app-layer function with no
+documented import path, called only by MuFinder's own code and tests. Projects
+need no migration: ``dismissed_at`` keeps its name and meaning.
+
+- ``mufinder.app.workflow_submission.job_is_resubmittable_after_dismissal``:
+  compare with ``JobStatus.ENDED``; ``effective_row_status`` reads the job's
+  state alone.
 
 The private forwarders below were removed without a deprecation period. They
 were one-line ``MainWindow`` methods, not part of any public import path, and

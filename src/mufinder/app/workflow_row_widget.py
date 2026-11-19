@@ -1364,7 +1364,7 @@ class RelaxationRowTableWidget(RowTableWidget):
         Called by the controller wiring with the controller's
         ``row_is_continuable``. Evaluated fresh every time a row context menu
         opens, not cached, so a status change since the last refresh (e.g. a
-        dashboard dismissal) is always reflected in whether "Continue
+        reset from the dashboard) is always reflected in whether "Continue
         relaxation…" is enabled.
         """
 

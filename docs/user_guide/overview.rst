@@ -398,9 +398,9 @@ and shares one set of table behaviours:
   cores, memory, executable and template overrides, a queue choice on every
   submission, and queue polling and automatic output retrieval;
 - a ``Job Dashboard`` of the jobs that still need attention, with one action
-  button per row and a ``⋯`` menu holding the rest (``Resubmit…``, ``Retry
-  retrieval``, ``Cancel``, ``Inspect…``, ``Reset…``, ``Dismiss``, ``Open in
-  <stage>``), double-click to open a job's page, a failure cause on each failed
+  button per row and a ``⋯`` menu holding the rest (``Resubmit…``, ``Check
+  now``, ``Cancel``, ``Inspect…``, ``Reset…``, ``Dismiss``, ``Open in
+  <stage>``), ``Show dismissed`` to list dismissed jobs again, double-click to open a job's page, a failure cause on each failed
   or stopped row, the geometry-optimisation progress of each running relaxation
   (the step reached in its status, with a plot of every criterion against its
   tolerance), and safeguards that keep no job stuck in an active state;

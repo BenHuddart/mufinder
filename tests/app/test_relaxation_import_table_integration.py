@@ -174,7 +174,7 @@ class TestResetIsBlocked:
         monkeypatch.setattr(
             window,
             "_prompt_failed_job_cleanup",
-            lambda count: (prompted.append(count), False)[1],
+            lambda jobs: (prompted.append(len(jobs)), False)[1],
         )
         monkeypatch.setattr(window, "_refresh_views_after_job_reset", lambda: None)
         monkeypatch.setattr(window, "_record_job_reset", lambda **kwargs: None)

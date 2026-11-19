@@ -88,11 +88,12 @@ def test_pristine_controller_handles_only_its_calc_type(tmp_path: Path) -> None:
 
 def test_pristine_controller_uses_workflow_row_ready_predicate() -> None:
     controller = PristineRelaxationController(make_context(), FakeRelaxationView())
-    # Pristine relaxation uses the base-default (wider) workflow-row predicate:
-    # "not generated" / "defined" rows are ready, only "failed" is excluded.
+    # The base-default workflow-row predicate: rows with nothing run yet and
+    # rows whose job ended are ready; active and completed rows are not.
     assert controller.is_ready({"r": FakeRowState("not generated")}, "r") is True
     assert controller.is_ready({"r": FakeRowState("ready")}, "r") is True
-    assert controller.is_ready({"r": FakeRowState("failed")}, "r") is False
+    assert controller.is_ready({"r": FakeRowState("failed")}, "r") is True
+    assert controller.is_ready({"r": FakeRowState("running")}, "r") is False
 
 
 def test_pristine_controller_refresh_view_without_document_clears_rows() -> None:

@@ -89,7 +89,8 @@ Primitives
   ``started_at`` when the job starts running. It also makes an ``ended`` job
   ``active`` again, clearing ``error_message``, ``end_reason`` and
   ``completed_at`` and keeping the remote metadata. A ``defined`` job becomes
-  active only through ``submit_job``.
+  active only through ``submit_job``. Making an ended job active also clears
+  ``dismissed_at``.
 - ``complete_job`` makes an ``active`` job ``completed``, stamps
   ``completed_at`` and clears ``error_message``.
 - ``end_job(job, reason, message=None)`` makes an ``active`` job ``ended``
@@ -105,7 +106,7 @@ Primitives
   :ref:`job-continuation-primitive`.
 - ``dismiss_job`` stamps ``dismissed_at`` on an ``ended`` job that has none.
   It is not a change of state; ``record_job_dismissed`` appends the
-  ``job_dismissed`` milestone. See :ref:`dismissed-rows-stay-resubmittable`.
+  ``job_dismissed`` milestone. See :ref:`dismiss-only-hides`.
 
 Reset and dismiss accept exactly the ``ended`` jobs, so anything the user can
 dismiss, the app can also reset.
@@ -690,7 +691,9 @@ Dashboard
 ~~~~~~~~~
 
 The Job Dashboard lists ``active`` and ``ended`` jobs without a
-``dismissed_at`` stamp. The ``Status`` cell shows the status word, with the
+``dismissed_at`` stamp. With ``Show dismissed`` ticked (above the table, not
+saved) it lists the dismissed ones too, with a greyed label whose tooltip says
+when the job was dismissed. The ``Status`` cell shows the status word, with the
 reason for a failed or stopped job (``failed · SCF did not converge``,
 ``stopped · walltime``) and geometry progress for a running relaxation. Its
 tooltip explains the failure and carries the last check's age, source and
@@ -729,9 +732,10 @@ Each row has one action button and a ``⋯`` menu:
      - ``ended``. Relaxations first ask whether to continue or start again
        (see :ref:`resubmit-continue-or-start-again`).
    * - ``Reset…``
-     - ``ended``.
+     - ``ended``. The clean-up prompt adds ``unretrieved_output_note`` with
+       ``Resetting`` when ``has_unretrieved_cluster_output`` holds.
    * - ``Dismiss``
-     - ``ended``. When ``has_unretrieved_cluster_output`` holds, the
+     - ``ended`` without a ``dismissed_at`` stamp. When ``has_unretrieved_cluster_output`` holds, the
        confirmation adds ``services.job_monitoring.unretrieved_output_note``:
        the output may still be on the cluster and ``Check now`` retrieves it.
 
@@ -747,9 +751,8 @@ offers ``Reset Failed Jobs…`` in its shared right-click row menu, from
 ``mufinder.app.workflow_table_utils``:
 
 - ``RESETTABLE_ROW_STATUSES`` — ``{failed, stopped, cancelled}``, the status
-  words of an ended job. A dismissed ended job reads ``ready`` instead and is
-  recovered by the table's own run actions (see
-  :ref:`dismissed-rows-stay-resubmittable`).
+  words of an ended job, dismissed or not. The same rows can also be run
+  directly (see :ref:`ended-rows-are-submittable`).
 - ``resettable_keys`` — the selected rows a reset applies to: a resettable
   status and a key. A mixed or partly keyed selection shows its count in the
   entry (``Reset Failed Jobs... (2 of 5)``, from ``partial_count_suffix``),
@@ -791,31 +794,49 @@ folder of its own (the seed gains ``_phonon`` when the singlepoint's folder
 still exists). A row whose singlepoint is still active shows that job's status
 and refuses submission until the singlepoint finishes or is cancelled.
 
-.. _dismissed-rows-stay-resubmittable:
+.. _ended-rows-are-submittable:
+.. _dismiss-only-hides:
 
-Dismissed rows stay resubmittable
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Ended rows are submittable; Dismiss only hides
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Dismissing an ended job removes its dashboard row and with it the only generic
-``Resubmit`` and ``Reset`` controls, while its workflow row still points at it.
-Dismissal is therefore read as *"failure acknowledged, this row is actionable
-again"*, through two pieces in ``mufinder.app.workflow_submission``:
+A workflow row's status comes from its job's state alone, through
+``effective_row_status(job)`` in ``mufinder.app.workflow_submission``: a row
+with no job reads ``ready`` (or the workflow's own word for it), every other
+row reads ``job_status_word(job)``. Every workflow's job-to-row projection goes
+through it.
 
-- ``effective_row_status(job)`` — the one place the rule lives. An ``ended``
-  job with a ``dismissed_at`` stamp projects ``"ready"``; every other job
-  projects its status word. Every workflow's job-to-row projection goes through
-  it. A job that is not dismissed is unaffected.
-- ``prepare_jobs_for_resubmission`` on ``WorkflowControllerContext`` — the lazy
-  reset. ``WorkflowJobController.submit`` calls it for the dismissed jobs just
-  before dispatch; the main window runs the same clean-up prompt as ``Reset``
-  and then ``reset_failed_job``, so the jobs reach the submit backends as
-  ``defined``. Cancelling the prompt aborts the submission.
+A row can be submitted when its status is in ``READY_WORKFLOW_ROW_STATUSES``:
+``ready``, ``defined``, ``not generated``, and the three words of an ended job,
+``failed``, ``stopped`` and ``cancelled``. ``Run All`` includes them. Their
+inputs stay as the job ran them until a reset: ``workflow_row_is_locked`` keeps
+failed and stopped rows read-only (a cancelled sweep or relaxation row stays
+editable), and the Configure dialogs of Hyperfine Coupling, Quantum Corrections
+and Energy Barriers edit only ``UNSUBMITTED_WORKFLOW_ROW_STATUSES`` rows
+(``ready``, ``defined``, ``not generated``). The dashboard's ``Resubmit…``
+reruns a job's own inputs, so an edit to an ended row would otherwise be
+ignored, and a changed farm count would disagree with the job's ``NUM_FARMS``.
+
+``prepare_jobs_for_resubmission`` on ``WorkflowControllerContext`` is the lazy
+reset. ``WorkflowJobController.submit`` calls it for the plan's ended jobs just
+before dispatch; the main window runs the same clean-up prompt as ``Reset``
+(with the unretrieved-output note when it applies) and then
+``reset_failed_job``, so the jobs reach the submit backends as ``defined``.
+Cancelling the prompt aborts the submission. Imported jobs are never reset.
 
 ``submit`` then runs ``materialize`` again for the plan's ready keys, because a
 controller rewrites a job's inputs only while it is ``defined``; without it the
 row would resubmit the failed run's ``.cell`` and ``.param``. The row keeps its
 job, and a reset cutoff-convergence job stays in its ``job_ids_by_cutoff``
-mapping. The projection is read-time only, so nothing persisted changes.
+mapping.
+
+Dismissing an ended job only hides it from the Job Dashboard. Nothing else
+reads ``dismissed_at``: the workflow row reads the same, and the job stays
+resubmittable from it. Every change of state clears the stamp (reset,
+continuation, and an ended job made active again by ``Check now``), so a job
+that runs again is always listed. ``Show dismissed`` lists the hidden jobs
+with their usual actions, so a dismissed job whose output is still on the
+cluster can be checked again.
 
 Job bindings across definitions
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

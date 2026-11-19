@@ -1756,8 +1756,8 @@ def test_relaxation_row_menu_acts_on_the_eligible_rows_of_a_mixed_selection(
     menu = open_reset_menu(widget._table)
 
     assert [action.text for action in menu.actions][:5] == [
-        "Run Local (1 of 3)",
-        "Run on Cluster (1 of 3)",
+        "Run Local (2 of 3)",
+        "Run on Cluster (2 of 3)",
         "Cancel (1 of 3)",
         "Inspect Failure (1 of 3)",
         "Reset Failed Jobs… (1 of 3)",

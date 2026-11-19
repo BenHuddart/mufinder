@@ -246,6 +246,7 @@ def _reset_menu_table(qapp, statuses: tuple[str, ...]):
         ("queued", True),
         ("running", True),
         ("retrieving", True),
+        # A failed or stopped row can be run again, but its inputs change only after a reset.
         ("stopped", True),
         ("failed", True),
         ("completed", True),
@@ -798,14 +799,23 @@ def test_standard_row_menu_omits_actions_a_table_does_not_have(qapp, monkeypatch
     [
         (["ready", "not generated"], {"Run Local", "Run on Cluster", "Configure…", "Remove"}),
         (["running", "queued"], {"Cancel", "Configure…", "Remove"}),
+        # A row whose job ended runs again from the row: the submit cycle resets it.
         (
             ["failed", "stopped"],
-            {"Inspect Failure", "Reset Failed Jobs…", "Configure…", "Remove"},
+            {
+                "Run Local",
+                "Run on Cluster",
+                "Inspect Failure",
+                "Reset Failed Jobs…",
+                "Configure…",
+                "Remove",
+            },
         ),
         (["completed", "completed"], {"Configure…", "Remove"}),
-        # Cancelled rows are editable but run again through Reset (or the
-        # dashboard), so Run stays off, matching the submission filter.
-        (["cancelled", "cancelled"], {"Reset Failed Jobs…", "Configure…", "Remove"}),
+        (
+            ["cancelled", "cancelled"],
+            {"Run Local", "Run on Cluster", "Reset Failed Jobs…", "Configure…", "Remove"},
+        ),
     ],
 )
 def test_standard_row_menu_enables_actions_from_row_status(
@@ -833,8 +843,8 @@ def test_standard_row_menu_offers_actions_for_the_eligible_rows_of_a_mixed_selec
     menu = open_reset_menu(table)
 
     assert [action.text for action in menu.actions] == [
-        "Run Local (1 of 4)",
-        "Run on Cluster (1 of 4)",
+        "Run Local (2 of 4)",
+        "Run on Cluster (2 of 4)",
         "Cancel (2 of 4)",
         "Inspect Failure (1 of 4)",
         "Reset Failed Jobs… (1 of 4)",

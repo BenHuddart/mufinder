@@ -1766,8 +1766,8 @@ class ProjectService:
 
         ``activity`` is display only, so an active job may move to any
         activity. An ended job becomes active when evidence shows it is alive
-        or has output still to be recorded; its end stamps are cleared and its
-        remote metadata is kept. ``started_at`` is stamped when the job starts
+        or has output still to be recorded; its end stamps and any dismissal
+        are cleared and its remote metadata is kept. ``started_at`` is stamped when the job starts
         running. ``remote_job_id``, when given, replaces the scheduler job ID.
         """
 
@@ -1778,6 +1778,7 @@ class ProjectService:
             job.completed_at = None
             job.error_message = None
             job.end_reason = None
+            job.dismissed_at = None
         if activity == JobActivity.RUNNING and (
             job.status != JobStatus.ACTIVE or job.activity != JobActivity.RUNNING
         ):
@@ -1877,12 +1878,8 @@ class ProjectService:
         record, runs, results, and provenance all remain in the document. Only
         ``dismissed_at`` is stamped so the dashboard can filter the row out.
         Already-dismissed jobs are rejected so the milestone is recorded once.
-
-        Dismissal is nonetheless *acknowledgement* of the failure: the app layer
-        derives a submittable workflow-row status from the stamp (see
-        ``mufinder.app.workflow_submission.effective_row_status``) so the row the
-        job belongs to can be resubmitted once its dashboard controls are gone.
-        That projection is derived at read time and changes nothing here.
+        Nothing else reads the stamp, and every change of state clears it, so a
+        job that is reset, continued or made active again is shown again.
         """
 
         if job.status != JobStatus.ENDED or job.dismissed_at is not None:
