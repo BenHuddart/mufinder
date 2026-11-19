@@ -1205,7 +1205,7 @@ def test_quantum_controller_row_lifecycle_from_ready_to_a_completed_result(tmp_p
     assert extras == {}
     (job,) = submitted
     assert job.calc_type == QUANTUM_PHONON_CALC_TYPE
-    assert controller.build_states()[key].status == "defined"
+    assert controller.build_states()[key].status == "ready"
     assert controller.jobs_for_keys([key]) == [job]
 
     job.status = JobStatus.ACTIVE
@@ -1984,7 +1984,7 @@ def test_quantum_controller_fresh_seed_and_legacy_binding_survive_a_reload(tmp_p
     assert controller.legacy_singlepoint_job_for_key(loaded_definition, key).id == singlepoint.id
     assert loaded_definition.parameters["job_seed_names_by_label"][key] == "quantum_siteA_phonon"
     assert loaded_definition.parameters["singlepoint_seed_names_by_label"] == {key: "quantum_siteA"}
-    assert controller.build_states()[key].status == "defined"
+    assert controller.build_states()[key].status == "ready"
 
     def seed(owner, row: str) -> str:
         return quantum_seed_name_for_key(loaded, owner, row)

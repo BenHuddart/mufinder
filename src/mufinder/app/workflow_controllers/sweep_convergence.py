@@ -373,7 +373,7 @@ class SweepConvergenceController(WorkflowJobController):
                 )
                 continue
             states[key] = SweepPointRunState(
-                status="ready" if job.status == JobStatus.DEFINED else effective_row_status(job),
+                status=effective_row_status(job),
                 total_energy=self._context.total_energy_for_job(job.id),
                 max_force=self._context.max_force_for_job(job.id),
                 max_stress=self._deps.max_stress_for_job(job.id),

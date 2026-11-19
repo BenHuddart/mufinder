@@ -106,7 +106,7 @@ run. When ``Configure…`` opens a locked row read-only, the dialog says why in
 one line. A row whose phonon job failed, stopped or was cancelled can be run
 again as it is, as in every workflow table; running it resets the job first.
 To change its parameters, use ``Reset Failed Jobs…`` in step 2 or in the
-right-click menu, which returns the job to ``defined`` (see
+right-click menu, which returns the row to ``ready`` (see
 :doc:`/getting_started/running_jobs`). The reset asks first and offers to clean
 the job directory:
 
@@ -119,10 +119,10 @@ the job directory:
   directory again and asks before deleting one that already exists, so it
   starts again.
 
-The row then reads ``defined`` with every parameter editable; submit it again.
+The row then reads ``ready`` with every parameter editable; submit it again.
 Cancel an active job before resetting it. A completed phonon job is not reset:
 to run the row again with other parameters, delete the job from the Job
-Dashboard. A job still ``defined`` (staged but never submitted) stays editable,
+Dashboard. A job staged but never submitted (its row reads ``ready``) stays editable,
 because submitting the row rewrites its input files from the stored
 configuration. Dismissing a job from the Job Dashboard does not change its row.
 
@@ -303,7 +303,7 @@ between rows are marked as mixed and are left untouched unless you edit them.
 
    * - Row state
      - What you can change
-   * - ``ready`` (no job) or ``defined``
+   * - ``ready`` (no job, or a job not yet submitted)
      - Everything.
    * - Anything else, for any selected row
      - Nothing; the dialog opens read-only as ``Inspect Quantum Corrections

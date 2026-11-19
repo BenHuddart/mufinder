@@ -256,7 +256,7 @@ class PristineRelaxationController(WorkflowJobController):
                 states[row.label] = RelaxationRunState(status="ready")
                 continue
 
-            status_value = "ready" if job.status == JobStatus.DEFINED else effective_row_status(job)
+            status_value = effective_row_status(job)
             run = self._context.run_for_job(job.id)
             if (
                 status_value == JobStatus.COMPLETED.value

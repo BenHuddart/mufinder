@@ -126,8 +126,13 @@ def test_active_and_completed_rows_are_not_ready(dismissed: bool) -> None:
         assert not workflow_row_state_is_ready({"row": _State(effective_row_status(job))}, "row")
 
 
-def test_defined_job_projects_defined_and_missing_job_projects_ready() -> None:
-    assert effective_row_status(_job_with(JobStatus.DEFINED, dismissed=False)) == "defined"
+def test_defined_and_missing_jobs_both_project_ready() -> None:
+    """A staged or reset job has not run, so its row reads like a row with no job."""
+
+    assert effective_row_status(_job_with(JobStatus.DEFINED, dismissed=False)) == "ready"
+    assert (
+        effective_row_status(_job_with(JobStatus.DEFINED, dismissed=False), ready_status="x") == "x"
+    )
     assert effective_row_status(None) == "ready"
     assert effective_row_status(None, ready_status="not generated") == "not generated"
 

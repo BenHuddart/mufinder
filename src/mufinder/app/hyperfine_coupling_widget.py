@@ -195,7 +195,7 @@ class HyperfineCouplingWidget(RelaxedSiteSourceTableWidget):
         self._submit_cluster_button = QPushButton()
         self._reset_failed_button = QPushButton(RESET_FAILED_ACTION_TEXT)
         self._reset_failed_button.setToolTip(
-            "Return the selected failed, stopped or cancelled magres jobs to 'defined' for a rerun."
+            "Return the selected failed, stopped or cancelled magres jobs to 'ready' for a rerun."
         )
         self._batch_configure_button.clicked.connect(self._emit_batch_configure)
         self._submit_local_button.clicked.connect(self._emit_submit_local)

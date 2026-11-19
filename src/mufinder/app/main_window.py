@@ -4684,7 +4684,7 @@ class MainWindow(QMainWindow):
         jobs: list[Job],
         *,
         eligible_statuses: set[JobStatus] | None = None,
-        no_eligible_message: str = "Selected jobs must be in the 'defined' state for local submission.",
+        no_eligible_message: str = "Selected jobs must be ready for local submission.",
         success_message: Callable[[int], str] | None = None,
         fresh_start_job_ids: Collection[UUID] = (),
     ) -> None:
@@ -4800,7 +4800,7 @@ class MainWindow(QMainWindow):
         *,
         default_cluster_name: str | None = None,
         eligible_statuses: set[JobStatus] | None = None,
-        no_eligible_message: str = "Selected jobs must be in the 'defined' state for cluster submission.",
+        no_eligible_message: str = "Selected jobs must be ready for cluster submission.",
         reuse_existing_remote_files: bool = False,
         success_message: Callable[[int, str], str] | None = None,
         fresh_start_job_ids: Collection[UUID] = (),
@@ -6334,7 +6334,8 @@ class MainWindow(QMainWindow):
         answer = workflow_table_utils.confirm_choice(
             self,
             "Reset failed jobs",
-            f"Reset {plural(len(jobs), 'failed job')} to the 'defined' state?",
+            f"Reset {plural(len(jobs), 'failed job')} so "
+            f"{'it is' if len(jobs) == 1 else 'they are'} ready to run again?",
             [("clean", "Clean and reset"), ("keep", "Reset, keep files"), ("cancel", "Cancel")],
             default="keep",
             escape="cancel",

@@ -424,8 +424,8 @@ or to change its parameters and carry on.
    regenerated from the row's structure (this dialog does not edit atomic
    positions), and a summary naming the execution target and the directory that
    will be reused.
-3. **Accept.** Click ``Continue``. The row keeps its job, which returns to
-   ``defined``, and MuFinder rewrites the ``.cell`` and ``.param`` into the same
+3. **Accept.** Click ``Continue``. The row keeps its job, which is made
+   ready again, and MuFinder rewrites the ``.cell`` and ``.param`` into the same
    directory, locally or on the cluster, then resubmits the job to its original
    execution target.
 

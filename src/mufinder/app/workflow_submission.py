@@ -6,6 +6,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Generic, TypeVar
 
+from mufinder.domain.enums import JobStatus
 from mufinder.domain.models import Job
 from mufinder.services.job_monitoring import job_status_word
 
@@ -31,13 +32,14 @@ _READY_WORKFLOW_ROW_STATUSES = READY_WORKFLOW_ROW_STATUSES
 def effective_row_status(job: Job | None, *, ready_status: str = "ready") -> str:
     """Project ``job`` onto the status string its workflow table row shows.
 
-    A row with no job reads ``ready_status``: it has nothing to run yet. Every
-    other row reads its job's status word
+    A row with no job, or whose job is ``defined`` (staged or reset, never
+    run), reads ``ready_status``: either way it is ready to run. Every other
+    row reads its job's status word
     (:func:`~mufinder.services.job_monitoring.job_status_word`), from the job's
     state alone. Dismissing a job from the Job Dashboard does not change it.
     """
 
-    if job is None:
+    if job is None or job.status == JobStatus.DEFINED:
         return ready_status
     return job_status_word(job)
 

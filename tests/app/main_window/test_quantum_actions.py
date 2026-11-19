@@ -87,7 +87,7 @@ def test_quantum_row_reset_with_cleanup_reruns_as_a_fresh_job(
     if singlepoint is not None:
         assert doc.jobs[singlepoint.id].status == JobStatus.COMPLETED
     controller = window._quantum_corrections_controller
-    assert controller.build_states()[candidate.key].status == "defined"
+    assert controller.build_states()[candidate.key].status == "ready"
     request = controller.configure_request([candidate.key])
     assert request is not None and request.read_only is False
     window.close()

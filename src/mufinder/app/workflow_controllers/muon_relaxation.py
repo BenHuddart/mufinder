@@ -100,7 +100,7 @@ from mufinder.app.workflow_controllers.base import (
     relaxation_artifact_failure,
     upsert_job_derived_structure,
 )
-from mufinder.app.workflow_submission import effective_row_status
+from mufinder.app.workflow_submission import READY_WORKFLOW_ROW_STATUSES, effective_row_status
 
 
 #: The definition mapping that holds each row's job seed name.
@@ -377,7 +377,7 @@ class MuonRelaxationController(WorkflowJobController):
         Behavior-preserving move of ``MainWindow._muon_relaxation_label_is_ready``.
         """
 
-        ready_statuses = {"ready", "defined", "not generated"}
+        ready_statuses = READY_WORKFLOW_ROW_STATUSES
         state = states.get(key)
         if state is not None and state.status in ready_statuses:
             return True

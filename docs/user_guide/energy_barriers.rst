@@ -317,7 +317,7 @@ the user — it is a physical resolution choice, not a scheduling one.
    The farm split of the GdRu₂Si₂ band: 41 images over 4 farms.
 
 The farm count can only be changed while a path has no NEB job yet, or while
-its job is still in the ``defined`` state — the same rule that governs every
+its job has not been submitted (the row reads ``ready``) — the same rule that governs every
 other NEB parameter. This matters more for farming than for the rest: the
 configured count also tells MuFinder which output filenames to read, so it must
 not drift away from the ``NUM_FARMS`` already written into a submitted job's

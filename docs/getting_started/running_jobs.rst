@@ -26,7 +26,7 @@ To submit jobs from a workflow page:
    ``Run All Locally`` and ``Run All on Cluster`` and every row is submitted;
    rows that are not ready are skipped. With rows selected they read ``Run
    Selected Locally`` and ``Run Selected on Cluster``. A row is ready when it
-   has no job yet, its job is ``defined``, or its job ``failed``, ``stopped`` or
+   has not run yet (it reads ``ready``), or its job ``failed``, ``stopped`` or
    was ``cancelled``, whether or not you dismissed it from the Job Dashboard.
    Running a row whose job ended first asks the ``Reset…`` question (see
    `Reset and its clean-up`_) for all of them at once; ``Cancel`` there submits
@@ -365,9 +365,10 @@ Job states
 
 The ``Status`` column shows where each job is:
 
-``defined``
-   The job has been created but has not been submitted yet. Submit it from the
-   workflow table that created it (see `Submitting jobs`_).
+``ready``
+   Shown in a workflow table for a row that has not run: it has no job yet, or
+   its job has been created or reset but not submitted. Submit it from that
+   table (see `Submitting jobs`_). The Job Dashboard does not list these.
 
 ``submitting``
    MuFinder is handing the job to a local process or a cluster scheduler.
@@ -482,7 +483,7 @@ when it is partial (``Reset… (2 of 3)``).
    continued (see :ref:`continue-relaxation`). It opens for one job at a time.
 
 ``Reset…``
-   Returns a failed, stopped or cancelled job to ``defined``, with an option to
+   Returns a failed, stopped or cancelled job to ``ready``, with an option to
    clean its output folder. See `Reset and its clean-up`_.
 
 ``Dismiss``

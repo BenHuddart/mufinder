@@ -1210,7 +1210,8 @@ def test_main_window_materializes_a_configured_quantum_phonon_job_and_shows_its_
     assert table.item(0, 8).text() == "ready"
 
     phonon_jobs = window._quantum_corrections_controller.materialize([str(site.id)])
-    assert table.item(0, 8).text() == "defined"
+    # A staged phonon job has not run: its row still reads ready.
+    assert table.item(0, 8).text() == "ready"
 
     assert len(phonon_jobs) == 1
     assert phonon_jobs[0].calc_type == QUANTUM_PHONON_CALC_TYPE

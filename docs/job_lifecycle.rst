@@ -802,8 +802,9 @@ Ended rows are submittable; Dismiss only hides
 
 A workflow row's status comes from its job's state alone, through
 ``effective_row_status(job)`` in ``mufinder.app.workflow_submission``: a row
-with no job reads ``ready`` (or the workflow's own word for it), every other
-row reads ``job_status_word(job)``. Every workflow's job-to-row projection goes
+with no job, or whose job is ``defined`` (staged or reset, never run), reads
+``ready`` (or the workflow's own word for it); every other row reads
+``job_status_word(job)``. Every workflow's job-to-row projection goes
 through it.
 
 A row can be submitted when its status is in ``READY_WORKFLOW_ROW_STATUSES``:
