@@ -23,6 +23,7 @@ from mufinder.services.job_progress import (
     job_reports_geometry_progress,
     remote_castep_candidates,
 )
+from tests.support.jobs import state_fields
 from tests.support.cluster_ssh import GrowingOutputSSH
 
 BFGS = Path(__file__).resolve().parents[1] / "fixtures" / "geometry" / "Si2_bfgs.castep"
@@ -32,10 +33,10 @@ LBFGS_CONTINUED = BFGS.with_name("Si2_lbfgs.castep")
 def _job(
     stage: WorkflowStage = WorkflowStage.MUON_RELAXATION,
     *,
-    status=JobStatus.RUNNING,
+    status="running",
     target="local",
 ) -> Job:
-    return Job(label="job", workflow_stage=stage, status=status, execution_target=target)
+    return Job(label="job", workflow_stage=stage, **state_fields(status), execution_target=target)
 
 
 def test_geometry_progress_is_reported_for_relaxation_stages_only() -> None:
@@ -251,7 +252,7 @@ def test_monitor_follows_only_running_geometry_optimisations(monitor) -> None:
     monitor, recorder, paths = monitor
     relaxing = _job()
     paths[relaxing.id] = (BFGS,)
-    queued = _job(status=JobStatus.QUEUED)
+    queued = _job(status="queued")
     sweep = _job(WorkflowStage.CONVERGENCE_CUTOFF)
 
     monitor.follow([relaxing, queued, sweep])

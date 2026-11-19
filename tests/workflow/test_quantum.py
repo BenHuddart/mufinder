@@ -10,7 +10,7 @@ import pytest
 from mufinder.castep_io import write_cell, write_param
 from mufinder.castep_io.types import BlockSection, KeywordAssignment, ValueWithUnit
 from mufinder.domain.constants import MUON_MASS_AMU
-from mufinder.domain.enums import JobStatus, WorkflowStage
+from mufinder.domain.enums import JobActivity, JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationRun, Job, MuonSite, Structure
 from mufinder.workflow.bridge import structure_to_spec
 from mufinder.workflow.types import CellTemplate, ParamTemplate
@@ -376,12 +376,18 @@ def _structure_without_stage_provenance() -> Structure:
             "recorded relaxation run is missing",
         ),
         (
-            {"run": CalculationRun(id=_RUN_ID, status=JobStatus.RUNNING)},
+            {"run": CalculationRun(id=_RUN_ID, status=JobStatus.ACTIVE)},
             "relaxation run is not complete",
         ),
         ({"job": None}, "not a MuFinder muon structural relaxation"),
         (
-            {"job": Job(workflow_stage=WorkflowStage.MUON_RELAXATION, status=JobStatus.RUNNING)},
+            {
+                "job": Job(
+                    workflow_stage=WorkflowStage.MUON_RELAXATION,
+                    status=JobStatus.ACTIVE,
+                    activity=JobActivity.RUNNING,
+                )
+            },
             "muon relaxation job is not complete",
         ),
         ({"relaxed_structure": None}, "no parsed relaxed structure"),

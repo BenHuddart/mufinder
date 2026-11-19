@@ -142,8 +142,8 @@ class SubmissionHarness:
         )
 
     # -- runner-signal emission (drives the wired handlers) --------------
-    def emit_local_status(self, job_id: UUID, status: JobStatus) -> None:
-        self.local_runner.status_changed.emit(job_id, status.value)
+    def emit_local_status(self, job_id: UUID, status: str) -> None:
+        self.local_runner.status_changed.emit(job_id, str(status))
 
     def emit_local_started(self, job_id: UUID) -> None:
         self.local_runner.job_started.emit(job_id)
@@ -202,7 +202,7 @@ def _make_finished_handler(harness: SubmissionHarness):
         job = harness.document.jobs.get(job_id)
         if job is None:
             return
-        run = harness.controller.ensure_run_for_job(job, status=JobStatus.RUNNING, started=True)
+        run = harness.controller.ensure_run_for_job(job, status=JobStatus.ACTIVE, started=True)
         if run is None:
             return
         result = harness.record_result(

@@ -19,6 +19,7 @@ from mufinder.app.main_window import MainWindow
 from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.services.project_service import ProjectService
 from mufinder.workflow.quantum import QUANTUM_PHONON_CALC_TYPE
+from tests.support.jobs import set_job_state
 from tests.app.test_fresh_start_safety import ALL_FILES, SEED, _job_directory, _pristine_job
 from tests.support.main_window import stage_quantum_row
 
@@ -53,7 +54,7 @@ def _legacy_quantum_row(tmp_path: Path, *, singlepoint_status: JobStatus, phonon
         workflow_stage=WorkflowStage.QUANTUM_CORRECTIONS,
         calc_type=QUANTUM_PHONON_CALC_TYPE,
     )
-    phonon.status = phonon_status
+    set_job_state(phonon, phonon_status)
     definition.parameters["phonon_job_ids_by_label"] = {candidate.key: str(phonon.id)}
 
     directory = doc.project_root / "files" / "quantum_corrections" / QUANTUM_SEED
@@ -84,7 +85,7 @@ def test_resetting_a_legacy_phonon_with_cleanup_empties_the_shared_directory(
     qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     window, doc, _definition, _candidate, singlepoint, phonon, directory = _legacy_quantum_row(
-        tmp_path, singlepoint_status=JobStatus.COMPLETED, phonon_status=JobStatus.FAILED
+        tmp_path, singlepoint_status=JobStatus.COMPLETED, phonon_status="failed"
     )
     warnings = _capture_warnings(monkeypatch)
 
@@ -103,7 +104,7 @@ def test_resetting_both_legacy_jobs_together_cleans_their_directory(
     qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     window, _doc, _definition, _candidate, singlepoint, phonon, directory = _legacy_quantum_row(
-        tmp_path, singlepoint_status=JobStatus.FAILED, phonon_status=JobStatus.FAILED
+        tmp_path, singlepoint_status="failed", phonon_status="failed"
     )
     warnings = _capture_warnings(monkeypatch)
 
@@ -118,7 +119,7 @@ def test_resetting_a_legacy_phonon_without_cleanup_keeps_its_checkpoint(
     qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     window, _doc, _definition, _candidate, singlepoint, phonon, directory = _legacy_quantum_row(
-        tmp_path, singlepoint_status=JobStatus.COMPLETED, phonon_status=JobStatus.FAILED
+        tmp_path, singlepoint_status=JobStatus.COMPLETED, phonon_status="failed"
     )
     warnings = _capture_warnings(monkeypatch)
 
@@ -136,7 +137,7 @@ def test_resetting_a_phonon_keeps_a_folder_an_unrelated_job_uses(
     qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     window, doc, _definition, _candidate, _singlepoint, phonon, directory = _legacy_quantum_row(
-        tmp_path, singlepoint_status=JobStatus.COMPLETED, phonon_status=JobStatus.FAILED
+        tmp_path, singlepoint_status=JobStatus.COMPLETED, phonon_status="failed"
     )
     stranger = ProjectService().add_job(
         doc, label="stranger", workflow_stage=WorkflowStage.QUANTUM_CORRECTIONS, calc_type="castep"
@@ -164,7 +165,7 @@ def test_resetting_a_relaxation_keeps_a_folder_its_replacement_uses(
     service = ProjectService()
     doc = service.create_project(tmp_path / "relax_reset.mufinder", "RelaxReset")
     window._document = doc
-    old = _pristine_job(service, doc, JobStatus.FAILED)
+    old = _pristine_job(service, doc, "failed")
     _replacement = _pristine_job(service, doc, JobStatus.COMPLETED)
     directory = _job_directory(doc)
     warnings = _capture_warnings(monkeypatch)
@@ -184,8 +185,8 @@ def test_a_folder_shared_with_an_imported_job_is_never_cleaned(qapp, tmp_path: P
     service = ProjectService()
     doc = service.create_project(tmp_path / "imported_share.mufinder", "ImportedShare")
     window._document = doc
-    native = _pristine_job(service, doc, JobStatus.FAILED)
-    imported = _pristine_job(service, doc, JobStatus.FAILED)
+    native = _pristine_job(service, doc, "failed")
+    imported = _pristine_job(service, doc, "failed")
     imported.tags.append(main_window_module.IMPORTED_JOB_TAG)
     directory = _job_directory(doc)
 

@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from mufinder.services.job_monitoring import job_status_word
 from mufinder.app.main_window import MainWindow
-from mufinder.domain.enums import FailureReason, JobStatus, WorkflowStage
+from mufinder.domain.enums import EndReason, JobActivity, JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationRun
 from mufinder.services.project_service import ProjectService
 
@@ -20,8 +21,8 @@ def _running_local_job(window: MainWindow, service: ProjectService, document) ->
     # Drive it to RUNNING through the primitives, exactly as a real submission
     # would, then register an active run so close-out has something to touch.
     service.submit_job(job)
-    service.start_job(job)
-    run = CalculationRun(job_id=job.id, run_index=1, status=JobStatus.RUNNING)
+    service.mark_job_active(job, JobActivity.RUNNING)
+    run = CalculationRun(job_id=job.id, run_index=1, status=JobStatus.ACTIVE)
     document.runs[run.id] = run
     window._active_run_by_job[job.id] = run.id
     return job
@@ -40,14 +41,14 @@ def test_job_check_stops_a_local_job_with_no_process(main_window, tmp_path: Path
     window._on_job_check_tick()
 
     stopped = document.jobs[job.id]
-    assert stopped.status == JobStatus.STOPPED
-    assert stopped.failure_reason == FailureReason.INTERRUPTED
+    assert job_status_word(stopped) == "stopped"
+    assert stopped.end_reason == EndReason.INTERRUPTED
     assert stopped.last_status_source == "reconciliation"
     assert stopped.last_status_message
     # The active run was closed out and unmapped, mirroring the walltime-stop path.
     assert job.id not in window._active_run_by_job
     stopped_runs = [run for run in document.runs.values() if run.job_id == job.id]
-    assert stopped_runs and all(run.status == JobStatus.STOPPED for run in stopped_runs)
+    assert stopped_runs and all(run.status == JobStatus.ENDED for run in stopped_runs)
     assert "1 local job was stopped" in window.statusBar().currentMessage()
 
 
@@ -64,7 +65,7 @@ def test_job_check_leaves_a_local_job_the_runner_holds(
 
     window._on_job_check_tick()
 
-    assert document.jobs[job.id].status == JobStatus.RUNNING
+    assert job_status_word(document.jobs[job.id]) == "running"
 
 
 def test_job_check_noop_without_active_jobs(main_window, tmp_path: Path) -> None:
@@ -95,12 +96,12 @@ def test_job_check_leaves_an_untracked_cluster_job_active(main_window, tmp_path:
     )
     job.execution_target = "SCARF"
     service.submit_job(job)
-    service.start_job(job)
+    service.mark_job_active(job, JobActivity.RUNNING)
     window._cluster_runner._connected = True
     window._cluster_runner._connected_cluster_name = "SCARF"
 
     window._on_job_check_tick()
     window._on_job_check_tick()
 
-    assert document.jobs[job.id].status == JobStatus.RUNNING
-    assert document.jobs[job.id].failure_reason is None
+    assert job_status_word(document.jobs[job.id]) == "running"
+    assert document.jobs[job.id].end_reason is None

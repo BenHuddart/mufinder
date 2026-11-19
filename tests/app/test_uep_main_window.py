@@ -14,7 +14,7 @@ import mufinder.app.main_window as main_window_module
 from mufinder.app.main_window import MainWindow
 from mufinder.app.uep_types import UepConfig, UepSourceRow
 from mufinder.castep_io.output_parser import CastepResult
-from mufinder.domain.enums import JobStatus, WorkflowStage
+from mufinder.domain.enums import JobActivity, JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationRun, Result
 from mufinder.science.uep import UepField, load_uep_source, potential_grid
 from mufinder.services.project_service import ProjectService
@@ -80,8 +80,9 @@ def test_main_window_local_finish_uep_source_marks_density_available(
         workflow_stage=WorkflowStage.UEP,
         calc_type="castep_uep_source",
     )
-    job.status = JobStatus.RUNNING
-    run = CalculationRun(job_id=job.id, run_index=1, status=JobStatus.RUNNING)
+    job.status = JobStatus.ACTIVE
+    job.activity = JobActivity.RUNNING
+    run = CalculationRun(job_id=job.id, run_index=1, status=JobStatus.ACTIVE)
     doc.runs[run.id] = run
     window._document = doc
     window._active_run_by_job[job.id] = run.id

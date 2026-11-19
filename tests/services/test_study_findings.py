@@ -9,7 +9,7 @@ from uuid import uuid4
 import pytest
 
 from mufinder.domain.charge_states import MUON_RELAXATION_CALC_TYPES, MUONIUM_CHARGE_STATE
-from mufinder.domain.enums import JobStatus, WorkflowStage
+from mufinder.domain.enums import JobActivity, JobStatus, WorkflowStage
 from mufinder.domain.models import (
     CalculationDefinition,
     CalculationRun,
@@ -388,8 +388,9 @@ def _finish(
 ) -> None:
     """Complete ``job`` with a result, as the shared completion path does."""
 
-    job.status = JobStatus.RUNNING
-    run = CalculationRun(job_id=job.id, status=JobStatus.RUNNING)
+    job.status = JobStatus.ACTIVE
+    job.activity = JobActivity.RUNNING
+    run = CalculationRun(job_id=job.id, status=JobStatus.ACTIVE)
     document.runs[run.id] = run
     result = Result(calculation_run_id=run.id, result_type=calc_type, data=data)
     document.results[result.id] = result

@@ -9,7 +9,6 @@ from uuid import UUID
 import pytest
 
 from mufinder.cluster_setup import ClusterConfig
-from mufinder.domain.enums import JobStatus
 from mufinder.domain.models import Job
 from mufinder.services.cluster_security import invalid_remote_job_labels
 from mufinder.services.cluster_submission_planner import (
@@ -130,7 +129,10 @@ def test_continuation_on_another_cluster_falls_through_to_a_fresh_target() -> No
 
 def test_resubmission_reuses_its_previous_directory_without_uploading() -> None:
     job = make_job(
-        "a", status=JobStatus.FAILED, execution_target="alpha", remote_directory="/remote/old/a"
+        "a",
+        status="failed",
+        execution_target="alpha",
+        remote_directory="/remote/old/a",
     )
 
     plan = _plan([job], reuse_existing_remote_files=True)
@@ -144,7 +146,7 @@ def test_resubmission_reuses_its_previous_directory_without_uploading() -> None:
 def test_start_again_job_deletes_its_own_directory_without_a_prompt() -> None:
     job = make_job(
         "a",
-        status=JobStatus.STOPPED,
+        status="stopped",
         execution_target="alpha",
         remote_directory="/remote/old/a",
         remote_job_id=" 4242 ",
@@ -169,7 +171,10 @@ def test_start_again_job_deletes_its_own_directory_without_a_prompt() -> None:
 
 def test_start_again_job_on_another_cluster_is_a_fresh_job_still_cleared_locally() -> None:
     job = make_job(
-        "a", status=JobStatus.STOPPED, execution_target="beta", remote_directory="/remote/old/a"
+        "a",
+        status="stopped",
+        execution_target="beta",
+        remote_directory="/remote/old/a",
     )
 
     plan = _plan([job], fresh_start_job_ids=(job.id,), reuse_existing_remote_files=True)
@@ -259,7 +264,10 @@ def test_protected_directory_is_never_deleted_for_a_colliding_job() -> None:
 def test_start_again_job_in_a_protected_directory_fails() -> None:
     continuing = make_job("a", execution_target="alpha", remote_directory="/remote/shared")
     restarting = make_job(
-        "b", status=JobStatus.STOPPED, execution_target="alpha", remote_directory="/remote/shared"
+        "b",
+        status="stopped",
+        execution_target="alpha",
+        remote_directory="/remote/shared",
     )
 
     plan = _plan([continuing, restarting], fresh_start_job_ids=(restarting.id,))
@@ -291,7 +299,10 @@ def test_job_without_an_output_directory_is_missing() -> None:
 
 def test_uncleaned_start_again_job_is_left_out() -> None:
     job = make_job(
-        "a", status=JobStatus.STOPPED, execution_target="alpha", remote_directory="/remote/old/a"
+        "a",
+        status="stopped",
+        execution_target="alpha",
+        remote_directory="/remote/old/a",
     )
     plan = _plan([job], fresh_start_job_ids=(job.id,))
     decisions = resolve_overwrite_decisions(
@@ -450,12 +461,15 @@ def test_driver_reports_failures_in_stage_order_and_skips() -> None:
     existing = make_job("existing")
     uncleared = make_job(
         "uncleared",
-        status=JobStatus.STOPPED,
+        status="stopped",
         execution_target="alpha",
         remote_directory="/remote/x",
     )
     blocked = make_job(
-        "blocked", status=JobStatus.STOPPED, execution_target="alpha", remote_directory="/remote/c"
+        "blocked",
+        status="stopped",
+        execution_target="alpha",
+        remote_directory="/remote/c",
     )
     continuing = make_job("continuing", execution_target="alpha", remote_directory="/remote/c")
     jobs = [errored, existing, uncleared, blocked, continuing]

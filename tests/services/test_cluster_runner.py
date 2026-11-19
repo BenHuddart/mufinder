@@ -11,7 +11,6 @@ import mufinder.services.cluster_runner as cluster_runner_module
 from mufinder.castep_io.geometry_progress import parse_geometry_progress
 from mufinder.castep_io.output_parser import CastepResult
 from mufinder.domain.cluster import ClusterConfig
-from mufinder.domain.enums import JobStatus
 from mufinder.services.cluster_retrieval import RetrievalResult
 from mufinder.services.cluster_runner import CheckTarget, ClusterJobRunner, QueueCheckSnapshot
 from mufinder.services.job_reconcile import JobEvidence, OutputState, SchedulerState
@@ -59,16 +58,16 @@ class _FakeScheduler:
             if job_id in self._history
         }
 
-    def map_to_job_status(self, state: str) -> JobStatus:
+    def map_to_scheduler_state(self, state: str) -> SchedulerState:
         mapping = {
-            "PD": JobStatus.QUEUED,
-            "S": JobStatus.QUEUED,
-            "R": JobStatus.RUNNING,
-            "CD": JobStatus.COMPLETED,
-            "F": JobStatus.FAILED,
-            "OOM": JobStatus.FAILED,
-            "TO": JobStatus.STOPPED,
-            "CA": JobStatus.CANCELLED,
+            "PD": SchedulerState.PENDING,
+            "S": SchedulerState.PENDING,
+            "R": SchedulerState.RUNNING,
+            "CD": SchedulerState.COMPLETED,
+            "F": SchedulerState.FAILED,
+            "OOM": SchedulerState.FAILED,
+            "TO": SchedulerState.TIMED_OUT,
+            "CA": SchedulerState.CANCELLED,
         }
         return mapping[state]
 

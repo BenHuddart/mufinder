@@ -12,7 +12,8 @@ import pytest
 from ase import Atoms
 from ase.io import write as ase_write
 
-from mufinder.domain.enums import FailureReason, JobStatus, WorkflowStage
+from mufinder.services.job_monitoring import job_status_word
+from mufinder.domain.enums import EndReason, JobActivity, JobStatus, WorkflowStage
 from mufinder.domain.models import (
     CONVERGED_DEFAULT_METHOD,
     CalculationDefinition,
@@ -29,7 +30,7 @@ from mufinder.castep_io.types import ValueWithUnit
 from mufinder.persistence.codec import to_jsonable
 from mufinder.persistence.json_store import ProjectStore
 from mufinder.persistence.migration_save import JOURNAL_NAME
-from mufinder.persistence.migrations import RETIRED_UI_STATE_KEYS
+from mufinder.persistence.migrations import RETIRED_UI_STATE_KEYS, legacy_job_state
 from mufinder.science.site_generation import SiteGenerationError
 from mufinder.services.journal import build_journal
 from mufinder.services.magnetic_field_results import (
@@ -778,15 +779,15 @@ def test_job_transition_rules(tmp_path: Path) -> None:
     assert job.status == JobStatus.DEFINED
 
     service.submit_job(job)
-    assert job.status == JobStatus.SUBMITTING
+    assert job_status_word(job) == "submitting"
     assert job.submitted_at is not None
 
-    service.mark_job_queued(job, remote_job_id="123")
-    assert job.status == JobStatus.QUEUED
-    service.start_job(job)
+    service.mark_job_active(job, JobActivity.QUEUED, remote_job_id="123")
+    assert job_status_word(job) == "queued"
+    service.mark_job_active(job, JobActivity.RUNNING)
     assert job.started_at is not None
-    service.mark_job_retrieving(job)
-    assert job.status == JobStatus.RETRIEVING
+    service.mark_job_active(job, JobActivity.RETRIEVING)
+    assert job_status_word(job) == "retrieving"
     service.complete_job(job)
 
     assert job.status == JobStatus.COMPLETED
@@ -795,7 +796,7 @@ def test_job_transition_rules(tmp_path: Path) -> None:
     assert job.error_message is None
 
     with pytest.raises(ValueError):
-        service.start_job(job)
+        service.mark_job_active(job, JobActivity.RUNNING)
 
 
 def test_mark_job_queued_without_a_remote_id_keeps_it_unset(tmp_path: Path) -> None:
@@ -805,9 +806,9 @@ def test_mark_job_queued_without_a_remote_id_keeps_it_unset(tmp_path: Path) -> N
     )
 
     service.submit_job(job)
-    service.mark_job_queued(job)
+    service.mark_job_active(job, JobActivity.QUEUED)
 
-    assert job.status == JobStatus.QUEUED
+    assert job_status_word(job) == "queued"
     assert job.remote_job_id is None
 
 
@@ -821,13 +822,13 @@ def test_fail_job_records_the_error_and_cancel_job_the_completion_time(tmp_path:
     )
 
     service.submit_job(failed)
-    service.start_job(failed)
-    service.fail_job(failed, "boom")
-    service.cancel_job(cancelled)
+    service.mark_job_active(failed, JobActivity.RUNNING)
+    service.end_job(failed, EndReason.UNKNOWN, "boom")
+    service.end_job(cancelled, EndReason.CANCELLED)
 
-    assert failed.status == JobStatus.FAILED
+    assert job_status_word(failed) == "failed"
     assert failed.error_message == "boom"
-    assert cancelled.status == JobStatus.CANCELLED
+    assert job_status_word(cancelled) == "cancelled"
     assert cancelled.completed_at is not None
 
 
@@ -844,10 +845,10 @@ def test_reset_failed_job_sets_defined_state(tmp_path: Path) -> None:
     service.submit_job(job)
     job.remote_directory = "/remote/work/ResetMe"
     job.num_processes = 8
-    service.start_job(job)
-    service.fail_job(job, "failure")
+    service.mark_job_active(job, JobActivity.RUNNING)
+    service.end_job(job, EndReason.UNKNOWN, "failure")
 
-    assert job.status == JobStatus.FAILED
+    assert job_status_word(job) == "failed"
     assert job.error_message == "failure"
 
     service.reset_failed_job(job)
@@ -875,9 +876,9 @@ def test_reset_failed_job_allows_cancelled_jobs(tmp_path: Path) -> None:
 
     service.submit_job(job)
     job.num_processes = 4
-    service.cancel_job(job)
+    service.end_job(job, EndReason.CANCELLED)
 
-    assert job.status == JobStatus.CANCELLED
+    assert job_status_word(job) == "cancelled"
 
     service.reset_failed_job(job)
 
@@ -900,10 +901,10 @@ def test_stop_job_sets_stopped_state(tmp_path: Path) -> None:
     )
 
     service.submit_job(job)
-    service.start_job(job)
-    service.stop_job(job, "walltime reached")
+    service.mark_job_active(job, JobActivity.RUNNING)
+    service.end_job(job, EndReason.WALLTIME, "walltime reached")
 
-    assert job.status == JobStatus.STOPPED
+    assert job_status_word(job) == "stopped"
     assert job.error_message == "walltime reached"
     assert job.completed_at is not None
 
@@ -920,8 +921,8 @@ def test_reset_failed_job_allows_stopped_jobs(tmp_path: Path) -> None:
 
     service.submit_job(job)
     job.num_processes = 16
-    service.start_job(job)
-    service.stop_job(job, "timeout")
+    service.mark_job_active(job, JobActivity.RUNNING)
+    service.end_job(job, EndReason.WALLTIME, "timeout")
 
     service.reset_failed_job(job)
 
@@ -982,8 +983,10 @@ def test_record_job_submission_includes_a_job_already_running(tmp_path: Path) ->
     )
     for job in (queued, running, failed):
         service.submit_job(job)
-    running.status = JobStatus.RUNNING
-    failed.status = JobStatus.FAILED
+    running.status = JobStatus.ACTIVE
+    running.activity = JobActivity.RUNNING
+    failed.status = JobStatus.ENDED
+    failed.end_reason = EndReason.UNKNOWN
 
     service.record_job_submission(doc, jobs=[queued, running, failed], execution_target="local")
 
@@ -1153,9 +1156,9 @@ def test_lifecycle_transitions_do_not_append_intermediate_provenance(tmp_path: P
     )
 
     service.submit_job(job)
-    service.mark_job_queued(job, remote_job_id="123")
-    service.start_job(job)
-    service.mark_job_retrieving(job)
+    service.mark_job_active(job, JobActivity.QUEUED, remote_job_id="123")
+    service.mark_job_active(job, JobActivity.RUNNING)
+    service.mark_job_active(job, JobActivity.RETRIEVING)
 
     assert doc.provenance == []
 
@@ -1214,7 +1217,8 @@ def test_reset_failed_job_clears_monitor_metadata_and_dismissal() -> None:
         label="ResetMonitor",
         workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF,
         calc_type="castep_convergence_cutoff",
-        status=JobStatus.FAILED,
+        status=JobStatus.ENDED,
+        end_reason=EndReason.UNKNOWN,
     )
     job.last_checked_at = utc_now()
     job.last_status_source = "watchdog"
@@ -2180,18 +2184,68 @@ _SCHEMA_6_JOB_STATES_FIXTURE = (
 )
 
 
-def test_schema_6_job_states_fixture_holds_every_stored_status_and_reason(tmp_path: Path) -> None:
+def _schema_6_job_payloads(root: Path) -> dict[str, dict[str, object]]:
+    return {
+        path.stem: json.loads(path.read_text())
+        for path in (root / "entities" / "jobs").glob("*.json")
+    }
+
+
+def test_schema_6_job_states_migrate_to_four_states(tmp_path: Path) -> None:
     root = tmp_path / "schema_v6.mufinder"
     shutil.copytree(_SCHEMA_6_JOB_STATES_FIXTURE, root)
+    stored = _schema_6_job_payloads(root)
 
     loaded = ProjectService().load_project(root)
 
-    jobs = list(loaded.jobs.values())
-    assert {job.status for job in jobs} == set(JobStatus)
-    for status in (JobStatus.STOPPED, JobStatus.FAILED):
-        reasons = {job.failure_reason for job in jobs if job.status == status}
-        assert reasons == {*FailureReason, None}
-    assert {run.status for run in loaded.runs.values()} == set(JobStatus) - {JobStatus.DEFINED}
+    assert loaded.project.schema_version == PROJECT_SCHEMA_VERSION
+    assert {payload["status"] for payload in stored.values()} >= {
+        "defined",
+        "submitting",
+        "queued",
+        "running",
+        "retrieving",
+        "completed",
+        "stopped",
+        "failed",
+        "cancelled",
+    }
+    for job_id, payload in stored.items():
+        job = loaded.jobs[UUID(job_id)]
+        expected = legacy_job_state(payload["status"], payload["failure_reason"])
+        assert (job.status, job.activity, job.end_reason) == (
+            expected["status"],
+            expected["activity"],
+            expected["end_reason"],
+        ), payload["label"]
+        assert job.error_message == payload["error_message"]
+        assert job.remote_job_id == payload["remote_job_id"]
+    assert {run.status for run in loaded.runs.values()} == {
+        JobStatus.ACTIVE,
+        JobStatus.COMPLETED,
+        JobStatus.ENDED,
+    }
+
+
+def test_schema_6_job_states_survive_save_and_reload(tmp_path: Path) -> None:
+    root = tmp_path / "schema_v6.mufinder"
+    shutil.copytree(_SCHEMA_6_JOB_STATES_FIXTURE, root)
+    service = ProjectService()
+    migrated = service.load_project(root)
+
+    service.save_project(migrated)
+
+    assert json.loads((root / "project.json").read_text())["schema_version"] == 7
+    for payload in _schema_6_job_payloads(root).values():
+        assert "failure_reason" not in payload
+        assert payload["status"] in {"defined", "active", "completed", "ended"}
+    reloaded = ProjectService().load_project(root)
+    assert {job_id: to_jsonable(job) for job_id, job in reloaded.jobs.items()} == {
+        job_id: to_jsonable(job) for job_id, job in migrated.jobs.items()
+    }
+    assert {run_id: to_jsonable(run) for run_id, run in reloaded.runs.items()} == {
+        run_id: to_jsonable(run) for run_id, run in migrated.runs.items()
+    }
 
 
 def test_register_convergence_kpoint_definition_records_the_simulation_cell(tmp_path: Path) -> None:
@@ -3086,7 +3140,7 @@ def test_promotable_failed_relaxation_excluded(tmp_path: Path) -> None:
         fractional_positions=[[0, 0, 0]],
     )
     doc.structures[relaxed.id] = relaxed
-    run = CalculationRun(status=JobStatus.FAILED)
+    run = CalculationRun(status=JobStatus.ENDED)
     result = Result(calculation_run_id=run.id, derived_structure_ids=[relaxed.id])
     doc.runs[run.id] = run
     doc.results[result.id] = result
@@ -3620,7 +3674,7 @@ def test_clear_recommended_defaults_removes_value_and_metadata(tmp_path: Path) -
 def test_failure_reason_is_recorded_cleared_and_persisted(tmp_path: Path) -> None:
     service = ProjectService()
     root = tmp_path / "failure_reason.mufinder"
-    doc = service.create_project(root, "FailureReason")
+    doc = service.create_project(root, "EndReason")
     job = service.add_job(
         doc,
         label="Timeout",
@@ -3628,20 +3682,20 @@ def test_failure_reason_is_recorded_cleared_and_persisted(tmp_path: Path) -> Non
         calc_type="castep_convergence_cutoff",
     )
     service.submit_job(job)
-    service.start_job(job)
-    service.stop_job(job, "walltime", reason=FailureReason.WALLTIME)
+    service.mark_job_active(job, JobActivity.RUNNING)
+    service.end_job(job, EndReason.WALLTIME, "walltime")
     service.record_job_terminal_event(doc, action="job_stopped", job=job, error_message="walltime")
 
     assert doc.provenance[-1].parameters["failure_reason"] == "walltime"
     service.save_project(doc)
-    assert service.load_project(root).jobs[job.id].failure_reason == FailureReason.WALLTIME
+    assert service.load_project(root).jobs[job.id].end_reason == EndReason.WALLTIME
 
     service.submit_job(job)
-    assert job.failure_reason is None
-    service.start_job(job)
-    service.fail_job(job, "oom", reason=FailureReason.OUT_OF_MEMORY)
+    assert job.end_reason is None
+    service.mark_job_active(job, JobActivity.RUNNING)
+    service.end_job(job, EndReason.OUT_OF_MEMORY, "oom")
     service.reset_failed_job(job)
-    assert job.failure_reason is None
+    assert job.end_reason is None
 
 
 def _definition_at(

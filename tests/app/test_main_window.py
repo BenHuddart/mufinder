@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from mufinder.services.job_monitoring import job_status_word
 from collections.abc import Iterator
 from dataclasses import replace
 from pathlib import Path
@@ -41,7 +42,7 @@ from mufinder.castep_io.types import ValueWithUnit
 from mufinder.castep_io.ts_parser import TransitionStateImage, TransitionStatePath
 from mufinder.app.param_dialog import ParameterDialog
 from mufinder.domain.charge_states import MUON_RELAXATION_CALC_TYPES
-from mufinder.domain.enums import JobStatus, WorkflowStage
+from mufinder.domain.enums import JobActivity, JobStatus, WorkflowStage
 from mufinder.domain.models import (
     CalculationDefinition,
     CalculationRun,
@@ -3325,14 +3326,16 @@ def test_main_window_muon_relaxation_workflow_complete_when_table_jobs_done(
         workflow_stage=main_window_module.WorkflowStage.MUON_RELAXATION,
         calc_type=MUON_RELAXATION_CALC_TYPES["positive_muon"],
     )
-    second_job.status = JobStatus.QUEUED
+    second_job.status = JobStatus.ACTIVE
+    second_job.activity = JobActivity.QUEUED
     extra_job = service.add_job(
         doc,
         label="Historical Relax",
         workflow_stage=main_window_module.WorkflowStage.MUON_RELAXATION,
         calc_type=MUON_RELAXATION_CALC_TYPES["positive_muon"],
     )
-    extra_job.status = JobStatus.RUNNING
+    extra_job.status = JobStatus.ACTIVE
+    extra_job.activity = JobActivity.RUNNING
     definition = CalculationDefinition(
         workflow_stage=main_window_module.WorkflowStage.MUON_RELAXATION,
         calc_type="castep_muon_relaxation",
@@ -3629,8 +3632,8 @@ def test_main_window_neb_configure_is_read_only_once_a_job_exists(qapp, tmp_path
 
     from mufinder.app.workflow_submission import READY_WORKFLOW_ROW_STATUSES
 
-    assert JobStatus.FAILED.value not in READY_WORKFLOW_ROW_STATUSES
-    assert JobStatus.CANCELLED.value not in READY_WORKFLOW_ROW_STATUSES
+    assert "failed" not in READY_WORKFLOW_ROW_STATUSES
+    assert "cancelled" not in READY_WORKFLOW_ROW_STATUSES
     assert JobStatus.COMPLETED.value not in READY_WORKFLOW_ROW_STATUSES
     assert JobStatus.DEFINED.value in READY_WORKFLOW_ROW_STATUSES
 
@@ -3724,7 +3727,7 @@ def test_main_window_fallback_collection_reads_farmed_ts(
         job.id, main_window_module.CastepResult(completed=True, total_energy=-1.0)
     )
 
-    assert job.status is not JobStatus.FAILED
+    assert job_status_word(job) != "failed"
     stored = next(iter(doc.results.values()))
     assert stored.result_type == NUDGED_ELASTIC_BAND_CALC_TYPE
     assert stored.data["num_images"] == 2

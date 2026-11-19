@@ -7,7 +7,7 @@ from functools import partial
 
 import pytest
 
-from mufinder.domain.enums import FailureReason, JobStatus
+from mufinder.domain.enums import EndReason, JobStatus
 from mufinder.services.job_monitoring import (
     STALENESS_THRESHOLD_SECONDS,
     is_cluster_job,
@@ -23,7 +23,7 @@ _NOW = datetime(2026, 7, 4, 12, 0, tzinfo=UTC)
 _job = partial(
     make_job,
     label="Mon",
-    status=JobStatus.QUEUED,
+    status="queued",
     calc_type="castep_convergence_cutoff",
     execution_target="scarf",
 )
@@ -50,7 +50,9 @@ def test_terminal_and_local_jobs_are_never_stale() -> None:
     old = _NOW - timedelta(hours=5)
     assert (
         job_staleness(
-            _job(status=JobStatus.FAILED, last_checked_at=old), now=_NOW, cluster_connected=False
+            _job(status="failed", last_checked_at=old),
+            now=_NOW,
+            cluster_connected=False,
         )
         is None
     )
@@ -124,7 +126,10 @@ def test_job_on_a_disconnected_cluster_reads_as_disconnected_whatever_else_holds
 
 def test_a_job_still_being_submitted_is_not_stale() -> None:
     # The scheduler has not returned its ID yet.
-    job = _job(status=JobStatus.SUBMITTING, submitted_at=_NOW - timedelta(minutes=10))
+    job = _job(
+        status="submitting",
+        submitted_at=_NOW - timedelta(minutes=10),
+    )
 
     assert job_staleness(job, now=_NOW, cluster_connected=True, submitting=True) is None
     assert job_staleness(job, now=_NOW, cluster_connected=True) == (
@@ -135,8 +140,8 @@ def test_a_job_still_being_submitted_is_not_stale() -> None:
 def _orphaned(label: str) -> object:
     return _job(
         label=label,
-        status=JobStatus.STOPPED,
-        failure_reason=FailureReason.INTERRUPTED,
+        status=JobStatus.ENDED,
+        end_reason=EndReason.INTERRUPTED,
         remote_directory=f"/remote/{label}",
     )
 
@@ -148,4 +153,4 @@ def test_unretrieved_note_says_its_only_when_the_prompt_is_about_one_job() -> No
     note = unretrieved_output_note([job], prompt_job_count=3)
     assert note.startswith("The output of 1 of these jobs may still be on scarf")
     assert note.endswith("to keep the result.")
-    assert unretrieved_output_note([_job(status=JobStatus.FAILED)]) == ""
+    assert unretrieved_output_note([_job(status="failed")]) == ""

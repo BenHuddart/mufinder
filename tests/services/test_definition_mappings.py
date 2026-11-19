@@ -115,14 +115,14 @@ def _sync(document: ProjectDocument, target: CalculationDefinition, **options: o
 @pytest.mark.parametrize(
     ("status", "convergence", "relaxation"),
     [
-        (JobStatus.SUBMITTING, 50, 50),
-        (JobStatus.QUEUED, 50, 50),
-        (JobStatus.RUNNING, 50, 50),
-        (JobStatus.RETRIEVING, 50, 50),
+        ("submitting", 50, 50),
+        ("queued", 50, 50),
+        ("running", 50, 50),
+        ("retrieving", 50, 50),
         (JobStatus.COMPLETED, 40, 40),
-        (JobStatus.FAILED, 30, 30),
-        (JobStatus.STOPPED, 30, 30),
-        (JobStatus.CANCELLED, 30, 30),
+        ("failed", 30, 30),
+        ("stopped", 30, 30),
+        ("cancelled", 30, 30),
         (JobStatus.DEFINED, 10, 35),
     ],
 )
@@ -326,10 +326,10 @@ def test_sync_keeps_a_target_binding_that_ranks_as_high(document: ProjectDocumen
 
 
 def test_sync_replaces_a_lower_ranked_target_binding(document: ProjectDocument) -> None:
-    running = _job_id(document, JobStatus.RUNNING)
+    running = _job_id(document, "running")
     _definition(document, (_Row("a"),), job_ids_by_label={"a": running})
     target = _definition(
-        document, (_Row("a"),), job_ids_by_label={"a": _job_id(document, JobStatus.FAILED)}
+        document, (_Row("a"),), job_ids_by_label={"a": _job_id(document, "failed")}
     )
 
     _sync(document, target)
@@ -343,7 +343,7 @@ def test_sync_priority_decides_between_a_defined_and_a_failed_job(
     """The relaxation order prefers a re-staged (defined) job; the convergence order a failed one."""
 
     defined = _job_id(document, JobStatus.DEFINED)
-    failed = _job_id(document, JobStatus.FAILED)
+    failed = _job_id(document, "failed")
     _definition(document, (_Row("a"),), job_ids_by_label={"a": failed})
     _definition(document, (_Row("a"),), job_ids_by_label={"a": defined})
     relaxation_target = _definition(document, (_Row("a"),))
@@ -490,7 +490,7 @@ def test_sync_creates_the_seed_mapping_but_ignores_a_blank_seed(document: Projec
 
 def test_sync_drops_candidates_the_job_filter_rejects(document: ProjectDocument) -> None:
     rejected = _job_id(document, JobStatus.COMPLETED)
-    accepted = _job_id(document, JobStatus.FAILED)
+    accepted = _job_id(document, "failed")
     _definition(
         document, (_Row("a"), _Row("b")), job_ids_by_label={"q:a": rejected, "q:b": accepted}
     )

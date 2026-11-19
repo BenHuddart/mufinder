@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from mufinder.services.job_monitoring import job_status_word
 import dataclasses
 import threading
 from pathlib import Path
@@ -16,7 +17,7 @@ from mufinder.app import workflow_table_utils
 from mufinder.app.cluster_submission_dialog import ClusterSubmissionConfig
 from mufinder.app.main_window import MainWindow
 from mufinder.domain.cluster import ClusterConfig
-from mufinder.domain.enums import JobStatus, WorkflowStage
+from mufinder.domain.enums import EndReason, JobActivity, JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationRun, Job, MuonSite, Result, Structure
 from mufinder.services.project_service import ProjectService
 from mufinder.services.ssh_client import SSHCredentials
@@ -142,23 +143,23 @@ def test_main_window_submit_jobs_on_cluster_creates_run_and_calls_runner(
     assert infos == ["Cluster connection successful"]
     assert len(submit_calls) == 1
     assert submit_calls[0]["seed_name"] == job.label
-    assert job.status == JobStatus.QUEUED
+    assert job_status_word(job) == "queued"
     assert job.execution_target == "alpha"
     assert job.remote_job_id == "99123"
     assert job.remote_directory == f"/remote/work/{job.label}"
     assert job.num_processes == 16
     runs = [run for run in doc.runs.values() if run.job_id == job.id]
     assert len(runs) == 1
-    assert runs[0].status == JobStatus.QUEUED
+    assert runs[0].status == JobStatus.ACTIVE
 
     reloaded = service.load_project(doc.project_root)
     persisted_job = reloaded.jobs[job.id]
-    assert persisted_job.status == JobStatus.QUEUED
+    assert job_status_word(persisted_job) == "queued"
     assert persisted_job.remote_job_id == "99123"
     assert persisted_job.remote_directory == f"/remote/work/{job.label}"
     persisted_runs = [run for run in reloaded.runs.values() if run.job_id == job.id]
     assert len(persisted_runs) == 1
-    assert persisted_runs[0].status == JobStatus.QUEUED
+    assert persisted_runs[0].status == JobStatus.ACTIVE
     assert reloaded.provenance[-1].parameters["jobs"] == [
         {
             "job_id": str(job.id),
@@ -314,7 +315,8 @@ def test_main_window_resubmits_failed_cluster_job_without_replacing_remote_files
         calc_type="castep_convergence_cutoff",
         execution_target="alpha",
     )
-    job.status = JobStatus.FAILED
+    job.status = JobStatus.ENDED
+    job.end_reason = EndReason.UNKNOWN
     job.remote_job_id = "old99123"
     job.remote_directory = "/remote/work/conv_ecut_300"
     job.error_message = "previous scheduler failure"
@@ -413,13 +415,13 @@ def test_main_window_resubmits_failed_cluster_job_without_replacing_remote_files
     assert len(submit_calls) == 1
     assert submit_calls[0]["remote_directory"] == "/remote/work/conv_ecut_300"
     assert submit_calls[0]["reuse_existing_files"] is True
-    assert job.status == JobStatus.QUEUED
+    assert job_status_word(job) == "queued"
     assert job.remote_job_id == "new99123"
     assert job.remote_directory == "/remote/work/conv_ecut_300"
     assert job.error_message is None
     runs = [run for run in doc.runs.values() if run.job_id == job.id]
     assert len(runs) == 1
-    assert runs[0].status == JobStatus.QUEUED
+    assert runs[0].status == JobStatus.ACTIVE
     window.close()
 
 
@@ -448,7 +450,8 @@ def test_main_window_resubmit_passes_updated_resources_to_runner(
         calc_type="castep_convergence_cutoff",
         execution_target="alpha",
     )
-    job.status = JobStatus.FAILED
+    job.status = JobStatus.ENDED
+    job.end_reason = EndReason.UNKNOWN
     job.remote_job_id = "old99123"
     job.remote_directory = "/remote/work/conv_ecut_300"
     job.error_message = "previous scheduler failure"
@@ -552,13 +555,13 @@ def test_main_window_resubmit_passes_updated_resources_to_runner(
     assert submit_calls[0]["reuse_existing_files"] is True
     assert submit_calls[0]["remote_directory"] == "/remote/work/conv_ecut_300"
     assert job.num_processes == 32
-    assert job.status == JobStatus.QUEUED
+    assert job_status_word(job) == "queued"
     assert job.remote_job_id == "new99123"
     assert job.remote_directory == "/remote/work/conv_ecut_300"
     assert job.error_message is None
     runs = [run for run in doc.runs.values() if run.job_id == job.id]
     assert len(runs) == 1
-    assert runs[0].status == JobStatus.QUEUED
+    assert runs[0].status == JobStatus.ACTIVE
     window.close()
 
 
@@ -1294,7 +1297,8 @@ def _continue_cluster_job(service: ProjectService, job: Job, remote_directory: s
     job.execution_target = "alpha"
     job.remote_directory = remote_directory
     job.remote_job_id = "55501"
-    job.status = JobStatus.FAILED
+    job.status = JobStatus.ENDED
+    job.end_reason = EndReason.UNKNOWN
     service.prepare_job_continuation(job)
     assert job.status == JobStatus.DEFINED
     assert job.remote_directory == remote_directory
@@ -1459,7 +1463,7 @@ def test_main_window_submit_jobs_on_cluster_does_not_submit_a_job_whose_director
     ]
     assert unchecked.status == JobStatus.DEFINED
     assert unchecked.remote_directory is None
-    assert checked.status == JobStatus.QUEUED
+    assert job_status_word(checked) == "queued"
     assert warnings == [
         (
             "Cluster submission failed",
@@ -1510,7 +1514,7 @@ def test_main_window_submit_jobs_on_cluster_continuation_survives_target_collisi
     assert recorded["submitted"][0]["seed_name"] == "conv_ecut_400"
     assert recorded["submitted"][0]["remote_directory"] == "/remote/work/conv_ecut_400"
     assert recorded["submitted"][0]["allow_existing_remote_directory"] is True
-    assert continued.status == JobStatus.QUEUED
+    assert job_status_word(continued) == "queued"
     assert collider.status == JobStatus.DEFINED
 
     window.close()
@@ -1542,8 +1546,8 @@ def test_main_window_submit_jobs_on_cluster_collision_overwrite_spares_continued
 
     assert recorded["deleted"] == []
     assert len(recorded["submitted"]) == 2
-    assert continued.status == JobStatus.QUEUED
-    assert collider.status == JobStatus.QUEUED
+    assert job_status_word(continued) == "queued"
+    assert job_status_word(collider) == "queued"
 
     window.close()
 
@@ -1565,7 +1569,8 @@ def test_main_window_submit_jobs_on_cluster_dashboard_resubmit_still_reuses_file
     job = add_cluster_input_job(service, doc, "conv_ecut_300")
     job.execution_target = "alpha"
     job.remote_directory = "/remote/work/conv_ecut_300"
-    job.status = JobStatus.FAILED
+    job.status = JobStatus.ENDED
+    job.end_reason = EndReason.UNKNOWN
 
     patch_continuation_cluster_dialog(monkeypatch)
     recorded = patch_continuation_cluster_runner(monkeypatch, window, directory_exists=True)
@@ -1577,7 +1582,7 @@ def test_main_window_submit_jobs_on_cluster_dashboard_resubmit_still_reuses_file
 
     window._submit_jobs_on_cluster(
         [job],
-        eligible_statuses={JobStatus.FAILED, JobStatus.CANCELLED},
+        eligible_statuses={JobStatus.ENDED},
         reuse_existing_remote_files=True,
     )
 
@@ -2380,9 +2385,9 @@ def _queued_cluster_job(window: MainWindow, tmp_path: Path) -> Job:
         execution_target="alpha",
     )
     service.submit_job(job)
-    service.mark_job_queued(job, remote_job_id="4242")
+    service.mark_job_active(job, JobActivity.QUEUED, remote_job_id="4242")
     job.remote_directory = "/remote/work/long_queue_job"
-    run = CalculationRun(job_id=job.id, run_index=1, status=JobStatus.QUEUED)
+    run = CalculationRun(job_id=job.id, run_index=1, status=JobStatus.ACTIVE)
     doc.runs[run.id] = run
     window._document = doc
     window._job_execution.active_run_by_job[job.id] = run.id

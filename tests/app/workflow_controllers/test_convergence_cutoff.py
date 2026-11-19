@@ -14,7 +14,7 @@ from uuid import UUID
 
 import pytest
 
-from mufinder.domain.enums import JobStatus, WorkflowStage
+from mufinder.domain.enums import JobActivity, JobStatus, WorkflowStage
 from mufinder.domain.models import Structure
 from mufinder.persistence.migrations import RETIRED_UI_STATE_KEYS
 from mufinder.services.convergence_defaults import (
@@ -243,7 +243,8 @@ def test_convergence_controller_materialize_keeps_non_defined_job_inputs(
     controller = ConvergenceCutoffController(context, deps, view)
 
     (job,) = controller.materialize([300.0])
-    job.status = JobStatus.RUNNING
+    job.status = JobStatus.ACTIVE
+    job.activity = JobActivity.RUNNING
     param_path = (
         document.project_root
         / "files"

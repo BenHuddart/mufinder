@@ -15,7 +15,7 @@ import pytest
 
 from mufinder.app import workflow_table_utils
 from mufinder.app.main_window import MainWindow
-from mufinder.domain.enums import JobStatus, WorkflowStage
+from mufinder.domain.enums import EndReason, JobStatus, WorkflowStage
 from mufinder.domain.models import Job, Structure
 from mufinder.domain.text import KeptFolder, folder_outcome_status
 from mufinder.services.journal import build_journal
@@ -475,7 +475,8 @@ class TestLinks:
     ) -> None:
         outcome = project.import_batch("runs", (1,))
         looped = project.native(label="looped", seed="loop")
-        looped.status = JobStatus.FAILED
+        looped.status = JobStatus.ENDED
+        looped.end_reason = EndReason.UNKNOWN
         (project.charge / "loop").symlink_to(project.charge / "loop")
         mine = project.native(label="mine", seed="own")
         (project.charge / "own").mkdir()
@@ -577,7 +578,8 @@ class TestCutoffRoute:
             workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF,
             calc_type="castep_convergence_cutoff",
         )
-        job.status = JobStatus.FAILED
+        job.status = JobStatus.ENDED
+        job.end_reason = EndReason.UNKNOWN
         definition = service.register_convergence_cutoff_definition(
             document,
             host_structure_id=host.id,
@@ -731,7 +733,8 @@ class TestDashboardReset:
 
     def _failed_native(self, project: _Project, label: str, seed: str) -> Job:
         job = project.native(label=label, seed=seed)
-        job.status = JobStatus.FAILED
+        job.status = JobStatus.ENDED
+        job.end_reason = EndReason.UNKNOWN
         return job
 
     def _folder(self, project: _Project, name: str) -> Path:
@@ -846,7 +849,8 @@ class TestDashboardReset:
         project.import_batch("runs", (1,))
         positive = self._failed_native(project, "positive", "same")
         muonium = project.native(label="neutral", seed="same", charge="muonium")
-        muonium.status = JobStatus.FAILED
+        muonium.status = JobStatus.ENDED
+        muonium.end_reason = EndReason.UNKNOWN
         self._folder(project, "same")
         other = project.output_root / "muonium" / "same"
         other.mkdir(parents=True)

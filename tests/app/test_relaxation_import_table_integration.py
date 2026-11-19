@@ -20,6 +20,7 @@ Fixtures are hand-authored: see ``docs/relaxation_import.rst``.
 
 from __future__ import annotations
 
+from mufinder.services.job_monitoring import job_status_word
 from pathlib import Path
 from uuid import uuid4
 
@@ -30,6 +31,7 @@ from mufinder.app.workflow_config_codecs import deserialize_muon_relaxation_conf
 from mufinder.domain.constants import IMPORTED_JOB_TAG
 from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.domain.models import Job, utc_now
+from tests.support.jobs import state_fields
 
 
 @pytest.fixture()
@@ -42,17 +44,17 @@ def _imported_job(status: JobStatus = JobStatus.COMPLETED) -> Job:
         label="Imported Host_1",
         workflow_stage=WorkflowStage.MUON_RELAXATION,
         calc_type="castep_positivemuon_relaxation",
-        status=status,
+        **state_fields(status),
         tags=["muon_relaxation", "castep_positivemuon_relaxation", IMPORTED_JOB_TAG],
     )
 
 
-def _native_job(status: JobStatus = JobStatus.FAILED) -> Job:
+def _native_job(status: str = "failed") -> Job:
     return Job(
         label="Site 1",
         workflow_stage=WorkflowStage.MUON_RELAXATION,
         calc_type="castep_positivemuon_relaxation",
-        status=status,
+        **state_fields(status),
         tags=["muon_relaxation", "castep_positivemuon_relaxation"],
     )
 
@@ -79,7 +81,7 @@ class TestResetIsBlocked:
         it is guarded directly rather than only at the call sites.
         """
 
-        job = _imported_job(status=JobStatus.FAILED)
+        job = _imported_job(status="failed")
         directory = tmp_path / "positivemuon" / "Host_1"
         directory.mkdir(parents=True)
         (directory / "Host_1.castep").write_text("results", encoding="utf-8")
@@ -96,7 +98,7 @@ class TestResetIsBlocked:
 
         assert reset_count == 0
         assert errors == []
-        assert job.status is JobStatus.FAILED
+        assert job_status_word(job) == "failed"
         # The irreplaceable files are still there.
         assert (directory / "Host_1.castep").is_file()
         assert (directory / "legacy_source" / "Host_1.cell").is_file()
@@ -106,7 +108,7 @@ class TestResetIsBlocked:
     ) -> None:
         """The guard must not disable recovery for jobs MuFinder did run."""
 
-        job = _native_job(status=JobStatus.FAILED)
+        job = _native_job(status="failed")
         directory = tmp_path / "positivemuon" / "Site_1"
         directory.mkdir(parents=True)
         (directory / "Site_1.castep").write_text("results", encoding="utf-8")
@@ -136,7 +138,7 @@ class TestResetIsBlocked:
         from mufinder.domain.models import Project
         from mufinder.services.project_service import ProjectDocument
 
-        job = _imported_job(status=JobStatus.FAILED)
+        job = _imported_job(status="failed")
         job.dismissed_at = utc_now()
         window._document = ProjectDocument(
             project_root=tmp_path / "project", project=Project(name="T")
@@ -153,7 +155,7 @@ class TestResetIsBlocked:
         assert window._prepare_jobs_for_resubmission([job]) is True
         # No cleanup prompt means the reset core was never reached for this job.
         assert prompted == []
-        assert job.status is JobStatus.FAILED
+        assert job_status_word(job) == "failed"
 
     def test_resubmission_preparation_still_recovers_a_native_job(
         self, window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -161,7 +163,7 @@ class TestResetIsBlocked:
         from mufinder.domain.models import Project
         from mufinder.services.project_service import ProjectDocument
 
-        job = _native_job(status=JobStatus.FAILED)
+        job = _native_job(status="failed")
         job.dismissed_at = utc_now()
         window._document = ProjectDocument(
             project_root=tmp_path / "project", project=Project(name="T")

@@ -7,7 +7,7 @@ from pathlib import Path
 
 from mufinder.castep_io.cell_parser import parse_cell_text
 from mufinder.domain.enums import WorkflowStage
-from mufinder.domain.models import CalculationRun, Result, Structure
+from mufinder.domain.models import PROJECT_SCHEMA_VERSION, CalculationRun, Result, Structure
 from mufinder.services.project_service import ProjectDocument, ProjectService
 from mufinder.services.relaxed_structure_spins import (
     SPINS_KEPT_SCHEMA_VERSION,
@@ -125,14 +125,14 @@ def test_opening_a_project_backfills_spins_from_the_out_cell(tmp_path: Path) -> 
     reopened = _reopen_schema_5(document, loader)
     assert reopened.structures[structure.id].properties["atomic_spins"] == [2.2, 2.2]
 
-    # The next save by the same service persists the recovered spins at schema 6.
+    # The next save by the same service persists the recovered spins at the current schema.
     loader.save_project(reopened)
     assert _saved_structure_payload(reopened, structure)["properties"]["atomic_spins"] == [
         2.2,
         2.2,
     ]
     manifest = json.loads((document.project_root / "project.json").read_text(encoding="utf-8"))
-    assert manifest["schema_version"] == SPINS_KEPT_SCHEMA_VERSION
+    assert manifest["schema_version"] == PROJECT_SCHEMA_VERSION
 
 
 def test_a_project_saved_at_schema_6_is_not_backfilled(tmp_path: Path) -> None:

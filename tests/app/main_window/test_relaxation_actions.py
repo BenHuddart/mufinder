@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from mufinder.services.job_monitoring import job_status_word
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -20,7 +21,7 @@ from mufinder.app.workflow_config_codecs import (
     pristine_relaxation_row_signature,
     serialize_pristine_relaxation_config,
 )
-from mufinder.domain.enums import JobStatus, WorkflowStage
+from mufinder.domain.enums import JobActivity, JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationRun, ComparisonTable, Job, Result, Structure
 from mufinder.science.supercell_matching import normalize_for_comparison
 from mufinder.services.project_service import ProjectService
@@ -51,8 +52,9 @@ def test_main_window_local_finish_pristine_relaxation_uses_first_three_lattice_p
         workflow_stage=main_window_module.WorkflowStage.PRISTINE_RELAXATION,
         calc_type="castep_pristine_relaxation",
     )
-    job.status = JobStatus.RUNNING
-    run = CalculationRun(job_id=job.id, run_index=1, status=JobStatus.RUNNING)
+    job.status = JobStatus.ACTIVE
+    job.activity = JobActivity.RUNNING
+    run = CalculationRun(job_id=job.id, run_index=1, status=JobStatus.ACTIVE)
     doc.runs[run.id] = run
     window._document = doc
     window._active_run_by_job[job.id] = run.id
@@ -125,8 +127,9 @@ def test_main_window_local_finish_pristine_relaxation_missing_out_cell_fails_job
         workflow_stage=main_window_module.WorkflowStage.PRISTINE_RELAXATION,
         calc_type="castep_pristine_relaxation",
     )
-    job.status = JobStatus.RUNNING
-    run = CalculationRun(job_id=job.id, run_index=1, status=JobStatus.RUNNING)
+    job.status = JobStatus.ACTIVE
+    job.activity = JobActivity.RUNNING
+    run = CalculationRun(job_id=job.id, run_index=1, status=JobStatus.ACTIVE)
     doc.runs[run.id] = run
     window._document = doc
     window._active_run_by_job[job.id] = run.id
@@ -143,7 +146,7 @@ def test_main_window_local_finish_pristine_relaxation_missing_out_cell_fails_job
     )
     window._on_local_job_finished(job.id, parsed)
 
-    assert job.status == JobStatus.FAILED
+    assert job_status_word(job) == "failed"
     assert run.result_id is None
     assert not any(
         structure.origin == "pristine_relaxation" for structure in doc.structures.values()
@@ -210,8 +213,8 @@ def _start_pristine_run(window: MainWindow, service: ProjectService, doc, job, r
     """Take ``job`` through submit → start and register a fresh active run."""
 
     service.submit_job(job)
-    service.start_job(job)
-    run = CalculationRun(job_id=job.id, run_index=run_index, status=JobStatus.RUNNING)
+    service.mark_job_active(job, JobActivity.RUNNING)
+    run = CalculationRun(job_id=job.id, run_index=run_index, status=JobStatus.ACTIVE)
     run.started_at = job.started_at
     doc.runs[run.id] = run
     window._active_run_by_job[job.id] = run.id
@@ -246,7 +249,7 @@ def test_main_window_local_finish_relaxation_stale_out_cell_fails_job(
     )
     window._on_local_job_finished(job.id, parsed)
 
-    assert job.status == JobStatus.FAILED
+    assert job_status_word(job) == "failed"
     assert "predates this run" in (job.error_message or "")
     assert run.result_id is None
     assert not any(
@@ -321,7 +324,7 @@ def test_main_window_pristine_relaxation_recompletion_keeps_trail_and_references
     service.prepare_job_continuation(job)
     assert job.status == JobStatus.DEFINED
     run_two = _start_pristine_run(window, service, doc, job, run_index=2)
-    assert job.status == JobStatus.RUNNING
+    assert job_status_word(job) == "running"
     # Table-driven, so the milestone does not dip while the continued job runs.
     assert pristine_relaxation_complete(doc) is True
 
@@ -659,7 +662,8 @@ def test_main_window_pristine_form_edit_hides_stale_definition_status(
         workflow_stage=WorkflowStage.PRISTINE_RELAXATION,
         calc_type="castep_pristine_relaxation",
     )
-    running_job.status = JobStatus.RUNNING
+    running_job.status = JobStatus.ACTIVE
+    running_job.activity = JobActivity.RUNNING
     definition.parameters["job_ids_by_label"] = {"row_1": str(running_job.id)}
     doc.ui_state[window._ACTIVE_PRISTINE_RELAXATION_DEFINITION_KEY] = str(definition.id)
     doc.ui_state["pristine_relaxation_form"] = {
@@ -801,7 +805,8 @@ def test_pristine_relaxation_preserves_running_row_when_adding_job(
         workflow_stage=WorkflowStage.PRISTINE_RELAXATION,
         calc_type="castep_pristine_relaxation",
     )
-    running_job.status = JobStatus.RUNNING
+    running_job.status = JobStatus.ACTIVE
+    running_job.activity = JobActivity.RUNNING
     old_definition.parameters["job_ids_by_label"] = {"row_1": str(running_job.id)}
 
     new_config = main_window_module.PristineRelaxationConfig(
@@ -821,7 +826,7 @@ def test_pristine_relaxation_preserves_running_row_when_adding_job(
     window._pristine_relaxation_controller.submit(["row_2"], target="cluster")
 
     states = window._pristine_relaxation_controller.build_states()
-    assert states["row_1"].status == JobStatus.RUNNING.value
+    assert states["row_1"].status == "running"
     assert states["row_1"].job_id == running_job.id
     assert len(submitted) == 1
     assert submitted[0].label == "pristine_relax_row_2"
@@ -938,7 +943,8 @@ def test_pristine_relaxation_deleted_row_does_not_reinherit_stale_status(
         workflow_stage=WorkflowStage.PRISTINE_RELAXATION,
         calc_type="castep_pristine_relaxation",
     )
-    running_job.status = JobStatus.RUNNING
+    running_job.status = JobStatus.ACTIVE
+    running_job.activity = JobActivity.RUNNING
     old_definition.parameters["job_ids_by_label"] = {"row_1": str(running_job.id)}
 
     window._on_remove_pristine_relaxation_rows(["row_1"])

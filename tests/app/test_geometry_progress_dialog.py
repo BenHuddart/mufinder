@@ -16,7 +16,7 @@ from mufinder.app.geometry_progress_dialog import (
 from mufinder.app.main_window import MainWindow
 from mufinder.app.theme import plot_series_colours
 from mufinder.castep_io.geometry_progress import GeometryProgress, parse_geometry_progress
-from mufinder.domain.enums import JobStatus
+from mufinder.domain.enums import EndReason, JobActivity, JobStatus
 from tests.support.dashboard import job_row, open_more_menu
 from mufinder.services.project_service import ProjectService
 
@@ -113,7 +113,8 @@ def _running_window(window: MainWindow, tmp_path: Path, *, stage, target: str = 
     service = ProjectService()
     doc = service.create_project(tmp_path / "progress.mufinder", "Progress")
     job = service.add_job(doc, label="Si_site_1", workflow_stage=stage, calc_type="castep")
-    job.status = JobStatus.RUNNING
+    job.status = JobStatus.ACTIVE
+    job.activity = JobActivity.RUNNING
     job.execution_target = target
     monitor = window._job_progress
     monitor._local_output_paths = lambda job_id: (BFGS,) if job_id == job.id else ()
@@ -149,7 +150,8 @@ def test_dashboard_shows_progress_of_a_running_relaxation(
         assert "step" in header.toolTip()
 
         # A finished cluster job is retrieved before it leaves the dashboard.
-        job.status = JobStatus.RETRIEVING
+        job.status = JobStatus.ACTIVE
+        job.activity = JobActivity.RETRIEVING
         window._refresh_jobs_table()
         assert item.text() == "retrieving"
         assert "Inspect…" not in _more_menu_texts(window, job, monkeypatch)
@@ -249,7 +251,8 @@ def test_inspect_on_a_mixed_selection_routes_failed_jobs_to_diagnostics(
         workflow_stage=main_window_module.WorkflowStage.MUON_RELAXATION,
         calc_type="castep",
     )
-    failed.status = JobStatus.FAILED
+    failed.status = JobStatus.ENDED
+    failed.end_reason = EndReason.UNKNOWN
     diagnosed: list[list] = []
     monkeypatch.setattr(window, "_on_inspect_failed_from_dashboard", diagnosed.append)
     try:

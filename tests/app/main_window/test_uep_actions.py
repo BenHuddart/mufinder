@@ -6,7 +6,7 @@ from pathlib import Path
 
 
 import mufinder.app.main_window as main_window_module
-from mufinder.domain.enums import JobStatus, WorkflowStage
+from mufinder.domain.enums import JobActivity, JobStatus, WorkflowStage
 from mufinder.domain.models import Structure
 from mufinder.services.project_service import ProjectService
 from mufinder.app.workflow_config_codecs import serialize_uep_config
@@ -87,7 +87,8 @@ def test_uep_preserves_running_row_across_reconfiguration(main_window, tmp_path:
         workflow_stage=WorkflowStage.UEP,
         calc_type="castep_uep_source",
     )
-    running_job.status = JobStatus.RUNNING
+    running_job.status = JobStatus.ACTIVE
+    running_job.activity = JobActivity.RUNNING
     old_definition.parameters["job_ids_by_label"] = {"row_1": str(running_job.id)}
 
     new_definition = service.register_uep_definition(
@@ -102,7 +103,7 @@ def test_uep_preserves_running_row_across_reconfiguration(main_window, tmp_path:
 
     states = window._uep_controller.build_states()
 
-    assert states["row_1"].status == JobStatus.RUNNING.value
+    assert states["row_1"].status == "running"
     assert states["row_1"].job_id == running_job.id
     assert new_definition.parameters["job_ids_by_label"]["row_1"] == str(running_job.id)
     window.close()
@@ -136,7 +137,8 @@ def test_uep_deleted_row_does_not_reinherit_stale_status(main_window, tmp_path: 
         workflow_stage=WorkflowStage.UEP,
         calc_type="castep_uep_source",
     )
-    running_job.status = JobStatus.RUNNING
+    running_job.status = JobStatus.ACTIVE
+    running_job.activity = JobActivity.RUNNING
     old_definition.parameters["job_ids_by_label"] = {"row_1": str(running_job.id)}
 
     window._on_remove_uep_rows(["row_1"])

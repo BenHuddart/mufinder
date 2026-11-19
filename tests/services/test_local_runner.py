@@ -11,7 +11,6 @@ from PySide6.QtCore import QProcess
 import mufinder.native_threads as native_threads_module
 import mufinder.services.local_runner as local_runner_module
 from mufinder.castep_io.output_parser import CastepResult
-from mufinder.domain.enums import JobStatus
 from mufinder.services.job_artifacts import RetrievalFlags
 from mufinder.services.local_runner import LocalJobRunner
 
@@ -106,7 +105,7 @@ def test_local_runner_rejects_missing_executable(qapp, tmp_path: Path) -> None:
     assert len(failures) == 1
     assert failures[0][0] == job_id
     assert "executable" in failures[0][1].lower()
-    assert statuses == [(job_id, JobStatus.FAILED.value)]
+    assert statuses == [(job_id, "failed")]
 
 
 def test_local_runner_queues_and_cancels_pending_jobs(qapp, monkeypatch, tmp_path: Path) -> None:
@@ -152,13 +151,13 @@ def test_local_runner_queues_and_cancels_pending_jobs(qapp, monkeypatch, tmp_pat
     assert started == [first_job]
     assert runner.running_count() == 1
     assert len(runner.pending_job_ids()) == 1
-    assert (second_job, JobStatus.QUEUED.value) in status_events
+    assert (second_job, "queued") in status_events
 
     runner.cancel(second_job)
 
     assert len(runner.pending_job_ids()) == 0
     assert second_job in cancel_events
-    assert (second_job, JobStatus.CANCELLED.value) in status_events
+    assert (second_job, "cancelled") in status_events
 
 
 def test_local_runner_launch_uses_mpirun_for_multicore(qapp, monkeypatch, tmp_path: Path) -> None:
@@ -185,7 +184,7 @@ def test_local_runner_launch_uses_mpirun_for_multicore(qapp, monkeypatch, tmp_pa
     assert fake_process.working_dir == str(tmp_path)
     assert fake_process.program == "/usr/bin/mpirun"
     assert fake_process.arguments == ["-np", "4", "/usr/bin/castep", "job_multi"]
-    assert statuses[-1] == (job_id, JobStatus.RUNNING.value)
+    assert statuses[-1] == (job_id, "running")
 
 
 def test_local_runner_launch_uses_executable_for_single_core(
@@ -288,7 +287,7 @@ def test_local_runner_cancel_running_process(qapp, tmp_path: Path) -> None:
 
     assert process.killed is True
     assert cancelled == [job_id]
-    assert statuses[-1] == (job_id, JobStatus.CANCELLED.value)
+    assert statuses[-1] == (job_id, "cancelled")
 
 
 def test_local_runner_process_finished_nonzero_exit_reports_stderr(qapp, tmp_path: Path) -> None:
@@ -314,7 +313,7 @@ def test_local_runner_process_finished_nonzero_exit_reports_stderr(qapp, tmp_pat
     runner._on_process_finished(job_id, 2)
 
     assert failures == ["fatal error"]
-    assert statuses[-1] == (job_id, JobStatus.FAILED.value)
+    assert statuses[-1] == (job_id, "failed")
 
 
 def test_local_runner_process_finished_handles_missing_output(qapp, tmp_path: Path) -> None:
@@ -408,7 +407,7 @@ def test_local_runner_process_finished_handles_incomplete_result(
     runner._on_process_finished(job_id, 0)
 
     assert failures == ["did not converge"]
-    assert statuses[-1] == (job_id, JobStatus.FAILED.value)
+    assert statuses[-1] == (job_id, "failed")
 
 
 def test_local_runner_process_finished_emits_success(qapp, monkeypatch, tmp_path: Path) -> None:
@@ -441,7 +440,7 @@ def test_local_runner_process_finished_emits_success(qapp, monkeypatch, tmp_path
     runner._on_process_finished(job_id, 0)
 
     assert finished == [(job_id, parsed)]
-    assert statuses[-1] == (job_id, JobStatus.COMPLETED.value)
+    assert statuses[-1] == (job_id, "completed")
 
 
 def test_local_runner_process_finished_uses_task_farm_primary_output(
@@ -673,7 +672,7 @@ def test_local_runner_failed_to_start_fails_fast(qapp, monkeypatch, tmp_path: Pa
             "Check the CASTEP executable path and file permissions.",
         )
     ]
-    assert statuses == [(job_id, JobStatus.FAILED.value)]
+    assert statuses == [(job_id, "failed")]
     assert job_id not in runner._active
     assert process.deleted is True
     assert launched == [pending_id]
@@ -710,7 +709,7 @@ def test_local_runner_failed_to_start_then_finished_is_noop(qapp, tmp_path: Path
     runner._on_process_finished(job_id, 1)
 
     assert failures == [job_id]
-    assert statuses == [(job_id, JobStatus.FAILED.value)]
+    assert statuses == [(job_id, "failed")]
 
 
 def test_local_runner_non_fatal_process_error_stores_and_waits(qapp, tmp_path: Path) -> None:

@@ -8,6 +8,7 @@ appends the matching provenance milestone. See docs/job_lifecycle.rst.
 
 from __future__ import annotations
 
+from mufinder.services.job_monitoring import job_status_word
 from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
@@ -18,16 +19,15 @@ from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.domain.models import Job
 from mufinder.services.project_service import (
     CONTINUABLE_JOB_STATUSES,
-    TERMINAL_RECOVERABLE_JOB_STATUSES,
     ProjectService,
 )
 from tests.support.jobs import make_job
 
 _CONTINUABLE = [
     JobStatus.COMPLETED,
-    JobStatus.FAILED,
-    JobStatus.STOPPED,
-    JobStatus.CANCELLED,
+    "failed",
+    "stopped",
+    "cancelled",
 ]
 
 
@@ -55,12 +55,9 @@ def _job_with_run_metadata(status: JobStatus) -> Job:
     return job
 
 
-def test_continuable_statuses_are_wider_than_the_reset_dismiss_set() -> None:
-    # The third status set is a strict superset: COMPLETED relaxations are
-    # continuable, and the reset/dismiss pair stays untouched.
-    assert CONTINUABLE_JOB_STATUSES == frozenset(_CONTINUABLE)
-    assert TERMINAL_RECOVERABLE_JOB_STATUSES < CONTINUABLE_JOB_STATUSES
-    assert CONTINUABLE_JOB_STATUSES - TERMINAL_RECOVERABLE_JOB_STATUSES == {JobStatus.COMPLETED}
+def test_completed_and_ended_jobs_are_continuable() -> None:
+    # A COMPLETED relaxation is continuable as well as an ended one.
+    assert CONTINUABLE_JOB_STATUSES == {JobStatus.COMPLETED, JobStatus.ENDED}
 
 
 @pytest.mark.parametrize("source", _CONTINUABLE)
@@ -79,10 +76,10 @@ def test_prepare_job_continuation_accepts_every_continuable_status(
     "source",
     [
         JobStatus.DEFINED,
-        JobStatus.SUBMITTING,
-        JobStatus.QUEUED,
-        JobStatus.RUNNING,
-        JobStatus.RETRIEVING,
+        "submitting",
+        "queued",
+        "running",
+        "retrieving",
     ],
 )
 def test_prepare_job_continuation_rejects_non_continuable_states(
@@ -98,7 +95,7 @@ def test_prepare_job_continuation_rejects_non_continuable_states(
     ):
         service.prepare_job_continuation(job)
 
-    assert job.status == source
+    assert job_status_word(job) == source
     assert job.remote_directory == "/scratch/user/relax_row_1"
 
 
@@ -139,7 +136,7 @@ def test_prepare_job_continuation_makes_a_dismissed_job_visible_again() -> None:
     # Continuation clears it, exactly as reset_failed_job does, so the row comes
     # back on screen for the continuation run.
     service = ProjectService()
-    job = _job_with_run_metadata(JobStatus.FAILED)
+    job = _job_with_run_metadata("failed")
     service.dismiss_job(job)
     assert job.dismissed_at is not None
 
@@ -183,7 +180,7 @@ def test_record_job_continuation_appends_provenance(tmp_path: Path) -> None:
 def test_record_job_continuation_marks_a_missing_remote_directory(tmp_path: Path) -> None:
     service = ProjectService()
     document = service.create_project(tmp_path / "continue_local.mufinder", "ContinueLocal")
-    job = _job(status=JobStatus.STOPPED)
+    job = _job(status="stopped")
     document.jobs[job.id] = job
 
     service.prepare_job_continuation(job)

@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from mufinder.domain.enums import FailureReason, JobStatus, WorkflowStage
+from mufinder.domain.enums import EndReason, JobStatus, WorkflowStage
 from mufinder.domain.models import Job
 from mufinder.services.failure_diagnosis import (
     failure_log_excerpt,
@@ -44,23 +44,23 @@ def _write(path: Path, text: str) -> Path:
 @pytest.mark.parametrize(
     ("log_text", "reason"),
     [
-        (f"mpirun noise\n{_SLURM_TIMEOUT}\n", FailureReason.WALLTIME),
-        ("=>> PBS: job killed: walltime 7210 exceeded limit 7200\n", FailureReason.WALLTIME),
+        (f"mpirun noise\n{_SLURM_TIMEOUT}\n", EndReason.WALLTIME),
+        ("=>> PBS: job killed: walltime 7210 exceeded limit 7200\n", EndReason.WALLTIME),
         (
             "slurmstepd: error: Detected 1 oom-kill event(s) in StepId=4242.0. "
             "Some of your processes may have been killed by the cgroup out-of-memory handler.\n",
-            FailureReason.OUT_OF_MEMORY,
+            EndReason.OUT_OF_MEMORY,
         ),
-        ("slurmstepd: error: Exceeded job memory limit\n", FailureReason.OUT_OF_MEMORY),
+        ("slurmstepd: error: Exceeded job memory limit\n", EndReason.OUT_OF_MEMORY),
         (
             "slurmstepd: error: *** JOB 4242 ON node017 CANCELLED AT 2026-10-04T10:00:00 "
             "DUE TO NODE FAILURE ***\n",
-            FailureReason.NODE_FAILURE,
+            EndReason.NODE_FAILURE,
         ),
     ],
 )
 def test_scheduler_log_evidence_is_classified(
-    tmp_path: Path, log_text: str, reason: FailureReason
+    tmp_path: Path, log_text: str, reason: EndReason
 ) -> None:
     log = _write(tmp_path / "slurm-4242.out", log_text)
 
@@ -74,7 +74,7 @@ def test_scheduler_log_evidence_is_classified(
 def test_scheduler_state_in_message_is_classified() -> None:
     diagnosis = diagnose_failure("Scheduler reported the job as OUT_OF_MEMORY.", [])
 
-    assert diagnosis.reason == FailureReason.OUT_OF_MEMORY
+    assert diagnosis.reason == EndReason.OUT_OF_MEMORY
     assert diagnosis.evidence_source == "failure message"
 
 
@@ -84,7 +84,7 @@ def test_scheduler_kill_outranks_castep_error_file(tmp_path: Path) -> None:
 
     diagnosis = diagnose_failure(None, [err, log])
 
-    assert diagnosis.reason == FailureReason.WALLTIME
+    assert diagnosis.reason == EndReason.WALLTIME
 
 
 def test_castep_error_file_gives_first_meaningful_line(tmp_path: Path) -> None:
@@ -96,7 +96,7 @@ def test_castep_error_file_gives_first_meaningful_line(tmp_path: Path) -> None:
     diagnosis = diagnose_failure("CASTEP did not report successful completion.", [err])
 
     assert diagnosis == FailureDiagnosis(
-        reason=FailureReason.CASTEP_ERROR,
+        reason=EndReason.CASTEP_ERROR,
         evidence="Error in parameters: unrecognised keyword FOO",
         evidence_source="seed.0001.err",
     )
@@ -116,7 +116,7 @@ def test_empty_castep_error_file_is_not_evidence(tmp_path: Path) -> None:
     ],
 )
 def test_retrieval_failures_are_output_unavailable(message: str) -> None:
-    assert diagnose_failure(message, []).reason == FailureReason.OUTPUT_UNAVAILABLE
+    assert diagnose_failure(message, []).reason == EndReason.OUTPUT_UNAVAILABLE
 
 
 def test_retrieval_failure_after_walltime_kill_reports_walltime(tmp_path: Path) -> None:
@@ -124,7 +124,7 @@ def test_retrieval_failure_after_walltime_kill_reports_walltime(tmp_path: Path) 
 
     diagnosis = diagnose_failure(f"{RETRIEVAL_FAILURE_PREFIX}: seed.castep missing", [log])
 
-    assert diagnosis.reason == FailureReason.WALLTIME
+    assert diagnosis.reason == EndReason.WALLTIME
 
 
 def test_unrecognised_failure_has_no_reason() -> None:
@@ -143,7 +143,7 @@ def test_logs_older_than_submission_are_ignored(tmp_path: Path) -> None:
     fresh = diagnose_failure(None, [log], not_before=datetime.now(tz=UTC) - timedelta(days=1))
 
     assert stale.reason is None
-    assert fresh.reason == FailureReason.WALLTIME
+    assert fresh.reason == EndReason.WALLTIME
 
 
 def test_missing_log_file_is_skipped(tmp_path: Path) -> None:
@@ -151,13 +151,16 @@ def test_missing_log_file_is_skipped(tmp_path: Path) -> None:
 
 
 def test_every_reason_has_a_label_and_summary() -> None:
-    for reason in FailureReason:
+    # A cancellation reads "cancelled" and an unknown cause shows the job's message.
+    for reason in set(EndReason) - {EndReason.CANCELLED, EndReason.UNKNOWN}:
         assert FAILURE_REASON_LABELS[reason]
         assert FAILURE_REASON_SUMMARIES[reason]
         assert failure_reason_label(reason) == FAILURE_REASON_LABELS[reason]
         assert failure_reason_summary(reason) == FAILURE_REASON_SUMMARIES[reason]
     assert failure_reason_label(None) == ""
     assert failure_reason_summary(None) == UNDIAGNOSED_SUMMARY
+    assert failure_reason_label(EndReason.UNKNOWN) == ""
+    assert failure_reason_summary(EndReason.UNKNOWN) == UNDIAGNOSED_SUMMARY
 
 
 def test_find_failure_log_files_prefers_job_specific_logs(tmp_path: Path) -> None:
@@ -199,16 +202,17 @@ def _job(label: str = "job_failed", *, message: str | None = None) -> Job:
         label=label,
         workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF,
         calc_type="castep_convergence_cutoff",
-        status=JobStatus.FAILED,
+        status=JobStatus.ENDED,
+        end_reason=EndReason.UNKNOWN,
         error_message=message,
     )
 
 
 def test_headline_prefers_the_cause_then_the_recorded_message() -> None:
-    walltime = FailureDiagnosis(reason=FailureReason.WALLTIME)
+    walltime = FailureDiagnosis(reason=EndReason.WALLTIME)
     message = "CASTEP exited with status 1: SCF cycles did not converge"
 
-    assert failure_headline(walltime, message) == FAILURE_REASON_SUMMARIES[FailureReason.WALLTIME]
+    assert failure_headline(walltime, message) == FAILURE_REASON_SUMMARIES[EndReason.WALLTIME]
     assert failure_headline(FailureDiagnosis(), f"  {message}\n") == message
     assert failure_headline(FailureDiagnosis(), "  ") == UNDIAGNOSED_SUMMARY
     assert failure_headline(FailureDiagnosis(), None) == "No cause found in the logs."
@@ -223,14 +227,14 @@ def test_report_without_an_output_folder_says_so(tmp_path: Path) -> None:
     assert report.notes == ("The job's output folder was not found, so there are no logs to show.",)
     assert report.log_excerpt == ""
     assert report.output_directory is None
-    assert (report.job_id, report.label, report.status) == (job.id, job.label, JobStatus.FAILED)
+    assert (report.job_id, report.label, report.status) == (job.id, job.label, "failed")
 
 
 def test_report_lists_the_message_the_evidence_and_the_log_excerpt(tmp_path: Path) -> None:
     job = _job(message="process failed")
     _write(tmp_path / "job_failed.err", "line 1\nfatal error\nline 3\n")
     diagnosis = FailureDiagnosis(
-        reason=FailureReason.CASTEP_ERROR, evidence="line 1", evidence_source="job_failed.err"
+        reason=EndReason.CASTEP_ERROR, evidence="line 1", evidence_source="job_failed.err"
     )
 
     report = failed_job_report(job, diagnosis, tmp_path, job.label)
@@ -246,7 +250,7 @@ def test_report_does_not_repeat_the_headline_or_the_message(tmp_path: Path) -> N
     message = f"{RETRIEVAL_FAILURE_PREFIX}: timeout"
     job = _job(message=message)
     diagnosis = FailureDiagnosis(
-        reason=FailureReason.OUTPUT_UNAVAILABLE, evidence=message, evidence_source="failure message"
+        reason=EndReason.OUTPUT_UNAVAILABLE, evidence=message, evidence_source="failure message"
     )
 
     report = failed_job_report(job, diagnosis, tmp_path, job.label)
@@ -256,7 +260,7 @@ def test_report_does_not_repeat_the_headline_or_the_message(tmp_path: Path) -> N
 
 
 def test_reports_group_by_headline_in_first_seen_order(tmp_path: Path) -> None:
-    walltime = FailureDiagnosis(reason=FailureReason.WALLTIME)
+    walltime = FailureDiagnosis(reason=EndReason.WALLTIME)
     reports = [
         failed_job_report(_job("a"), walltime, None, "a"),
         failed_job_report(_job("b", message="exit 137"), FailureDiagnosis(), None, "b"),
@@ -266,7 +270,7 @@ def test_reports_group_by_headline_in_first_seen_order(tmp_path: Path) -> None:
     groups = group_reports_by_headline(reports)
 
     assert [(headline, [r.label for r in members]) for headline, members in groups] == [
-        (FAILURE_REASON_SUMMARIES[FailureReason.WALLTIME], ["a", "c"]),
+        (FAILURE_REASON_SUMMARIES[EndReason.WALLTIME], ["a", "c"]),
         ("exit 137", ["b"]),
     ]
 
@@ -336,9 +340,9 @@ def test_evidence_taken_from_the_recorded_message_is_not_repeated(tmp_path: Path
 @pytest.mark.parametrize(
     ("reason", "message", "expected"),
     [
-        (FailureReason.WALLTIME, "scheduler said TIMEOUT", "walltime"),
-        (FailureReason.CASTEP_ERROR, "SCF did not converge\nmore", "SCF did not converge"),
-        (FailureReason.CASTEP_ERROR, None, "CASTEP"),
+        (EndReason.WALLTIME, "scheduler said TIMEOUT", "walltime"),
+        (EndReason.CASTEP_ERROR, "SCF did not converge\nmore", "SCF did not converge"),
+        (EndReason.CASTEP_ERROR, None, "CASTEP"),
         (None, "  process exited with code 1\n", "process exited with code 1"),
         (None, None, ""),
     ],
@@ -377,5 +381,5 @@ def test_report_for_a_cluster_job_without_an_output_folder_points_at_the_remote_
 
 
 def test_a_job_mufinder_lost_track_of_says_so_in_plain_words() -> None:
-    assert failure_reason_label(FailureReason.INTERRUPTED) == "lost track"
-    assert failure_status_reason(FailureReason.INTERRUPTED, "any message") == "lost track"
+    assert failure_reason_label(EndReason.INTERRUPTED) == "lost track"
+    assert failure_status_reason(EndReason.INTERRUPTED, "any message") == "lost track"

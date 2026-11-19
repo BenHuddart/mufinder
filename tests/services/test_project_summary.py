@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from uuid import uuid4
 
-from mufinder.domain.enums import JobStatus, WorkflowStage
+from mufinder.domain.enums import JobActivity, JobStatus, WorkflowStage
 from mufinder.domain.models import Job, Result
 from mufinder.services.project_service import ProjectService
 from mufinder.services.project_summary import (
@@ -98,7 +98,8 @@ def test_convergence_defaults_and_active_jobs_are_reported(tmp_path: Path) -> No
         workflow_stage=WorkflowStage.CONVERGENCE_KPOINT,
         calc_type="castep_kpoint",
     )
-    job.status = JobStatus.RUNNING
+    job.status = JobStatus.ACTIVE
+    job.activity = JobActivity.RUNNING
 
     summary = summarize_project(document)
 

@@ -22,6 +22,7 @@ from mufinder.app.relaxation_import_dialog import (
 )
 from mufinder.app.main_window import MainWindow
 from mufinder.app.workflow_config_codecs import deserialize_muon_relaxation_config
+from mufinder.domain.enums import JobStatus
 from mufinder.domain.models import Project, Structure
 from mufinder.services.relaxation_import import scan_relaxation_folder
 from mufinder.services.project_service import ProjectDocument
@@ -251,7 +252,7 @@ class TestTheAction:
         assert definition is not None
         assert len(definition.parameters["job_ids_by_label"]) == 2
         assert len(window._document.sites) == 2
-        assert all(job.status.value == "completed" for job in window._document.jobs.values())
+        assert all(job.status == JobStatus.COMPLETED for job in window._document.jobs.values())
 
     def test_the_completion_message_reports_skips_and_notes(
         self,

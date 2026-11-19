@@ -8,7 +8,7 @@ from uuid import uuid4
 
 import pytest
 
-from mufinder.domain.enums import JobStatus, WorkflowStage
+from mufinder.domain.enums import JobActivity, JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationDefinition, CalculationRun, Job, MuonSite, Result
 from mufinder.services.magnetic_field_results import (
     CALCULATION_METHOD_VERSION,
@@ -338,7 +338,8 @@ def test_quantum_layer_shows_nothing_for_a_job_that_no_longer_stands_behind_its_
     tmp_path: Path,
 ) -> None:
     project, _definition, job, _result = _project_with_a_zpe(tmp_path)
-    job.status = JobStatus.RUNNING
+    job.status = JobStatus.ACTIVE
+    job.activity = JobActivity.RUNNING
 
     assert survey_layers(project.document, "quantum_corrections") == ()
 

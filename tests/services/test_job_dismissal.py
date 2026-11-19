@@ -8,6 +8,7 @@ appends the matching provenance milestone.
 
 from __future__ import annotations
 
+from mufinder.services.job_monitoring import job_status_word
 from pathlib import Path
 
 import pytest
@@ -19,7 +20,7 @@ from tests.support.jobs import make_job
 
 @pytest.mark.parametrize(
     "source",
-    [JobStatus.FAILED, JobStatus.STOPPED, JobStatus.CANCELLED],
+    ["failed", "stopped", "cancelled"],
 )
 def test_dismiss_job_stamps_dismissed_at_without_status_change(source: JobStatus) -> None:
     service = ProjectService()
@@ -30,7 +31,7 @@ def test_dismiss_job_stamps_dismissed_at_without_status_change(source: JobStatus
 
     assert job.dismissed_at is not None
     # Status is unchanged: dismissal is not a transition.
-    assert job.status == source
+    assert job_status_word(job) == source
     # Diagnostics are preserved for later data-level recovery.
     assert job.error_message == "prior diagnostics"
 
@@ -39,10 +40,10 @@ def test_dismiss_job_stamps_dismissed_at_without_status_change(source: JobStatus
     "source",
     [
         JobStatus.DEFINED,
-        JobStatus.SUBMITTING,
-        JobStatus.QUEUED,
-        JobStatus.RUNNING,
-        JobStatus.RETRIEVING,
+        "submitting",
+        "queued",
+        "running",
+        "retrieving",
         JobStatus.COMPLETED,
     ],
 )
@@ -58,7 +59,7 @@ def test_dismiss_job_rejects_non_terminal_states(source: JobStatus) -> None:
 
 def test_dismiss_job_rejects_already_dismissed() -> None:
     service = ProjectService()
-    job = make_job(status=JobStatus.FAILED)
+    job = make_job(status="failed")
     service.dismiss_job(job)
     first_stamp = job.dismissed_at
 
@@ -73,7 +74,7 @@ def test_dismiss_job_rejects_already_dismissed() -> None:
 def test_record_job_dismissed_appends_provenance(tmp_path: Path) -> None:
     service = ProjectService()
     document = service.create_project(tmp_path / "dismiss.mufinder", "Dismiss")
-    job = make_job(status=JobStatus.STOPPED)
+    job = make_job(status="stopped")
     document.jobs[job.id] = job
 
     service.dismiss_job(job)
