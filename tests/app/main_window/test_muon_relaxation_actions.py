@@ -73,7 +73,9 @@ def test_main_window_muon_job_uses_row_label_and_charge_seed_directory(
     assert job.label == "Random Site 1"
     assert window._job_output_directory(job) == output_dir
     assert window._job_seed_name(job) == "positivemuon_Random_Site_1"
-    assert window._cluster_workflow_directory_fragment([job]) == "muon_relaxation/positivemuon"
+    assert (
+        window._jobs._cluster_workflow_directory_fragment([job]) == "muon_relaxation/positivemuon"
+    )
     window.close()
 
 
@@ -1414,7 +1416,7 @@ def test_muon_relaxation_remove_row_archives_associated_files_and_job(
         original_save(document)
 
     window._project_service.save_project = _save_project
-    monkeypatch.setattr(window, "_prompt_job_file_disposition", lambda **_kwargs: "archive")
+    monkeypatch.setattr(window._jobs, "prompt_job_file_disposition", lambda **_kwargs: "archive")
 
     window._on_remove_muon_relaxation_rows(["positivemuon:Site 1"])
 

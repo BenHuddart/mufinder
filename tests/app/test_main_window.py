@@ -3512,7 +3512,7 @@ def test_main_window_task_farming_dispatch_covers_neb_jobs(qapp, tmp_path: Path)
     assert definition is not None
 
     assert window._task_farming_for_job(job) == (True, 3)
-    assert window._farm_counts_for_jobs([job]) == {"barrier_siteA_to_siteB_neb": 3}
+    assert window._jobs._farm_counts_for_jobs([job]) == {"barrier_siteA_to_siteB_neb": 3}
     window.close()
 
 
@@ -3547,7 +3547,7 @@ def test_main_window_task_farming_reports_off_for_unfarmed_neb_jobs(qapp, tmp_pa
     )
 
     assert window._task_farming_for_job(job) == (False, None)
-    assert window._farm_counts_for_jobs([job]) == {}
+    assert window._jobs._farm_counts_for_jobs([job]) == {}
     window.close()
 
 

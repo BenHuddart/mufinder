@@ -768,8 +768,8 @@ offers ``Reset Failed Jobs…`` in its shared right-click row menu, from
   of its own.
 
 The main window resolves a widget's ``reset_failed_requested`` keys through the
-workflow's ``WorkflowJobController.jobs_for_keys`` and hands the jobs to the
-shared reset handler. Muon relaxation binds the menu once per charge-state
+workflow's ``WorkflowJobController.jobs_for_keys`` and hands the jobs to
+``JobsController.reset_failed_jobs``. Muon relaxation binds the menu once per charge-state
 table. After a reset every workflow table is repainted.
 
 .. _quantum-singlepoint-records:
@@ -820,7 +820,7 @@ ignored, and a changed farm count would disagree with the job's ``NUM_FARMS``.
 
 ``prepare_jobs_for_resubmission`` on ``WorkflowControllerContext`` is the lazy
 reset. ``WorkflowJobController.submit`` calls it for the plan's ended jobs just
-before dispatch; the main window runs the same clean-up prompt as ``Reset``
+before dispatch; ``JobsController`` runs the same clean-up prompt as ``Reset``
 (with the unretrieved-output note when it applies) and then
 ``reset_failed_job``, so the jobs reach the submit backends as ``defined``.
 Cancelling the prompt aborts the submission. Imported jobs are never reset.

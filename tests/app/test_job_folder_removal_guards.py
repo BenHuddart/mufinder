@@ -65,6 +65,12 @@ class _Project:
             ).append(f"{text}\n{kwargs.get('details', '')}"),
         )
         monkeypatch.setattr(
+            "mufinder.app.jobs_controller.show_detailed_warning",
+            lambda _parent, title, text, **kwargs: (
+                self.boxes if title == "Folders kept" else self.warned
+            ).append(f"{text}\n{kwargs.get('details', '')}"),
+        )
+        monkeypatch.setattr(
             workflow_table_utils, "confirm_destructive", lambda *args, **kwargs: True
         )
         monkeypatch.setattr(window, "_persist_document_ui_state", lambda **kwargs: None)
@@ -74,7 +80,7 @@ class _Project:
             self.asked.append(text)
             return "delete"
 
-        monkeypatch.setattr(window, "_prompt_job_file_disposition", _delete)
+        monkeypatch.setattr(window._jobs, "prompt_job_file_disposition", _delete)
 
     def import_batch(self, name: str, sites: tuple[int, ...], seed: str | None = None):
         scan = _scan(build_folder(self.tmp_path / name, sites=sites))
@@ -483,7 +489,7 @@ class TestLinks:
         (project.charge / "own" / "own.castep").write_text("gone")
         (project.charge / "own" / "own.cell").write_text("input")
 
-        project.window._reset_failed_jobs([looped], cleanup_choice=True)
+        project.window._jobs.reset_failed_jobs([looped], cleanup_choice=True)
         assert (project.charge / "loop").is_symlink()
         assert project.status() == "Reset 1 failed job; kept 1 folder"
         project.warned.clear()
@@ -749,7 +755,7 @@ class TestDashboardReset:
         job = self._failed_native(project, "native", "own")
         folder = self._folder(project, "own")
 
-        project.window._reset_failed_jobs([job], cleanup_choice=True)
+        project.window._jobs.reset_failed_jobs([job], cleanup_choice=True)
 
         assert _tree(folder) == ["own.cell"]
         assert job.status == JobStatus.DEFINED
@@ -763,7 +769,7 @@ class TestDashboardReset:
         job = self._failed_native(project, "native", item.seed_name)
         before = _tree(project.files)
 
-        project.window._reset_failed_jobs([job], cleanup_choice=True)
+        project.window._jobs.reset_failed_jobs([job], cleanup_choice=True)
 
         assert _tree(project.files) == before
         assert job.status == JobStatus.DEFINED
@@ -781,7 +787,7 @@ class TestDashboardReset:
         job = self._failed_native(project, "native", seed)
         before = _tree(project.files)
 
-        project.window._reset_failed_jobs([job], cleanup_choice=True)
+        project.window._jobs.reset_failed_jobs([job], cleanup_choice=True)
 
         assert _tree(project.files) == before
         assert job.status == JobStatus.DEFINED
@@ -796,7 +802,7 @@ class TestDashboardReset:
         job = self._failed_native(project, "native", str(folder))
         before = _tree(project.files)
 
-        project.window._reset_failed_jobs([job], cleanup_choice=True)
+        project.window._jobs.reset_failed_jobs([job], cleanup_choice=True)
 
         assert _tree(project.files) == before
         assert project.warned and "another workflow" in project.warned[0]
@@ -820,8 +826,14 @@ class TestDashboardReset:
                 (title, text, kwargs["informative_text"], kwargs["details"])
             ),
         )
+        project.monkeypatch.setattr(
+            "mufinder.app.jobs_controller.show_detailed_warning",
+            lambda _parent, title, text, **kwargs: seen.append(
+                (title, text, kwargs["informative_text"], kwargs["details"])
+            ),
+        )
 
-        project.window._reset_failed_jobs(jobs, cleanup_choice=True)
+        project.window._jobs.reset_failed_jobs(jobs, cleanup_choice=True)
 
         title, summary, instruction, details = seen[0]
         assert title == "Directory cleanup issues"
@@ -837,7 +849,7 @@ class TestDashboardReset:
         shared = self._failed_native(project, "shared", item.seed_name)
         imported_tree = _tree(item.job_directory)
 
-        project.window._reset_failed_jobs([own, shared], cleanup_choice=True)
+        project.window._jobs.reset_failed_jobs([own, shared], cleanup_choice=True)
 
         assert _tree(project.charge / "own") == ["own.cell"]
         assert _tree(item.job_directory) == imported_tree
@@ -857,7 +869,7 @@ class TestDashboardReset:
         (other / "same.cell").write_text("input")
         (other / "same.castep").write_text("output")
 
-        project.window._reset_failed_jobs([positive, muonium], cleanup_choice=True)
+        project.window._jobs.reset_failed_jobs([positive, muonium], cleanup_choice=True)
 
         assert _tree(other) == ["same.cell"]
         assert project.status() == "Reset 2 failed jobs; cleaned 2 folders"
@@ -868,7 +880,7 @@ class TestDashboardReset:
         self._folder(project, "own")
         before = _tree(project.files)
 
-        project.window._reset_failed_jobs([job], cleanup_choice=False)
+        project.window._jobs.reset_failed_jobs([job], cleanup_choice=False)
 
         assert _tree(project.files) == before
         assert project.status() == "Reset 1 failed job"

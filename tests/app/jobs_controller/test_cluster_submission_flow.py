@@ -1,4 +1,4 @@
-"""Submitting jobs to a cluster from the main window, and the cluster connection around it."""
+"""Submitting jobs to a cluster through the jobs controller, and the cluster connection around it."""
 
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ import pytest
 from PySide6.QtGui import QAction
 
 import mufinder.app.main_window as main_window_module
+import mufinder.app.jobs_controller as jobs_controller_module
 from mufinder.app import workflow_table_utils
 from mufinder.app.cluster_submission_dialog import ClusterSubmissionConfig
 from mufinder.app.main_window import MainWindow
@@ -105,9 +106,13 @@ def test_main_window_submit_jobs_on_cluster_creates_run_and_calls_runner(
         def password(self) -> str:
             return ""
 
-    monkeypatch.setattr(main_window_module, "ClusterSubmissionDialog", _FakeDialog)
+    monkeypatch.setattr(jobs_controller_module, "ClusterSubmissionDialog", _FakeDialog)
     monkeypatch.setattr(main_window_module, "load_cluster_configs", lambda _settings: [cluster])
+    monkeypatch.setattr(jobs_controller_module, "load_cluster_configs", lambda _settings: [cluster])
     monkeypatch.setattr(main_window_module, "load_cluster_config", lambda _settings, _name: cluster)
+    monkeypatch.setattr(
+        jobs_controller_module, "load_cluster_config", lambda _settings, _name: cluster
+    )
     monkeypatch.setattr(main_window_module.QApplication, "processEvents", lambda: None)
 
     connect_calls: list[object] = []
@@ -137,7 +142,7 @@ def test_main_window_submit_jobs_on_cluster_creates_run_and_calls_runner(
         lambda _parent, title, _message: infos.append(title),
     )
 
-    window._submit_jobs_on_cluster([job])
+    window._jobs.submit_jobs_on_cluster([job])
 
     assert connect_calls == [("alpha", None)]
     assert infos == ["Cluster connection successful"]
@@ -252,9 +257,13 @@ def test_main_window_submit_jobs_on_cluster_passes_jump_host_credentials(
 
     connect_calls: list[tuple[str, SSHCredentials | None, str | None]] = []
     submit_calls: list[dict[str, object]] = []
-    monkeypatch.setattr(main_window_module, "ClusterSubmissionDialog", _FakeDialog)
+    monkeypatch.setattr(jobs_controller_module, "ClusterSubmissionDialog", _FakeDialog)
     monkeypatch.setattr(main_window_module, "load_cluster_configs", lambda _settings: [cluster])
+    monkeypatch.setattr(jobs_controller_module, "load_cluster_configs", lambda _settings: [cluster])
     monkeypatch.setattr(main_window_module, "load_cluster_config", lambda _settings, _name: cluster)
+    monkeypatch.setattr(
+        jobs_controller_module, "load_cluster_config", lambda _settings, _name: cluster
+    )
     monkeypatch.setattr(main_window_module.QApplication, "processEvents", lambda: None)
     monkeypatch.setattr(
         window._cluster_runner._runner,
@@ -280,7 +289,7 @@ def test_main_window_submit_jobs_on_cluster_passes_jump_host_credentials(
         main_window_module.QMessageBox, "information", lambda *_args, **_kwargs: None
     )
 
-    window._submit_jobs_on_cluster([job])
+    window._jobs.submit_jobs_on_cluster([job])
 
     assert len(connect_calls) == 1
     assert connect_calls[0][0] == "Redwood"
@@ -372,9 +381,13 @@ def test_main_window_resubmits_failed_cluster_job_without_replacing_remote_files
         def password(self) -> str:
             return ""
 
-    monkeypatch.setattr(main_window_module, "ClusterSubmissionDialog", _FakeDialog)
+    monkeypatch.setattr(jobs_controller_module, "ClusterSubmissionDialog", _FakeDialog)
     monkeypatch.setattr(main_window_module, "load_cluster_configs", lambda _settings: [cluster])
+    monkeypatch.setattr(jobs_controller_module, "load_cluster_configs", lambda _settings: [cluster])
     monkeypatch.setattr(main_window_module, "load_cluster_config", lambda _settings, _name: cluster)
+    monkeypatch.setattr(
+        jobs_controller_module, "load_cluster_config", lambda _settings, _name: cluster
+    )
     monkeypatch.setattr(main_window_module.QApplication, "processEvents", lambda: None)
     monkeypatch.setattr(
         window._cluster_runner._runner,
@@ -409,7 +422,7 @@ def test_main_window_resubmits_failed_cluster_job_without_replacing_remote_files
         lambda _parent, title, _message: infos.append(title),
     )
 
-    window._on_resubmit_from_dashboard([job.id])
+    window._jobs._on_resubmit_from_dashboard([job.id])
 
     assert infos == ["Cluster connection successful"]
     assert len(submit_calls) == 1
@@ -508,9 +521,13 @@ def test_main_window_resubmit_passes_updated_resources_to_runner(
         def password(self) -> str:
             return ""
 
-    monkeypatch.setattr(main_window_module, "ClusterSubmissionDialog", _FakeDialog)
+    monkeypatch.setattr(jobs_controller_module, "ClusterSubmissionDialog", _FakeDialog)
     monkeypatch.setattr(main_window_module, "load_cluster_configs", lambda _settings: [cluster])
+    monkeypatch.setattr(jobs_controller_module, "load_cluster_configs", lambda _settings: [cluster])
     monkeypatch.setattr(main_window_module, "load_cluster_config", lambda _settings, _name: cluster)
+    monkeypatch.setattr(
+        jobs_controller_module, "load_cluster_config", lambda _settings, _name: cluster
+    )
     monkeypatch.setattr(main_window_module.QApplication, "processEvents", lambda: None)
     monkeypatch.setattr(
         window._cluster_runner._runner,
@@ -545,7 +562,7 @@ def test_main_window_resubmit_passes_updated_resources_to_runner(
         lambda _parent, title, _message: infos.append(title),
     )
 
-    window._on_resubmit_from_dashboard([job.id])
+    window._jobs._on_resubmit_from_dashboard([job.id])
 
     assert infos == ["Cluster connection successful"]
     assert len(submit_calls) == 1
@@ -629,12 +646,15 @@ def test_main_window_submit_jobs_on_cluster_prefills_from_last_submission_defaul
         def exec(self) -> int:
             return 0
 
-    monkeypatch.setattr(main_window_module, "ClusterSubmissionDialog", _FakeDialog)
+    monkeypatch.setattr(jobs_controller_module, "ClusterSubmissionDialog", _FakeDialog)
     monkeypatch.setattr(
         main_window_module, "load_cluster_configs", lambda _settings: [alpha, redwood]
     )
+    monkeypatch.setattr(
+        jobs_controller_module, "load_cluster_configs", lambda _settings: [alpha, redwood]
+    )
 
-    window._submit_jobs_on_cluster([job])
+    window._jobs.submit_jobs_on_cluster([job])
 
     assert captured_kwargs["default_cluster_name"] == "Redwood"
     initial_config = captured_kwargs["initial_config"]
@@ -700,10 +720,11 @@ def test_main_window_submit_jobs_on_cluster_prefills_same_workflow_without_reset
         def exec(self) -> int:
             return 0
 
-    monkeypatch.setattr(main_window_module, "ClusterSubmissionDialog", _FakeDialog)
+    monkeypatch.setattr(jobs_controller_module, "ClusterSubmissionDialog", _FakeDialog)
     monkeypatch.setattr(main_window_module, "load_cluster_configs", lambda _settings: [redwood])
+    monkeypatch.setattr(jobs_controller_module, "load_cluster_configs", lambda _settings: [redwood])
 
-    window._submit_jobs_on_cluster([job])
+    window._jobs.submit_jobs_on_cluster([job])
 
     initial_config = captured_kwargs["initial_config"]
     assert initial_config is not None
@@ -790,10 +811,11 @@ def test_main_window_submit_jobs_on_cluster_resets_workdir_on_workflow_switch(
         def exec(self) -> int:
             return 0
 
-    monkeypatch.setattr(main_window_module, "ClusterSubmissionDialog", _FakeDialog)
+    monkeypatch.setattr(jobs_controller_module, "ClusterSubmissionDialog", _FakeDialog)
     monkeypatch.setattr(main_window_module, "load_cluster_configs", lambda _settings: [redwood])
+    monkeypatch.setattr(jobs_controller_module, "load_cluster_configs", lambda _settings: [redwood])
 
-    window._submit_jobs_on_cluster([job])
+    window._jobs.submit_jobs_on_cluster([job])
 
     initial_config = captured_kwargs["initial_config"]
     assert initial_config is not None
@@ -865,9 +887,13 @@ def test_main_window_submit_jobs_on_cluster_persists_last_submission_defaults(
             return ""
 
     warnings: list[str] = []
-    monkeypatch.setattr(main_window_module, "ClusterSubmissionDialog", _FakeDialog)
+    monkeypatch.setattr(jobs_controller_module, "ClusterSubmissionDialog", _FakeDialog)
     monkeypatch.setattr(main_window_module, "load_cluster_configs", lambda _settings: [redwood])
+    monkeypatch.setattr(jobs_controller_module, "load_cluster_configs", lambda _settings: [redwood])
     monkeypatch.setattr(main_window_module, "load_cluster_config", lambda _settings, _name: redwood)
+    monkeypatch.setattr(
+        jobs_controller_module, "load_cluster_config", lambda _settings, _name: redwood
+    )
     monkeypatch.setattr(
         window._cluster_runner._runner,
         "connect_to_cluster",
@@ -878,8 +904,13 @@ def test_main_window_submit_jobs_on_cluster_persists_last_submission_defaults(
         "show_detailed_warning",
         lambda _parent, title, _message, **_kwargs: warnings.append(title),
     )
+    monkeypatch.setattr(
+        jobs_controller_module,
+        "show_detailed_warning",
+        lambda _parent, title, _message, **_kwargs: warnings.append(title),
+    )
 
-    window._submit_jobs_on_cluster([job])
+    window._jobs.submit_jobs_on_cluster([job])
 
     assert warnings == ["Cluster connection failed"]
     persisted = doc.ui_state[main_window_module.MainWindow._LAST_CLUSTER_SUBMISSION_CONFIG_KEY]
@@ -943,9 +974,13 @@ def test_main_window_submit_jobs_on_cluster_connection_failure_warns(
         def password(self) -> str:
             return ""
 
-    monkeypatch.setattr(main_window_module, "ClusterSubmissionDialog", _FakeDialog)
+    monkeypatch.setattr(jobs_controller_module, "ClusterSubmissionDialog", _FakeDialog)
     monkeypatch.setattr(main_window_module, "load_cluster_configs", lambda _settings: [cluster])
+    monkeypatch.setattr(jobs_controller_module, "load_cluster_configs", lambda _settings: [cluster])
     monkeypatch.setattr(main_window_module, "load_cluster_config", lambda _settings, _name: cluster)
+    monkeypatch.setattr(
+        jobs_controller_module, "load_cluster_config", lambda _settings, _name: cluster
+    )
     monkeypatch.setattr(
         window._cluster_runner._runner,
         "connect_to_cluster",
@@ -959,7 +994,7 @@ def test_main_window_submit_jobs_on_cluster_connection_failure_warns(
         lambda _parent, title, _message: warnings.append(title),
     )
 
-    window._submit_jobs_on_cluster([job])
+    window._jobs.submit_jobs_on_cluster([job])
 
     assert warnings == ["Cluster connection failed"]
     window.close()
@@ -1013,9 +1048,13 @@ def test_main_window_submit_jobs_on_cluster_blocks_unsafe_remote_labels(
         def password(self) -> str:
             return ""
 
-    monkeypatch.setattr(main_window_module, "ClusterSubmissionDialog", _FakeDialog)
+    monkeypatch.setattr(jobs_controller_module, "ClusterSubmissionDialog", _FakeDialog)
     monkeypatch.setattr(main_window_module, "load_cluster_configs", lambda _settings: [cluster])
+    monkeypatch.setattr(jobs_controller_module, "load_cluster_configs", lambda _settings: [cluster])
     monkeypatch.setattr(main_window_module, "load_cluster_config", lambda _settings, _name: cluster)
+    monkeypatch.setattr(
+        jobs_controller_module, "load_cluster_config", lambda _settings, _name: cluster
+    )
 
     warnings: list[str] = []
     monkeypatch.setattr(
@@ -1023,8 +1062,13 @@ def test_main_window_submit_jobs_on_cluster_blocks_unsafe_remote_labels(
         "show_detailed_warning",
         lambda _parent, title, _message, **_kwargs: warnings.append(title),
     )
+    monkeypatch.setattr(
+        jobs_controller_module,
+        "show_detailed_warning",
+        lambda _parent, title, _message, **_kwargs: warnings.append(title),
+    )
 
-    window._submit_jobs_on_cluster([job])
+    window._jobs.submit_jobs_on_cluster([job])
 
     assert warnings == ["Unsafe job labels"]
     window.close()
@@ -1102,9 +1146,13 @@ def test_main_window_submit_jobs_on_cluster_existing_remote_dir_yes_deletes(
         def password(self) -> str:
             return ""
 
-    monkeypatch.setattr(main_window_module, "ClusterSubmissionDialog", _FakeDialog)
+    monkeypatch.setattr(jobs_controller_module, "ClusterSubmissionDialog", _FakeDialog)
     monkeypatch.setattr(main_window_module, "load_cluster_configs", lambda _settings: [cluster])
+    monkeypatch.setattr(jobs_controller_module, "load_cluster_configs", lambda _settings: [cluster])
     monkeypatch.setattr(main_window_module, "load_cluster_config", lambda _settings, _name: cluster)
+    monkeypatch.setattr(
+        jobs_controller_module, "load_cluster_config", lambda _settings, _name: cluster
+    )
     monkeypatch.setattr(main_window_module.QApplication, "processEvents", lambda: None)
 
     monkeypatch.setattr(
@@ -1123,12 +1171,12 @@ def test_main_window_submit_jobs_on_cluster_existing_remote_dir_yes_deletes(
         window._cluster_runner._runner, "remove_remote_directory", lambda path: deleted.append(path)
     )
     monkeypatch.setattr(window._cluster_runner._runner, "submit", lambda **_kwargs: "99123")
-    monkeypatch.setattr(window, "_prompt_remote_directory_overwrite", lambda *_args: "yes")
+    monkeypatch.setattr(window._jobs, "_prompt_remote_directory_overwrite", lambda *_args: "yes")
     monkeypatch.setattr(
         main_window_module.QMessageBox, "information", lambda *_args, **_kwargs: None
     )
 
-    window._submit_jobs_on_cluster([job])
+    window._jobs.submit_jobs_on_cluster([job])
 
     assert deleted == ["/remote/work/conv_ecut_300"]
     window.close()
@@ -1237,9 +1285,13 @@ def test_main_window_submit_jobs_on_cluster_sends_a_quantum_phonon_job_to_its_ow
         def password(self) -> str:
             return ""
 
-    monkeypatch.setattr(main_window_module, "ClusterSubmissionDialog", _FakeDialog)
+    monkeypatch.setattr(jobs_controller_module, "ClusterSubmissionDialog", _FakeDialog)
     monkeypatch.setattr(main_window_module, "load_cluster_configs", lambda _settings: [cluster])
+    monkeypatch.setattr(jobs_controller_module, "load_cluster_configs", lambda _settings: [cluster])
     monkeypatch.setattr(main_window_module, "load_cluster_config", lambda _settings, _name: cluster)
+    monkeypatch.setattr(
+        jobs_controller_module, "load_cluster_config", lambda _settings, _name: cluster
+    )
     monkeypatch.setattr(main_window_module.QApplication, "processEvents", lambda: None)
     monkeypatch.setattr(
         window._cluster_runner._runner, "connect_to_cluster", lambda *_args, **_kwargs: None
@@ -1267,7 +1319,7 @@ def test_main_window_submit_jobs_on_cluster_sends_a_quantum_phonon_job_to_its_ow
         lambda **kwargs: submit_calls.append(kwargs) or "99123",
     )
     monkeypatch.setattr(
-        window,
+        window._jobs,
         "_prompt_remote_directory_overwrite",
         lambda *_args: pytest.fail("a fresh remote directory needs no overwrite prompt"),
     )
@@ -1275,7 +1327,7 @@ def test_main_window_submit_jobs_on_cluster_sends_a_quantum_phonon_job_to_its_ow
         main_window_module.QMessageBox, "information", lambda *_args, **_kwargs: None
     )
 
-    window._submit_jobs_on_cluster([phonon_job])
+    window._jobs.submit_jobs_on_cluster([phonon_job])
 
     # One fresh job: its own directory is checked before upload, and task farming applies.
     assert checked_paths == ["/remote/work/quantum_siteA"]
@@ -1318,14 +1370,14 @@ def test_main_window_submit_jobs_on_cluster_reuses_continued_job_remote_director
     patch_continuation_cluster_dialog(monkeypatch)
     recorded = patch_continuation_cluster_runner(monkeypatch, window, directory_exists=True)
     monkeypatch.setattr(
-        window,
+        window._jobs,
         "_prompt_remote_directory_overwrite",
         lambda *_args: pytest.fail(
             "a continued job must never prompt to overwrite its own directory"
         ),
     )
 
-    window._submit_jobs_on_cluster([job])
+    window._jobs.submit_jobs_on_cluster([job])
 
     # The preserved directory is never probed, never offered for deletion, and
     # never deleted: it holds the .check file the continuation resumes from.
@@ -1364,14 +1416,14 @@ def test_main_window_submit_jobs_on_cluster_continuation_keeps_original_seed_nam
     patch_continuation_cluster_dialog(monkeypatch)
     recorded = patch_continuation_cluster_runner(monkeypatch, window, directory_exists=True)
     monkeypatch.setattr(
-        window,
+        window._jobs,
         "_prompt_remote_directory_overwrite",
         lambda *_args: pytest.fail(
             "a continued job must never prompt to overwrite its own directory"
         ),
     )
 
-    window._submit_jobs_on_cluster([job])
+    window._jobs.submit_jobs_on_cluster([job])
 
     assert len(recorded["submitted"]) == 1
     submitted = recorded["submitted"][0]
@@ -1402,12 +1454,12 @@ def test_main_window_submit_jobs_on_cluster_mixed_batch_checks_only_the_new_job(
     patch_continuation_cluster_dialog(monkeypatch)
     recorded = patch_continuation_cluster_runner(monkeypatch, window, directory_exists=False)
     monkeypatch.setattr(
-        window,
+        window._jobs,
         "_prompt_remote_directory_overwrite",
         lambda *_args: pytest.fail("no directory exists, so nothing should prompt"),
     )
 
-    window._submit_jobs_on_cluster([continued, fresh])
+    window._jobs.submit_jobs_on_cluster([continued, fresh])
 
     # Exactly the fresh job's computed target is probed: the continued job is
     # excluded, the fresh job's existence check is unchanged.
@@ -1445,7 +1497,7 @@ def test_main_window_submit_jobs_on_cluster_does_not_submit_a_job_whose_director
         window._cluster_runner._runner, "remote_directory_exists", _directory_exists
     )
     monkeypatch.setattr(
-        window,
+        window._jobs,
         "_prompt_remote_directory_overwrite",
         lambda *_args: pytest.fail("no directory is known to exist, so nothing should prompt"),
     )
@@ -1455,8 +1507,13 @@ def test_main_window_submit_jobs_on_cluster_does_not_submit_a_job_whose_director
         "show_detailed_warning",
         lambda _parent, title, message, **_kwargs: warnings.append((title, message)),
     )
+    monkeypatch.setattr(
+        jobs_controller_module,
+        "show_detailed_warning",
+        lambda _parent, title, message, **_kwargs: warnings.append((title, message)),
+    )
 
-    window._submit_jobs_on_cluster([unchecked, checked])
+    window._jobs.submit_jobs_on_cluster([unchecked, checked])
 
     assert [call["remote_directory"] for call in recorded["submitted"]] == [
         "/remote/work/conv_ecut_400"
@@ -1501,12 +1558,12 @@ def test_main_window_submit_jobs_on_cluster_continuation_survives_target_collisi
     recorded = patch_continuation_cluster_runner(monkeypatch, window, directory_exists=True)
     prompted: list[str] = []
     monkeypatch.setattr(
-        window,
+        window._jobs,
         "_prompt_remote_directory_overwrite",
         lambda label, _target: prompted.append(label) or "no",
     )
 
-    window._submit_jobs_on_cluster([continued, collider])
+    window._jobs.submit_jobs_on_cluster([continued, collider])
 
     assert prompted == ["conv_ecut_400"]
     assert recorded["deleted"] == []
@@ -1540,9 +1597,9 @@ def test_main_window_submit_jobs_on_cluster_collision_overwrite_spares_continued
 
     patch_continuation_cluster_dialog(monkeypatch)
     recorded = patch_continuation_cluster_runner(monkeypatch, window, directory_exists=True)
-    monkeypatch.setattr(window, "_prompt_remote_directory_overwrite", lambda *_args: "yes")
+    monkeypatch.setattr(window._jobs, "_prompt_remote_directory_overwrite", lambda *_args: "yes")
 
-    window._submit_jobs_on_cluster([continued, collider])
+    window._jobs.submit_jobs_on_cluster([continued, collider])
 
     assert recorded["deleted"] == []
     assert len(recorded["submitted"]) == 2
@@ -1575,12 +1632,12 @@ def test_main_window_submit_jobs_on_cluster_dashboard_resubmit_still_reuses_file
     patch_continuation_cluster_dialog(monkeypatch)
     recorded = patch_continuation_cluster_runner(monkeypatch, window, directory_exists=True)
     monkeypatch.setattr(
-        window,
+        window._jobs,
         "_prompt_remote_directory_overwrite",
         lambda *_args: pytest.fail("a resubmission into its own directory must not prompt"),
     )
 
-    window._submit_jobs_on_cluster(
+    window._jobs.submit_jobs_on_cluster(
         [job],
         eligible_statuses={JobStatus.ENDED},
         reuse_existing_remote_files=True,
@@ -1677,9 +1734,13 @@ def test_main_window_submit_jobs_on_cluster_yes_to_all_requires_confirmation(
         def password(self) -> str:
             return ""
 
-    monkeypatch.setattr(main_window_module, "ClusterSubmissionDialog", _FakeDialog)
+    monkeypatch.setattr(jobs_controller_module, "ClusterSubmissionDialog", _FakeDialog)
     monkeypatch.setattr(main_window_module, "load_cluster_configs", lambda _settings: [cluster])
+    monkeypatch.setattr(jobs_controller_module, "load_cluster_configs", lambda _settings: [cluster])
     monkeypatch.setattr(main_window_module, "load_cluster_config", lambda _settings, _name: cluster)
+    monkeypatch.setattr(
+        jobs_controller_module, "load_cluster_config", lambda _settings, _name: cluster
+    )
     monkeypatch.setattr(main_window_module.QApplication, "processEvents", lambda: None)
 
     monkeypatch.setattr(
@@ -1702,12 +1763,12 @@ def test_main_window_submit_jobs_on_cluster_yes_to_all_requires_confirmation(
     prompt_calls: list[str] = []
     confirm_calls: list[list[str]] = []
     monkeypatch.setattr(
-        window,
+        window._jobs,
         "_prompt_remote_directory_overwrite",
         lambda *_args: prompt_calls.append("prompt") or "yes_to_all",
     )
     monkeypatch.setattr(
-        window,
+        window._jobs,
         "_confirm_bulk_remote_delete",
         lambda paths: confirm_calls.append(list(paths)) or (len(paths) == 2),
     )
@@ -1715,7 +1776,7 @@ def test_main_window_submit_jobs_on_cluster_yes_to_all_requires_confirmation(
         main_window_module.QMessageBox, "information", lambda *_args, **_kwargs: None
     )
 
-    window._submit_jobs_on_cluster(jobs)
+    window._jobs.submit_jobs_on_cluster(jobs)
 
     assert prompt_calls == ["prompt"]
     assert len(confirm_calls) == 1
@@ -1808,10 +1869,10 @@ def test_main_window_remote_directory_prompt_mappings(
 
     monkeypatch.setattr(workflow_table_utils, "confirm_choice", _choose)
 
-    assert window._prompt_remote_directory_overwrite("job", "/remote/job") == "yes"
-    assert window._prompt_remote_directory_overwrite("job", "/remote/job") == "yes_to_all"
-    assert window._prompt_remote_directory_overwrite("job", "/remote/job") == "no_to_all"
-    assert window._prompt_remote_directory_overwrite("job", "/remote/job") == "no"
+    assert window._jobs._prompt_remote_directory_overwrite("job", "/remote/job") == "yes"
+    assert window._jobs._prompt_remote_directory_overwrite("job", "/remote/job") == "yes_to_all"
+    assert window._jobs._prompt_remote_directory_overwrite("job", "/remote/job") == "no_to_all"
+    assert window._jobs._prompt_remote_directory_overwrite("job", "/remote/job") == "no"
     choices, default, escape = prompts[0]
     assert choices == [
         ("yes", "Delete directory"),
@@ -1828,16 +1889,16 @@ def test_main_window_confirm_bulk_remote_delete_branches(
 ) -> None:
     window = main_window
 
-    assert window._confirm_bulk_remote_delete([]) is True
+    assert window._jobs._confirm_bulk_remote_delete([]) is True
     assert confirmed_destructive_actions == []
 
-    assert window._confirm_bulk_remote_delete(["/b", "/a", "/a"]) is True
+    assert window._jobs._confirm_bulk_remote_delete(["/b", "/a", "/a"]) is True
     (prompt,) = confirmed_destructive_actions
     assert prompt["accept_label"] == "Delete 2 directories"
     assert prompt["detailed_text"] == "- /a\n- /b"
 
     monkeypatch.setattr(workflow_table_utils, "confirm_destructive", lambda *_a, **_k: False)
-    assert window._confirm_bulk_remote_delete(["/a"]) is False
+    assert window._jobs._confirm_bulk_remote_delete(["/a"]) is False
     window.close()
 
 
@@ -1911,9 +1972,13 @@ def test_main_window_submit_jobs_on_cluster_no_to_all_skips_deletion(
         def password(self) -> str:
             return ""
 
-    monkeypatch.setattr(main_window_module, "ClusterSubmissionDialog", _FakeDialog)
+    monkeypatch.setattr(jobs_controller_module, "ClusterSubmissionDialog", _FakeDialog)
     monkeypatch.setattr(main_window_module, "load_cluster_configs", lambda _settings: [cluster])
+    monkeypatch.setattr(jobs_controller_module, "load_cluster_configs", lambda _settings: [cluster])
     monkeypatch.setattr(main_window_module, "load_cluster_config", lambda _settings, _name: cluster)
+    monkeypatch.setattr(
+        jobs_controller_module, "load_cluster_config", lambda _settings, _name: cluster
+    )
     monkeypatch.setattr(main_window_module.QApplication, "processEvents", lambda: None)
 
     monkeypatch.setattr(
@@ -1937,12 +2002,14 @@ def test_main_window_submit_jobs_on_cluster_no_to_all_skips_deletion(
         "submit",
         lambda **kwargs: submitted.append(kwargs) or "99123",
     )
-    monkeypatch.setattr(window, "_prompt_remote_directory_overwrite", lambda *_args: "no_to_all")
+    monkeypatch.setattr(
+        window._jobs, "_prompt_remote_directory_overwrite", lambda *_args: "no_to_all"
+    )
     monkeypatch.setattr(
         main_window_module.QMessageBox, "information", lambda *_args, **_kwargs: None
     )
 
-    window._submit_jobs_on_cluster([job])
+    window._jobs.submit_jobs_on_cluster([job])
 
     assert deleted == []
     assert len(submitted) == 0
@@ -2020,9 +2087,13 @@ def test_main_window_submit_jobs_on_cluster_no_skips_submission(
         def password(self) -> str:
             return ""
 
-    monkeypatch.setattr(main_window_module, "ClusterSubmissionDialog", _FakeDialog)
+    monkeypatch.setattr(jobs_controller_module, "ClusterSubmissionDialog", _FakeDialog)
     monkeypatch.setattr(main_window_module, "load_cluster_configs", lambda _settings: [cluster])
+    monkeypatch.setattr(jobs_controller_module, "load_cluster_configs", lambda _settings: [cluster])
     monkeypatch.setattr(main_window_module, "load_cluster_config", lambda _settings, _name: cluster)
+    monkeypatch.setattr(
+        jobs_controller_module, "load_cluster_config", lambda _settings, _name: cluster
+    )
     monkeypatch.setattr(main_window_module.QApplication, "processEvents", lambda: None)
 
     monkeypatch.setattr(
@@ -2046,12 +2117,12 @@ def test_main_window_submit_jobs_on_cluster_no_skips_submission(
         "submit",
         lambda **kwargs: submitted.append(kwargs) or "99123",
     )
-    monkeypatch.setattr(window, "_prompt_remote_directory_overwrite", lambda *_args: "no")
+    monkeypatch.setattr(window._jobs, "_prompt_remote_directory_overwrite", lambda *_args: "no")
     monkeypatch.setattr(
         main_window_module.QMessageBox, "information", lambda *_args, **_kwargs: None
     )
 
-    window._submit_jobs_on_cluster([job])
+    window._jobs.submit_jobs_on_cluster([job])
 
     assert deleted == []
     assert len(submitted) == 0
@@ -2129,9 +2200,13 @@ def test_main_window_submit_jobs_on_cluster_reuses_connection_without_success_di
         def password(self) -> str:
             return ""
 
-    monkeypatch.setattr(main_window_module, "ClusterSubmissionDialog", _FakeDialog)
+    monkeypatch.setattr(jobs_controller_module, "ClusterSubmissionDialog", _FakeDialog)
     monkeypatch.setattr(main_window_module, "load_cluster_configs", lambda _settings: [cluster])
+    monkeypatch.setattr(jobs_controller_module, "load_cluster_configs", lambda _settings: [cluster])
     monkeypatch.setattr(main_window_module, "load_cluster_config", lambda _settings, _name: cluster)
+    monkeypatch.setattr(
+        jobs_controller_module, "load_cluster_config", lambda _settings, _name: cluster
+    )
     monkeypatch.setattr(main_window_module.QApplication, "processEvents", lambda: None)
     monkeypatch.setattr(
         type(window._cluster_runner),
@@ -2169,7 +2244,7 @@ def test_main_window_submit_jobs_on_cluster_reuses_connection_without_success_di
         lambda _parent, title, _message: infos.append(title),
     )
 
-    window._submit_jobs_on_cluster([job])
+    window._jobs.submit_jobs_on_cluster([job])
 
     assert "Cluster connection successful" not in infos
     window.close()
@@ -2183,7 +2258,7 @@ def test_main_window_round_trips_mem_per_cpu_in_last_submission_config(
     doc = service.create_project(tmp_path / "cluster_mem_per_cpu.mufinder", "ClusterMem")
     window._document = doc
 
-    window._persist_last_cluster_submission_config(
+    window._jobs._persist_last_cluster_submission_config(
         ClusterSubmissionConfig(
             cluster_name="SCARF",
             working_directory="/work4/isis/alice/project_z",
@@ -2198,7 +2273,7 @@ def test_main_window_round_trips_mem_per_cpu_in_last_submission_config(
     persisted = doc.ui_state[main_window_module.MainWindow._LAST_CLUSTER_SUBMISSION_CONFIG_KEY]
     assert persisted["mem_per_cpu_gb"] == 6.0
 
-    restored = window._load_last_cluster_submission_config(
+    restored = window._jobs._load_last_cluster_submission_config(
         workflow_type="muon_relaxation/positivemuon"
     )
     assert restored is not None
@@ -2220,7 +2295,7 @@ def test_main_window_loads_absent_or_invalid_mem_per_cpu_as_unset(
         "mem_per_cpu_gb": stored,
     }
 
-    restored = window._load_last_cluster_submission_config()
+    restored = window._jobs._load_last_cluster_submission_config()
 
     assert restored is not None
     assert restored.mem_per_cpu_gb is None
@@ -2322,9 +2397,13 @@ def test_main_window_cluster_submission_sends_a_legacy_phonon_job_to_any_cluster
             return ""
 
     infos: list[str] = []
-    monkeypatch.setattr(main_window_module, "ClusterSubmissionDialog", _FakeDialog)
+    monkeypatch.setattr(jobs_controller_module, "ClusterSubmissionDialog", _FakeDialog)
     monkeypatch.setattr(main_window_module, "load_cluster_configs", lambda _settings: [beta])
+    monkeypatch.setattr(jobs_controller_module, "load_cluster_configs", lambda _settings: [beta])
     monkeypatch.setattr(main_window_module, "load_cluster_config", lambda _settings, _name: beta)
+    monkeypatch.setattr(
+        jobs_controller_module, "load_cluster_config", lambda _settings, _name: beta
+    )
     monkeypatch.setattr(main_window_module.QApplication, "processEvents", lambda: None)
     recorded = patch_continuation_cluster_runner(monkeypatch, window, directory_exists=False)
     monkeypatch.setattr(
@@ -2333,7 +2412,7 @@ def test_main_window_cluster_submission_sends_a_legacy_phonon_job_to_any_cluster
         lambda _parent, _title, text: infos.append(text),
     )
 
-    window._submit_jobs_on_cluster([phonon_job])
+    window._jobs.submit_jobs_on_cluster([phonon_job])
 
     assert not any("stage" in text.lower() for text in infos)
     assert recorded["checked"] == ["/remote/work/quantum_siteA"]
@@ -2360,14 +2439,14 @@ def test_main_window_local_submission_runs_a_legacy_phonon_job_after_a_cluster_s
     )
     monkeypatch.setattr(main_window_module.QMessageBox, "warning", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
-        main_window_module,
+        jobs_controller_module,
         "load_castep_setup",
         lambda settings: (
             setups.append(settings) or SimpleNamespace(executable_path="", mpirun_path="")
         ),
     )
 
-    window._submit_jobs_locally([phonon_job])
+    window._jobs.submit_jobs_locally([phonon_job])
 
     assert len(setups) == 1
     assert infos == []
@@ -2405,7 +2484,7 @@ def test_main_window_batch_timeout_stops_the_worker_submitting(
     monkeypatch.setattr(window._cluster_runner, "cancel_batch", lambda: requests.append("cancel"))
     _use_a_fast_submission_watchdog(monkeypatch)
 
-    submitted, failed = window._run_cluster_submit_batch([{"job_id": None}], {})
+    submitted, failed = window._jobs._run_cluster_submit_batch([{"job_id": None}], {})
 
     assert submitted == []
     # The watchdog gives the batch up before the unseen jobs are cancelled;
@@ -2423,6 +2502,7 @@ def _use_a_fast_submission_watchdog(monkeypatch: pytest.MonkeyPatch) -> None:
             super().setInterval(10)
 
     monkeypatch.setattr(main_window_module, "QTimer", _FastTimer)
+    monkeypatch.setattr(jobs_controller_module, "QTimer", _FastTimer)
 
 
 def test_main_window_cancels_a_job_submitted_after_the_batch_timed_out(
@@ -2446,7 +2526,7 @@ def test_main_window_cancels_a_job_submitted_after_the_batch_timed_out(
     job_id = uuid4()
 
     # The submit outlasts the dialog's wait, then succeeds.
-    _submitted, failed = window._run_cluster_submit_batch(
+    _submitted, failed = window._jobs._run_cluster_submit_batch(
         [{"job_id": job_id, "label": "late", "submit_kwargs": {}}], {}
     )
     gate.set()
@@ -2463,6 +2543,11 @@ def test_main_window_warns_when_a_late_submitted_job_cannot_be_cancelled(
     warnings: list[tuple[str, str]] = []
     monkeypatch.setattr(
         main_window_module,
+        "show_detailed_warning",
+        lambda _parent, title, message, **_kwargs: warnings.append((title, message)),
+    )
+    monkeypatch.setattr(
+        jobs_controller_module,
         "show_detailed_warning",
         lambda _parent, title, message, **_kwargs: warnings.append((title, message)),
     )
@@ -2508,11 +2593,12 @@ def test_main_window_missing_username_opens_the_cluster_profile(
             return 0
 
     monkeypatch.setattr(main_window_module, "ClusterSetupDialog", _FakeSetupDialog)
-    monkeypatch.setattr(main_window_module, "ClusterSubmissionDialog", _FakeSubmissionDialog)
+    monkeypatch.setattr(jobs_controller_module, "ClusterSubmissionDialog", _FakeSubmissionDialog)
     monkeypatch.setattr(main_window_module, "load_cluster_configs", lambda _settings: [cluster])
+    monkeypatch.setattr(jobs_controller_module, "load_cluster_configs", lambda _settings: [cluster])
     monkeypatch.setattr(window._keyword_catalog_guard, "confirm_submission", lambda: True)
 
-    assert window._choose_cluster_submission([], "SCARF") is None
+    assert window._jobs._choose_cluster_submission([], "SCARF") is None
 
     (edit_cluster,) = edit_callbacks
     assert edit_cluster(window, "SCARF") == [cluster]
@@ -2534,7 +2620,7 @@ def test_main_window_round_trips_processes_per_node_in_last_submission_config(
     doc = ProjectService().create_project(tmp_path / "placement.mufinder", "Placement")
     window._document = doc
 
-    window._persist_last_cluster_submission_config(
+    window._jobs._persist_last_cluster_submission_config(
         ClusterSubmissionConfig(
             cluster_name="Redwood",
             working_directory="/mnt/redwoodfs/alice/project",
@@ -2548,7 +2634,7 @@ def test_main_window_round_trips_processes_per_node_in_last_submission_config(
 
     persisted = doc.ui_state[main_window_module.MainWindow._LAST_CLUSTER_SUBMISSION_CONFIG_KEY]
     assert persisted["processes_per_node"] == 32
-    restored = window._load_last_cluster_submission_config(workflow_type="convergence")
+    restored = window._jobs._load_last_cluster_submission_config(workflow_type="convergence")
     assert restored is not None
     assert restored.processes_per_node == 32
     window.close()
@@ -2566,7 +2652,7 @@ def test_main_window_loads_absent_or_invalid_processes_per_node_as_unset(
         payload["processes_per_node"] = stored
     doc.ui_state[main_window_module.MainWindow._LAST_CLUSTER_SUBMISSION_CONFIG_KEY] = payload
 
-    restored = window._load_last_cluster_submission_config()
+    restored = window._jobs._load_last_cluster_submission_config()
 
     assert restored is not None
     assert restored.processes_per_node is None

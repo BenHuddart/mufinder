@@ -270,7 +270,7 @@ def test_dashboard_action_button_runs_its_action_for_its_job(main_window, tmp_pa
         ("inspect", "_on_inspect_from_dashboard"),
         ("resubmit", "_on_resubmit_from_dashboard"),
     ):
-        monkeypatch.setattr(window, handler, lambda ids, k=kind: calls.append((k, list(ids))))
+        monkeypatch.setattr(window._jobs, handler, lambda ids, k=kind: calls.append((k, list(ids))))
     monkeypatch.setattr(workflow_table_utils, "confirm_destructive", lambda *_a, **_k: True)
 
     window._refresh_jobs_table()
@@ -295,7 +295,7 @@ def test_dashboard_action_button_follows_the_job_without_being_rebuilt(
     window._document = doc
     inspected: list[list[object]] = []
     monkeypatch.setattr(
-        window, "_on_inspect_from_dashboard", lambda ids: inspected.append(list(ids))
+        window._jobs, "_on_inspect_from_dashboard", lambda ids: inspected.append(list(ids))
     )
     window._refresh_jobs_table()
     button = action_button(window)
@@ -355,7 +355,9 @@ def test_dashboard_more_menu_on_a_selected_row_asks_about_the_selection(
     window._document = doc
     window._refresh_jobs_table()
     acted: list[list[object]] = []
-    monkeypatch.setattr(window, "_on_reset_failed_from_dashboard", lambda ids: acted.append(ids))
+    monkeypatch.setattr(
+        window._jobs, "_on_reset_failed_from_dashboard", lambda ids: acted.append(ids)
+    )
     asked: list[str] = []
     monkeypatch.setattr(
         selection_snapshot_module,
@@ -383,7 +385,9 @@ def test_dashboard_more_menu_keeps_the_jobs_read_when_it_opened(main_window, tmp
     window._document = doc
     window._refresh_jobs_table()
     acted: list[list[object]] = []
-    monkeypatch.setattr(window, "_on_reset_failed_from_dashboard", lambda ids: acted.append(ids))
+    monkeypatch.setattr(
+        window._jobs, "_on_reset_failed_from_dashboard", lambda ids: acted.append(ids)
+    )
     monkeypatch.setattr(
         selection_snapshot_module,
         "ask_selection_scope",
@@ -410,7 +414,9 @@ def test_dashboard_more_menu_entry_does_nothing_once_its_row_is_gone(
     window._document = doc
     window._refresh_jobs_table()
     acted: list[list[object]] = []
-    monkeypatch.setattr(window, "_on_reset_failed_from_dashboard", lambda ids: acted.append(ids))
+    monkeypatch.setattr(
+        window._jobs, "_on_reset_failed_from_dashboard", lambda ids: acted.append(ids)
+    )
     menu = open_more_menu(window, monkeypatch)
 
     job.dismissed_at = utc_now_for_test()
@@ -432,7 +438,9 @@ def test_dashboard_scope_prompt_survives_the_row_going_away(main_window, tmp_pat
     window._document = doc
     window._refresh_jobs_table()
     acted: list[list[object]] = []
-    monkeypatch.setattr(window, "_on_reset_failed_from_dashboard", lambda ids: acted.append(ids))
+    monkeypatch.setattr(
+        window._jobs, "_on_reset_failed_from_dashboard", lambda ids: acted.append(ids)
+    )
 
     def row_goes_while_asking(*_args, **_kwargs):
         first.dismissed_at = utc_now_for_test()
@@ -703,7 +711,7 @@ def test_dashboard_tab_past_a_row_outside_the_selection_leaves_the_selection(
     table = window._job_dashboard.table
     inspected: list[list[object]] = []
     monkeypatch.setattr(
-        window, "_on_inspect_from_dashboard", lambda ids: inspected.append(list(ids))
+        window._jobs, "_on_inspect_from_dashboard", lambda ids: inspected.append(list(ids))
     )
     try:
         _focus_cell(window, 2, window._job_dashboard.LABEL_COLUMN)
@@ -1197,7 +1205,7 @@ def test_dashboard_keyboard_runs_the_action_button_and_the_menu_button(
     (job,) = _shown_dashboard(window, tmp_path, ["failed"])
     inspected: list[list[object]] = []
     monkeypatch.setattr(
-        window, "_on_inspect_from_dashboard", lambda ids: inspected.append(list(ids))
+        window._jobs, "_on_inspect_from_dashboard", lambda ids: inspected.append(list(ids))
     )
     FakeMenu.instances = []
     monkeypatch.setattr(job_dashboard_module, "QMenu", FakeMenu)
@@ -1352,9 +1360,9 @@ def test_dashboard_delete_keys_cancel_active_jobs_and_dismiss_the_rest(
         events.append(("cancel", jobs))
         window.statusBar().showMessage(f"Cancellation requested for {len(jobs)} jobs")
 
-    monkeypatch.setattr(window, "_cancel_jobs", fake_cancel)
+    monkeypatch.setattr(window._jobs, "cancel_jobs", fake_cancel)
     reset: list[object] = []
-    monkeypatch.setattr(window, "_reset_failed_jobs", lambda *a, **k: reset.append(a))
+    monkeypatch.setattr(window._jobs, "reset_failed_jobs", lambda *a, **k: reset.append(a))
 
     shortcut = getattr(window._job_dashboard, delete_key_shortcut)
     assert shortcut.context() == Qt.ShortcutContext.WidgetWithChildrenShortcut
@@ -1442,7 +1450,7 @@ def test_dashboard_delete_key_refused_touches_nothing(
         lambda _parent, *prompt: prompts.append(prompt) or False,
     )
     touched: list[str] = []
-    monkeypatch.setattr(window, "_cancel_jobs", lambda *_a, **_k: touched.append("cancel"))
+    monkeypatch.setattr(window._jobs, "cancel_jobs", lambda *_a, **_k: touched.append("cancel"))
 
     window._job_dashboard.delete_selected()
 
@@ -1609,7 +1617,7 @@ def test_dashboard_reconcile_button_dispatches_correct_job_id_after_churn(
 
     resubmitted: list[list[object]] = []
     monkeypatch.setattr(
-        window, "_on_resubmit_from_dashboard", lambda ids: resubmitted.append(list(ids))
+        window._jobs, "_on_resubmit_from_dashboard", lambda ids: resubmitted.append(list(ids))
     )
 
     window._refresh_jobs_table()
@@ -1651,7 +1659,7 @@ def test_main_window_dashboard_scope_prompt_cancel_does_nothing(
     window._document = doc
     cancelled: list[list[object]] = []
     monkeypatch.setattr(
-        window, "_on_cancel_from_dashboard", lambda ids: cancelled.append(list(ids))
+        window._jobs, "_on_cancel_from_dashboard", lambda ids: cancelled.append(list(ids))
     )
     asked: list[tuple[str, str]] = []
     monkeypatch.setattr(
@@ -1679,7 +1687,9 @@ def test_main_window_dashboard_single_row_cancel_button_is_confirmed(
     job = add_dashboard_job(service, doc, "j0", "running")
     window._document = doc
     acted: list[list[object]] = []
-    monkeypatch.setattr(window, "_on_cancel_from_dashboard", lambda ids: acted.append(list(ids)))
+    monkeypatch.setattr(
+        window._jobs, "_on_cancel_from_dashboard", lambda ids: acted.append(list(ids))
+    )
     prompts: list[tuple[str, ...]] = []
     answers = [False, True]
     monkeypatch.setattr(
@@ -1710,7 +1720,9 @@ def test_main_window_dashboard_more_menu_dismiss_is_confirmed(
     job = add_dashboard_job(service, doc, "j0", "failed")
     window._document = doc
     acted: list[list[object]] = []
-    monkeypatch.setattr(window, "_on_dismiss_from_dashboard", lambda ids: acted.append(list(ids)))
+    monkeypatch.setattr(
+        window._jobs, "_on_dismiss_from_dashboard", lambda ids: acted.append(list(ids))
+    )
     prompts: list[tuple[str, ...]] = []
     answers = [False, True]
     monkeypatch.setattr(
@@ -1754,7 +1766,7 @@ def test_main_window_dashboard_multi_row_cancel_is_confirmed_by_the_scope_prompt
     window._document = doc
     cancelled: list[list[object]] = []
     monkeypatch.setattr(
-        window, "_on_cancel_from_dashboard", lambda ids: cancelled.append(list(ids))
+        window._jobs, "_on_cancel_from_dashboard", lambda ids: cancelled.append(list(ids))
     )
     monkeypatch.setattr(
         selection_snapshot_module,
@@ -1841,7 +1853,7 @@ def test_main_window_dashboard_menu_acts_on_the_eligible_selected_jobs(
         ("inspect", "_on_inspect_failed_from_dashboard"),
         ("reset", "_on_reset_failed_from_dashboard"),
     ):
-        monkeypatch.setattr(window, handler, lambda ids, k=kind: calls.append((k, list(ids))))
+        monkeypatch.setattr(window._jobs, handler, lambda ids, k=kind: calls.append((k, list(ids))))
     _select_dashboard_rows(window, [0, 1, 2])
 
     menu = open_context_menu(window, monkeypatch)
@@ -1882,10 +1894,10 @@ def test_main_window_dashboard_menu_confirms_cancel_and_dismiss(
     )
     calls: list[tuple[str, list[object]]] = []
     monkeypatch.setattr(
-        window, "_on_cancel_from_dashboard", lambda ids: calls.append(("cancel", list(ids)))
+        window._jobs, "_on_cancel_from_dashboard", lambda ids: calls.append(("cancel", list(ids)))
     )
     monkeypatch.setattr(
-        window, "_on_dismiss_from_dashboard", lambda ids: calls.append(("dismiss", list(ids)))
+        window._jobs, "_on_dismiss_from_dashboard", lambda ids: calls.append(("dismiss", list(ids)))
     )
     prompts: list[tuple[str, ...]] = []
     answers = [False, True, True]
@@ -1959,8 +1971,8 @@ def test_main_window_dashboard_menu_continues_one_relaxation_at_a_time(
     )
     continued: list[object] = []
     monkeypatch.setattr(
-        window,
-        "_continue_relaxation_for_job",
+        window._jobs,
+        "continue_relaxation_for_job",
         lambda job: (lambda j=job: continued.append(j.id)) if job is not running else None,
     )
 

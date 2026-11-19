@@ -482,6 +482,13 @@ defined by two of these modules, and a pinned count may only fall.
        (``RESUBMITTABLE_JOB_STATES``), and whether a job was imported
        (``job_is_imported``) or resumes from its checkpoint when run again
        (``job_resumes_from_checkpoint``).
+   * - ``mufinder.app.jobs_controller``
+     - Carrying out job actions (``JobsController``): local and cluster
+       submission with their dialogs, the cluster connection and the waits on
+       the cluster worker, resubmission, Continue relaxation, reset, cancel,
+       inspect, ``Check now`` and dismiss. Every change of job state goes
+       through ``JobExecutionController`` or ``ProjectService``; what it needs
+       from the window comes through ``JobsControllerDeps``.
    * - ``mufinder.app.job_dashboard``
      - The Job Dashboard dock's contents (``JobDashboard``): the jobs table,
        its status and runtime cells, the row action button, the ``⋯`` and
@@ -1243,11 +1250,12 @@ Workflow controllers
 layer, between the ``MainWindow`` widgets and the services, workflow and science
 layers. Each
 :class:`~mufinder.app.workflow_controllers.base.WorkflowJobController` owns one
-workflow's submit, materialize, result and refresh cycle. ``MainWindow`` keeps
-only the two cross-workflow dashboard entry points, which fan out to every
-controller; ``tests/test_agent_harness.py`` pins that set and fails if a
-per-workflow ``_on_submit_*`` / ``_materialize_*`` handler appears on
-``MainWindow``.
+workflow's submit, materialize, result and refresh cycle. The job actions
+that cross workflows (the Job Dashboard's actions, submission to the local
+runner or a cluster, resubmission, reset, cancel and inspect) live on
+:class:`~mufinder.app.jobs_controller.JobsController`, which the context's job
+dispatch callables reach; ``tests/test_agent_harness.py`` fails if an
+``_on_submit_*`` / ``_materialize_*`` handler appears on ``MainWindow``.
 
 Construction
 ~~~~~~~~~~~~

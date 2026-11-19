@@ -9,6 +9,7 @@ import pytest
 from PySide6.QtCore import QSettings
 
 import mufinder.app.main_window as main_window_module
+import mufinder.app.jobs_controller as jobs_controller_module
 from mufinder.app.main_window import MainWindow
 from mufinder.castep_setup import CastepSetup
 from mufinder.domain.enums import JobStatus
@@ -125,7 +126,7 @@ def test_local_submission_respects_the_catalog_warning(
 ) -> None:
     window, job = _window_with_job(tmp_path)
     monkeypatch.setattr(
-        main_window_module,
+        jobs_controller_module,
         "load_castep_setup",
         lambda _settings: CastepSetup(executable_path="/usr/bin/castep"),
     )
@@ -141,9 +142,9 @@ def test_local_submission_respects_the_catalog_warning(
         def exec(self) -> int:
             return 0
 
-    monkeypatch.setattr(main_window_module, "LocalSubmissionDialog", _Dialog)
+    monkeypatch.setattr(jobs_controller_module, "LocalSubmissionDialog", _Dialog)
 
-    window._submit_jobs_locally([job])
+    window._jobs.submit_jobs_locally([job])
 
     # Declining the warning stops before the submission dialog; accepting it
     # carries on exactly as before.
@@ -172,9 +173,9 @@ def test_cluster_submission_respects_the_catalog_warning(
         def exec(self) -> int:
             return 0
 
-    monkeypatch.setattr(main_window_module, "ClusterSubmissionDialog", _Dialog)
+    monkeypatch.setattr(jobs_controller_module, "ClusterSubmissionDialog", _Dialog)
 
-    window._submit_jobs_on_cluster([job])
+    window._jobs.submit_jobs_on_cluster([job])
 
     assert dialogs == ([True] if allowed else [])
     assert job.status == JobStatus.DEFINED

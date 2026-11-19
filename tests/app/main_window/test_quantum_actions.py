@@ -9,7 +9,7 @@ import pytest
 from PySide6.QtCore import QEvent
 from PySide6.QtWidgets import QApplication, QDialog
 
-import mufinder.app.main_window as main_window_module
+from mufinder.app.jobs_controller import JobsController
 import mufinder.app.workflow_controllers.quantum_corrections as quantum_controller_module
 from mufinder.domain.enums import EndReason, JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationRun, Result
@@ -61,7 +61,7 @@ def _answer_cleanup(monkeypatch: pytest.MonkeyPatch, answer: bool | None) -> lis
         asked.append(len(jobs))
         return answer
 
-    monkeypatch.setattr(main_window_module.MainWindow, "_prompt_failed_job_cleanup", prompt)
+    monkeypatch.setattr(JobsController, "_prompt_failed_job_cleanup", prompt)
     return asked
 
 

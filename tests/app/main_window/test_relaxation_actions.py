@@ -394,7 +394,7 @@ def _fake_local_submission(window, monkeypatch: pytest.MonkeyPatch) -> list[list
             window._with_kpoint_status_note(f"Submitted {len(jobs)} local jobs")
         )
 
-    monkeypatch.setattr(window, "_submit_jobs_locally", _submit)
+    monkeypatch.setattr(window._jobs, "submit_jobs_locally", _submit)
     return submitted
 
 
@@ -466,7 +466,7 @@ def test_rescaled_grid_note_is_not_shown_when_nothing_is_submitted(
     window = main_window
     window._document = _pristine_kpoint_document(tmp_path, "PristineNone")
     _refuse_message_boxes(monkeypatch)
-    monkeypatch.setattr(window, "_submit_jobs_locally", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(window._jobs, "submit_jobs_locally", lambda *_args, **_kwargs: None)
     view = _rows_in_a_supercell(window, 2)
 
     view._run_local_selected_rows()
@@ -821,7 +821,7 @@ def test_pristine_relaxation_preserves_running_row_when_adding_job(
     doc.ui_state[window._ACTIVE_PRISTINE_RELAXATION_DEFINITION_KEY] = str(new_definition.id)
 
     submitted: list[Job] = []
-    monkeypatch.setattr(window, "_submit_jobs_on_cluster", lambda jobs: submitted.extend(jobs))
+    monkeypatch.setattr(window._jobs, "submit_jobs_on_cluster", lambda jobs: submitted.extend(jobs))
 
     window._pristine_relaxation_controller.submit(["row_2"], target="cluster")
 
@@ -1001,7 +1001,7 @@ def test_pristine_relaxation_remove_row_deletes_associated_files_and_job(
     job_dir = doc.project_root / "files" / "pristine_relaxation" / job.label
     job_dir.mkdir(parents=True, exist_ok=True)
     (job_dir / f"{job.label}.cell").write_text("cell", encoding="utf-8")
-    monkeypatch.setattr(window, "_prompt_job_file_disposition", lambda **_kwargs: "delete")
+    monkeypatch.setattr(window._jobs, "prompt_job_file_disposition", lambda **_kwargs: "delete")
 
     window._on_remove_pristine_relaxation_rows(["row_1"])
 
@@ -1049,7 +1049,7 @@ def test_pristine_relaxation_remove_row_cancel_keeps_files_and_restores_form(
     job_dir.mkdir(parents=True, exist_ok=True)
     (job_dir / f"{job.label}.cell").write_text("cell", encoding="utf-8")
     window._pristine_relaxation_view.set_form_state({"name_prefix": "pristine_relax", "rows": []})
-    monkeypatch.setattr(window, "_prompt_job_file_disposition", lambda **_kwargs: None)
+    monkeypatch.setattr(window._jobs, "prompt_job_file_disposition", lambda **_kwargs: None)
 
     window._on_remove_pristine_relaxation_rows(["row_1"])
 

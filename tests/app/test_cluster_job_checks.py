@@ -111,7 +111,7 @@ def test_opening_a_project_asks_about_its_active_cluster_jobs(checking) -> None:
     assert checks == [(["queued"], True)]
 
     no_id = next(job for job in document.jobs.values() if job.label == "no_id")
-    window._on_check_now_from_dashboard([no_id.id])
+    window._jobs._on_check_now_from_dashboard([no_id.id])
     assert checks[-1] == (["no_id"], False)
 
 
@@ -295,6 +295,9 @@ def test_a_failed_check_discards_what_it_had_changed(checking, monkeypatch) -> N
     job = _add_cluster_job(document, service, label="queued", status="queued")
     monkeypatch.setattr(
         "mufinder.app.main_window.show_detailed_warning", lambda *args, **kwargs: None
+    )
+    monkeypatch.setattr(
+        "mufinder.app.jobs_controller.show_detailed_warning", lambda *args, **kwargs: None
     )
     window._on_cluster_job_checked(job.id, _evidence(job, SchedulerState.RUNNING))
 

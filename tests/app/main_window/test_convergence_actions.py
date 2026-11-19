@@ -418,7 +418,7 @@ def test_submit_convergence_ignores_stale_same_label_jobs_for_ready_cutoffs(
     )
 
     submitted: list[list[Job]] = []
-    monkeypatch.setattr(window, "_submit_jobs_on_cluster", lambda jobs: submitted.append(jobs))
+    monkeypatch.setattr(window._jobs, "submit_jobs_on_cluster", lambda jobs: submitted.append(jobs))
 
     window._convergence_controller.submit([300.0, 1300.0, 1400.0], target="cluster")
 
@@ -1133,8 +1133,8 @@ def test_main_window_convergence_failed_handlers_forward_jobs(
 
     inspected: list[list[object]] = []
     reset: list[list[object]] = []
-    monkeypatch.setattr(window, "_inspect_failed_jobs", lambda jobs: inspected.append(jobs))
-    monkeypatch.setattr(window, "_reset_failed_jobs", lambda jobs: reset.append(jobs))
+    monkeypatch.setattr(window._jobs, "inspect_failed_jobs", lambda jobs: inspected.append(jobs))
+    monkeypatch.setattr(window._jobs, "reset_failed_jobs", lambda jobs: reset.append(jobs))
 
     window._convergence_view.inspect_failed_requested.emit([300.0])
     window._convergence_view.reset_failed_requested.emit([300.0])
@@ -1314,9 +1314,9 @@ def test_main_window_reset_failed_convergence_job_restores_ready_state(
         "shared_params": {"task": "SINGLEPOINT"},
     }
     window._document = doc
-    monkeypatch.setattr(window, "_prompt_failed_job_cleanup", lambda _count: False)
+    monkeypatch.setattr(window._jobs, "_prompt_failed_job_cleanup", lambda _count: False)
 
-    window._reset_failed_jobs([job])
+    window._jobs.reset_failed_jobs([job])
 
     assert window._job_dashboard.table.rowCount() == 0
     assert window._convergence_controller.build_states()[300.0].status == "ready"
@@ -2002,8 +2002,8 @@ def _cutoff_window_with_completed_rows(tmp_path: Path, monkeypatch: pytest.Monke
         view._add_row(cutoff)
     sent: list[list[str]] = []
     monkeypatch.setattr(
-        window,
-        "_submit_jobs_on_cluster",
+        window._jobs,
+        "submit_jobs_on_cluster",
         lambda jobs, **_kwargs: sent.append(
             [job.label for job in jobs if job.status == JobStatus.DEFINED]
         ),

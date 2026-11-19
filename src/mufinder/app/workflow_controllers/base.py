@@ -391,7 +391,7 @@ class WorkflowJobController:
             if self.remove_labels_from_definition(definition, removed)
         )
 
-    # --- submission contract (mirrors _submit_workflow_selection today) ---
+    # --- submission contract ---
 
     def normalize(self, value: object) -> object:
         """Return a canonical key for a raw selection value."""
@@ -475,7 +475,6 @@ class WorkflowJobController:
     def submit(self, values: list[object], *, target: Literal["local", "cluster"]) -> None:
         """Template method: plan the submission and dispatch each group.
 
-        Mirrors ``MainWindow._submit_workflow_selection`` today:
         ``pre_submit_check`` → coordinator plan → if no jobs,
         ``show_info(no_ready_message)`` → else submit each
         :meth:`submission_groups` group via the local/cluster backend.

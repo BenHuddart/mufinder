@@ -179,9 +179,12 @@ modules can take the names of the controller modules they test
 ``tests/science``.
 
 ``tests/app/main_window`` holds the integration tests that drive
-``MainWindow`` itself, one module per subject: the jobs dashboard, job
-recovery, cluster and local submission, each workflow's actions, and the
-project, structure and site-generation actions. A workflow controller's own
+``MainWindow`` itself, one module per subject: the jobs dashboard's flushes and
+status bar, each workflow's actions, and the project, structure and
+site-generation actions. ``tests/app/jobs_controller`` holds those that drive
+the jobs controller inside a window: cluster and local submission and job
+recovery. The Job Dashboard widget's own tests are in
+``tests/app/test_job_dashboard.py``. A workflow controller's own
 behaviour is tested through the controller in ``tests/app/workflow_controllers``,
 which has one module per module of ``mufinder.app.workflow_controllers``; the
 shared sweep behaviour of ``sweep_convergence`` is tested through the cutoff

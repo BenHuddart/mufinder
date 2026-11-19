@@ -271,7 +271,9 @@ def test_main_window_submit_from_kpoint_dedupes_existing_ready_jobs(
 
     submitted_ids: list[list[object]] = []
     monkeypatch.setattr(
-        window, "_submit_jobs_locally", lambda jobs: submitted_ids.append([job.id for job in jobs])
+        window._jobs,
+        "submit_jobs_locally",
+        lambda jobs: submitted_ids.append([job.id for job in jobs]),
     )
 
     window._kpoint_convergence_controller.submit([(2, 2, 2), (2, 2, 2), (3, 3, 2)], target="local")

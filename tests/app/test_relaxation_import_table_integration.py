@@ -91,9 +91,9 @@ class TestResetIsBlocked:
 
         monkeypatch.setattr(window, "_job_output_directory", lambda _job: directory)
         monkeypatch.setattr(window, "_refresh_views_after_job_reset", lambda: None)
-        monkeypatch.setattr(window, "_record_job_reset", lambda **kwargs: None)
+        monkeypatch.setattr(window._jobs, "_record_job_reset", lambda **kwargs: None)
 
-        reset_count, errors, _folders = window._apply_failed_job_reset(
+        reset_count, errors, _folders = window._jobs._apply_failed_job_reset(
             [job], cleanup_choice=True, detach_convergence=False
         )
 
@@ -116,9 +116,9 @@ class TestResetIsBlocked:
 
         monkeypatch.setattr(window, "_job_output_directory", lambda _job: directory)
         monkeypatch.setattr(window, "_refresh_views_after_job_reset", lambda: None)
-        monkeypatch.setattr(window, "_record_job_reset", lambda **kwargs: None)
+        monkeypatch.setattr(window._jobs, "_record_job_reset", lambda **kwargs: None)
 
-        reset_count, _errors, _folders = window._apply_failed_job_reset(
+        reset_count, _errors, _folders = window._jobs._apply_failed_job_reset(
             [job], cleanup_choice=True, detach_convergence=False
         )
 
@@ -148,12 +148,12 @@ class TestResetIsBlocked:
 
         prompted: list[int] = []
         monkeypatch.setattr(
-            window,
+            window._jobs,
             "_prompt_failed_job_cleanup",
             lambda count: (prompted.append(count), True)[1],
         )
 
-        assert window._prepare_jobs_for_resubmission([job]) is True
+        assert window._jobs.prepare_jobs_for_resubmission([job]) is True
         # No cleanup prompt means the reset core was never reached for this job.
         assert prompted == []
         assert job_status_word(job) == "failed"
@@ -173,16 +173,16 @@ class TestResetIsBlocked:
 
         prompted: list[int] = []
         monkeypatch.setattr(
-            window,
+            window._jobs,
             "_prompt_failed_job_cleanup",
             lambda jobs: (prompted.append(len(jobs)), False)[1],
         )
         monkeypatch.setattr(window, "_refresh_views_after_job_reset", lambda: None)
-        monkeypatch.setattr(window, "_record_job_reset", lambda **kwargs: None)
+        monkeypatch.setattr(window._jobs, "_record_job_reset", lambda **kwargs: None)
         monkeypatch.setattr(window, "_persist_document_ui_state", lambda **kwargs: None)
         monkeypatch.setattr(window, "_job_output_directory", lambda _job: None)
 
-        assert window._prepare_jobs_for_resubmission([job]) is True
+        assert window._jobs.prepare_jobs_for_resubmission([job]) is True
         assert prompted == [1]
         assert job.status is JobStatus.DEFINED
 
