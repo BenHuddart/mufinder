@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from mufinder.app.job_dashboard import JobDashboard
 from mufinder.app.main_window import MainWindow
 from mufinder.domain.enums import EndReason, JobStatus, WorkflowStage
 from mufinder.services.project_service import ProjectService
@@ -35,7 +36,7 @@ def _window_with_job(tmp_path: Path, *, label: str, status: JobStatus):
 
 def _status_item(window: MainWindow):
     window._refresh_jobs_table()
-    item = window._jobs_table.item(0, window._JOB_STATUS_COLUMN)
+    item = window._job_dashboard.table.item(0, window._job_dashboard.STATUS_COLUMN)
     assert item is not None
     return item
 
@@ -52,7 +53,7 @@ def test_dashboard_status_names_the_failure_reason(qapp, tmp_path: Path) -> None
     # tooltip ends with what to do next.
     assert item.toolTip() == (
         "The scheduler stopped the job when it reached its walltime limit.\n\n"
-        + MainWindow._WALLTIME_NEXT_STEP
+        + JobDashboard._WALLTIME_NEXT_STEP
     )
     window.close()
 
@@ -65,7 +66,7 @@ def test_stopped_job_can_be_resubmitted_from_the_dashboard(
     job.execution_target = "alpha"
     job.remote_directory = "/remote/work/timed_out"
 
-    assert window._dashboard_action_applies("resubmit", job) is True
+    assert window._job_dashboard.action_applies("resubmit", job) is True
 
     calls: list[dict] = []
     monkeypatch.setattr(

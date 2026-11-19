@@ -820,7 +820,7 @@ def test_main_window_form_muon_relaxation_shows_ready_before_submission(
     window._refresh_ui_after_project_change()
 
     table = window._muon_relaxation_view._tables_by_charge_state["positive_muon"]
-    assert window._jobs_table.rowCount() == 0
+    assert window._job_dashboard.table.rowCount() == 0
     assert table.item(0, window._muon_relaxation_view._STATUS_COLUMN).text() == "ready"
     window.close()
 

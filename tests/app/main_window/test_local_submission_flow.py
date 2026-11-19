@@ -424,7 +424,7 @@ def test_main_window_local_finish_creates_result_and_completes_job(
     result = doc.results[run.result_id]
     assert result.data["total_energy"] == -10.5
     assert any(path.endswith(f"{job.label}.castep") for path in result.output_files)
-    assert window._jobs_table.rowCount() == 0
+    assert window._job_dashboard.table.rowCount() == 0
     assert doc.provenance[-1].action == "job_completed"
     window.close()
 

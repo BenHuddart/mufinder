@@ -413,7 +413,7 @@ def test_dashboard_check_now_is_offered_where_there_is_somewhere_to_look(
     window._refresh_jobs_table()
 
     def offers_check(job) -> bool:
-        return window._dashboard_action_applies("check_now", job)
+        return window._job_dashboard.action_applies("check_now", job)
 
     assert offers_check(connected_job) is True
     assert offers_check(active_job) is True
@@ -526,7 +526,7 @@ def test_dashboard_dismiss_hides_row_after_flush(
 
     window._document = doc
     window._refresh_jobs_table()
-    assert window._jobs_table.rowCount() == 2
+    assert window._job_dashboard.table.rowCount() == 2
 
     monkeypatch.setattr(workflow_table_utils, "confirm_destructive", lambda *_args, **_kwargs: True)
     assert open_more_menu(window, monkeypatch, 1).action("Dismiss") is None
@@ -537,8 +537,8 @@ def test_dashboard_dismiss_hides_row_after_flush(
 
     # After dismissal + rebuild, the failed row disappears; running row remains.
     assert failed_job.dismissed_at is not None
-    assert window._jobs_table.rowCount() == 1
-    remaining = window._jobs_table.item(0, window._JOB_LABEL_COLUMN)
+    assert window._job_dashboard.table.rowCount() == 1
+    remaining = window._job_dashboard.table.item(0, window._job_dashboard.LABEL_COLUMN)
     assert remaining.data(Qt.ItemDataRole.UserRole) == str(running_job.id)
     # Provenance milestone recorded.
     assert doc.provenance[-1].action == "job_dismissed"
@@ -582,7 +582,7 @@ def test_dashboard_dismiss_multi_select(
 
     assert job0.dismissed_at is not None
     assert job1.dismissed_at is not None
-    assert window._jobs_table.rowCount() == 0
+    assert window._job_dashboard.table.rowCount() == 0
     window.close()
 
 

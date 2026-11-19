@@ -690,7 +690,7 @@ flush added or changed, and catches up when its page is shown.
 Dashboard
 ~~~~~~~~~
 
-The Job Dashboard lists ``active`` and ``ended`` jobs without a
+The Job Dashboard (``mufinder.app.job_dashboard.JobDashboard``) lists ``active`` and ``ended`` jobs without a
 ``dismissed_at`` stamp. With ``Show dismissed`` ticked (above the table, not
 saved, unticked whenever a project opens) it lists the dismissed ones too, with a greyed label whose tooltip says
 when the job was dismissed. The ``Status`` cell shows the status word, with the

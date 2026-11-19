@@ -125,7 +125,9 @@ def _running_window(window: MainWindow, tmp_path: Path, *, stage, target: str = 
 
 
 def _status_item(window, job):
-    return window._jobs_table.item(job_row(window, job.id), window._JOB_STATUS_COLUMN)
+    return window._job_dashboard.table.item(
+        job_row(window, job.id), window._job_dashboard.STATUS_COLUMN
+    )
 
 
 def _more_menu_texts(window, job, monkeypatch) -> list[str]:
@@ -145,7 +147,9 @@ def test_dashboard_shows_progress_of_a_running_relaxation(
         assert item.text() == "running · step 7 of 30"
         assert "iteration 7 of at most 30" in item.toolTip()
         assert "Inspect…" in _more_menu_texts(window, job, monkeypatch)
-        header = window._jobs_table.horizontalHeaderItem(window._JOB_STATUS_COLUMN)
+        header = window._job_dashboard.table.horizontalHeaderItem(
+            window._job_dashboard.STATUS_COLUMN
+        )
         assert header.text() == "Status"
         assert "step" in header.toolTip()
 
@@ -234,7 +238,7 @@ def test_inspect_is_not_offered_for_a_running_job_without_geometry_progress(
     try:
         assert _status_item(window, job).text() == "running"
         assert "Inspect…" not in _more_menu_texts(window, job, monkeypatch)
-        assert not window._dashboard_action_applies("inspect", job)
+        assert not window._job_dashboard.action_applies("inspect", job)
     finally:
         window._document = None
 

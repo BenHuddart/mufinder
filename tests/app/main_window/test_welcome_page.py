@@ -506,13 +506,13 @@ def test_a_refresh_of_the_open_project_leaves_keyboard_focus_alone(
     root = ProjectService().create_project(tmp_path / "keep.mufinder", "Keep").project_root
     _active(window)
     assert window.open_project(root)
-    window._jobs_table.setFocus()
-    assert QApplication.focusWidget() is window._jobs_table
+    window._job_dashboard.table.setFocus()
+    assert QApplication.focusWidget() is window._job_dashboard.table
 
     window._refresh_ui_after_project_change()
     QApplication.processEvents()
 
-    assert QApplication.focusWidget() is window._jobs_table
+    assert QApplication.focusWidget() is window._job_dashboard.table
 
 
 def test_opening_under_a_dialog_leaves_its_focus_and_lands_on_the_navigator_after(

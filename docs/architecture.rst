@@ -477,8 +477,17 @@ defined by two of these modules, and a pinned count may only fall.
        and labels, and the ``AdapterExpansion`` return shape (see Workflow
        adapters).
    * - ``mufinder.app.workflow_submission``
-     - Row submission planning, ``effective_row_status`` and the submittable
-       row statuses.
+     - Row submission planning, ``effective_row_status``, the submittable
+       row statuses, the job states Resubmit accepts
+       (``RESUBMITTABLE_JOB_STATES``), and whether a job was imported
+       (``job_is_imported``) or resumes from its checkpoint when run again
+       (``job_resumes_from_checkpoint``).
+   * - ``mufinder.app.job_dashboard``
+     - The Job Dashboard dock's contents (``JobDashboard``): the jobs table,
+       its status and runtime cells, the row action button, the ``⋯`` and
+       context menus, ``Show dismissed``, the Delete and Backspace keys, and
+       the Cancel and Dismiss confirmations. It decides which action applies to
+       which job and emits the confirmed action; it changes no job itself.
    * - ``mufinder.app.workflow_controllers.base``
      - The submit, materialize, result and refresh cycle (see Workflow
        controllers), ``dedupe_jobs`` for the jobs a ``materialize`` or
