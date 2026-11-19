@@ -31,7 +31,7 @@ from mufinder.castep_io.keyword_catalog_file import (
     write_keyword_catalog_file,
 )
 from mufinder.domain.cluster import ClusterConfig
-from mufinder.domain.enums import JobStatus
+from mufinder.services.scheduler_state import SchedulerState
 from mufinder.services.cluster_keyword_scripts import (
     DUMP_COMPLETE_MARKER,
     HELP_END_MARKER,
@@ -467,18 +467,22 @@ def _wait_for_scheduler_job(
         _check_cancel(cancel_check)
         statuses = scheduler.status(ssh, [remote_job_id])
         info = statuses.get(remote_job_id)
-        mapped = JobStatus.COMPLETED if info is None else scheduler.map_to_job_status(info.state)
-        if mapped == JobStatus.QUEUED:
+        mapped = (
+            SchedulerState.COMPLETED
+            if info is None
+            else scheduler.map_to_scheduler_state(info.state)
+        )
+        if mapped == SchedulerState.PENDING:
             _emit_progress(progress, f"Keyword job {remote_job_id} is queued…", 35)
-        elif mapped == JobStatus.RUNNING:
+        elif mapped == SchedulerState.RUNNING:
             described = _remote_described_count(ssh, remote_dump_path)
             detail = f" ({described} keywords described so far)" if described else ""
             _emit_progress(progress, f"Keyword job {remote_job_id} is running…{detail}", 60)
-        elif mapped == JobStatus.COMPLETED:
+        elif mapped == SchedulerState.COMPLETED:
             return
-        elif mapped == JobStatus.CANCELLED:
+        elif mapped == SchedulerState.CANCELLED:
             raise ClusterKeywordGenerationCancelled("Cluster keyword generation job was cancelled.")
-        elif mapped in {JobStatus.FAILED, JobStatus.STOPPED}:
+        elif mapped in {SchedulerState.FAILED, SchedulerState.TIMED_OUT}:
             message = f"Cluster keyword generation job failed on {config.name}."
             details = _remote_log_excerpt(ssh, remote_log_path, remote_dump_path)
             if details:

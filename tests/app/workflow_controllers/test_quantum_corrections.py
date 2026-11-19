@@ -8,6 +8,7 @@ project that ran the legacy singlepoint job first are read.
 
 from __future__ import annotations
 
+from mufinder.services.job_monitoring import job_status_word
 import math
 import time
 from dataclasses import replace
@@ -18,7 +19,7 @@ from uuid import UUID, uuid4
 import pytest
 
 from mufinder.castep_io.output_parser import CastepResult
-from mufinder.domain.enums import JobStatus, WorkflowStage
+from mufinder.domain.enums import EndReason, JobActivity, JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationRun, Job, Result, Structure
 from mufinder.science.quantum_phonons import mode_width_angstrom
 from mufinder.services.job_artifacts import ParsedJobArtifacts, collect_job_artifacts
@@ -35,6 +36,7 @@ from mufinder.app.workflow_controllers.quantum_corrections import (
     QuantumCorrectionsDeps,
 )
 
+from tests.support.jobs import set_job_state
 from tests.support.controllers import (
     configure_result,
     RecordingBackend,
@@ -531,7 +533,7 @@ def test_quantum_controller_leaves_an_earlier_run_of_a_listed_job_out_of_the_tab
     service = ProjectService()
     document, definition, candidates, output_root = _seed_quantum_document(service, tmp_path)
     key = next(iter(candidates))
-    job = _bind_phonon(service, document, definition, key, status=JobStatus.RUNNING)
+    job = _bind_phonon(service, document, definition, key, status="running")
     _store_phonon_result(document, job, {"muon_zpe_total_eV": 0.5})
     controller = _quantum_document_controller(service, document, output_root)
     controller.refresh_view()
@@ -545,7 +547,8 @@ def test_quantum_controller_gives_a_row_only_to_a_completed_job_with_no_site(
     service = ProjectService()
     document, _definition, _candidates, output_root = _seed_quantum_document(service, tmp_path)
     job = _quantum_job(service, document, "quantum_phonon_old", QUANTUM_PHONON_CALC_TYPE)
-    job.status = JobStatus.RUNNING
+    job.status = JobStatus.ACTIVE
+    job.activity = JobActivity.RUNNING
     _store_phonon_result(document, job, {"muon_zpe_total_eV": 0.5})
     controller = _quantum_document_controller(service, document, output_root)
     controller.refresh_view()
@@ -578,7 +581,7 @@ def test_quantum_controller_shows_no_result_while_the_job_is_not_completed(
     service = ProjectService()
     document, definition, candidates, output_root = _seed_quantum_document(service, tmp_path)
     key = next(iter(candidates))
-    job = _bind_phonon(service, document, definition, key, status=JobStatus.RUNNING)
+    job = _bind_phonon(service, document, definition, key, status="running")
     _store_phonon_result(document, job, {"muon_zpe_total_eV": 0.5})
     controller = _quantum_document_controller(service, document, output_root)
     controller.refresh_view()
@@ -987,7 +990,7 @@ def _bind_phonon(
     """Bind a phonon job in ``status`` to the row ``key``, read from the row's current run."""
 
     phonon = _quantum_job(service, document, f"quantum_phonon_{key}", QUANTUM_PHONON_CALC_TYPE)
-    phonon.status = status
+    set_job_state(phonon, status)
     definition.parameters["phonon_job_ids_by_label"][key] = str(phonon.id)
     if recorded_source:
         source_run = document.sites[UUID(key)].relaxation_run_id
@@ -1010,7 +1013,7 @@ def _bind_legacy_singlepoint(
     singlepoint = _quantum_job(
         service, document, f"quantum_singlepoint_{key}", QUANTUM_SINGLEPOINT_CALC_TYPE
     )
-    singlepoint.status = status
+    set_job_state(singlepoint, status)
     definition.parameters.setdefault("singlepoint_job_ids_by_label", {})[key] = str(singlepoint.id)
     return singlepoint
 
@@ -1159,7 +1162,7 @@ def test_quantum_controller_materialize_reuses_a_rows_job(tmp_path: Path) -> Non
     document, definition, candidates, output_root = _seed_quantum_document(service, tmp_path)
     first, second = list(candidates)
     defined = _bind_phonon(service, document, definition, first)
-    failed = _bind_phonon(service, document, definition, second, status=JobStatus.FAILED)
+    failed = _bind_phonon(service, document, definition, second, status="failed")
     store_workflow_row_configuration(definition, first, {"num_farms": 2})
     controller = _quantum_document_controller(service, document, output_root)
 
@@ -1172,7 +1175,7 @@ def test_quantum_controller_materialize_reuses_a_rows_job(tmp_path: Path) -> Non
         encoding="utf-8"
     )
     assert not (output_root / "quantum_siteB").exists()
-    assert failed.status == JobStatus.FAILED
+    assert job_status_word(failed) == "failed"
 
 
 def test_quantum_controller_row_lifecycle_from_ready_to_a_completed_result(tmp_path: Path) -> None:
@@ -1201,7 +1204,8 @@ def test_quantum_controller_row_lifecycle_from_ready_to_a_completed_result(tmp_p
     assert controller.build_states()[key].status == "defined"
     assert controller.jobs_for_keys([key]) == [job]
 
-    job.status = JobStatus.RUNNING
+    job.status = JobStatus.ACTIVE
+    job.activity = JobActivity.RUNNING
     assert controller.build_states()[key].status == "running"
     # Submitting again leaves a running row alone: nothing new is created.
     controller.submit([key], target="local")
@@ -1271,7 +1275,7 @@ def test_quantum_controller_dismissed_failed_job_resubmits_without_a_new_job(
     service = ProjectService()
     document, definition, candidates, output_root = _seed_quantum_document(service, tmp_path)
     key = next(iter(candidates))
-    phonon = _bind_phonon(service, document, definition, key, status=JobStatus.FAILED)
+    phonon = _bind_phonon(service, document, definition, key, status="failed")
     phonon.dismissed_at = datetime.now(timezone.utc)
     reset: list[list[Job]] = []
 
@@ -1334,7 +1338,8 @@ def test_quantum_controller_configure_request_edits_a_defined_or_dismissed_job(
     key = next(iter(candidates))
     phonon = _bind_phonon(service, document, definition, key)
     if dismissed:
-        phonon.status = JobStatus.FAILED
+        phonon.status = JobStatus.ENDED
+        phonon.end_reason = EndReason.UNKNOWN
         phonon.dismissed_at = datetime.now(timezone.utc)
     controller = _quantum_document_controller(service, document, output_root)
 
@@ -1349,10 +1354,10 @@ def test_quantum_controller_configure_request_edits_a_defined_or_dismissed_job(
 @pytest.mark.parametrize(
     ("status", "expected"),
     [
-        (JobStatus.RUNNING, "phonon job is running; cancel it, then use Reset Failed Jobs…"),
-        (JobStatus.QUEUED, "phonon job is queued; cancel it"),
-        (JobStatus.FAILED, "phonon job is failed; use Reset Failed Jobs… to edit"),
-        (JobStatus.CANCELLED, "phonon job is cancelled; use Reset Failed Jobs…"),
+        ("running", "phonon job is running; cancel it, then use Reset Failed Jobs…"),
+        ("queued", "phonon job is queued; cancel it"),
+        ("failed", "phonon job is failed; use Reset Failed Jobs… to edit"),
+        ("cancelled", "phonon job is cancelled; use Reset Failed Jobs…"),
         (JobStatus.COMPLETED, "phonon job has completed; delete it from the Job Dashboard"),
     ],
 )
@@ -1580,7 +1585,7 @@ def test_quantum_controller_keeps_a_completed_legacy_pairs_phonon_result(tmp_pat
     assert controller.phonon_result(str(result.id)) is result
 
 
-@pytest.mark.parametrize("legacy_status", [JobStatus.COMPLETED, JobStatus.FAILED])
+@pytest.mark.parametrize("legacy_status", [JobStatus.COMPLETED, "failed"])
 def test_quantum_controller_singlepoint_only_row_is_ready_with_a_fresh_directory(
     tmp_path: Path, legacy_status: JobStatus
 ) -> None:
@@ -1645,9 +1650,7 @@ def test_quantum_controller_fresh_seed_skips_names_already_taken(tmp_path: Path)
     assert "singlepoint_seed_names_by_label" not in definition.parameters
 
 
-@pytest.mark.parametrize(
-    "status", [JobStatus.SUBMITTING, JobStatus.QUEUED, JobStatus.RUNNING, JobStatus.RETRIEVING]
-)
+@pytest.mark.parametrize("status", ["submitting", "queued", "running", "retrieving"])
 def test_quantum_controller_refuses_a_row_whose_legacy_singlepoint_is_active(
     tmp_path: Path, status: JobStatus
 ) -> None:
@@ -1662,7 +1665,7 @@ def test_quantum_controller_refuses_a_row_whose_legacy_singlepoint_is_active(
     )
 
     # The row shows the singlepoint, so it can be cancelled from the table.
-    assert controller.build_states()[key].status == status.value
+    assert controller.build_states()[key].status == status
     assert controller.jobs_for_keys([key]) == [singlepoint]
     request = controller.configure_request([key])
     assert request is not None and request.read_only is True
@@ -1673,7 +1676,7 @@ def test_quantum_controller_refuses_a_row_whose_legacy_singlepoint_is_active(
     assert local.calls == []
     ((title, message),) = infos
     assert title == "Singlepoint still in progress"
-    assert f"siteA ({status.value})" in message
+    assert f"siteA ({status})" in message
     assert "phonon_job_ids_by_label" in definition.parameters
     assert definition.parameters["phonon_job_ids_by_label"] == {}
 
@@ -1688,8 +1691,8 @@ def test_quantum_controller_directory_companions_name_the_legacy_singlepoint(
         {first: "quantum_siteA", second: "quantum_siteB"}
     )
     singlepoint = _bind_legacy_singlepoint(service, document, definition, first)
-    phonon = _bind_phonon(service, document, definition, first, status=JobStatus.FAILED)
-    lone_phonon = _bind_phonon(service, document, definition, second, status=JobStatus.FAILED)
+    phonon = _bind_phonon(service, document, definition, first, status="failed")
+    lone_phonon = _bind_phonon(service, document, definition, second, status="failed")
 
     def resolve(job: Job) -> Path | None:
         return job_output_directory(
@@ -1708,7 +1711,8 @@ def test_quantum_controller_directory_companions_name_the_legacy_singlepoint(
     assert controller.directory_companions(phonon) == [singlepoint]
     assert controller.directory_companions(singlepoint) == []
     assert controller.directory_companions(lone_phonon) == []
-    singlepoint.status = JobStatus.RUNNING
+    singlepoint.status = JobStatus.ACTIVE
+    singlepoint.activity = JobActivity.RUNNING
     assert controller.directory_companions(phonon) == []
     singlepoint.status = JobStatus.COMPLETED
     # Once the singlepoint records its own seed, it no longer shares the directory.

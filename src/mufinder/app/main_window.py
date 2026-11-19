@@ -82,7 +82,7 @@ from mufinder.branding import (
 from mufinder.cluster_setup import load_cluster_config, load_cluster_configs
 from mufinder.domain.cluster import ClusterConfig
 from mufinder.domain.constants import IMPORTED_JOB_TAG
-from mufinder.domain.enums import ACTIVE_JOB_STATUSES, FailureReason, JobStatus, WorkflowStage
+from mufinder.domain.enums import EndReason, JobActivity, JobStatus, WorkflowStage
 from mufinder.domain.models import (
     MANUAL_DEFAULT_METHOD,
     CalculationRun,
@@ -352,6 +352,7 @@ from mufinder.services.job_results import (
 from mufinder.services.job_reconcile import JobEvidence
 from mufinder.services.job_monitoring import (
     has_unretrieved_cluster_output,
+    job_status_word,
     job_where_text,
     unretrieved_output_note,
 )
@@ -452,10 +453,10 @@ from mufinder.workflow.quantum import (
 
 _LOG = logging.getLogger(__name__)
 
-# Stopped jobs (walltime, lost track) are resubmittable like failed ones: the
+# Every ended job is resubmittable, a stopped one too (walltime, lost track): the
 # submit script is regenerated, so a longer walltime takes effect.
-_RESUBMITTABLE_JOB_STATES = {JobStatus.FAILED, JobStatus.STOPPED, JobStatus.CANCELLED}
-_VISIBLE_DASHBOARD_STATES = ACTIVE_JOB_STATUSES | {JobStatus.STOPPED} | _RESUBMITTABLE_JOB_STATES
+_RESUBMITTABLE_JOB_STATES = {JobStatus.ENDED}
+_VISIBLE_DASHBOARD_STATES = {JobStatus.ACTIVE, JobStatus.ENDED}
 _RELAXATION_ANALYSIS_STATE_KEY = "relaxation_analysis_workspaces"
 _WorkflowKey = TypeVar("_WorkflowKey")
 _STRUCTURE_CONTROLLED_CELL_KEYWORDS = {
@@ -2713,9 +2714,9 @@ class MainWindow(QMainWindow):
     def _job_primary_action(self, job: Job) -> tuple[str, str]:
         """Return the ``(kind, text)`` of the one action button that fits ``job``'s state."""
 
-        if job.status in ACTIVE_JOB_STATUSES:
+        if job.status == JobStatus.ACTIVE:
             return "cancel", "Cancel"
-        if job.status == JobStatus.CANCELLED:
+        if job.end_reason == EndReason.CANCELLED:
             return "resubmit", "Resubmit…"
         if has_unretrieved_cluster_output(job) and self._job_execution.can_check_now(job):
             return "check_now", "Check now"
@@ -2947,7 +2948,7 @@ class MainWindow(QMainWindow):
             if (
                 runtime_item is None
                 or job is None
-                or job.status not in {JobStatus.RUNNING, JobStatus.RETRIEVING}
+                or job.activity not in {JobActivity.RUNNING, JobActivity.RETRIEVING}
             ):
                 continue
             old_text = runtime_item.text()
@@ -2984,7 +2985,7 @@ class MainWindow(QMainWindow):
     def _job_has_live_runtime(self, job: Job) -> bool:
         """Return True when the job's runtime cell advances with the clock."""
 
-        return job.status in {JobStatus.RUNNING, JobStatus.RETRIEVING} and (
+        return job.activity in {JobActivity.RUNNING, JobActivity.RETRIEVING} and (
             job.started_at is not None
             or (job.execution_target != "local" and job.id in self._cluster_elapsed_seconds_by_job)
         )
@@ -3058,10 +3059,10 @@ class MainWindow(QMainWindow):
         detail = ""
         tooltip_parts: list[str] = []
         progress = None
-        if job.status in {JobStatus.FAILED, JobStatus.STOPPED}:
-            detail = failure_status_reason(job.failure_reason, job.error_message)
+        if job.status == JobStatus.ENDED and job.end_reason != EndReason.CANCELLED:
+            detail = failure_status_reason(job.end_reason, job.error_message)
             tooltip_parts.append(self._failure_tooltip(job))
-        elif job.status == JobStatus.RUNNING:
+        elif job.activity == JobActivity.RUNNING:
             progress = self._job_progress.progress_for(job.id)
             detail = progress_status_text(progress)
         stale_reason = self._job_execution.staleness(job, now=now)
@@ -3077,9 +3078,10 @@ class MainWindow(QMainWindow):
                 if part
             )
 
-        _set_item_text(item, f"{job.status.value} · {detail}" if detail else job.status.value)
+        word = job_status_word(job)
+        _set_item_text(item, f"{word} · {detail}" if detail else word)
         _set_item_tooltip(item, tooltip)
-        _set_item_foreground(item, self._status_brush(job.status.value))
+        _set_item_foreground(item, self._status_brush(word))
         is_stale = stale_reason is not None
         if bool(item.data(self._JOB_STALE_ROLE)) != is_stale:
             item.setData(self._JOB_STALE_ROLE, is_stale)
@@ -3106,14 +3108,14 @@ class MainWindow(QMainWindow):
 
     @classmethod
     def _failure_tooltip(cls, job: Job) -> str:
-        summary = failure_reason_summary(job.failure_reason)
+        summary = failure_reason_summary(job.end_reason)
         message = (job.error_message or "").strip()
-        if job.failure_reason is None and message:
+        if job.end_reason in (None, EndReason.UNKNOWN) and message:
             return f"{message}\n\nUse Inspect to see the job's logs."
         parts = [summary]
         if message and message != summary:
             parts.append(message)
-        if job.failure_reason == FailureReason.WALLTIME:
+        if job.end_reason == EndReason.WALLTIME:
             parts.append(
                 cls._RELAXATION_WALLTIME_NEXT_STEP
                 if cls._job_resumes_from_checkpoint(job)
@@ -3194,7 +3196,7 @@ class MainWindow(QMainWindow):
     def _job_runtime_text(self, job: Job) -> str:
         if (
             job.execution_target != "local"
-            and job.status in {JobStatus.RUNNING, JobStatus.RETRIEVING}
+            and job.activity in {JobActivity.RUNNING, JobActivity.RETRIEVING}
             and (base_elapsed := self._cluster_elapsed_seconds_by_job.get(job.id)) is not None
         ):
             checked_at = self._cluster_elapsed_checked_at
@@ -3733,8 +3735,7 @@ class MainWindow(QMainWindow):
             [
                 ResubmitCandidate(
                     label=job.label,
-                    status=job.status,
-                    reason=job.failure_reason,
+                    reason=job.end_reason,
                     checkpoint=probes[job.id].status,
                 )
                 for job in relaxations
@@ -3822,9 +3823,7 @@ class MainWindow(QMainWindow):
         dismissable = [
             job
             for job in jobs
-            if job is not None
-            and job.status in {JobStatus.FAILED, JobStatus.STOPPED, JobStatus.CANCELLED}
-            and job.dismissed_at is None
+            if job is not None and job.status == JobStatus.ENDED and job.dismissed_at is None
         ]
         if not dismissable:
             QMessageBox.information(
@@ -3951,16 +3950,17 @@ class MainWindow(QMainWindow):
         if kind == "check_now":
             # Needs somewhere to look and a live connection, not just a status.
             return self._job_execution.can_check_now(job)
-        if kind == "inspect" and job.status == JobStatus.RUNNING:
+        if kind == "inspect" and job.activity == JobActivity.RUNNING:
             # A running geometry optimisation opens its convergence progress.
             return job_reports_geometry_progress(job)
-        terminal = {JobStatus.FAILED, JobStatus.STOPPED, JobStatus.CANCELLED}
+        if kind == "inspect":
+            # A failed or stopped job opens its failure; a cancelled one has none.
+            return job.status == JobStatus.ENDED and job.end_reason != EndReason.CANCELLED
         eligible_statuses = {
             "resubmit": _RESUBMITTABLE_JOB_STATES,
-            "cancel": ACTIVE_JOB_STATUSES,
-            "inspect": {JobStatus.FAILED, JobStatus.STOPPED},
-            "reset": terminal,
-            "dismiss": terminal,
+            "cancel": {JobStatus.ACTIVE},
+            "reset": {JobStatus.ENDED},
+            "dismiss": {JobStatus.ENDED},
         }
         return job.status in eligible_statuses[kind]
 
@@ -4182,9 +4182,9 @@ class MainWindow(QMainWindow):
             if job is not None
         ]
         for job in jobs:
-            if job.status == JobStatus.RUNNING:
+            if job.activity == JobActivity.RUNNING:
                 self._show_geometry_progress(job)
-        others = [job.id for job in jobs if job.status != JobStatus.RUNNING]
+        others = [job.id for job in jobs if job.activity != JobActivity.RUNNING]
         if others or not jobs:
             self._on_inspect_failed_from_dashboard(others)
 
@@ -4246,7 +4246,7 @@ class MainWindow(QMainWindow):
         """
 
         jobs = self._selected_dashboard_jobs()
-        active_jobs = [job for job in jobs if job.status in ACTIVE_JOB_STATUSES]
+        active_jobs = [job for job in jobs if job.status == JobStatus.ACTIVE]
         dismissable_jobs = [job for job in jobs if self._dashboard_action_applies("dismiss", job)]
         if not active_jobs and not dismissable_jobs:
             return
@@ -5423,7 +5423,7 @@ class MainWindow(QMainWindow):
         uncontacted: dict[str, str] = {}
         project_only = 0
         for job in jobs:
-            if job.status not in ACTIVE_JOB_STATUSES:
+            if job.status != JobStatus.ACTIVE:
                 continue
             if job.execution_target == "local":
                 self._local_runner.cancel(job.id)
@@ -5467,7 +5467,11 @@ class MainWindow(QMainWindow):
         if self._document is None:
             return
 
-        failed_jobs = [job for job in jobs if job.status in {JobStatus.FAILED, JobStatus.STOPPED}]
+        failed_jobs = [
+            job
+            for job in jobs
+            if job.status == JobStatus.ENDED and job.end_reason != EndReason.CANCELLED
+        ]
         if not failed_jobs:
             QMessageBox.information(
                 self,
@@ -5580,11 +5584,7 @@ class MainWindow(QMainWindow):
         if self._document is None:
             return
 
-        terminal_jobs = [
-            job
-            for job in jobs
-            if job.status in {JobStatus.FAILED, JobStatus.STOPPED, JobStatus.CANCELLED}
-        ]
+        terminal_jobs = [job for job in jobs if job.status == JobStatus.ENDED]
         resettable_jobs = [job for job in terminal_jobs if not job_is_imported(job)]
         imported_count = len(terminal_jobs) - len(resettable_jobs)
         if imported_count:
@@ -6294,9 +6294,9 @@ class MainWindow(QMainWindow):
         """
 
         fresh = self._job_execution.diagnose_failure(job, job.error_message)
-        if job.failure_reason is None or fresh.reason == job.failure_reason:
+        if job.end_reason in (None, EndReason.UNKNOWN) or fresh.reason == job.end_reason:
             return fresh
-        return FailureDiagnosis(reason=job.failure_reason)
+        return FailureDiagnosis(reason=job.end_reason)
 
     def _prompt_failed_job_cleanup(self, job_count: int) -> bool | None:
         answer = workflow_table_utils.confirm_choice(
@@ -6477,7 +6477,7 @@ class MainWindow(QMainWindow):
                 num_farms=farm_count or 1,
             )
 
-        run = self._job_execution.ensure_run_for_job(job, status=JobStatus.RUNNING, started=True)
+        run = self._job_execution.ensure_run_for_job(job, started=True)
         if run is None:
             return
 
@@ -6890,7 +6890,7 @@ class MainWindow(QMainWindow):
                 self._on_local_job_finished(
                     update.job.id, update.finished.parsed, update.finished.artifacts
                 )
-            elif update.job.status == JobStatus.STOPPED:
+            elif update.job.status == JobStatus.ENDED:
                 stopped += 1
         if stopped == 0:
             return
@@ -8247,7 +8247,7 @@ class MainWindow(QMainWindow):
                 if job.workflow_stage == WorkflowStage.MUON_RELAXATION
                 and job.calc_type == expected_calc_type
                 and job.label == row.label
-                and job.status in ACTIVE_JOB_STATUSES
+                and job.status == JobStatus.ACTIVE
             ]
             if not candidates:
                 continue

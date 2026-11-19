@@ -13,7 +13,7 @@ from pathlib import Path
 
 import mufinder.app.main_window as main_window_module
 from mufinder.app.main_window import MainWindow
-from mufinder.domain.enums import JobStatus
+from mufinder.domain.enums import EndReason, JobActivity, JobStatus
 from mufinder.services.project_service import ProjectService
 
 
@@ -48,7 +48,8 @@ def test_status_tooltip_is_empty_without_metadata(qapp, tmp_path: Path) -> None:
     service = ProjectService()
     doc = service.create_project(tmp_path / "nometa.mufinder", "NoMeta")
     job = _add_job(service, doc, label="cancelled")
-    job.status = JobStatus.CANCELLED
+    job.status = JobStatus.ENDED
+    job.end_reason = EndReason.CANCELLED
     window._document = doc
     window._refresh_jobs_table()
 
@@ -62,7 +63,8 @@ def test_status_tooltip_carries_the_last_check(qapp, tmp_path: Path) -> None:
     service = ProjectService()
     doc = service.create_project(tmp_path / "meta.mufinder", "Meta")
     job = _add_job(service, doc, label="running")
-    job.status = JobStatus.RUNNING
+    job.status = JobStatus.ACTIVE
+    job.activity = JobActivity.RUNNING
     job.execution_target = "scarf"
     job.last_checked_at = datetime.now(UTC) - timedelta(minutes=2)
     job.last_status_source = "poll"
@@ -86,7 +88,8 @@ def test_disconnected_active_cluster_job_gets_the_stale_icon(qapp, tmp_path: Pat
     service = ProjectService()
     doc = service.create_project(tmp_path / "stale.mufinder", "Stale")
     job = _add_job(service, doc, label="queued")
-    job.status = JobStatus.QUEUED
+    job.status = JobStatus.ACTIVE
+    job.activity = JobActivity.QUEUED
     job.execution_target = "scarf"
     job.last_checked_at = datetime.now(UTC) - timedelta(minutes=1)
     window._document = doc
@@ -103,7 +106,8 @@ def test_disconnected_active_cluster_job_gets_the_stale_icon(qapp, tmp_path: Pat
 
     # The row is updated in place: once the job is no longer stale its cell
     # drops the icon and the stale line.
-    job.status = JobStatus.FAILED
+    job.status = JobStatus.ENDED
+    job.end_reason = EndReason.UNKNOWN
     window._refresh_jobs_table()
 
     assert _status_item(window) is item

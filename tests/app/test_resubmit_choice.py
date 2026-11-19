@@ -8,6 +8,7 @@ import pytest
 
 import mufinder.app.main_window as main_window_module
 import mufinder.app.workflow_table_utils as workflow_table_utils
+from mufinder.services.job_monitoring import job_status_word
 from mufinder.app.main_window import MainWindow
 from mufinder.app.resubmit_choice_dialog import (
     ResubmitCandidate,
@@ -18,7 +19,7 @@ from mufinder.app.resubmit_choice_dialog import (
     default_resubmit_mode,
 )
 from mufinder.castep_setup import CastepSetup
-from mufinder.domain.enums import FailureReason, JobStatus, WorkflowStage
+from mufinder.domain.enums import EndReason, JobStatus, WorkflowStage
 from mufinder.services.cluster_runner import CheckpointProbeStatus
 from mufinder.services.project_service import ProjectService
 
@@ -28,34 +29,33 @@ UNAVAILABLE = CheckpointProbeStatus.UNAVAILABLE
 
 
 def _candidate(
-    reason: FailureReason | None,
+    reason: EndReason | None,
     *,
-    status: JobStatus = JobStatus.FAILED,
     checkpoint: CheckpointProbeStatus = FOUND,
 ) -> ResubmitCandidate:
-    return ResubmitCandidate(label="job", status=status, reason=reason, checkpoint=checkpoint)
+    return ResubmitCandidate(label="job", reason=reason, checkpoint=checkpoint)
 
 
 @pytest.mark.parametrize(
     "reason",
     [
-        FailureReason.WALLTIME,
-        FailureReason.OUT_OF_MEMORY,
-        FailureReason.NODE_FAILURE,
-        FailureReason.INTERRUPTED,
+        EndReason.WALLTIME,
+        EndReason.OUT_OF_MEMORY,
+        EndReason.NODE_FAILURE,
+        EndReason.INTERRUPTED,
     ],
 )
-def test_interrupted_runs_default_to_continue(reason: FailureReason) -> None:
+def test_interrupted_runs_default_to_continue(reason: EndReason) -> None:
     assert default_resubmit_mode([_candidate(reason)]) == ResubmitMode.CONTINUE
 
 
 @pytest.mark.parametrize(
     "candidate",
     [
-        _candidate(FailureReason.CASTEP_ERROR),
-        _candidate(FailureReason.SUBMISSION),
+        _candidate(EndReason.CASTEP_ERROR),
+        _candidate(EndReason.SUBMISSION),
         _candidate(None),
-        _candidate(None, status=JobStatus.CANCELLED),
+        _candidate(EndReason.CANCELLED),
     ],
 )
 def test_runs_that_went_wrong_default_to_start_again(candidate: ResubmitCandidate) -> None:
@@ -63,17 +63,17 @@ def test_runs_that_went_wrong_default_to_start_again(candidate: ResubmitCandidat
 
 
 def test_a_mixed_batch_defaults_to_the_choice_that_deletes_nothing() -> None:
-    candidates = [_candidate(FailureReason.CASTEP_ERROR), _candidate(FailureReason.WALLTIME)]
+    candidates = [_candidate(EndReason.CASTEP_ERROR), _candidate(EndReason.WALLTIME)]
 
     assert default_resubmit_mode(candidates) == ResubmitMode.CONTINUE
 
 
 def test_cause_summary_counts_each_cause() -> None:
     candidates = [
-        _candidate(FailureReason.WALLTIME, status=JobStatus.STOPPED),
-        _candidate(FailureReason.WALLTIME, status=JobStatus.STOPPED),
-        _candidate(FailureReason.CASTEP_ERROR),
-        _candidate(None, status=JobStatus.CANCELLED),
+        _candidate(EndReason.WALLTIME),
+        _candidate(EndReason.WALLTIME),
+        _candidate(EndReason.CASTEP_ERROR),
+        _candidate(EndReason.CANCELLED),
         _candidate(None),
     ]
 
@@ -102,27 +102,27 @@ def test_cause_summary_counts_each_cause() -> None:
 )
 def test_checkpoint_summary(checkpoints: list[CheckpointProbeStatus], expected: str) -> None:
     candidates = [
-        _candidate(FailureReason.WALLTIME, checkpoint=checkpoint) for checkpoint in checkpoints
+        _candidate(EndReason.WALLTIME, checkpoint=checkpoint) for checkpoint in checkpoints
     ]
 
     assert checkpoint_summary(candidates) == expected
 
 
 def test_dialog_preselects_the_default_and_reports_the_choice(qapp) -> None:
-    dialog = ResubmitChoiceDialog([_candidate(FailureReason.WALLTIME)], other_job_count=2)
+    dialog = ResubmitChoiceDialog([_candidate(EndReason.WALLTIME)], other_job_count=2)
 
     assert dialog.mode() == ResubmitMode.CONTINUE
     dialog._start_again_radio.setChecked(True)
     assert dialog.mode() == ResubmitMode.START_AGAIN
     dialog.close()
 
-    dialog = ResubmitChoiceDialog([_candidate(FailureReason.CASTEP_ERROR)])
+    dialog = ResubmitChoiceDialog([_candidate(EndReason.CASTEP_ERROR)])
     assert dialog.mode() == ResubmitMode.START_AGAIN
     dialog.close()
 
 
 def test_enter_cancels_while_start_again_is_selected(qapp) -> None:
-    dialog = ResubmitChoiceDialog([_candidate(FailureReason.CASTEP_ERROR)])
+    dialog = ResubmitChoiceDialog([_candidate(EndReason.CASTEP_ERROR)])
     assert dialog._cancel_button.isDefault()
     assert not dialog._resubmit_button.isDefault()
 
@@ -145,8 +145,8 @@ def _window_with_jobs(tmp_path: Path, specs: list[tuple[str, WorkflowStage]]):
     jobs = []
     for label, stage in specs:
         job = service.add_job(doc, label=label, workflow_stage=stage, calc_type="castep")
-        job.status = JobStatus.STOPPED
-        job.failure_reason = FailureReason.WALLTIME
+        job.status = JobStatus.ENDED
+        job.end_reason = EndReason.WALLTIME
         job.execution_target = "alpha"
         job.remote_directory = f"/remote/work/{label}"
         jobs.append(job)
@@ -244,7 +244,7 @@ def test_cancelling_the_choice_resubmits_nothing(
     window._on_resubmit_from_dashboard([jobs[0].id])
 
     assert calls == []
-    assert jobs[0].status == JobStatus.STOPPED
+    assert job_status_word(jobs[0]) == "stopped"
     window.close()
 
 

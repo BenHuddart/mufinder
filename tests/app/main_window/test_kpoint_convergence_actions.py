@@ -9,7 +9,7 @@ import pytest
 
 import mufinder.app.main_window as main_window_module
 from mufinder.app.convergence_types import ConvergenceConfig
-from mufinder.domain.enums import JobStatus, WorkflowStage
+from mufinder.domain.enums import JobActivity, JobStatus, WorkflowStage
 from mufinder.domain.models import Structure
 from mufinder.services.convergence_defaults import (
     CONVERGENCE_OVERVIEW_SNAPSHOTS_KEY,
@@ -114,7 +114,8 @@ def test_kpoint_convergence_preserves_running_grid_across_reconfiguration(
         workflow_stage=WorkflowStage.CONVERGENCE_KPOINT,
         calc_type="castep_convergence_kpoint",
     )
-    running_job.status = JobStatus.RUNNING
+    running_job.status = JobStatus.ACTIVE
+    running_job.activity = JobActivity.RUNNING
     old_definition.parameters["job_ids_by_grid"] = {
         main_window_module.MainWindow._grid_key((2, 2, 2)): str(running_job.id)
     }
@@ -135,7 +136,7 @@ def test_kpoint_convergence_preserves_running_grid_across_reconfiguration(
 
     states = window._kpoint_convergence_controller.build_states()
 
-    assert states[(2, 2, 2)].status == JobStatus.RUNNING.value
+    assert states[(2, 2, 2)].status == "running"
     assert states[(2, 2, 2)].job_id == running_job.id
     assert new_definition.parameters["job_ids_by_grid"]["2x2x2"] == str(running_job.id)
     window.close()
@@ -172,7 +173,8 @@ def test_kpoint_deleted_grid_does_not_reinherit_stale_status(main_window, tmp_pa
         workflow_stage=WorkflowStage.CONVERGENCE_KPOINT,
         calc_type="castep_convergence_kpoint",
     )
-    running_job.status = JobStatus.RUNNING
+    running_job.status = JobStatus.ACTIVE
+    running_job.activity = JobActivity.RUNNING
     old_definition.parameters["job_ids_by_grid"] = {"2x2x2": str(running_job.id)}
 
     active_definition = service.register_convergence_kpoint_definition(

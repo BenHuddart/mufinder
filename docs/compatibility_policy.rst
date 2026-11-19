@@ -408,17 +408,34 @@ Compatibility ledger
        in existing projects, so it requires a schema-version bump with a
        migration entry and an update to the persistence codec, the dashboard
        visibility filter, and the workflow-row projection.
-   * - ``failure_reason`` job field
+   * - ``end_reason`` job field
      - ``Job`` (``mufinder.domain.models``) / job entity files
-     - Persisted cause of a failed or stopped job (a ``FailureReason`` value
-       such as ``walltime`` or ``out_of_memory``), shown beside the dashboard
-       status; see ``docs/job_lifecycle.rst`` (Why a job failed). Optional
-       with a ``None`` default, and an unknown value loads as ``None``, so
-       older projects load unchanged and their failures show the bare status.
-     - Current job data, not deprecated. Removing the field or renaming a
-       ``FailureReason`` value drops recorded causes from existing projects, so
-       it requires a schema-version bump with a migration entry and updates to
-       the persistence codec and dashboard rendering.
+     - Why an ``ended`` job did not finish (an ``EndReason`` value such as
+       ``walltime``, ``out_of_memory`` or ``cancelled``), shown beside the
+       dashboard status and deciding whether an ended job reads ``failed``,
+       ``stopped`` or ``cancelled``; see ``docs/job_lifecycle.rst``. Written
+       from schema 7, when it replaced ``failure_reason``. An ended job saved
+       without one, or with a value this build does not know (a newer build's),
+       loads as ``unknown``; any other job loads with none.
+     - Current job data, not deprecated. Removing the field or renaming an
+       ``EndReason`` value drops recorded causes from existing projects, so it
+       requires a schema-version bump with a migration entry and updates to the
+       persistence codec and dashboard rendering.
+   * - ``activity`` job field
+     - ``Job`` (``mufinder.domain.models``) / job entity files
+     - What an ``active`` job was last seen doing (``submitting``,
+       ``queued``, ``running``, ``retrieving``), shown as its status word.
+       Display only: it has no transitions. Written from schema 7. An active
+       job saved without one, or with a value this build does not know, loads
+       with none and reads ``active``; any other job loads with none.
+     - Current job data, not deprecated. Renaming a value changes what existing
+       rows show, so it requires a schema-version bump with a migration entry.
+   * - ``FailureReason``
+     - ``mufinder.domain.enums`` (also exported from ``mufinder.domain``)
+     - Import alias for ``EndReason``, which added ``cancelled`` and
+       ``unknown`` to its seven values. Not persisted.
+     - Public import alias. Keep for one minor release (through 0.9.x); then
+       drop it and its ``mufinder.domain`` export.
    * - ``created_at`` job field
      - ``Job`` (``mufinder.domain.models``) / job entity files
      - Persisted creation timestamp that fixes a job's position in the
@@ -1049,6 +1066,23 @@ their per-file atomic-write behaviour.
      - ``workflow.bridge.structure_to_spec`` prefers ``atomic_spins``, so the
        ``.cell`` export and every job started from a relaxed structure write
        the run's spins. Relaxation completion stores them for new runs.
+   * - 6 to 7
+     - Jobs and calculation runs (``jobs`` and ``runs`` entities). Schema 6
+       stored nine job statuses and a ``failure_reason``. The step
+       (``legacy_job_state``) stores four: ``submitting``, ``queued``,
+       ``running`` and ``retrieving`` become ``active`` with that
+       ``activity``; ``stopped`` and ``failed`` become ``ended`` with their
+       ``failure_reason`` as ``end_reason``, or ``unknown`` when none (or one
+       schema 6 did not know) was recorded; ``cancelled`` becomes ``ended``
+       with ``end_reason`` ``cancelled``; ``defined`` and ``completed`` keep
+       their names. ``failure_reason`` is removed. A run keeps only its
+       status, mapped the same way. A payload whose status schema 6 did not
+       store is left as it is, and a run without a status is not touched.
+       Provenance keeps the words it was written with.
+     - ``job_from_dict`` and ``run_from_dict`` read only the four states, and
+       a job state this build does not know refuses to load rather than being
+       guessed. A build from before schema 7 cannot open a project a schema 7
+       build has saved: it does not know ``active`` or ``ended``.
 
 A schema bump adds ``PROJECT_SCHEMA_VERSION + 1``, one entry in
 ``_MIGRATIONS`` keyed by the version it upgrades from, a row in the table
@@ -1210,7 +1244,7 @@ by ``mufinder.services.job_reconcile.reconcile`` and applied by
   ``JobExecutionController.check_local_jobs``.
 - ``ProjectService.retry_job_retrieval`` and
   ``ProjectService.resume_reappeared_job``: use
-  ``ProjectService.reactivate_job``.
+  ``ProjectService.mark_job_active``.
 - ``JobExecutionController.prepare_retry_retrieval``,
   ``mark_cluster_status_changed``, ``resume_reappeared_cluster_job``,
   ``mark_queue_checked`` and ``stale_reappearance_watches``, and
@@ -1222,6 +1256,28 @@ by ``mufinder.services.job_reconcile.reconcile`` and applied by
   ``job_reappeared`` signals: use ``check_jobs`` and ``job_checked``.
 - ``services.job_monitoring.is_unmonitored_cluster_job``: use
   ``JobExecutionController.staleness``.
+
+The job-state names below were removed without a deprecation period when a job
+came to store four states (schema 7). They were service methods and module
+constants with no documented import path, called only by MuFinder's own code
+and tests. Saved projects are migrated (see Saved-project schema migrations).
+
+- ``JobStatus.SUBMITTING``, ``QUEUED``, ``RUNNING`` and ``RETRIEVING``: use
+  ``JobStatus.ACTIVE`` with a ``JobActivity``. ``JobStatus.FAILED``,
+  ``STOPPED`` and ``CANCELLED``: use ``JobStatus.ENDED`` with an
+  ``EndReason``. ``services.job_monitoring.job_status_word`` gives the word a
+  job table shows.
+- ``ProjectService.mark_job_queued``, ``start_job``, ``mark_job_retrieving``
+  and ``reactivate_job``: use ``ProjectService.mark_job_active``.
+  ``ProjectService.stop_job``, ``fail_job`` and ``cancel_job``: use
+  ``ProjectService.end_job``.
+- ``mufinder.domain.enums.ACTIVE_JOB_STATUSES``,
+  ``mufinder.services.job_reconcile.ENDED_JOB_STATUSES``,
+  ``ProjectService.TERMINAL_RECOVERABLE_JOB_STATUSES`` and
+  ``mufinder.app.workflow_submission.RESUBMITTABLE_AFTER_DISMISSAL_STATUSES``:
+  compare with ``JobStatus.ACTIVE`` or ``JobStatus.ENDED``.
+- ``Scheduler.map_to_job_status``: use ``Scheduler.map_to_scheduler_state``,
+  which returns a ``SchedulerState``.
 
 The private forwarders below were removed without a deprecation period. They
 were one-line ``MainWindow`` methods, not part of any public import path, and

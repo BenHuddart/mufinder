@@ -15,7 +15,7 @@ import posixpath
 import re
 
 from mufinder.castep_io.output_parser import CastepResult, parse_castep_output
-from mufinder.domain.enums import FailureReason
+from mufinder.domain.enums import EndReason
 from mufinder.services.failure_diagnosis import diagnose_failure, find_failure_log_files
 from mufinder.services.job_artifacts import ParsedJobArtifacts, RetrievalFlags
 from mufinder.services.job_reconcile import OutputState
@@ -342,4 +342,4 @@ def _stopped_at_walltime(
 
     log_files = find_failure_log_files(local_output_dir, [seed_name], remote_job_id)
     diagnosis = diagnose_failure(parsed.error_message, log_files, not_before=logs_fetched_from)
-    return diagnosis.reason == FailureReason.WALLTIME
+    return diagnosis.reason == EndReason.WALLTIME

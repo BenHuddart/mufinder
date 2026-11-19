@@ -12,18 +12,19 @@ from mufinder.services.cluster_status import (
     cluster_status,
     monitored_cluster_names,
 )
+from tests.support.jobs import state_fields
 
 
 def _job(
     target: str = "SCARF",
-    status: JobStatus = JobStatus.RUNNING,
+    status: str = "running",
     remote_job_id: str | None = "12345",
 ) -> Job:
     return Job(
         label="job",
         workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF,
         calc_type="castep_cutoff",
-        status=status,
+        **state_fields(status),
         execution_target=target,
         remote_job_id=remote_job_id,
     )
@@ -35,7 +36,7 @@ def test_hidden_without_jobs_the_poll_follows() -> None:
         [_job(target="local")],
         [_job(target="")],
         [_job(status=JobStatus.COMPLETED)],
-        [_job(status=JobStatus.FAILED)],
+        [_job(status="failed")],
     ):
         status = cluster_status(jobs, connected_cluster="SCARF")
         assert status.visible is False
@@ -45,16 +46,16 @@ def test_hidden_without_jobs_the_poll_follows() -> None:
 
 def test_shown_for_every_active_status_including_retrieving() -> None:
     for job_status in (
-        JobStatus.SUBMITTING,
-        JobStatus.QUEUED,
-        JobStatus.RUNNING,
-        JobStatus.RETRIEVING,
+        "submitting",
+        "queued",
+        "running",
+        "retrieving",
     ):
         assert cluster_status([_job(status=job_status)], connected_cluster=None).visible is True
 
 
 def test_hidden_for_a_job_that_ended_whatever_its_message() -> None:
-    assert cluster_status([_job(status=JobStatus.FAILED)], connected_cluster=None).visible is False
+    assert cluster_status([_job(status="failed")], connected_cluster=None).visible is False
 
 
 def test_idle_reads_neutral_with_the_cluster_name() -> None:
@@ -102,7 +103,7 @@ def test_several_clusters_are_each_described_and_a_loss_takes_the_colour() -> No
 
 
 def test_nothing_to_check_until_a_job_has_a_remote_id_or_folder() -> None:
-    submitting = _job(status=JobStatus.SUBMITTING, remote_job_id=None)
+    submitting = _job(status="submitting", remote_job_id=None)
     submitting.remote_directory = None
     status = cluster_status([submitting], connected_cluster=None)
     assert status.visible is True

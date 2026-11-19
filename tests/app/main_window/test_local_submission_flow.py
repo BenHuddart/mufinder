@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from mufinder.services.job_monitoring import job_status_word
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -10,7 +11,7 @@ import pytest
 import mufinder.app.main_window as main_window_module
 from mufinder.castep_io.output_parser import CastepResult
 from mufinder.castep_setup import CastepSetup
-from mufinder.domain.enums import JobStatus
+from mufinder.domain.enums import EndReason, JobActivity, JobStatus
 from mufinder.domain.models import CalculationDefinition, CalculationRun, Job, Structure
 from mufinder.services.project_service import ProjectService
 
@@ -84,7 +85,7 @@ def test_main_window_submit_jobs_locally_creates_run_and_calls_runner(
 
     window._submit_jobs_locally([job])
 
-    assert job.status == JobStatus.SUBMITTING
+    assert job_status_word(job) == "submitting"
     assert len(submit_calls) == 1
     assert submit_calls[0]["seed_name"] == job.label
     assert submit_calls[0]["job_dir"] == output_dir / job.label
@@ -187,7 +188,8 @@ def test_main_window_submit_jobs_locally_resets_execution_target_after_cluster_r
     )
     output_dir = doc.project_root / "files" / "convergence_cutoff" / job.label
     output_dir.mkdir(parents=True, exist_ok=True)
-    job.status = JobStatus.FAILED
+    job.status = JobStatus.ENDED
+    job.end_reason = EndReason.UNKNOWN
     job.remote_job_id = "12345"
     job.remote_directory = "/remote/conv_ecut_300"
     service.reset_failed_job(job)
@@ -352,31 +354,33 @@ def test_main_window_local_status_handlers_update_job_and_run(main_window, tmp_p
         workflow_stage=main_window_module.WorkflowStage.CONVERGENCE_CUTOFF,
         calc_type="castep_convergence_cutoff",
     )
-    run = CalculationRun(job_id=job.id, run_index=1, status=JobStatus.SUBMITTING)
+    run = CalculationRun(job_id=job.id, run_index=1, status=JobStatus.ACTIVE)
     doc.runs[run.id] = run
     window._document = doc
     window._active_run_by_job[job.id] = run.id
-    job.status = JobStatus.SUBMITTING
+    job.status = JobStatus.ACTIVE
+    job.activity = JobActivity.SUBMITTING
 
-    window._on_local_job_status_changed(job.id, JobStatus.QUEUED.value)
-    assert job.status == JobStatus.QUEUED
-    assert run.status == JobStatus.QUEUED
+    window._on_local_job_status_changed(job.id, "queued")
+    assert job_status_word(job) == "queued"
+    assert run.status == JobStatus.ACTIVE
 
     window._on_local_job_started(job.id)
-    assert job.status == JobStatus.RUNNING
-    assert run.status == JobStatus.RUNNING
+    assert job_status_word(job) == "running"
+    assert run.status == JobStatus.ACTIVE
     assert run.started_at is not None
 
     window._on_local_job_failed(job.id, "boom")
-    assert job.status == JobStatus.FAILED
-    assert run.status == JobStatus.FAILED
+    assert job_status_word(job) == "failed"
+    assert run.status == JobStatus.ENDED
     assert doc.provenance[-1].action == "job_failed"
 
-    job.status = JobStatus.RUNNING
-    run.status = JobStatus.RUNNING
+    job.status = JobStatus.ACTIVE
+    job.activity = JobActivity.RUNNING
+    run.status = JobStatus.ACTIVE
     window._on_local_job_cancelled(job.id)
-    assert job.status == JobStatus.CANCELLED
-    assert run.status == JobStatus.CANCELLED
+    assert job_status_word(job) == "cancelled"
+    assert run.status == JobStatus.ENDED
     assert doc.provenance[-1].action == "job_cancelled"
     window.close()
 
@@ -393,8 +397,9 @@ def test_main_window_local_finish_creates_result_and_completes_job(
         workflow_stage=main_window_module.WorkflowStage.MUON_RELAXATION,
         calc_type="castep_geom_opt",
     )
-    job.status = JobStatus.RUNNING
-    run = CalculationRun(job_id=job.id, run_index=1, status=JobStatus.RUNNING)
+    job.status = JobStatus.ACTIVE
+    job.activity = JobActivity.RUNNING
+    run = CalculationRun(job_id=job.id, run_index=1, status=JobStatus.ACTIVE)
     doc.runs[run.id] = run
     window._document = doc
     window._active_run_by_job[job.id] = run.id

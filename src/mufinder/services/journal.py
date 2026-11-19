@@ -16,7 +16,7 @@ from mufinder.domain.charge_states import (
     muon_charge_state_label,
 )
 from mufinder.domain.constants import MEV_PER_EV
-from mufinder.domain.enums import FailureReason, WorkflowStage
+from mufinder.domain.enums import EndReason, WorkflowStage
 from mufinder.domain.models import (
     GENERATION_METHOD_LABELS,
     MANUAL_DEFAULT_METHOD,
@@ -1768,7 +1768,7 @@ def _failure_text(record: ProvenanceRecord) -> str:
 
     parts: list[str] = []
     try:
-        parts.append(FAILURE_REASON_SUMMARIES[FailureReason(_text_param(record, "failure_reason"))])
+        parts.append(FAILURE_REASON_SUMMARIES[EndReason(_text_param(record, "failure_reason"))])
     except (KeyError, ValueError):
         pass
     error_message = _text_param(record, "error_message")

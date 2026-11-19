@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from mufinder.services.job_monitoring import job_status_word
 import copy
 from datetime import UTC, datetime
 from pathlib import Path
@@ -27,7 +28,7 @@ from mufinder.app.workflow_config_codecs import (
 )
 from mufinder.castep_setup import CastepSetup
 from mufinder.domain.cluster import ClusterConfig
-from mufinder.domain.enums import JobStatus, WorkflowStage
+from mufinder.domain.enums import EndReason, JobActivity, JobStatus, WorkflowStage
 from tests.support.dashboard import more_button, open_more_menu
 from mufinder.domain.models import CalculationRun, Job, MuonSite, Structure
 from mufinder.services.job_file_cleanup import JobFileCleanup
@@ -53,7 +54,8 @@ def test_main_window_reset_failed_jobs_can_clean_output_directory(
         workflow_stage=main_window_module.WorkflowStage.CONVERGENCE_CUTOFF,
         calc_type="castep_convergence_cutoff",
     )
-    job.status = JobStatus.FAILED
+    job.status = JobStatus.ENDED
+    job.end_reason = EndReason.UNKNOWN
     job.error_message = "boom"
     window._document = doc
 
@@ -115,7 +117,8 @@ def test_main_window_reset_failed_jobs_accepts_cancelled_jobs(
         workflow_stage=main_window_module.WorkflowStage.CONVERGENCE_CUTOFF,
         calc_type="castep_convergence_cutoff",
     )
-    job.status = JobStatus.CANCELLED
+    job.status = JobStatus.ENDED
+    job.end_reason = EndReason.CANCELLED
     job.error_message = "stopped"
     window._document = doc
 
@@ -140,7 +143,8 @@ def test_main_window_reset_failed_jobs_cancelled_by_user(
         workflow_stage=main_window_module.WorkflowStage.CONVERGENCE_CUTOFF,
         calc_type="castep_convergence_cutoff",
     )
-    job.status = JobStatus.FAILED
+    job.status = JobStatus.ENDED
+    job.end_reason = EndReason.UNKNOWN
     job.error_message = "boom"
     window._document = doc
 
@@ -148,7 +152,7 @@ def test_main_window_reset_failed_jobs_cancelled_by_user(
 
     window._reset_failed_jobs([job])
 
-    assert job.status == JobStatus.FAILED
+    assert job_status_word(job) == "failed"
     assert job.error_message == "boom"
     window.close()
 
@@ -165,7 +169,8 @@ def test_main_window_reset_failed_jobs_warns_when_cleanup_fails(
         workflow_stage=main_window_module.WorkflowStage.CONVERGENCE_CUTOFF,
         calc_type="castep_convergence_cutoff",
     )
-    job.status = JobStatus.FAILED
+    job.status = JobStatus.ENDED
+    job.end_reason = EndReason.UNKNOWN
     window._document = doc
 
     output_dir = doc.project_root / "files" / "convergence_cutoff" / job.label
@@ -229,7 +234,8 @@ def _failed_job(
         workflow_stage=stage,
         calc_type="castep_convergence_cutoff",
     )
-    job.status = JobStatus.FAILED
+    job.status = JobStatus.ENDED
+    job.end_reason = EndReason.UNKNOWN
     return job
 
 
@@ -298,7 +304,7 @@ def test_inspect_close_does_nothing_further(
 
     window._inspect_failed_jobs([job])
 
-    assert job.status == JobStatus.FAILED
+    assert job_status_word(job) == "failed"
     window.close()
 
 
@@ -342,7 +348,8 @@ def _make_failed_cluster_job(service, doc, *, label: str, cluster: str = "scarf"
         workflow_stage=main_window_module.WorkflowStage.CONVERGENCE_CUTOFF,
         calc_type="castep_convergence_cutoff",
     )
-    job.status = JobStatus.FAILED
+    job.status = JobStatus.ENDED
+    job.end_reason = EndReason.UNKNOWN
     job.execution_target = cluster
     job.remote_job_id = "99123"
     job.remote_directory = "/remote/work/" + label
@@ -361,14 +368,16 @@ def test_dashboard_check_now_is_offered_where_there_is_somewhere_to_look(
     no_meta_job = _make_failed_cluster_job(service, doc, label="nometa", cluster="scarf")
     no_meta_job.remote_directory = None
     active_job = _make_failed_cluster_job(service, doc, label="active", cluster="scarf")
-    active_job.status = JobStatus.RUNNING
+    active_job.status = JobStatus.ACTIVE
+    active_job.activity = JobActivity.RUNNING
     local_job = service.add_job(
         doc,
         label="localjob",
         workflow_stage=main_window_module.WorkflowStage.CONVERGENCE_CUTOFF,
         calc_type="castep_convergence_cutoff",
     )
-    local_job.status = JobStatus.FAILED
+    local_job.status = JobStatus.ENDED
+    local_job.end_reason = EndReason.UNKNOWN
     local_job.execution_target = "local"
 
     window._document = doc
@@ -387,7 +396,8 @@ def test_dashboard_check_now_is_offered_where_there_is_somewhere_to_look(
     assert offers_check(no_meta_job) is False
     # A local job that ended has its output folder to look at.
     assert offers_check(local_job) is True
-    local_job.status = JobStatus.RUNNING
+    local_job.status = JobStatus.ACTIVE
+    local_job.activity = JobActivity.RUNNING
     assert offers_check(local_job) is False
     window.close()
 
@@ -416,7 +426,7 @@ def test_dashboard_check_now_asks_the_cluster_and_leaves_the_job_as_it_is(
     open_more_menu(window, monkeypatch).action("Check now").triggered.emit()
 
     # The job changes only when the evidence comes back.
-    assert job.status == JobStatus.FAILED
+    assert job_status_word(job) == "failed"
     ((targets, skip_if_busy),) = checks
     assert skip_if_busy is False
     assert [(t.job_id, t.remote_job_id, t.on_request) for t in targets] == [(job.id, "99123", True)]
@@ -437,7 +447,8 @@ def test_dashboard_check_now_completes_a_local_job_whose_output_is_complete(
         calc_type="castep_convergence_cutoff",
     )
     job.execution_target = "local"
-    job.status = JobStatus.STOPPED
+    job.status = JobStatus.ENDED
+    job.end_reason = EndReason.WALLTIME
     fixture = Path(__file__).parents[2] / "fixtures" / "uep" / "Si2.castep"
     (tmp_path / "localjob.castep").write_bytes(fixture.read_bytes())
     window._document = doc
@@ -475,14 +486,16 @@ def test_dashboard_dismiss_hides_row_after_flush(
         workflow_stage=main_window_module.WorkflowStage.CONVERGENCE_CUTOFF,
         calc_type="castep_convergence_cutoff",
     )
-    failed_job.status = JobStatus.FAILED
+    failed_job.status = JobStatus.ENDED
+    failed_job.end_reason = EndReason.UNKNOWN
     running_job = service.add_job(
         doc,
         label="running",
         workflow_stage=main_window_module.WorkflowStage.CONVERGENCE_CUTOFF,
         calc_type="castep_convergence_cutoff",
     )
-    running_job.status = JobStatus.RUNNING
+    running_job.status = JobStatus.ACTIVE
+    running_job.activity = JobActivity.RUNNING
 
     window._document = doc
     window._refresh_jobs_table()
@@ -523,8 +536,10 @@ def test_dashboard_dismiss_multi_select(
         workflow_stage=main_window_module.WorkflowStage.CONVERGENCE_CUTOFF,
         calc_type="castep_convergence_cutoff",
     )
-    job0.status = JobStatus.FAILED
-    job1.status = JobStatus.STOPPED
+    job0.status = JobStatus.ENDED
+    job0.end_reason = EndReason.UNKNOWN
+    job1.status = JobStatus.ENDED
+    job1.end_reason = EndReason.WALLTIME
 
     window._document = doc
     monkeypatch.setattr(
@@ -554,10 +569,10 @@ def test_dashboard_dismiss_multi_select(
 # "ready" and its submit resets the *same* job back to defined before dispatch.
 def _fail_and_dismiss(window: MainWindow, service: ProjectService, job: Job) -> None:
     service.submit_job(job)
-    service.fail_job(job, "castep exploded")
+    service.end_job(job, EndReason.UNKNOWN, "castep exploded")
     window._on_dismiss_from_dashboard([job.id])
     assert job.dismissed_at is not None
-    assert job.status is JobStatus.FAILED
+    assert job_status_word(job) == "failed"
 
 
 def test_dismissed_pristine_relaxation_job_row_is_resubmittable(
@@ -600,7 +615,7 @@ def test_dismissed_pristine_relaxation_job_row_is_resubmittable(
     window._refresh_ui_after_project_change()
 
     service.submit_job(job)
-    service.fail_job(job, "castep exploded")
+    service.end_job(job, EndReason.UNKNOWN, "castep exploded")
     window._refresh_ui_after_project_change()
     status_column = window._pristine_relaxation_view._STATUS_COLUMN
     assert window._pristine_relaxation_view._table.item(0, status_column).text() == "failed"
@@ -667,7 +682,7 @@ def test_dismissed_convergence_cutoff_job_row_is_resubmittable(
     window._refresh_ui_after_project_change()
 
     service.submit_job(job)
-    service.fail_job(job, "castep exploded")
+    service.end_job(job, EndReason.UNKNOWN, "castep exploded")
     window._refresh_ui_after_project_change()
     status_column = window._convergence_view._STATUS_COLUMN
     assert window._convergence_view._table.item(0, status_column).text() == "failed"
@@ -747,7 +762,7 @@ def test_dismissed_row_submit_aborts_when_cleanup_prompt_cancelled(
     window._convergence_controller.submit([300.0], target="local")
 
     assert submitted == []
-    assert job.status is JobStatus.FAILED
+    assert job_status_word(job) == "failed"
     assert job.dismissed_at is not None
     window.close()
 
@@ -793,7 +808,7 @@ def test_non_dismissed_failed_row_keeps_failed_status_and_is_not_reset(
     )
     window._document = doc
     service.submit_job(job)
-    service.fail_job(job, "castep exploded")
+    service.end_job(job, EndReason.UNKNOWN, "castep exploded")
     window._refresh_ui_after_project_change()
 
     assert (
@@ -815,7 +830,7 @@ def test_non_dismissed_failed_row_keeps_failed_status_and_is_not_reset(
     window._convergence_controller.submit([300.0], target="local")
 
     assert prompted == []
-    assert job.status is JobStatus.FAILED
+    assert job_status_word(job) == "failed"
     assert job.dismissed_at is None
     window.close()
 
@@ -920,7 +935,8 @@ def test_main_window_routes_workflow_row_actions_through_the_controller(
         label="row-job",
         workflow_stage=WorkflowStage.PRISTINE_RELAXATION,
         calc_type="castep_relaxation",
-        status=JobStatus.FAILED,
+        status=JobStatus.ENDED,
+        end_reason=EndReason.UNKNOWN,
     )
 
     requested_keys: list[list[object]] = []
@@ -954,7 +970,8 @@ def test_main_window_reset_refreshes_the_lazily_created_workflow_views(
         workflow_stage=WorkflowStage.ENERGY_BARRIERS,
         calc_type="castep_neb",
     )
-    job.status = JobStatus.FAILED
+    job.status = JobStatus.ENDED
+    job.end_reason = EndReason.UNKNOWN
     window._document = doc
 
     refreshed: list[str] = []
@@ -1014,7 +1031,8 @@ def test_main_window_row_reset_clears_the_displayed_status_for_a_bound_job(
         workflow_stage=WorkflowStage.PRISTINE_RELAXATION,
         calc_type="castep_pristine_relaxation",
     )
-    failed_job.status = JobStatus.FAILED
+    failed_job.status = JobStatus.ENDED
+    failed_job.end_reason = EndReason.UNKNOWN
     definition.parameters["job_ids_by_label"] = {"row_1": str(failed_job.id)}
     doc.ui_state[window._ACTIVE_PRISTINE_RELAXATION_DEFINITION_KEY] = str(definition.id)
     doc.ui_state["pristine_relaxation_form"] = {
@@ -1263,7 +1281,8 @@ def test_continue_relaxation_pristine_cluster_dismissed_failed_row_end_to_end(
     )
 
     job.execution_target = "alpha"
-    job.status = JobStatus.FAILED
+    job.status = JobStatus.ENDED
+    job.end_reason = EndReason.UNKNOWN
     job.remote_directory = "/remote/work/pristine_relax_row_1"
     job.remote_job_id = "old-remote-id"
     job.error_message = "previous castep failure"
@@ -1306,7 +1325,7 @@ def test_continue_relaxation_pristine_cluster_dismissed_failed_row_end_to_end(
     assert submit_calls[0]["reuse_existing_files"] is False
     # dismissed_at/error/old remote id cleared by prepare_job_continuation, and
     # the job is back in an active state after a successful cluster submit.
-    assert job.status == JobStatus.QUEUED
+    assert job_status_word(job) == "queued"
     assert job.dismissed_at is None
     assert job.error_message is None
     assert job.remote_job_id == "new-remote-job-id"
@@ -1345,7 +1364,7 @@ def test_continue_relaxation_muon_cluster_completed_row_end_to_end(
     assert len(submit_calls) == 1
     assert submit_calls[0]["remote_directory"] == "/remote/work/positivemuon_site1"
     assert submit_calls[0]["allow_existing_remote_directory"] is True
-    assert job.status == JobStatus.QUEUED
+    assert job_status_word(job) == "queued"
     assert any(record.action == "job_continuation" for record in doc.provenance)
     window.close()
 
@@ -1356,7 +1375,8 @@ def test_continue_relaxation_local_job_round_trip(
     window, service, doc, definition, job, output_root, param_path = _pristine_continue_fixture(
         tmp_path
     )
-    job.status = JobStatus.FAILED
+    job.status = JobStatus.ENDED
+    job.end_reason = EndReason.UNKNOWN
     job.error_message = "boom"
     assert job.execution_target == "local"
 
@@ -1392,7 +1412,8 @@ def test_continue_relaxation_from_the_failed_job_dialog_continues_the_row(
     window, _service, _doc, _definition, job, _output_root, param_path = _pristine_continue_fixture(
         tmp_path
     )
-    job.status = JobStatus.FAILED
+    job.status = JobStatus.ENDED
+    job.end_reason = EndReason.UNKNOWN
     job.error_message = "CASTEP exited with status 1: SCF cycles did not converge"
     dialogs = capture_failed_job_dialogs(monkeypatch, action=FailedJobAction.CONTINUE_RELAXATION)
     fake_continue_dialog.result_to_return = ({"geom_max_iter": 300}, ())
@@ -1418,7 +1439,8 @@ def test_failed_job_dialog_continues_a_muon_relaxation_by_its_charge_qualified_r
     window, _service, _doc, _definition, job, _output_root, _param_path = _muon_continue_fixture(
         tmp_path
     )
-    job.status = JobStatus.FAILED
+    job.status = JobStatus.ENDED
+    job.end_reason = EndReason.UNKNOWN
     window._refresh_ui_after_project_change()
     continued: list[object] = []
     monkeypatch.setattr(
@@ -1439,7 +1461,8 @@ def test_dashboard_opens_a_muon_relaxation_on_its_charge_state_row(
     window, _service, _doc, _definition, job, _output_root, _param_path = _muon_continue_fixture(
         tmp_path
     )
-    job.status = JobStatus.FAILED
+    job.status = JobStatus.ENDED
+    job.end_reason = EndReason.UNKNOWN
     window._refresh_ui_after_project_change()
 
     menu = open_more_menu(window, monkeypatch)
@@ -1464,7 +1487,8 @@ def test_dashboard_more_menu_continues_a_relaxation_through_its_row(
     window, _service, _doc, _definition, job, _output_root, _param_path = (
         _pristine_continue_fixture(tmp_path)
     )
-    job.status = JobStatus.STOPPED
+    job.status = JobStatus.ENDED
+    job.end_reason = EndReason.WALLTIME
     window._refresh_ui_after_project_change()
     continued: list[object] = []
     monkeypatch.setattr(
@@ -1483,7 +1507,8 @@ def test_failed_job_dialog_offers_no_continue_when_the_row_cannot_be_continued(
     window, _service, _doc, _definition, job, _output_root, _param_path = (
         _pristine_continue_fixture(tmp_path)
     )
-    job.status = JobStatus.STOPPED
+    job.status = JobStatus.ENDED
+    job.end_reason = EndReason.WALLTIME
     monkeypatch.setattr(
         window._pristine_relaxation_controller, "row_is_continuable", lambda _key: False
     )
@@ -1502,7 +1527,8 @@ def test_continue_relaxation_cluster_not_connected_dialog_still_opens_with_unava
         tmp_path
     )
     job.execution_target = "alpha"
-    job.status = JobStatus.FAILED
+    job.status = JobStatus.ENDED
+    job.end_reason = EndReason.UNKNOWN
     job.remote_directory = "/remote/work/pristine_relax_row_1"
     assert window._cluster_runner.is_connected is False
 
@@ -1530,7 +1556,8 @@ def test_continue_relaxation_cancel_leaves_everything_unchanged(
     window, service, doc, definition, job, output_root, param_path = _pristine_continue_fixture(
         tmp_path
     )
-    job.status = JobStatus.FAILED
+    job.status = JobStatus.ENDED
+    job.end_reason = EndReason.UNKNOWN
     job.error_message = "boom"
     before_config = copy.deepcopy(definition.parameters["configuration"])
 
@@ -1545,7 +1572,7 @@ def test_continue_relaxation_cancel_leaves_everything_unchanged(
     window._on_continue_relaxation_requested_from_pristine_relaxation("row_1")
 
     assert definition.parameters["configuration"] == before_config
-    assert job.status == JobStatus.FAILED
+    assert job_status_word(job) == "failed"
     assert job.error_message == "boom"
     assert not any(record.action == "job_continuation" for record in doc.provenance)
     window.close()
@@ -1560,7 +1587,8 @@ def test_continue_relaxation_deletes_its_dialogs_after_closing(
     window, service, doc, definition, job, output_root, param_path = _pristine_continue_fixture(
         tmp_path
     )
-    job.status = JobStatus.FAILED
+    job.status = JobStatus.ENDED
+    job.end_reason = EndReason.UNKNOWN
     code = main_window_module.QDialog.DialogCode
     opened: list[object] = []
 
@@ -1574,7 +1602,8 @@ def test_continue_relaxation_deletes_its_dialogs_after_closing(
 
     for _ in range(3):
         if accept:
-            job.status = JobStatus.FAILED
+            job.status = JobStatus.ENDED
+            job.end_reason = EndReason.UNKNOWN
         window._on_continue_relaxation_requested_from_pristine_relaxation("row_1")
     assert len(opened) == 3
     QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
@@ -1590,10 +1619,12 @@ def test_continue_relaxation_gating_disabled_running_enabled_not_converged(
         tmp_path
     )
 
-    job.status = JobStatus.RUNNING
+    job.status = JobStatus.ACTIVE
+    job.activity = JobActivity.RUNNING
     assert window._pristine_relaxation_controller.row_is_continuable("row_1") is False
 
-    job.status = JobStatus.QUEUED
+    job.status = JobStatus.ACTIVE
+    job.activity = JobActivity.QUEUED
     assert window._pristine_relaxation_controller.row_is_continuable("row_1") is False
 
     # A completed-but-unconverged job displays "not converged" on the row, but
@@ -1621,7 +1652,8 @@ def test_continue_relaxation_unedited_real_dialog_shows_no_parameter_changes(
     window, service, doc, definition, job, output_root, param_path = _pristine_continue_fixture(
         tmp_path
     )
-    job.status = JobStatus.FAILED
+    job.status = JobStatus.ENDED
+    job.end_reason = EndReason.UNKNOWN
 
     seed = window._pristine_relaxation_view.continue_relaxation_dialog_seed("row_1")
     assert seed is not None
@@ -1661,7 +1693,8 @@ def test_continue_relaxation_muon_unedited_real_dialog_shows_no_parameter_change
     window, service, doc, definition, job, output_root, param_path = _muon_continue_fixture(
         tmp_path
     )
-    job.status = JobStatus.FAILED
+    job.status = JobStatus.ENDED
+    job.end_reason = EndReason.UNKNOWN
 
     seed = window._muon_relaxation_view.continue_relaxation_dialog_seed("positivemuon:Site 1")
     assert seed is not None
@@ -1706,7 +1739,8 @@ def test_continue_relaxation_warns_and_does_not_submit_when_materialize_fails(
     window, service, doc, definition, job, output_root, param_path = _pristine_continue_fixture(
         tmp_path
     )
-    job.status = JobStatus.FAILED
+    job.status = JobStatus.ENDED
+    job.end_reason = EndReason.UNKNOWN
     fake_continue_dialog.result_to_return = ({"geom_max_iter": 500}, ())
 
     # Force the continuation's own materialize call to fail, exactly like the
@@ -1780,7 +1814,8 @@ def test_continue_relaxation_cross_cluster_misroute_guard(
         tmp_path
     )
     job.execution_target = "alpha"
-    job.status = JobStatus.FAILED
+    job.status = JobStatus.ENDED
+    job.end_reason = EndReason.UNKNOWN
     job.remote_directory = "/remote/work/pristine_relax_row_1"
     fake_continue_dialog.result_to_return = ({"geom_max_iter": 500}, ())
 
@@ -1974,7 +2009,8 @@ def test_await_remote_file_check_reports_worker_exception_as_unavailable(
         execution_target="alpha",
         remote_directory="/remote/x",
     )
-    job.status = JobStatus.FAILED
+    job.status = JobStatus.ENDED
+    job.end_reason = EndReason.UNKNOWN
     monkeypatch.setattr(window, "_is_cluster_connected_for_job", lambda _job: True)
     monkeypatch.setattr(window, "_job_seed_name", lambda _job: "seed")
     monkeypatch.setattr(window._cluster_runner._runner, "remote_file_exists", _boom)
@@ -2000,7 +2036,8 @@ def test_main_window_reset_failed_jobs_uses_supplied_cleanup_choice_without_aski
         workflow_stage=main_window_module.WorkflowStage.CONVERGENCE_CUTOFF,
         calc_type="castep_convergence_cutoff",
     )
-    job.status = JobStatus.FAILED
+    job.status = JobStatus.ENDED
+    job.end_reason = EndReason.UNKNOWN
     window._document = doc
     asked: list[int] = []
     monkeypatch.setattr(window, "_prompt_failed_job_cleanup", lambda count: asked.append(count))
@@ -2038,7 +2075,8 @@ def test_main_window_start_again_on_cluster_deletes_its_own_directory_without_pr
     job.execution_target = "alpha"
     job.remote_directory = "/remote/work/relax_a"
     job.remote_job_id = "55501"
-    job.status = JobStatus.STOPPED
+    job.status = JobStatus.ENDED
+    job.end_reason = EndReason.WALLTIME
     job_dir = doc.project_root / "files" / "convergence_cutoff" / "relax_a"
     _write_previous_run_output(job_dir, "relax_a")
 
@@ -2075,7 +2113,7 @@ def test_main_window_start_again_on_cluster_deletes_its_own_directory_without_pr
 
     window._submit_jobs_on_cluster(
         [job],
-        eligible_statuses={JobStatus.STOPPED},
+        eligible_statuses={JobStatus.ENDED},
         reuse_existing_remote_files=True,
         fresh_start_job_ids={job.id},
     )
@@ -2108,7 +2146,8 @@ def test_main_window_continue_on_cluster_keeps_the_previous_run(
     job = add_cluster_input_job(service, doc, "relax_b")
     job.execution_target = "alpha"
     job.remote_directory = "/remote/work/relax_b"
-    job.status = JobStatus.STOPPED
+    job.status = JobStatus.ENDED
+    job.end_reason = EndReason.WALLTIME
     job_dir = doc.project_root / "files" / "convergence_cutoff" / "relax_b"
     _write_previous_run_output(job_dir, "relax_b")
 
@@ -2117,7 +2156,7 @@ def test_main_window_continue_on_cluster_keeps_the_previous_run(
 
     window._submit_jobs_on_cluster(
         [job],
-        eligible_statuses={JobStatus.STOPPED},
+        eligible_statuses={JobStatus.ENDED},
         reuse_existing_remote_files=True,
     )
 
@@ -2137,7 +2176,8 @@ def test_main_window_start_again_locally_clears_the_previous_output(
 
     job = add_cluster_input_job(service, doc, "relax_c")
     job.execution_target = "local"
-    job.status = JobStatus.STOPPED
+    job.status = JobStatus.ENDED
+    job.end_reason = EndReason.WALLTIME
     job_dir = doc.project_root / "files" / "convergence_cutoff" / "relax_c"
     _write_previous_run_output(job_dir, "relax_c")
 
@@ -2167,7 +2207,7 @@ def test_main_window_start_again_locally_clears_the_previous_output(
 
     window._submit_jobs_locally(
         [job],
-        eligible_statuses={JobStatus.STOPPED},
+        eligible_statuses={JobStatus.ENDED},
         fresh_start_job_ids={job.id},
     )
 
@@ -2187,7 +2227,8 @@ def test_main_window_start_again_skips_a_job_whose_output_cannot_be_cleared(
     job = add_cluster_input_job(service, doc, "relax_d")
     job.execution_target = "alpha"
     job.remote_directory = "/remote/work/relax_d"
-    job.status = JobStatus.STOPPED
+    job.status = JobStatus.ENDED
+    job.end_reason = EndReason.WALLTIME
 
     patch_continuation_cluster_dialog(monkeypatch)
     recorded = patch_continuation_cluster_runner(monkeypatch, window, directory_exists=True)
@@ -2205,7 +2246,7 @@ def test_main_window_start_again_skips_a_job_whose_output_cannot_be_cleared(
 
     window._submit_jobs_on_cluster(
         [job],
-        eligible_statuses={JobStatus.STOPPED},
+        eligible_statuses={JobStatus.ENDED},
         reuse_existing_remote_files=True,
         fresh_start_job_ids={job.id},
     )
@@ -2213,6 +2254,6 @@ def test_main_window_start_again_skips_a_job_whose_output_cannot_be_cleared(
     # Submitting would resume from a checkpoint the user asked to discard.
     assert recorded["submitted"] == []
     assert recorded["deleted"] == []
-    assert job.status == JobStatus.STOPPED
+    assert job_status_word(job) == "stopped"
     assert "relax_d: could not clear its previous output (file in use)" in warnings[0]
     window.close()

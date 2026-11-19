@@ -52,7 +52,7 @@ from uuid import UUID
 from mufinder.castep_io.output_parser import CastepResult
 from mufinder.services.job_artifacts import ParsedJobArtifacts
 from mufinder.domain.constants import IMPORTED_JOB_TAG
-from mufinder.domain.enums import ACTIVE_JOB_STATUSES, JobStatus, WorkflowStage
+from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.domain.models import (
     CalculationDefinition,
     CalculationRun,
@@ -181,9 +181,9 @@ class MuonRelaxationDeps:
     :class:`~mufinder.app.workflow_controllers.base.WorkflowControllerContext`;
     cross-workflow job/definition readers (``job_output_directory``,
     ``job_seed_name``, ``run_for_job``, ``definition_output_directory``, the
-    energy/force readers) live there instead. Active-job membership uses the
-    domain-layer :data:`~mufinder.domain.enums.ACTIVE_JOB_STATUSES` constant
-    directly (``app`` → ``domain`` is a legal import).
+    energy/force readers) live there instead. Active-job membership compares
+    with the domain-layer ``JobStatus.ACTIVE`` directly (``app`` → ``domain``
+    is a legal import).
     """
 
     deserialize_muon_relaxation_config: Callable[[object], MuonRelaxationConfig | None]
@@ -478,7 +478,7 @@ class MuonRelaxationController(WorkflowJobController):
                     definition_row.label,
                     definition_row.charge_state,
                 )
-                if job is not None and job.status in ACTIVE_JOB_STATUSES:
+                if job is not None and job.status == JobStatus.ACTIVE:
                     rows_for_status.append(definition_row)
         else:
             rows_for_status = list(config.rows)

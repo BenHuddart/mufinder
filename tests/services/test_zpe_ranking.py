@@ -19,6 +19,7 @@ from mufinder.services.source_candidates import (
 )
 from mufinder.services.zpe_ranking import zpe_ranking
 from mufinder.workflow.quantum import QUANTUM_PHONON_CALC_TYPE, QUANTUM_PHONON_SET_CALC_TYPE
+from tests.support.jobs import set_job_state
 from tests.support.muon_sites import add_relaxed_muon_site
 
 
@@ -95,10 +96,10 @@ def test_a_non_positive_mode_with_no_stored_warning_is_flagged_but_not_marked(do
     assert ranking.warned(key) is False
 
 
-@pytest.mark.parametrize("status", [JobStatus.RUNNING, JobStatus.DEFINED, JobStatus.FAILED])
+@pytest.mark.parametrize("status", ["running", JobStatus.DEFINED, "failed"])
 def test_a_job_that_is_not_completed_gives_its_site_no_result(document, status) -> None:
     key, job = _phonon_job(document, {"muon_zpe_total_eV": 0.5})
-    job.status = status
+    set_job_state(job, status)
 
     ranking = _ranking(document)
 

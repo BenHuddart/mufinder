@@ -18,10 +18,11 @@ import pytest
 
 import mufinder.app.main_window as main_window_module
 from mufinder.app.main_window import MainWindow
-from mufinder.domain.enums import FailureReason, JobStatus, WorkflowStage
+from mufinder.domain.enums import EndReason, JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationDefinition
 from mufinder.services.job_file_cleanup import JobFileCleanup
 from mufinder.services.project_service import ProjectService
+from tests.support.jobs import set_job_state
 from tests.support.main_window import (
     patch_continuation_cluster_dialog,
     patch_continuation_cluster_runner,
@@ -47,8 +48,8 @@ def _pristine_job(service, doc, status: JobStatus, *, row_key: str = "unit"):
         workflow_stage=WorkflowStage.PRISTINE_RELAXATION,
         calc_type="castep_pristine_relaxation",
     )
-    job.status = status
-    job.failure_reason = FailureReason.WALLTIME if status == JobStatus.STOPPED else None
+    set_job_state(job, status)
+    job.end_reason = EndReason.WALLTIME if status == "stopped" else None
     definition = CalculationDefinition(
         workflow_stage=WorkflowStage.PRISTINE_RELAXATION,
         calc_type="castep_pristine_relaxation",
@@ -93,7 +94,7 @@ ALL_FILES = sorted(
 
 def test_a_job_in_its_own_directory_is_cleaned(qapp, tmp_path: Path) -> None:
     window, service, doc = _project(tmp_path)
-    job = _pristine_job(service, doc, JobStatus.STOPPED)
+    job = _pristine_job(service, doc, "stopped")
     directory = _job_directory(doc)
 
     assert window._fresh_start_refusals([job]) == {}
@@ -106,7 +107,7 @@ def test_a_job_in_its_own_directory_is_cleaned(qapp, tmp_path: Path) -> None:
 
 def test_a_directory_shared_with_another_job_is_never_cleaned(qapp, tmp_path: Path) -> None:
     window, service, doc = _project(tmp_path)
-    old = _pristine_job(service, doc, JobStatus.STOPPED)
+    old = _pristine_job(service, doc, "stopped")
     _replacement = _pristine_job(service, doc, JobStatus.COMPLETED)
     directory = _job_directory(doc)
 
@@ -120,7 +121,7 @@ def test_a_directory_shared_with_another_job_is_never_cleaned(qapp, tmp_path: Pa
 
 def test_a_remote_directory_shared_with_another_job_is_refused(qapp, tmp_path: Path) -> None:
     window, service, doc = _project(tmp_path)
-    job = _pristine_job(service, doc, JobStatus.STOPPED)
+    job = _pristine_job(service, doc, "stopped")
     _job_directory(doc)
     _on_cluster(job)
     other = service.add_job(
@@ -136,7 +137,7 @@ def test_a_remote_directory_shared_with_another_job_is_refused(qapp, tmp_path: P
 
 def test_the_same_remote_path_on_another_cluster_is_not_shared(qapp, tmp_path: Path) -> None:
     window, service, doc = _project(tmp_path)
-    job = _pristine_job(service, doc, JobStatus.STOPPED)
+    job = _pristine_job(service, doc, "stopped")
     _job_directory(doc)
     _on_cluster(job)
     other = service.add_job(
@@ -151,7 +152,7 @@ def test_the_same_remote_path_on_another_cluster_is_not_shared(qapp, tmp_path: P
 
 def test_directories_not_named_after_the_job_are_refused(qapp, tmp_path: Path) -> None:
     window, service, doc = _project(tmp_path)
-    job = _pristine_job(service, doc, JobStatus.STOPPED)
+    job = _pristine_job(service, doc, "stopped")
     _job_directory(doc)
 
     window._job_seed_name = lambda _job: SEED
@@ -175,7 +176,7 @@ def test_directories_outside_the_job_folders_are_refused(
     qapp, tmp_path: Path, location: str
 ) -> None:
     window, service, doc = _project(tmp_path)
-    job = _pristine_job(service, doc, JobStatus.STOPPED)
+    job = _pristine_job(service, doc, "stopped")
     directory = (
         tmp_path / "elsewhere" / SEED
         if location == "outside"
@@ -198,8 +199,8 @@ def test_dashboard_start_again_never_touches_a_running_replacements_directory(
     qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     window, service, doc = _project(tmp_path)
-    old = _pristine_job(service, doc, JobStatus.STOPPED)
-    replacement = _pristine_job(service, doc, JobStatus.RUNNING)
+    old = _pristine_job(service, doc, "stopped")
+    replacement = _pristine_job(service, doc, "running")
     directory = _job_directory(doc)
     _on_cluster(old)
     _on_cluster(replacement, remote_job_id="5000")
@@ -243,8 +244,8 @@ def test_two_fresh_starts_sharing_a_remote_directory_delete_nothing(
     qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     window, service, doc = _project(tmp_path)
-    first = _pristine_job(service, doc, JobStatus.STOPPED)
-    second = _pristine_job(service, doc, JobStatus.FAILED)
+    first = _pristine_job(service, doc, "stopped")
+    second = _pristine_job(service, doc, "failed")
     _job_directory(doc)
     _on_cluster(first)
     _on_cluster(second, remote_job_id="4243")
@@ -255,7 +256,7 @@ def test_two_fresh_starts_sharing_a_remote_directory_delete_nothing(
 
     window._submit_jobs_on_cluster(
         [first, second],
-        eligible_statuses={JobStatus.STOPPED, JobStatus.FAILED},
+        eligible_statuses={JobStatus.ENDED},
         reuse_existing_remote_files=True,
         fresh_start_job_ids={first.id, second.id},
     )
@@ -271,7 +272,7 @@ def test_a_fresh_start_into_a_protected_directory_is_dropped(
     """Defence in depth: never submit a fresh start whose directory survives."""
 
     window, service, doc = _project(tmp_path)
-    fresh = _pristine_job(service, doc, JobStatus.STOPPED)
+    fresh = _pristine_job(service, doc, "stopped")
     _job_directory(doc)
     _on_cluster(fresh)
     continuing = _pristine_job(service, doc, JobStatus.DEFINED, row_key="other")
@@ -292,7 +293,7 @@ def test_a_fresh_start_into_a_protected_directory_is_dropped(
 
     window._submit_jobs_on_cluster(
         [fresh, continuing],
-        eligible_statuses={JobStatus.STOPPED, JobStatus.DEFINED},
+        eligible_statuses={JobStatus.ENDED, JobStatus.DEFINED},
         reuse_existing_remote_files=True,
         fresh_start_job_ids={fresh.id},
     )
@@ -312,7 +313,7 @@ def test_cancelling_the_cluster_dialog_deletes_nothing(
     qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     window, service, doc = _project(tmp_path)
-    job = _pristine_job(service, doc, JobStatus.STOPPED)
+    job = _pristine_job(service, doc, "stopped")
     directory = _job_directory(doc)
     _on_cluster(job)
 
@@ -322,7 +323,7 @@ def test_cancelling_the_cluster_dialog_deletes_nothing(
 
     window._submit_jobs_on_cluster(
         [job],
-        eligible_statuses={JobStatus.STOPPED},
+        eligible_statuses={JobStatus.ENDED},
         reuse_existing_remote_files=True,
         fresh_start_job_ids={job.id},
     )
@@ -336,7 +337,7 @@ def test_a_failed_cluster_connection_deletes_nothing(
     qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     window, service, doc = _project(tmp_path)
-    job = _pristine_job(service, doc, JobStatus.STOPPED)
+    job = _pristine_job(service, doc, "stopped")
     directory = _job_directory(doc)
     _on_cluster(job)
 
@@ -351,7 +352,7 @@ def test_a_failed_cluster_connection_deletes_nothing(
 
     window._submit_jobs_on_cluster(
         [job],
-        eligible_statuses={JobStatus.STOPPED},
+        eligible_statuses={JobStatus.ENDED},
         reuse_existing_remote_files=True,
         fresh_start_job_ids={job.id},
     )
@@ -365,7 +366,7 @@ def test_cancelling_the_local_dialog_deletes_nothing(
     qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     window, service, doc = _project(tmp_path)
-    job = _pristine_job(service, doc, JobStatus.STOPPED)
+    job = _pristine_job(service, doc, "stopped")
     job.execution_target = "local"
     directory = _job_directory(doc)
 
@@ -387,7 +388,7 @@ def test_cancelling_the_local_dialog_deletes_nothing(
     monkeypatch.setattr(main_window_module, "LocalSubmissionDialog", _CancelledDialog)
 
     window._submit_jobs_locally(
-        [job], eligible_statuses={JobStatus.STOPPED}, fresh_start_job_ids={job.id}
+        [job], eligible_statuses={JobStatus.ENDED}, fresh_start_job_ids={job.id}
     )
 
     assert sorted(path.name for path in directory.iterdir()) == ALL_FILES

@@ -25,7 +25,7 @@ import pytest
 import mufinder.services.cluster_keyword_generator as generator_module
 import mufinder.services.cluster_keyword_scripts as scripts_module
 from mufinder.domain.cluster import ClusterConfig
-from mufinder.domain.enums import JobStatus
+from mufinder.services.job_reconcile import SchedulerState
 from mufinder.services.cluster_keyword_generator import (
     ClusterKeywordGenerationCancelled,
     ClusterKeywordGenerationError,
@@ -154,7 +154,7 @@ class _SchedulerSSH:
 
 
 class _Info:
-    def __init__(self, state: JobStatus) -> None:
+    def __init__(self, state: str) -> None:
         self.job_id = "42"
         self.state = state
 
@@ -164,7 +164,7 @@ class _Scheduler:
 
     def __init__(
         self,
-        states: list[JobStatus] | None = None,
+        states: list[str] | None = None,
         *,
         dump: bytes | None = None,
         log: bytes | None = None,
@@ -194,8 +194,8 @@ class _Scheduler:
     def cancel(self, _ssh, job_id: str) -> None:
         self.cancelled_jobs.append(job_id)
 
-    def map_to_job_status(self, state: JobStatus) -> JobStatus:
-        return state
+    def map_to_scheduler_state(self, state: str) -> SchedulerState:
+        return {"queued": SchedulerState.PENDING}.get(str(state)) or SchedulerState(state)
 
 
 def _direct_config(**overrides) -> ClusterConfig:
@@ -475,7 +475,7 @@ def test_scheduler_mode_parses_the_remote_dump_and_cleans_up(
     monkeypatch: pytest.MonkeyPatch,
     no_sleep: list[float],
 ) -> None:
-    scheduler = _Scheduler([JobStatus.QUEUED, JobStatus.RUNNING], dump=_scheduler_dump(_ALL_NAMES))
+    scheduler = _Scheduler(["queued", "running"], dump=_scheduler_dump(_ALL_NAMES))
     _use_scheduler(monkeypatch, scheduler)
     output_path = tmp_path / "castep_keywords.json"
     progress: list[str] = []
@@ -587,7 +587,7 @@ def test_running_job_progress_detail_is_best_effort(
     no_sleep: list[float],
     grep_result: tuple[int, str, str],
 ) -> None:
-    scheduler = _Scheduler([JobStatus.RUNNING], dump=_scheduler_dump(_ALL_NAMES))
+    scheduler = _Scheduler(["running"], dump=_scheduler_dump(_ALL_NAMES))
     _use_scheduler(monkeypatch, scheduler)
     monkeypatch.setattr(_SchedulerSSH, "grep_result", grep_result)
     progress: list[str] = []
@@ -604,7 +604,7 @@ def test_running_job_progress_detail_is_best_effort(
 def test_scheduler_polling_backs_off(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, no_sleep: list[float]
 ) -> None:
-    scheduler = _Scheduler([JobStatus.QUEUED] * 6, dump=_scheduler_dump(_ALL_NAMES))
+    scheduler = _Scheduler(["queued"] * 6, dump=_scheduler_dump(_ALL_NAMES))
     _use_scheduler(monkeypatch, scheduler)
 
     generate_cluster_castep_keywords_json(
@@ -847,9 +847,7 @@ def test_mpi_job_environment_pattern_selects_only_job_bound_variables() -> None:
 def test_scheduler_failed_state_raises_with_log(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, no_sleep
 ) -> None:
-    scheduler = _Scheduler(
-        [JobStatus.FAILED], log=b"castep.mpi: error while loading shared libraries\n"
-    )
+    scheduler = _Scheduler(["failed"], log=b"castep.mpi: error while loading shared libraries\n")
     _use_scheduler(monkeypatch, scheduler)
 
     with pytest.raises(ClusterKeywordGenerationError) as excinfo:
@@ -947,7 +945,7 @@ def test_failure_report_survives_an_unlistable_directory(
 def test_scheduler_cancelled_state_raises_cancelled(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, no_sleep
 ) -> None:
-    scheduler = _Scheduler([JobStatus.CANCELLED])
+    scheduler = _Scheduler(["cancelled"])
     _use_scheduler(monkeypatch, scheduler)
 
     with pytest.raises(ClusterKeywordGenerationCancelled, match="job was cancelled"):
@@ -963,7 +961,7 @@ def test_cancel_while_waiting_cancels_the_remote_job(
     monkeypatch: pytest.MonkeyPatch,
     no_sleep: list[float],
 ) -> None:
-    scheduler = _Scheduler([JobStatus.QUEUED] * 50)
+    scheduler = _Scheduler(["queued"] * 50)
     _use_scheduler(monkeypatch, scheduler)
 
     with pytest.raises(ClusterKeywordGenerationCancelled):
@@ -990,7 +988,7 @@ def test_cancel_and_cleanup_errors_do_not_mask_the_outcome(
         def rmtree(self, remote_path: str) -> None:
             raise OSError("permission denied")
 
-    scheduler = _FragileScheduler([JobStatus.QUEUED] * 5)
+    scheduler = _FragileScheduler(["queued"] * 5)
     monkeypatch.setattr(generator_module, "SSHConnection", _FragileSSH)
     monkeypatch.setattr(generator_module, "create_scheduler", lambda *_args, **_kwargs: scheduler)
 

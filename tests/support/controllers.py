@@ -44,6 +44,7 @@ from mufinder.app.workflow_controllers.base import WorkflowControllerContext
 from mufinder.app.workflow_config_codecs import serialize_pristine_relaxation_config
 from mufinder.app.workflow_dialogs import SourceConfigureResult
 from mufinder.app.workflow_submission import WorkflowSubmissionCoordinator
+from tests.support.jobs import set_job_state
 
 
 def no_artifacts() -> ParsedJobArtifacts:
@@ -258,7 +259,7 @@ def job_with_status(
     calc_type: str,
 ) -> str:
     job = service.add_job(document, label="job", workflow_stage=stage, calc_type=calc_type)
-    job.status = status
+    set_job_state(job, status)
     return str(job.id)
 
 

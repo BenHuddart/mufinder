@@ -13,7 +13,7 @@ from mufinder.app.convergence_types import ConvergenceConfig, SweepPointRunState
 from mufinder.app.main_window import MainWindow
 from mufinder.app.workflow_config_codecs import deserialize_convergence_config
 from mufinder.castep_io.types import BlockSection, ValueWithUnit
-from mufinder.domain.enums import JobStatus, WorkflowStage
+from mufinder.domain.enums import EndReason, JobActivity, JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationRun, Job, Result, Structure
 from mufinder.services.job_paths import definition_output_directory
 from mufinder.services.convergence_defaults import (
@@ -476,7 +476,8 @@ def test_convergence_states_merge_equivalent_definition_mappings(
         workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF,
         calc_type="castep_convergence_cutoff",
     )
-    running_300.status = JobStatus.RUNNING
+    running_300.status = JobStatus.ACTIVE
+    running_300.activity = JobActivity.RUNNING
     completed_400 = service.add_job(
         doc,
         label="cutoff_convergence_ecut_400",
@@ -490,7 +491,8 @@ def test_convergence_states_merge_equivalent_definition_mappings(
         workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF,
         calc_type="castep_convergence_cutoff",
     )
-    failed_1400.status = JobStatus.FAILED
+    failed_1400.status = JobStatus.ENDED
+    failed_1400.end_reason = EndReason.UNKNOWN
     stale_300 = service.add_job(
         doc,
         label="cutoff_convergence_ecut_300",
@@ -1111,7 +1113,8 @@ def test_main_window_convergence_failed_handlers_forward_jobs(
         workflow_stage=main_window_module.WorkflowStage.CONVERGENCE_CUTOFF,
         calc_type="castep_convergence_cutoff",
     )
-    job.status = JobStatus.FAILED
+    job.status = JobStatus.ENDED
+    job.end_reason = EndReason.UNKNOWN
 
     service.register_convergence_cutoff_definition(
         doc,
@@ -1291,7 +1294,8 @@ def test_main_window_reset_failed_convergence_job_restores_ready_state(
         workflow_stage=main_window_module.WorkflowStage.CONVERGENCE_CUTOFF,
         calc_type="castep_convergence_cutoff",
     )
-    job.status = JobStatus.FAILED
+    job.status = JobStatus.ENDED
+    job.end_reason = EndReason.UNKNOWN
     service.register_convergence_cutoff_definition(
         doc,
         host_structure_id=host.id,
@@ -1346,12 +1350,13 @@ def test_main_window_remove_convergence_cutoff_deletes_files_and_entities(
         workflow_stage=main_window_module.WorkflowStage.CONVERGENCE_CUTOFF,
         calc_type="castep_convergence_cutoff",
     )
-    job.status = JobStatus.FAILED
+    job.status = JobStatus.ENDED
+    job.end_reason = EndReason.UNKNOWN
     job_dir = output_root / job.label
     job_dir.mkdir(parents=True, exist_ok=True)
     (job_dir / f"{job.label}.castep").write_text("done", encoding="utf-8")
 
-    run = CalculationRun(job_id=job.id, status=JobStatus.FAILED, run_index=1)
+    run = CalculationRun(job_id=job.id, status=JobStatus.ENDED, run_index=1)
     result = Result(
         calculation_run_id=run.id, result_type="castep_singlepoint", data={"total_energy": -1.0}
     )
@@ -1643,7 +1648,8 @@ def test_main_window_remove_convergence_cutoff_clears_equivalent_definition_mapp
         workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF,
         calc_type="castep_convergence_cutoff",
     )
-    running_job.status = JobStatus.RUNNING
+    running_job.status = JobStatus.ACTIVE
+    running_job.activity = JobActivity.RUNNING
     old_definition.parameters["job_ids_by_cutoff"] = {"300": str(running_job.id)}
 
     active_definition = service.register_convergence_cutoff_definition(

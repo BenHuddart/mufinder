@@ -408,7 +408,7 @@ def dashboard_project(directory: Path) -> Path:
 
     from datetime import timedelta
 
-    from mufinder.domain.enums import FailureReason, JobStatus
+    from mufinder.domain.enums import EndReason, JobStatus
     from mufinder.domain.models import utc_now
 
     service, document = _build_fixture(directory)
@@ -417,31 +417,25 @@ def dashboard_project(directory: Path) -> Path:
         for definition in document.calculations.values()
         if definition.workflow_stage == WorkflowStage.CONVERGENCE_CUTOFF
     )
-    outcomes = (  # cutoff, status, cause, message, minutes run
-        (
-            300.0,
-            JobStatus.FAILED,
-            FailureReason.CASTEP_ERROR,
-            "SCF did not converge in 100 cycles",
-            9,
-        ),
-        (400.0, JobStatus.STOPPED, FailureReason.WALLTIME, "Stopped at the walltime limit", 60),
-        (500.0, JobStatus.CANCELLED, None, None, 4),
+    outcomes = (  # cutoff, why it ended, message, minutes run
+        (300.0, EndReason.CASTEP_ERROR, "SCF did not converge in 100 cycles", 9),
+        (400.0, EndReason.WALLTIME, "Stopped at the walltime limit", 60),
+        (500.0, EndReason.CANCELLED, None, 4),
     )
     labels = dict(
         zip(CUTOFFS_EV, sweep_job_labels(document, WorkflowStage.CONVERGENCE_CUTOFF), strict=True)
     )
     mapping = definition.parameters.setdefault("job_ids_by_cutoff", {})
     finished = utc_now()
-    for cutoff, status, reason, message, minutes in outcomes:
+    for cutoff, reason, message, minutes in outcomes:
         job = service.add_job(
             document,
             label=labels[cutoff],
             workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF,
             calc_type="castep_convergence_cutoff",
         )
-        job.status = status
-        job.failure_reason = reason
+        job.status = JobStatus.ENDED
+        job.end_reason = reason
         job.error_message = message
         job.num_processes = 4
         job.submitted_at = job.started_at = finished - timedelta(minutes=minutes)
@@ -1108,14 +1102,15 @@ def show_running_progress(window: MainWindow) -> QWidget:
     runner keeps it in while CASTEP writes its ``.castep``.
     """
 
-    from mufinder.domain.enums import JobStatus
+    from mufinder.domain.enums import JobActivity, JobStatus
 
     job = next(
         job
         for job in window._document.jobs.values()
         if job.workflow_stage == WorkflowStage.PRISTINE_RELAXATION
     )
-    job.status = JobStatus.RUNNING
+    job.status = JobStatus.ACTIVE
+    job.activity = JobActivity.RUNNING
     castep = window._job_output_directory(job) / f"{window._job_seed_name(job)}.castep"
     monitor = window._job_progress
     monitor._local_output_paths = lambda job_id: (castep,) if job_id == job.id else ()

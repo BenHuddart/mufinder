@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from mufinder.services.job_monitoring import job_status_word
 from mufinder.castep_io.output_parser import CastepResult
 from mufinder.domain.enums import JobStatus
 
@@ -24,12 +25,12 @@ def test_harness_local_job_full_lifecycle(qapp, tmp_path: Path) -> None:
     assert outcome.submitted_count == 1
     assert harness.local_runner.submitted[0]["job_id"] == job.id
     assert harness.local_runner.max_concurrent == 2
-    assert job.status == JobStatus.SUBMITTING
+    assert job_status_word(job) == "submitting"
 
     # Drive the lifecycle purely by emitting runner signals.
-    harness.emit_local_status(job.id, JobStatus.QUEUED)
+    harness.emit_local_status(job.id, "queued")
     harness.emit_local_started(job.id)
-    assert job.status == JobStatus.RUNNING
+    assert job_status_word(job) == "running"
 
     harness.emit_local_finished(
         job.id,
@@ -51,12 +52,12 @@ def test_harness_local_job_failure_via_signal(qapp, tmp_path: Path) -> None:
     job = harness.add_job("local-fail")
 
     harness.submit_local(job)
-    harness.emit_local_status(job.id, JobStatus.QUEUED)
+    harness.emit_local_status(job.id, "queued")
     harness.emit_local_started(job.id)
 
     harness.emit_local_failed(job.id, "castep crashed")
 
-    assert job.status == JobStatus.FAILED
+    assert job_status_word(job) == "failed"
     assert job.error_message == "castep crashed"
     assert harness.controller.active_run_by_job == {}
     assert harness.document.provenance[-1].action == "job_failed"
@@ -69,14 +70,14 @@ def test_harness_cluster_job_full_lifecycle(qapp, tmp_path: Path) -> None:
     outcome = harness.submit_cluster(job)
     assert outcome.submitted_job is job
     assert harness.cluster_runner.submitted[0]["job_id"] == job.id
-    assert job.status == JobStatus.QUEUED
+    assert job_status_word(job) == "queued"
     assert job.remote_job_id == "12345"
 
     # Each check reports what it saw; the last one carries the complete output.
     harness.emit_cluster_checked(job.id, SchedulerState.RUNNING)
-    assert job.status == JobStatus.RUNNING
+    assert job_status_word(job) == "running"
     harness.emit_cluster_checked(job.id, SchedulerState.COMPLETED)
-    assert job.status == JobStatus.RETRIEVING
+    assert job_status_word(job) == "retrieving"
 
     harness.emit_cluster_checked(
         job.id,
@@ -102,9 +103,9 @@ def test_harness_cluster_job_stopped_is_terminal(qapp, tmp_path: Path) -> None:
     harness.emit_cluster_checked(job.id, SchedulerState.TIMED_OUT, OutputState.ABSENT)
 
     run = harness.controller.run_for_job(job.id)
-    assert job.status == JobStatus.STOPPED
+    assert job_status_word(job) == "stopped"
     assert run is not None
-    assert run.status == JobStatus.STOPPED
+    assert run.status == JobStatus.ENDED
     assert harness.controller.active_run_by_job == {}
     assert harness.document.provenance[-1].action == "job_stopped"
 
@@ -118,14 +119,14 @@ def test_harness_local_queued_status_routes_through_project_service(qapp, tmp_pa
     job = harness.add_job("local-queued")
 
     harness.submit_local(job)
-    assert job.status == JobStatus.SUBMITTING
+    assert job_status_word(job) == "submitting"
 
-    harness.emit_local_status(job.id, JobStatus.QUEUED)
-    assert job.status == JobStatus.QUEUED
+    harness.emit_local_status(job.id, "queued")
+    assert job_status_word(job) == "queued"
     assert job.remote_job_id is None
     run = harness.controller.run_for_job(job.id)
     assert run is not None
-    assert run.status == JobStatus.QUEUED
+    assert run.status == JobStatus.ACTIVE
 
 
 def test_harness_local_queued_status_is_noop_for_already_queued_job(qapp, tmp_path: Path) -> None:
@@ -137,18 +138,18 @@ def test_harness_local_queued_status_is_noop_for_already_queued_job(qapp, tmp_pa
     job = harness.add_job("local-requeued")
 
     harness.submit_local(job)
-    harness.emit_local_status(job.id, JobStatus.QUEUED)
-    assert job.status == JobStatus.QUEUED
+    harness.emit_local_status(job.id, "queued")
+    assert job_status_word(job) == "queued"
     run_id_before = harness.controller.active_run_by_job.get(job.id)
 
     # A redundant queued signal for the (now) QUEUED job is ignored.
-    harness.emit_local_status(job.id, JobStatus.QUEUED)
-    assert job.status == JobStatus.QUEUED
+    harness.emit_local_status(job.id, "queued")
+    assert job_status_word(job) == "queued"
     assert harness.controller.active_run_by_job.get(job.id) == run_id_before
 
     # Once the job is RUNNING, a stray queued signal is likewise ignored (RUNNING
     # is not SUBMITTING, so the guard short-circuits) and does not regress state.
     harness.emit_local_started(job.id)
-    assert job.status == JobStatus.RUNNING
-    harness.emit_local_status(job.id, JobStatus.QUEUED)
-    assert job.status == JobStatus.RUNNING
+    assert job_status_word(job) == "running"
+    harness.emit_local_status(job.id, "queued")
+    assert job_status_word(job) == "running"

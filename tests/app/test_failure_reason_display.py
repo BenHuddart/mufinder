@@ -7,8 +7,9 @@ from pathlib import Path
 import pytest
 
 from mufinder.app.main_window import MainWindow
-from mufinder.domain.enums import FailureReason, JobStatus, WorkflowStage
+from mufinder.domain.enums import EndReason, JobStatus, WorkflowStage
 from mufinder.services.project_service import ProjectService
+from tests.support.jobs import set_job_state
 from tests.support.main_window import capture_failed_job_dialogs
 
 _SLURM_TIMEOUT = (
@@ -27,7 +28,7 @@ def _window_with_job(tmp_path: Path, *, label: str, status: JobStatus):
         workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF,
         calc_type="castep_convergence_cutoff",
     )
-    job.status = status
+    set_job_state(job, status)
     window._document = doc
     return window, doc, job
 
@@ -40,8 +41,8 @@ def _status_item(window: MainWindow):
 
 
 def test_dashboard_status_names_the_failure_reason(qapp, tmp_path: Path) -> None:
-    window, _doc, job = _window_with_job(tmp_path, label="timed_out", status=JobStatus.STOPPED)
-    job.failure_reason = FailureReason.WALLTIME
+    window, _doc, job = _window_with_job(tmp_path, label="timed_out", status="stopped")
+    job.end_reason = EndReason.WALLTIME
     job.error_message = "The scheduler stopped the job when it reached its walltime limit."
 
     item = _status_item(window)
@@ -59,8 +60,8 @@ def test_dashboard_status_names_the_failure_reason(qapp, tmp_path: Path) -> None
 def test_stopped_job_can_be_resubmitted_from_the_dashboard(
     qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    window, _doc, job = _window_with_job(tmp_path, label="timed_out", status=JobStatus.STOPPED)
-    job.failure_reason = FailureReason.WALLTIME
+    window, _doc, job = _window_with_job(tmp_path, label="timed_out", status="stopped")
+    job.end_reason = EndReason.WALLTIME
     job.execution_target = "alpha"
     job.remote_directory = "/remote/work/timed_out"
 
@@ -77,14 +78,14 @@ def test_stopped_job_can_be_resubmitted_from_the_dashboard(
 
     assert len(calls) == 1
     assert calls[0]["jobs"] == [job]
-    assert JobStatus.STOPPED in calls[0]["eligible_statuses"]
+    assert calls[0]["eligible_statuses"] == {JobStatus.ENDED}
     assert calls[0]["reuse_existing_remote_files"] is True
     window.close()
 
 
 def test_dashboard_tooltip_adds_the_recorded_message(qapp, tmp_path: Path) -> None:
-    window, _doc, job = _window_with_job(tmp_path, label="oom", status=JobStatus.FAILED)
-    job.failure_reason = FailureReason.OUT_OF_MEMORY
+    window, _doc, job = _window_with_job(tmp_path, label="oom", status="failed")
+    job.end_reason = EndReason.OUT_OF_MEMORY
     job.error_message = "Scheduler reported the job as OUT_OF_MEMORY."
 
     item = _status_item(window)
@@ -98,7 +99,7 @@ def test_dashboard_tooltip_adds_the_recorded_message(qapp, tmp_path: Path) -> No
 
 
 def test_dashboard_undiagnosed_failure_shows_its_message(qapp, tmp_path: Path) -> None:
-    window, _doc, job = _window_with_job(tmp_path, label="odd", status=JobStatus.FAILED)
+    window, _doc, job = _window_with_job(tmp_path, label="odd", status="failed")
     job.error_message = "process exited with code 1"
 
     item = _status_item(window)
@@ -109,9 +110,9 @@ def test_dashboard_undiagnosed_failure_shows_its_message(qapp, tmp_path: Path) -
 
 
 def test_dashboard_active_job_has_no_failure_tooltip(qapp, tmp_path: Path) -> None:
-    window, _doc, job = _window_with_job(tmp_path, label="busy", status=JobStatus.RUNNING)
+    window, _doc, job = _window_with_job(tmp_path, label="busy", status="running")
     # A stale reason from an earlier run must not leak onto an active row.
-    job.failure_reason = FailureReason.WALLTIME
+    job.end_reason = EndReason.WALLTIME
 
     item = _status_item(window)
 
@@ -121,11 +122,11 @@ def test_dashboard_active_job_has_no_failure_tooltip(qapp, tmp_path: Path) -> No
 
 
 def test_dashboard_status_updates_in_place_when_the_reason_arrives(qapp, tmp_path: Path) -> None:
-    window, _doc, job = _window_with_job(tmp_path, label="later", status=JobStatus.RUNNING)
+    window, _doc, job = _window_with_job(tmp_path, label="later", status="running")
     first = _status_item(window)
 
-    job.status = JobStatus.STOPPED
-    job.failure_reason = FailureReason.WALLTIME
+    job.status = JobStatus.ENDED
+    job.end_reason = EndReason.WALLTIME
     second = _status_item(window)
 
     assert second is first
@@ -136,7 +137,7 @@ def test_dashboard_status_updates_in_place_when_the_reason_arrives(qapp, tmp_pat
 def test_inspect_leads_with_the_cause_and_its_evidence(
     qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    window, doc, job = _window_with_job(tmp_path, label="timed_out", status=JobStatus.STOPPED)
+    window, doc, job = _window_with_job(tmp_path, label="timed_out", status="stopped")
     job.remote_job_id = "4242"
     output_dir = doc.project_root / "files" / "convergence_cutoff" / job.label
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -156,7 +157,7 @@ def test_inspect_leads_with_the_cause_and_its_evidence(
 def test_inspect_headlines_the_recorded_message_when_no_cause_is_found(
     qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    window, _doc, job = _window_with_job(tmp_path, label="scf", status=JobStatus.FAILED)
+    window, _doc, job = _window_with_job(tmp_path, label="scf", status="failed")
     job.error_message = "CASTEP exited with status 1: SCF cycles did not converge"
     dialogs = capture_failed_job_dialogs(monkeypatch)
 
@@ -173,8 +174,8 @@ def test_inspect_headlines_the_recorded_message_when_no_cause_is_found(
 def test_inspect_keeps_a_recorded_cause_the_logs_cannot_show(
     qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    window, _doc, job = _window_with_job(tmp_path, label="orphan", status=JobStatus.STOPPED)
-    job.failure_reason = FailureReason.INTERRUPTED
+    window, _doc, job = _window_with_job(tmp_path, label="orphan", status="stopped")
+    job.end_reason = EndReason.INTERRUPTED
     dialogs = capture_failed_job_dialogs(monkeypatch)
 
     window._inspect_failed_jobs([job])

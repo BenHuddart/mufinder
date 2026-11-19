@@ -16,7 +16,7 @@ from mufinder.domain.charge_states import (
     muon_charge_state_prefix,
     muon_relaxation_calc_type,
 )
-from mufinder.domain.enums import JobStatus, WorkflowStage
+from mufinder.domain.enums import JobActivity, JobStatus, WorkflowStage
 from mufinder.domain.models import (
     CalculationDefinition,
     CalculationRun,
@@ -75,6 +75,7 @@ from mufinder.workflow.energy_barriers import (
     TRANSITION_STATE_SEARCH_SET_CALC_TYPE,
 )
 from mufinder.workflow.muon_site import MUON_RELAXATION_DEFINITION_CALC_TYPE
+from tests.support.jobs import state_fields
 from tests.support.muon_sites import bind_muon_relaxation_row
 from tests.support.structures import host_structure
 
@@ -865,7 +866,7 @@ def _completed_relaxation(
     doc.structures[structure.id] = structure
     job = Job(
         label=label,
-        status=status,
+        **state_fields(status),
         calc_type=muon_relaxation_calc_type(POSITIVE_MUON_CHARGE_STATE),
     )
     if definition is not None:
@@ -897,7 +898,7 @@ def test_completed_muon_relaxation_sources_filter_and_sort(document: ProjectDocu
     low = add("Low", -2.0)
     unknown = add("unknown", None)
     unconverged = add("unconverged", -5.0, converged=False)
-    running = add("running", -5.0, status=JobStatus.RUNNING)
+    running = add("running", -5.0, status="running")
     no_muon = add("no-muon", -5.0, muon=None)
     rows = [high, low, unknown, unconverged, running, no_muon, high, ("none", "x", None, None)]
 
@@ -1080,7 +1081,7 @@ def test_completed_pristine_relaxation_jobs_describe_completed_rows(
     states = {
         "unit": _State(JobStatus.COMPLETED.value, job_unit.id, total_energy=-3.0, lattice_a=5.1),
         "super": _State(JobStatus.COMPLETED.value, job_super.id),
-        "queued": _State(JobStatus.QUEUED.value, uuid4()),
+        "queued": _State("queued", uuid4()),
         "unbound": _State(JobStatus.COMPLETED.value, None),
         "lost": _State(JobStatus.COMPLETED.value, uuid4()),
     }
@@ -1154,7 +1155,8 @@ def test_the_other_charge_state_needs_a_completed_relaxation(document: ProjectDo
     site = _add_relaxed_source(document, "O1", energy=-10.0)
     muonium_job = _relax_in_other_charge_state(document, site, MUONIUM_CHARGE_STATE, energy=-12.5)
 
-    muonium_job.status = JobStatus.RUNNING
+    muonium_job.status = JobStatus.ACTIVE
+    muonium_job.activity = JobActivity.RUNNING
     assert [candidate.key for candidate in eligible_quantum_source_candidates(document)] == [
         str(site.id)
     ]

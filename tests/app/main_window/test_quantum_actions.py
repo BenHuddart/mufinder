@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from mufinder.services.job_monitoring import job_status_word
 from pathlib import Path
 
 import pytest
@@ -10,7 +11,7 @@ from PySide6.QtWidgets import QApplication, QDialog
 
 import mufinder.app.main_window as main_window_module
 import mufinder.app.workflow_controllers.quantum_corrections as quantum_controller_module
-from mufinder.domain.enums import JobStatus, WorkflowStage
+from mufinder.domain.enums import EndReason, JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationRun, Result
 from mufinder.services.project_service import ProjectService
 from mufinder.workflow.quantum import QUANTUM_PHONON_CALC_TYPE
@@ -38,7 +39,8 @@ def _failed_phonon_row(main_window, tmp_path: Path, *, legacy: bool):
         workflow_stage=WorkflowStage.QUANTUM_CORRECTIONS,
         calc_type=QUANTUM_PHONON_CALC_TYPE,
     )
-    phonon.status = JobStatus.FAILED
+    phonon.status = JobStatus.ENDED
+    phonon.end_reason = EndReason.UNKNOWN
     phonon.execution_target = "archer2"
     phonon.remote_directory = "/work/quantum_siteA"
     definition.parameters["phonon_job_ids_by_label"] = {candidate.key: str(phonon.id)}
@@ -117,7 +119,7 @@ def test_quantum_row_reset_is_not_applied_when_cancelled(
     window._quantum_corrections_view.reset_failed_requested.emit([candidate.key])
 
     assert asked == [1]
-    assert phonon.status == JobStatus.FAILED
+    assert job_status_word(phonon) == "failed"
     assert phonon.remote_directory == "/work/quantum_siteA"
     assert (directory / "quantum_siteA.check").exists()
     window.close()

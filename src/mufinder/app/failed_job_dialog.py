@@ -29,7 +29,6 @@ from PySide6.QtWidgets import (
 )
 
 from mufinder.app.theme import style_hint_text, style_section_title
-from mufinder.domain.enums import JobStatus
 from mufinder.domain.text import plural
 from mufinder.services.failure_diagnosis import FailedJobReport, group_reports_by_headline
 
@@ -53,9 +52,9 @@ def failure_title(reports: Sequence[FailedJobReport]) -> str:
     """Return ``"<label> failed"`` for one job, ``"3 jobs stopped"`` for several."""
 
     statuses = {report.status for report in reports}
-    if statuses == {JobStatus.STOPPED}:
+    if statuses == {"stopped"}:
         verb = "stopped"
-    elif statuses == {JobStatus.FAILED}:
+    elif statuses == {"failed"}:
         verb = "failed"
     else:
         verb = "failed or stopped"

@@ -41,7 +41,7 @@ from mufinder.castep_io.geometry_progress import (
     parse_geometry_progress_lines,
 )
 from mufinder.castep_io.gui_metadata import WORKFLOW_TASK_MAP
-from mufinder.domain.enums import JobStatus
+from mufinder.domain.enums import JobActivity, JobStatus
 from mufinder.domain.models import Job
 from mufinder.services.job_monitoring import is_cluster_job
 
@@ -279,7 +279,11 @@ class JobProgressMonitor(QObject):
         followed = {
             job.id: is_cluster_job(job)
             for job in jobs
-            if job.status == JobStatus.RUNNING and job_reports_geometry_progress(job)
+            if (
+                job.status == JobStatus.ACTIVE
+                and job.activity == JobActivity.RUNNING
+                and job_reports_geometry_progress(job)
+            )
         }
         new_ids = [job_id for job_id in followed if job_id not in self._jobs]
         for job_id in [job_id for job_id in self._jobs if job_id not in followed]:

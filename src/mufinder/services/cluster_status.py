@@ -12,7 +12,7 @@ from collections.abc import Collection, Iterable
 from dataclasses import dataclass
 from enum import Enum
 
-from mufinder.domain.enums import ACTIVE_JOB_STATUSES
+from mufinder.domain.enums import JobStatus
 from mufinder.domain.models import Job
 from mufinder.services.job_monitoring import is_cluster_job
 
@@ -43,7 +43,7 @@ class ClusterStatus:
 def is_monitored_cluster_job(job: Job) -> bool:
     """Return whether queue checks follow ``job``: an active cluster job."""
 
-    return is_cluster_job(job) and job.status in ACTIVE_JOB_STATUSES
+    return is_cluster_job(job) and job.status == JobStatus.ACTIVE
 
 
 def monitored_cluster_names(jobs: Iterable[Job]) -> list[str]:

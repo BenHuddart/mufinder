@@ -10,11 +10,12 @@ proven independently of any concrete workflow. The module-level helpers in
 
 from __future__ import annotations
 
+from mufinder.services.job_monitoring import job_status_word
 import dataclasses
 from pathlib import Path
 
 from mufinder.castep_io.output_parser import CastepResult
-from mufinder.domain.enums import JobStatus, WorkflowStage
+from mufinder.domain.enums import EndReason, JobActivity, JobStatus, WorkflowStage
 from mufinder.domain.models import (
     CalculationDefinition,
     CalculationRun,
@@ -241,7 +242,7 @@ def test_submit_resets_dismissed_job_before_dispatch(tmp_path: Path) -> None:
     document = service.create_project(tmp_path / "p.mufinder", "P")
     dismissed = make_job("dismissed", service=service, document=document, calc_type="fake_calc")
     service.submit_job(dismissed)
-    service.fail_job(dismissed, "boom")
+    service.end_job(dismissed, EndReason.UNKNOWN, "boom")
     service.dismiss_job(dismissed)
 
     prepared: list[list[Job]] = []
@@ -283,7 +284,7 @@ def test_submit_aborts_when_resubmission_preparation_is_cancelled(tmp_path: Path
     document = service.create_project(tmp_path / "p.mufinder", "P")
     dismissed = make_job("dismissed", service=service, document=document, calc_type="fake_calc")
     service.submit_job(dismissed)
-    service.fail_job(dismissed, "boom")
+    service.end_job(dismissed, EndReason.UNKNOWN, "boom")
     service.dismiss_job(dismissed)
 
     local = RecordingBackend()
@@ -303,7 +304,7 @@ def test_submit_aborts_when_resubmission_preparation_is_cancelled(tmp_path: Path
 
     assert local.calls == []
     assert infos == []  # a cancelled cleanup prompt is a silent abort
-    assert dismissed.status is JobStatus.FAILED
+    assert job_status_word(dismissed) == "failed"
     assert dismissed.dismissed_at is not None
     assert controller.materialize_calls == [["a"]]  # no second pass after an abort
 
@@ -320,13 +321,13 @@ def test_submit_never_prepares_a_non_dismissed_failed_job(tmp_path: Path) -> Non
     document = service.create_project(tmp_path / "p.mufinder", "P")
     dismissed = make_job("dismissed", service=service, document=document, calc_type="fake_calc")
     service.submit_job(dismissed)
-    service.fail_job(dismissed, "boom")
+    service.end_job(dismissed, EndReason.UNKNOWN, "boom")
     service.dismiss_job(dismissed)
     still_failed = make_job(
         "still-failed", service=service, document=document, calc_type="fake_calc"
     )
     service.submit_job(still_failed)
-    service.fail_job(still_failed, "boom")
+    service.end_job(still_failed, EndReason.UNKNOWN, "boom")
 
     prepared: list[list[Job]] = []
     local = RecordingBackend()
@@ -343,7 +344,7 @@ def test_submit_never_prepares_a_non_dismissed_failed_job(tmp_path: Path) -> Non
     controller.submit(["a", "b"], target="local")
 
     assert [[job.id for job in jobs] for jobs in prepared] == [[dismissed.id]]
-    assert still_failed.status is JobStatus.FAILED
+    assert job_status_word(still_failed) == "failed"
     assert still_failed.dismissed_at is None
 
 
@@ -352,7 +353,8 @@ def test_submit_reports_rows_left_out_of_a_mixed_selection(tmp_path: Path) -> No
     document = service.create_project(tmp_path / "p.mufinder", "P")
     ready_job = make_job("ready", service=service, document=document, calc_type="fake_calc")
     running_job = make_job("running", service=service, document=document, calc_type="fake_calc")
-    running_job.status = JobStatus.RUNNING
+    running_job.status = JobStatus.ACTIVE
+    running_job.activity = JobActivity.RUNNING
     local = RecordingBackend()
     cluster = RecordingBackend()
     context = make_context(local_backend=local, cluster_backend=cluster)
@@ -862,7 +864,8 @@ def test_a_rows_earlier_job_shares_its_folder_in_every_definition(tmp_path: Path
 
 def test_a_rows_earlier_job_still_running_does_not_share_its_folder(tmp_path: Path) -> None:
     controller, document, root, jobs = _folder_controller(tmp_path, "x")
-    jobs["x"].status = JobStatus.RUNNING
+    jobs["x"].status = JobStatus.ACTIVE
+    jobs["x"].activity = JobActivity.RUNNING
     definition = CalculationDefinition(
         workflow_stage=WorkflowStage.UEP,
         calc_type="uep",
@@ -880,7 +883,11 @@ def test_submit_starts_only_the_jobs_free_to_start_and_resets_none_of_the_others
     service = ProjectService()
     document = service.create_project(tmp_path / "p.mufinder", "P")
     defined = make_job(status=JobStatus.DEFINED, label="defined")
-    refused = make_job(status=JobStatus.FAILED, label="refused", dismissed_at=utc_now())
+    refused = make_job(
+        status="failed",
+        label="refused",
+        dismissed_at=utc_now(),
+    )
     local = RecordingBackend()
     prepared: list[list[Job]] = []
     context = dataclasses.replace(
@@ -902,4 +909,4 @@ def test_submit_starts_only_the_jobs_free_to_start_and_resets_none_of_the_others
 
     assert prepared == []
     assert [jobs for jobs, _extras in local.calls] == [[defined]]
-    assert refused.status == JobStatus.FAILED
+    assert job_status_word(refused) == "failed"

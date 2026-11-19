@@ -14,7 +14,7 @@ from mufinder.domain.charge_states import (
     muon_charge_state_prefix,
     muon_relaxation_calc_type,
 )
-from mufinder.domain.enums import JobStatus, WorkflowStage
+from mufinder.domain.enums import JobActivity, JobStatus, WorkflowStage
 from mufinder.domain.models import (
     CalculationDefinition,
     CalculationRun,
@@ -93,7 +93,8 @@ def muon_project(tmp_path: Path) -> MuonProject:
         label="mu2",
         workflow_stage=WorkflowStage.MUON_RELAXATION,
         calc_type=calc_type,
-        status=JobStatus.RUNNING,
+        status=JobStatus.ACTIVE,
+        activity=JobActivity.RUNNING,
     )
     for job in (relaxed_job, running_job):
         document.jobs[job.id] = job

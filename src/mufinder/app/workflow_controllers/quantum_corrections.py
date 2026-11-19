@@ -55,7 +55,7 @@ from uuid import UUID
 from mufinder.castep_io.output_parser import CastepResult
 from mufinder.castep_io.schema import KeywordSpec
 from mufinder.castep_io.types import ValueWithUnit
-from mufinder.domain.enums import ACTIVE_JOB_STATUSES, JobStatus, WorkflowStage
+from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.domain.models import (
     CalculationDefinition,
     CalculationRun,
@@ -64,6 +64,7 @@ from mufinder.domain.models import (
 )
 from mufinder.domain.text import natural_sort_key
 from mufinder.services.job_artifacts import ParsedJobArtifacts
+from mufinder.services.job_monitoring import job_status_word
 from mufinder.services.job_results import parse_numeric
 from mufinder.services.quantum_results import (
     W1_DEFINITION,
@@ -381,7 +382,7 @@ class QuantumCorrectionsController(WorkflowJobController):
         if phonon_job is not None:
             return phonon_job
         singlepoint = self.legacy_singlepoint_job_for_key(definition, key)
-        if singlepoint is not None and singlepoint.status in ACTIVE_JOB_STATUSES:
+        if singlepoint is not None and singlepoint.status == JobStatus.ACTIVE:
             return singlepoint
         return None
 
@@ -422,7 +423,7 @@ class QuantumCorrectionsController(WorkflowJobController):
         if definition is None or key is None:
             return []
         singlepoint = self.legacy_singlepoint_job_for_key(definition, key)
-        if singlepoint is None or singlepoint.status in ACTIVE_JOB_STATUSES:
+        if singlepoint is None or singlepoint.status == JobStatus.ACTIVE:
             return []
         directory = self._context.job_output_directory(job)
         if directory is None or self._context.job_output_directory(singlepoint) != directory:
@@ -873,7 +874,7 @@ class QuantumCorrectionsController(WorkflowJobController):
                 continue
             job = self.row_job(definition, key)
             if job is not None and job.calc_type == QUANTUM_SINGLEPOINT_CALC_TYPE:
-                rows.append((self.source_label(candidate), job.status.value))
+                rows.append((self.source_label(candidate), job_status_word(job)))
         return rows
 
     def _rows_with_legacy_phonon_method(self, keys: list[object]) -> list[tuple[str, str]]:

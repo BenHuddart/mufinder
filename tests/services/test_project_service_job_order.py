@@ -9,7 +9,7 @@ from uuid import UUID
 import pytest
 
 from mufinder.domain import models
-from mufinder.domain.enums import JobStatus, WorkflowStage
+from mufinder.domain.enums import EndReason, JobStatus, WorkflowStage
 from mufinder.domain.models import Job, next_job_created_at
 from mufinder.persistence.json_store import ProjectStore
 from mufinder.services.project_service import ProjectService
@@ -30,7 +30,8 @@ def _legacy_payload(job_id: UUID, label: str, **timestamps: datetime) -> dict:
         "id": str(job_id),
         "label": label,
         "workflow_stage": WorkflowStage.MUON_RELAXATION.value,
-        "status": JobStatus.QUEUED.value,
+        "status": "active",
+        "activity": "queued",
     }
     payload.update({key: value.isoformat() for key, value in timestamps.items()})
     return payload
@@ -116,7 +117,8 @@ def test_resubmitting_or_resetting_a_job_does_not_move_it(tmp_path: Path) -> Non
         )
         document.jobs[job.id] = job
     first = next(iter(document.jobs.values()))
-    first.status = JobStatus.FAILED
+    first.status = JobStatus.ENDED
+    first.end_reason = EndReason.UNKNOWN
     service.reset_failed_job(first)
     service.submit_job(first)
     service.save_project(document)

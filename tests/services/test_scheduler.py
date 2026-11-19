@@ -6,7 +6,7 @@ from dataclasses import replace
 
 import pytest
 
-from mufinder.domain.enums import JobStatus
+from mufinder.services.job_reconcile import SchedulerState
 from mufinder.services.scheduler import (
     AddqueueScheduler,
     SchedulerSubmitRequest,
@@ -123,8 +123,8 @@ def test_slurm_history_reads_sacct_allocation_records() -> None:
         "--format=JobID,State,Elapsed,JobName"
     )
     assert sorted(records) == ["123", "124"]
-    assert scheduler.map_to_job_status(records["123"].state) == JobStatus.QUEUED
-    assert scheduler.map_to_job_status(records["124"].state) == JobStatus.CANCELLED
+    assert scheduler.map_to_scheduler_state(records["123"].state) == SchedulerState.PENDING
+    assert scheduler.map_to_scheduler_state(records["124"].state) == SchedulerState.CANCELLED
     assert scheduler.state_name(records["124"].state) == "CANCELLED"
     assert records["124"].elapsed_runtime == "00:01:02"
 
@@ -188,15 +188,15 @@ def test_slurm_status_invalid_job_id_fallback_queries_per_job() -> None:
 def test_slurm_state_mapping() -> None:
     scheduler = SlurmScheduler()
 
-    assert scheduler.map_to_job_status("PD") == JobStatus.QUEUED
-    assert scheduler.map_to_job_status("R") == JobStatus.RUNNING
-    assert scheduler.map_to_job_status("CD") == JobStatus.COMPLETED
-    assert scheduler.map_to_job_status("F") == JobStatus.FAILED
-    assert scheduler.map_to_job_status("TO") == JobStatus.STOPPED
-    assert scheduler.map_to_job_status("CA") == JobStatus.CANCELLED
-    assert scheduler.map_to_job_status("node_fail") == JobStatus.FAILED
+    assert scheduler.map_to_scheduler_state("PD") == SchedulerState.PENDING
+    assert scheduler.map_to_scheduler_state("R") == SchedulerState.RUNNING
+    assert scheduler.map_to_scheduler_state("CD") == SchedulerState.COMPLETED
+    assert scheduler.map_to_scheduler_state("F") == SchedulerState.FAILED
+    assert scheduler.map_to_scheduler_state("TO") == SchedulerState.TIMED_OUT
+    assert scheduler.map_to_scheduler_state("CA") == SchedulerState.CANCELLED
+    assert scheduler.map_to_scheduler_state("node_fail") == SchedulerState.FAILED
     # An unrecognised state keeps the job tracked, but never claims it runs.
-    assert scheduler.map_to_job_status("mystery") == JobStatus.QUEUED
+    assert scheduler.map_to_scheduler_state("mystery") == SchedulerState.PENDING
     assert scheduler.is_terminal("mystery") is False
     assert scheduler.is_terminal("completed") is True
     assert scheduler.is_terminal("running") is False
@@ -205,10 +205,10 @@ def test_slurm_state_mapping() -> None:
 @pytest.mark.parametrize(
     "state", ["CF", "S", "ST", "RH", "RQ", "RF", "RD", "SE", "SUSPENDED", "REQUEUE_HOLD"]
 )
-def test_slurm_waiting_and_held_states_map_to_queued(state: str) -> None:
+def test_slurm_waiting_and_held_states_map_to_pending(state: str) -> None:
     scheduler = SlurmScheduler()
 
-    assert scheduler.map_to_job_status(state) == JobStatus.QUEUED
+    assert scheduler.map_to_scheduler_state(state) == SchedulerState.PENDING
     assert scheduler.is_terminal(state) is False
 
 
@@ -216,7 +216,7 @@ def test_slurm_waiting_and_held_states_map_to_queued(state: str) -> None:
 def test_slurm_executing_states_map_to_running(state: str) -> None:
     scheduler = SlurmScheduler()
 
-    assert scheduler.map_to_job_status(state) == JobStatus.RUNNING
+    assert scheduler.map_to_scheduler_state(state) == SchedulerState.RUNNING
     assert scheduler.is_terminal(state) is False
 
 
@@ -226,7 +226,7 @@ def test_slurm_executing_states_map_to_running(state: str) -> None:
 def test_slurm_terminal_failure_states_map_to_failed(state: str) -> None:
     scheduler = SlurmScheduler()
 
-    assert scheduler.map_to_job_status(state) == JobStatus.FAILED
+    assert scheduler.map_to_scheduler_state(state) == SchedulerState.FAILED
     assert scheduler.is_terminal(state) is True
 
 

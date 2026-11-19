@@ -32,7 +32,6 @@ from uuid import uuid4
 import pytest
 from PySide6.QtCore import QMetaMethod
 
-from mufinder.domain.enums import JobStatus
 from mufinder.services import JobRunner
 from mufinder.services.cluster_runner import ClusterJobRunner
 from mufinder.services.local_runner import LocalJobRunner
@@ -121,7 +120,7 @@ def test_local_submit_missing_directory_does_not_raise_and_emits_failed(
     assert len(failures) == 1
     assert failures[0][0] == job_id
     assert "does not exist" in failures[0][1]
-    assert statuses == [(job_id, JobStatus.FAILED.value)]
+    assert statuses == [(job_id, "failed")]
 
 
 def test_cluster_submit_raises_without_connection(qapp, tmp_path: Path) -> None:

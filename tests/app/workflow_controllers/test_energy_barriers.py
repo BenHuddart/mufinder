@@ -24,7 +24,7 @@ from mufinder.castep_io.types import ValueWithUnit
 
 from mufinder.services.muon_sites_summary import ENERGY_BARRIERS_SCOPE, set_show_every_relaxed_site
 from mufinder.castep_io.output_parser import CastepResult
-from mufinder.domain.enums import JobStatus, WorkflowStage
+from mufinder.domain.enums import JobActivity, JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationRun, Job
 from mufinder.services.job_artifacts import ParsedJobArtifacts, collect_job_artifacts
 from mufinder.services.job_file_cleanup import JobCleanupOutcome
@@ -1166,7 +1166,8 @@ def test_energy_barriers_controller_configure_request_and_apply(tmp_path: Path) 
     )
 
     job = _neb_job(service, document, "barrier_neb", NUDGED_ELASTIC_BAND_CALC_TYPE)
-    job.status = JobStatus.RUNNING
+    job.status = JobStatus.ACTIVE
+    job.activity = JobActivity.RUNNING
     definition.parameters["job_ids_by_label"]["source-key"] = str(job.id)
     inspected = controller.configure_request(["source-key"])
     assert inspected is not None

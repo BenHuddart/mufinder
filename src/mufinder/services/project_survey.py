@@ -33,6 +33,7 @@ from mufinder.science.lattice import (
     lattice_frac_to_cart,
     wrap_fractional,
 )
+from mufinder.services.job_monitoring import job_status_word
 from mufinder.services.job_results import latest_result_for_job, total_energy_for_job
 from mufinder.services.magnetic_field_results import (
     field_result_uses_older_method,
@@ -259,7 +260,7 @@ def _relaxation_layers(document: ProjectDocument, host: Structure) -> list[Surve
                 )
             )
         elif start is not None:
-            status = job.status.value if job is not None else "not submitted"
+            status = job_status_word(job) if job is not None else "not submitted"
             markers.append(
                 SurveyMarker(start, SurveyMarkerKind.CANDIDATE, detail=f"{label} · {status}")
             )

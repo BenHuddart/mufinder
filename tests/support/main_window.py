@@ -24,6 +24,7 @@ from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationRun, Job, MuonSite, Result, Structure
 from mufinder.services.project_service import ProjectDocument, ProjectService
 from mufinder.workflow.quantum import QUANTUM_SINGLEPOINT_CALC_TYPE
+from tests.support.jobs import set_job_state
 from tests.support.qt import find_tree_item_by_route
 from tests.support.structures import host_structure
 
@@ -274,7 +275,7 @@ def stage_quantum_row(
             workflow_stage=WorkflowStage.QUANTUM_CORRECTIONS,
             calc_type=QUANTUM_SINGLEPOINT_CALC_TYPE,
         )
-        singlepoint_job.status = singlepoint_status
+        set_job_state(singlepoint_job, singlepoint_status)
         definition.parameters["singlepoint_job_ids_by_label"] = {
             str(site.id): str(singlepoint_job.id)
         }

@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from mufinder.domain.charge_states import MUONIUM_CHARGE_STATE, muon_relaxation_calc_type
-from mufinder.domain.enums import JobStatus, WorkflowStage
+from mufinder.domain.enums import JobActivity, JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationRun, Job, Result, Structure
 from mufinder.services.project_document import ProjectDocument
 from mufinder.services.structure_export import (
@@ -134,7 +134,8 @@ def test_export_is_unavailable_until_the_relaxation_completes(tmp_path: Path) ->
         calc_type=muon_relaxation_calc_type("positive_muon"),
         origin="muon_relaxation",
     )
-    job.status = JobStatus.RUNNING
+    job.status = JobStatus.ACTIVE
+    job.activity = JobActivity.RUNNING
 
     export = relaxed_structure_export_for_job(document, job)
 

@@ -13,11 +13,12 @@ These prove the end-to-end behavior through the real project-open flow
 
 from __future__ import annotations
 
+from mufinder.services.job_monitoring import job_status_word
 from pathlib import Path
 
 
 from mufinder.app.main_window import MainWindow
-from mufinder.domain.enums import JobStatus, WorkflowStage
+from mufinder.domain.enums import JobActivity, JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationRun
 from mufinder.services.job_execution_controller import JobExecutionController
 from mufinder.services.job_reconcile import NO_LOCAL_PROCESS_MESSAGE
@@ -40,8 +41,9 @@ def _seed_project_with_jobs(tmp_path: Path):
         calc_type="castep_cutoff",
         execution_target="local",
     )
-    local_job.status = JobStatus.RUNNING
-    run = CalculationRun(job_id=local_job.id, run_index=1, status=JobStatus.RUNNING)
+    local_job.status = JobStatus.ACTIVE
+    local_job.activity = JobActivity.RUNNING
+    run = CalculationRun(job_id=local_job.id, run_index=1, status=JobStatus.ACTIVE)
     document.runs[run.id] = run
 
     cluster_job = service.add_job(
@@ -51,7 +53,8 @@ def _seed_project_with_jobs(tmp_path: Path):
         calc_type="castep_cutoff",
         execution_target="SCARF",
     )
-    cluster_job.status = JobStatus.RUNNING
+    cluster_job.status = JobStatus.ACTIVE
+    cluster_job.activity = JobActivity.RUNNING
     cluster_job.remote_job_id = "12345"
     cluster_job.remote_directory = "/remote/work/cluster_running"
 
@@ -77,13 +80,13 @@ def test_open_project_stops_orphaned_local_job_and_shows_message(
     cluster_job = document.jobs[cluster_id]
 
     # Local job reconciled to STOPPED with the exact message; its run closed.
-    assert local_job.status == JobStatus.STOPPED
+    assert job_status_word(local_job) == "stopped"
     assert local_job.error_message == NO_LOCAL_PROCESS_MESSAGE
     latest_run = next(r for r in document.runs.values() if r.job_id == local_id)
-    assert latest_run.status == JobStatus.STOPPED
+    assert latest_run.status == JobStatus.ENDED
 
     # Cluster job untouched by reconciliation.
-    assert cluster_job.status == JobStatus.RUNNING
+    assert job_status_word(cluster_job) == "running"
 
     # Status-bar message surfaced (past the generic "Opened project" message).
     message = window.statusBar().currentMessage()
@@ -108,14 +111,14 @@ def test_reopen_does_not_re_reconcile_already_stopped_job(qapp, tmp_path, monkey
     monkeypatch.setattr(window, "_job_seed_name", lambda job: job.label)
 
     assert window._open_project_from_path(root) is True
-    assert window._document.jobs[local_id].status == JobStatus.STOPPED
+    assert job_status_word(window._document.jobs[local_id]) == "stopped"
     # Force the coalesced flush to persist the reconciled status to disk.
     window._flush_dashboard()
 
     # Reopen the same project; the stopped job must not be reconciled again.
     assert window._open_project_from_path(root) is True
     assert window.statusBar().currentMessage() == "Opened project Orphan"
-    assert window._document.jobs[local_id].status == JobStatus.STOPPED
+    assert job_status_word(window._document.jobs[local_id]) == "stopped"
     stopped_records = [
         record
         for record in window._document.provenance
@@ -134,13 +137,13 @@ def test_reconciliation_runs_before_jobs_table_render(qapp, tmp_path, monkeypatc
     monkeypatch.setattr(window, "_job_seed_name", lambda job: job.label)
 
     # Capture the local job's status at the moment the jobs table is rendered.
-    status_at_render: list[JobStatus] = []
+    status_at_render: list[str] = []
     original_refresh = window._refresh_jobs_table
 
     def _spy_refresh():
         job = window._document.jobs.get(local_id)
         if job is not None:
-            status_at_render.append(job.status)
+            status_at_render.append(job_status_word(job))
         return original_refresh()
 
     monkeypatch.setattr(window, "_refresh_jobs_table", _spy_refresh)
@@ -150,7 +153,7 @@ def test_reconciliation_runs_before_jobs_table_render(qapp, tmp_path, monkeypatc
     # The jobs table was rendered at least once and, every time, the orphaned
     # local job was already STOPPED — never a phantom RUNNING row.
     assert status_at_render, "jobs table was never rendered on open"
-    assert all(status == JobStatus.STOPPED for status in status_at_render)
+    assert all(status == "stopped" for status in status_at_render)
 
     window.close()
 
@@ -190,8 +193,9 @@ def test_stopped_local_muon_job_stays_linked_and_resettable(qapp, tmp_path, monk
         calc_type=calc_type,
         execution_target="local",
     )
-    job.status = JobStatus.RUNNING
-    run = CalculationRun(job_id=job.id, run_index=1, status=JobStatus.RUNNING)
+    job.status = JobStatus.ACTIVE
+    job.activity = JobActivity.RUNNING
+    run = CalculationRun(job_id=job.id, run_index=1, status=JobStatus.ACTIVE)
     document.runs[run.id] = run
 
     # Mirror real submission: persist the row->job mapping on the definition.
@@ -219,7 +223,7 @@ def test_stopped_local_muon_job_stays_linked_and_resettable(qapp, tmp_path, monk
     reloaded_definition = reloaded.calculations[definition.id]
     resolved = muon_relaxation_job_for_row(reloaded, reloaded_definition, "Site 1", "positive_muon")
     assert resolved is not None
-    assert resolved.status == JobStatus.STOPPED
+    assert job_status_word(resolved) == "stopped"
     # STOPPED is a resettable state, so the job can be resubmitted from the row.
     service.reset_failed_job(resolved)
     assert resolved.status == JobStatus.DEFINED

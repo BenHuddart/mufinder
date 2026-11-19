@@ -7,13 +7,14 @@ definition maintenance.
 
 from __future__ import annotations
 
+from mufinder.services.job_monitoring import job_status_word
 import copy
 from pathlib import Path
 
 import pytest
 
 from mufinder.castep_io.output_parser import CastepResult
-from mufinder.domain.enums import JobStatus, WorkflowStage
+from mufinder.domain.enums import EndReason, JobActivity, JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationRun, Job, Result, Structure
 from mufinder.services.job_artifacts import ParsedJobArtifacts, collect_job_artifacts
 from mufinder.services.project_service import ProjectDocument, ProjectService
@@ -24,6 +25,7 @@ from mufinder.app.workflow_config_codecs import (
     serialize_pristine_relaxation_config,
 )
 
+from tests.support.jobs import set_job_state
 from tests.support.controllers import (
     FakeRelaxationView,
     FakeRowState,
@@ -852,7 +854,8 @@ def test_pristine_controller_build_states_keeps_job_after_parameter_edit(
     document, _definition, job, view, output_root = _pristine_parameter_edit_fixture(
         service, tmp_path
     )
-    job.status = JobStatus.RUNNING
+    job.status = JobStatus.ACTIVE
+    job.activity = JobActivity.RUNNING
     persists: list[dict] = []
     controller = _pristine_edit_controller(service, document, view, output_root, persists)
     before = controller.build_states()
@@ -862,7 +865,7 @@ def test_pristine_controller_build_states_keeps_job_after_parameter_edit(
 
     after = controller.build_states()
     assert after["row1"].job_id == job.id
-    assert after["row1"].status == JobStatus.RUNNING.value
+    assert after["row1"].status == "running"
 
 
 def test_pristine_controller_row_is_continuable_reflects_raw_job_status(
@@ -880,19 +883,21 @@ def test_pristine_controller_row_is_continuable_reflects_raw_job_status(
     persists: list[dict] = []
     controller = _pristine_edit_controller(service, document, view, output_root, persists)
 
-    job.status = JobStatus.RUNNING
+    job.status = JobStatus.ACTIVE
+    job.activity = JobActivity.RUNNING
     assert controller.row_is_continuable("row1") is False
 
     for status in (
         JobStatus.COMPLETED,
-        JobStatus.FAILED,
-        JobStatus.STOPPED,
-        JobStatus.CANCELLED,
+        "failed",
+        "stopped",
+        "cancelled",
     ):
-        job.status = status
+        set_job_state(job, status)
         assert controller.row_is_continuable("row1") is True
 
-    job.status = JobStatus.FAILED
+    job.status = JobStatus.ENDED
+    job.end_reason = EndReason.UNKNOWN
     job.dismissed_at = utc_now()
     assert controller.row_is_continuable("row1") is True
 
@@ -915,7 +920,8 @@ def test_pristine_controller_relaxed_structure_export_follows_the_rows_job(
     )
     controller = _pristine_edit_controller(service, document, view, output_root, [])
 
-    job.status = JobStatus.RUNNING
+    job.status = JobStatus.ACTIVE
+    job.activity = JobActivity.RUNNING
     assert controller.relaxed_structure_export("row1").unavailable_reason == NOT_COMPLETED_REASON
 
     job.status = JobStatus.COMPLETED
@@ -1004,7 +1010,8 @@ def test_pristine_controller_continue_job_returns_to_defined_and_rewrites_direct
     param_path = output_root / job.label / f"{job.label}.param"
     assert "GEOM_MAX_ITER : 120" in param_path.read_text(encoding="utf-8")
 
-    job.status = JobStatus.FAILED
+    job.status = JobStatus.ENDED
+    job.end_reason = EndReason.UNKNOWN
     job.execution_target = "myhpc"
     job.remote_directory = "/scratch/user/row1"
     job.remote_job_id = "12345"
@@ -1048,12 +1055,13 @@ def test_pristine_controller_continue_job_rejects_non_continuable_job_without_mu
     controller = _pristine_edit_controller(service, document, view, output_root, persists)
     before = copy.deepcopy(definition.parameters["configuration"])
 
-    job.status = JobStatus.RUNNING
+    job.status = JobStatus.ACTIVE
+    job.activity = JobActivity.RUNNING
     assert controller.continue_job("row1", {"geom_max_iter": 500}) is None
 
     # Untouched: the row's parameters were never mutated, since the job wasn't
     # continuable in the first place.
-    assert job.status == JobStatus.RUNNING
+    assert job_status_word(job) == "running"
     assert definition.parameters["configuration"] == before
     assert not any(record.action == "job_continuation" for record in document.provenance)
 
@@ -1091,7 +1099,8 @@ def test_pristine_controller_continue_job_returns_none_when_materialize_fails(
     param_path = output_root / job.label / f"{job.label}.param"
     original_rendered = param_path.read_text(encoding="utf-8")
 
-    job.status = JobStatus.FAILED
+    job.status = JobStatus.ENDED
+    job.end_reason = EndReason.UNKNOWN
     job.remote_directory = "/scratch/user/row1"
 
     # Force the continuation's own materialize call to fail exactly the way
@@ -1137,7 +1146,8 @@ def test_pristine_controller_continue_job_leaves_row_untouched_when_document_dis
     document, definition, job, view, output_root = _pristine_parameter_edit_fixture(
         service, tmp_path
     )
-    job.status = JobStatus.FAILED
+    job.status = JobStatus.ENDED
+    job.end_reason = EndReason.UNKNOWN
     before_config = copy.deepcopy(definition.parameters["configuration"])
 
     calls = {"n": 0}
@@ -1163,7 +1173,7 @@ def test_pristine_controller_continue_job_leaves_row_untouched_when_document_dis
     assert result is None
     assert calls["n"] >= 2
     assert definition.parameters["configuration"] == before_config
-    assert job.status == JobStatus.FAILED
+    assert job_status_word(job) == "failed"
 
 
 # --------------------------------------------------------------------------- #

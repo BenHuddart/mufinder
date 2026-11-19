@@ -14,6 +14,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from mufinder.services.job_monitoring import job_status_word
 from mufinder.app.main_window import MainWindow
 from mufinder.app.relaxation_types import PristineRelaxationConfig, PristineRelaxationRow
 from mufinder.app.workflow_config_codecs import serialize_pristine_relaxation_config
@@ -21,6 +22,7 @@ from mufinder.domain.constants import IMPORTED_JOB_TAG
 from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.domain.models import Job, utc_now
 
+from tests.support.jobs import set_job_state
 from tests.app.test_job_folder_removal_guards import _Project, host  # noqa: F401
 from tests.app.test_relaxation_import_wizard import _document
 
@@ -335,7 +337,7 @@ class TestAProjectAlreadyHoldingBothInOneFolder:
         item = project.import_batch("runs", (1,), seed=SEED).imported[0]
         project.add_row()
         job = project.native(label="Site_native", seed=SEED)
-        job.status = status
+        set_job_state(job, status)
         return item, job
 
     def test_a_defined_job_is_not_written_or_started(self, project: _Submission) -> None:
@@ -368,7 +370,7 @@ class TestAProjectAlreadyHoldingBothInOneFolder:
     def test_a_dismissed_failed_job_is_not_written_or_started(
         self, project: _Submission, monkeypatch
     ) -> None:
-        _item, job = self._shared(project, JobStatus.FAILED)
+        _item, job = self._shared(project, "failed")
         job.dismissed_at = utc_now()
         before = _hashes(project.files)
 
@@ -376,14 +378,14 @@ class TestAProjectAlreadyHoldingBothInOneFolder:
 
         assert _hashes(project.files) == before
         assert project.started == []
-        assert job.status == JobStatus.FAILED
+        assert job_status_word(job) == "failed"
         assert project.asked == []
         assert len(project.warned) == 1
 
     def test_continue_relaxation_is_refused_before_anything_changes(
         self, project: _Submission, monkeypatch
     ) -> None:
-        _item, job = self._shared(project, JobStatus.FAILED)
+        _item, job = self._shared(project, "failed")
         before = _hashes(project.files)
         monkeypatch.setattr(
             project.controller,
@@ -399,7 +401,7 @@ class TestAProjectAlreadyHoldingBothInOneFolder:
         )
 
         assert _hashes(project.files) == before
-        assert job.status == JobStatus.FAILED
+        assert job_status_word(job) == "failed"
         assert project.seed() == SEED
         assert len(project.warned) == 1
 
@@ -422,7 +424,7 @@ class TestAProjectAlreadyHoldingBothInOneFolder:
         assert project.warned
 
     def test_dashboard_resubmit_refuses_it_with_the_same_box(self, project: _Submission) -> None:
-        _item, job = self._shared(project, JobStatus.CANCELLED)
+        _item, job = self._shared(project, "cancelled")
         job.execution_target = "local"
         before = _hashes(project.files)
 
@@ -430,7 +432,7 @@ class TestAProjectAlreadyHoldingBothInOneFolder:
 
         assert _hashes(project.files) == before
         assert project.started == []
-        assert job.status == JobStatus.CANCELLED
+        assert job_status_word(job) == "cancelled"
         assert len(project.warned) == 1
         assert (
             "'Site_native' was not started because another job uses its folder."

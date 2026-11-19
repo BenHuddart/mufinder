@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from mufinder.domain.enums import JobStatus, WorkflowStage
+from mufinder.domain.enums import JobActivity, JobStatus, WorkflowStage
 from mufinder.domain.models import Structure
 from mufinder.services.convergence_defaults import (
     CONVERGENCE_OVERVIEW_SNAPSHOTS_KEY,
@@ -247,7 +247,8 @@ def test_kpoint_controller_materialize_keeps_non_defined_job_inputs(
     controller = ConvergenceKpointController(context, deps, _FakeKpointView())
 
     (job,) = controller.materialize([(2, 2, 2)])
-    job.status = JobStatus.RUNNING
+    job.status = JobStatus.ACTIVE
+    job.activity = JobActivity.RUNNING
     param_path = (
         document.project_root / "files" / "convergence_kpoint" / job.label / f"{job.label}.param"
     )

@@ -354,7 +354,7 @@ def test_uep_and_pristine_sync_rank_a_defined_job_against_a_failed_one(tmp_path:
 
     def jobs(stage: WorkflowStage, calc_type: str) -> tuple[str, str]:
         return (
-            job_with_status(service, document, JobStatus.FAILED, stage=stage, calc_type=calc_type),
+            job_with_status(service, document, "failed", stage=stage, calc_type=calc_type),
             job_with_status(service, document, JobStatus.DEFINED, stage=stage, calc_type=calc_type),
         )
 

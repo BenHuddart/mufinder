@@ -8,6 +8,7 @@ maintenance.
 
 from __future__ import annotations
 
+from mufinder.services.job_monitoring import job_status_word
 import copy
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -15,7 +16,7 @@ from uuid import UUID, uuid4
 import pytest
 
 from mufinder.castep_io.output_parser import CastepResult
-from mufinder.domain.enums import JobStatus, WorkflowStage
+from mufinder.domain.enums import EndReason, JobActivity, JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationRun, Job
 from mufinder.services.job_artifacts import ParsedJobArtifacts, collect_job_artifacts
 from mufinder.services.project_service import ProjectDocument, ProjectService
@@ -29,6 +30,7 @@ from mufinder.app.workflow_config_codecs import (
     serialize_muon_relaxation_config,
 )
 
+from tests.support.jobs import set_job_state
 from tests.support.controllers import (
     FakeRowState,
     RecordingBackend,
@@ -670,7 +672,8 @@ def test_muon_controller_materialize_after_edit_rewrites_same_directory(
     param_path = output_root / "positivemuon" / seed / f"{seed}.param"
     assert "GEOM_MAX_ITER : 120" in param_path.read_text(encoding="utf-8")
 
-    job.status = JobStatus.FAILED
+    job.status = JobStatus.ENDED
+    job.end_reason = EndReason.UNKNOWN
     assert controller.update_row_parameters("positivemuon:Site 1", {"geom_max_iter": 500}) is True
     job.status = JobStatus.DEFINED
 
@@ -727,19 +730,21 @@ def test_muon_controller_row_is_continuable_uses_charge_qualified_key(
     persists: list[dict] = []
     controller = _muon_edit_controller(service, document, deps, view, output_root, persists)
 
-    job.status = JobStatus.RUNNING
+    job.status = JobStatus.ACTIVE
+    job.activity = JobActivity.RUNNING
     assert controller.row_is_continuable("positivemuon:Site 1") is False
 
     for status in (
         JobStatus.COMPLETED,
-        JobStatus.FAILED,
-        JobStatus.STOPPED,
-        JobStatus.CANCELLED,
+        "failed",
+        "stopped",
+        "cancelled",
     ):
-        job.status = status
+        set_job_state(job, status)
         assert controller.row_is_continuable("positivemuon:Site 1") is True
 
-    job.status = JobStatus.FAILED
+    job.status = JobStatus.ENDED
+    job.end_reason = EndReason.UNKNOWN
     job.dismissed_at = utc_now()
     assert controller.row_is_continuable("positivemuon:Site 1") is True
 
@@ -782,7 +787,8 @@ def test_muon_controller_continue_job_returns_to_defined_and_rewrites_directory(
     param_path = output_root / "positivemuon" / seed / f"{seed}.param"
     assert "GEOM_MAX_ITER : 120" in param_path.read_text(encoding="utf-8")
 
-    job.status = JobStatus.FAILED
+    job.status = JobStatus.ENDED
+    job.end_reason = EndReason.UNKNOWN
     job.execution_target = "myhpc"
     job.remote_directory = "/scratch/user/site1"
     job.remote_job_id = "999"
@@ -825,10 +831,11 @@ def test_muon_controller_continue_job_rejects_non_continuable_job_without_mutati
     controller = _muon_edit_controller(service, document, deps, view, output_root, persists)
     before = copy.deepcopy(definition.parameters["configuration"])
 
-    job.status = JobStatus.RUNNING
+    job.status = JobStatus.ACTIVE
+    job.activity = JobActivity.RUNNING
     assert controller.continue_job("positivemuon:Site 1", {"geom_max_iter": 500}) is None
 
-    assert job.status == JobStatus.RUNNING
+    assert job_status_word(job) == "running"
     assert definition.parameters["configuration"] == before
     assert not any(record.action == "job_continuation" for record in document.provenance)
 
@@ -842,10 +849,11 @@ def test_muon_controller_continue_job_rejects_bare_label(tmp_path: Path) -> None
     controller = _muon_edit_controller(service, document, deps, view, output_root, persists)
     before = copy.deepcopy(definition.parameters["configuration"])
 
-    job.status = JobStatus.FAILED
+    job.status = JobStatus.ENDED
+    job.end_reason = EndReason.UNKNOWN
     assert controller.continue_job("Site 1", {"geom_max_iter": 500}) is None
 
-    assert job.status == JobStatus.FAILED
+    assert job_status_word(job) == "failed"
     assert definition.parameters["configuration"] == before
 
 
@@ -867,7 +875,8 @@ def test_muon_controller_continue_job_returns_none_when_materialize_fails(
     param_path = output_root / "positivemuon" / seed / f"{seed}.param"
     original_rendered = param_path.read_text(encoding="utf-8")
 
-    job.status = JobStatus.FAILED
+    job.status = JobStatus.ENDED
+    job.end_reason = EndReason.UNKNOWN
     job.remote_directory = "/scratch/user/site1"
     controller.materialize = lambda keys: []
 

@@ -406,6 +406,10 @@ The ``Status`` column shows where each job is:
    You cancelled a queued or running job. Cancelled jobs remain in the
    dashboard and can be resubmitted or reset.
 
+Failed, stopped and cancelled jobs are the jobs that did not finish. MuFinder
+records why each one did not finish, and that reason decides which of the three
+words its row shows.
+
 Acting on jobs
 ~~~~~~~~~~~~~~
 

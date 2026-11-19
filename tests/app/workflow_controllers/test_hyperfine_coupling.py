@@ -154,7 +154,7 @@ def test_configure_request_hides_workflow_controlled_parameters(tmp_path: Path) 
 
 
 def _run(document, job) -> CalculationRun:
-    run = CalculationRun(job_id=job.id, status=JobStatus.RUNNING)
+    run = CalculationRun(job_id=job.id, status=JobStatus.ACTIVE)
     document.runs[run.id] = run
     return run
 

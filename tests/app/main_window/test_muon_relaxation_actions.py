@@ -13,7 +13,7 @@ import mufinder.app.main_window as main_window_module
 import mufinder.services.job_artifacts as job_artifacts_module
 from mufinder.castep_io.output_parser import CastepResult
 from mufinder.domain.charge_states import MUON_RELAXATION_CALC_TYPES
-from mufinder.domain.enums import JobStatus, WorkflowStage
+from mufinder.domain.enums import EndReason, JobActivity, JobStatus, WorkflowStage
 from mufinder.domain.models import (
     CalculationDefinition,
     CalculationRun,
@@ -587,7 +587,8 @@ def test_main_window_jobs_table_refresh_syncs_muon_relaxation_status(
         workflow_stage=main_window_module.WorkflowStage.MUON_RELAXATION,
         calc_type="castep_positivemuon_relaxation",
     )
-    job.status = JobStatus.QUEUED
+    job.status = JobStatus.ACTIVE
+    job.activity = JobActivity.QUEUED
     definition = CalculationDefinition(
         workflow_stage=main_window_module.WorkflowStage.MUON_RELAXATION,
         calc_type="castep_muon_relaxation",
@@ -664,8 +665,9 @@ def test_main_window_local_finish_muon_relaxation_records_folded_final_muon_posi
         workflow_stage=main_window_module.WorkflowStage.MUON_RELAXATION,
         calc_type="castep_muonium_relaxation",
     )
-    job.status = JobStatus.RUNNING
-    run = CalculationRun(job_id=job.id, run_index=1, status=JobStatus.RUNNING)
+    job.status = JobStatus.ACTIVE
+    job.activity = JobActivity.RUNNING
+    run = CalculationRun(job_id=job.id, run_index=1, status=JobStatus.ACTIVE)
     doc.runs[run.id] = run
     definition = CalculationDefinition(
         workflow_stage=main_window_module.WorkflowStage.MUON_RELAXATION,
@@ -923,7 +925,7 @@ def test_main_window_muon_relaxation_sync_prefers_defined_job_over_cancelled_his
         workflow_stage=WorkflowStage.MUON_RELAXATION,
         calc_type=main_window_module.muon_relaxation_calc_type("positive_muon"),
     )
-    service.cancel_job(cancelled_job)
+    service.end_job(cancelled_job, EndReason.CANCELLED)
     defined_job = service.add_job(
         doc,
         label="Site 1",
@@ -1050,7 +1052,8 @@ def test_main_window_muon_relaxation_recovers_active_dashboard_job_mapping(
         calc_type=main_window_module.muon_relaxation_calc_type("positive_muon"),
         execution_target="SCARF",
     )
-    queued_job.status = JobStatus.QUEUED
+    queued_job.status = JobStatus.ACTIVE
+    queued_job.activity = JobActivity.QUEUED
     queued_job.submitted_at = datetime(2026, 5, 1, tzinfo=UTC)
     queued_job.remote_job_id = "12345"
     queued_job.remote_directory = "/remote/work/site1"
@@ -1119,7 +1122,8 @@ def test_main_window_muon_relaxation_added_form_rows_preserve_existing_job_state
         calc_type=main_window_module.muon_relaxation_calc_type("positive_muon"),
         execution_target="SCARF",
     )
-    job.status = JobStatus.RUNNING
+    job.status = JobStatus.ACTIVE
+    job.activity = JobActivity.RUNNING
     job.remote_job_id = "12345"
     job.remote_directory = "/remote/work/site1"
     definition.parameters["job_ids_by_label"] = {"positivemuon:Site 1": str(job.id)}
@@ -1176,7 +1180,8 @@ def test_muon_relaxation_preserves_running_row_across_reconfiguration(
         workflow_stage=WorkflowStage.MUON_RELAXATION,
         calc_type=main_window_module.muon_relaxation_calc_type("positive_muon"),
     )
-    running_job.status = JobStatus.RUNNING
+    running_job.status = JobStatus.ACTIVE
+    running_job.activity = JobActivity.RUNNING
     key = "positivemuon:Site 1"
     old_definition.parameters["job_ids_by_label"] = {key: str(running_job.id)}
     old_definition.parameters["job_seed_names_by_label"] = {key: "positivemuon_Site_1"}
@@ -1193,7 +1198,7 @@ def test_muon_relaxation_preserves_running_row_across_reconfiguration(
 
     states = window._muon_relaxation_controller.build_states()
 
-    assert states["positivemuon:Site 1"].status == JobStatus.RUNNING.value
+    assert states["positivemuon:Site 1"].status == "running"
     assert states["positivemuon:Site 1"].job_id == running_job.id
     assert new_definition.parameters["job_ids_by_label"][key] == str(running_job.id)
     assert new_definition.parameters["job_seed_names_by_label"][key] == "positivemuon_Site_1"
@@ -1252,7 +1257,8 @@ def test_muon_relaxation_row_parameter_edit_touches_only_its_charge_state(
         workflow_stage=WorkflowStage.MUON_RELAXATION,
         calc_type=main_window_module.muon_relaxation_calc_type("positive_muon"),
     )
-    job.status = JobStatus.FAILED
+    job.status = JobStatus.ENDED
+    job.end_reason = EndReason.UNKNOWN
     definition.parameters["job_ids_by_label"] = {"positivemuon:Site 1": str(job.id)}
     window._restore_muon_relaxation_form_from_definition()
     assert window._muon_relaxation_controller.build_states()["positivemuon:Site 1"].job_id == job.id
@@ -1270,7 +1276,7 @@ def test_muon_relaxation_row_parameter_edit_touches_only_its_charge_state(
     assert definition.parameters["job_ids_by_label"] == {"positivemuon:Site 1": str(job.id)}
     states = window._muon_relaxation_controller.build_states()
     assert states["positivemuon:Site 1"].job_id == job.id
-    assert states["positivemuon:Site 1"].status == JobStatus.FAILED.value
+    assert states["positivemuon:Site 1"].status == "failed"
 
     config = deserialize_muon_relaxation_config(definition.parameters["configuration"])
     by_charge = {row.charge_state: row for row in config.rows}
@@ -1322,7 +1328,8 @@ def test_muon_relaxation_deleted_row_does_not_reinherit_stale_status(
         workflow_stage=WorkflowStage.MUON_RELAXATION,
         calc_type=main_window_module.muon_relaxation_calc_type("positive_muon"),
     )
-    running_job.status = JobStatus.RUNNING
+    running_job.status = JobStatus.ACTIVE
+    running_job.activity = JobActivity.RUNNING
     old_definition.parameters["job_ids_by_label"] = {"positivemuon:Site 1": str(running_job.id)}
 
     window._on_remove_muon_relaxation_rows(["positivemuon:Site 1"])

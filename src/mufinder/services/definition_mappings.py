@@ -50,13 +50,6 @@ KeyT = TypeVar("KeyT", bound=Hashable)
 #: The mapping that binds a row-keyed workflow's rows to their jobs.
 LABEL_MAPPING = "job_ids_by_label"
 
-_IN_FLIGHT_STATUSES = frozenset(
-    {JobStatus.SUBMITTING, JobStatus.QUEUED, JobStatus.RUNNING, JobStatus.RETRIEVING}
-)
-_TERMINAL_UNSUCCESSFUL_STATUSES = frozenset(
-    {JobStatus.FAILED, JobStatus.STOPPED, JobStatus.CANCELLED}
-)
-
 
 class _RowConfig(Protocol):
     rows: tuple[Any, ...]
@@ -80,11 +73,11 @@ def convergence_mapping_job_priority(document: ProjectDocument, raw_job_id: str)
     """
 
     status = _mapped_job_status(document, raw_job_id)
-    if status in _IN_FLIGHT_STATUSES:
+    if status == JobStatus.ACTIVE:
         return 50
     if status == JobStatus.COMPLETED:
         return 40
-    if status in _TERMINAL_UNSUCCESSFUL_STATUSES:
+    if status == JobStatus.ENDED:
         return 30
     if status == JobStatus.DEFINED:
         return 10
@@ -100,13 +93,13 @@ def relaxation_mapping_job_priority(document: ProjectDocument, raw_job_id: str) 
     """
 
     status = _mapped_job_status(document, raw_job_id)
-    if status in _IN_FLIGHT_STATUSES:
+    if status == JobStatus.ACTIVE:
         return 50
     if status == JobStatus.COMPLETED:
         return 40
     if status == JobStatus.DEFINED:
         return 35
-    if status in _TERMINAL_UNSUCCESSFUL_STATUSES:
+    if status == JobStatus.ENDED:
         return 30
     return 0
 

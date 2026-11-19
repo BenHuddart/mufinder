@@ -14,7 +14,6 @@ from mufinder.app.failed_job_dialog import (
     FailedJobDialog,
     failure_title,
 )
-from mufinder.domain.enums import JobStatus
 from mufinder.services.failure_diagnosis import FailedJobReport
 
 
@@ -22,7 +21,7 @@ def _report(
     label: str = "Muon_relax_0008",
     *,
     headline: str = "CASTEP exited with status 1: SCF cycles did not converge",
-    status: JobStatus = JobStatus.FAILED,
+    status: str = "failed",
     notes: tuple[str, ...] = (),
     log_excerpt: str = "",
     output_directory: Path | None = None,
@@ -148,11 +147,11 @@ def test_several_jobs_are_listed_one_per_line_under_their_cause(qapp) -> None:
         _report(
             "a",
             headline=walltime,
-            status=JobStatus.STOPPED,
+            status="stopped",
             notes=("The job's output folder was not found.",),
         ),
         _report("b", headline="exit 137", log_excerpt="[b.err]\n1: error"),
-        _report("c", headline=walltime, status=JobStatus.STOPPED),
+        _report("c", headline=walltime, status="stopped"),
     ]
     dialog = _dialog(reports, can_continue=False)
 
@@ -177,9 +176,9 @@ def test_a_long_cause_group_is_cut_with_a_count(qapp) -> None:
 
 
 def test_title_names_the_status() -> None:
-    assert failure_title([_report(status=JobStatus.STOPPED)]) == "Muon_relax_0008 stopped"
+    assert failure_title([_report(status="stopped")]) == "Muon_relax_0008 stopped"
     assert failure_title([_report(), _report()]) == "2 jobs failed"
-    assert failure_title([_report(status=JobStatus.STOPPED)] * 2) == "2 jobs stopped"
+    assert failure_title([_report(status="stopped")] * 2) == "2 jobs stopped"
 
 
 def test_needs_a_report(qapp) -> None:

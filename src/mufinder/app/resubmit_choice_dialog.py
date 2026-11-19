@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
 )
 
 from mufinder.app.theme import style_hint_text, style_section_title
-from mufinder.domain.enums import FailureReason, JobStatus
+from mufinder.domain.enums import EndReason
 from mufinder.services.cluster_runner import CheckpointProbeStatus
 from mufinder.services.failure_diagnosis import failure_reason_label
 
@@ -45,10 +45,10 @@ class ResubmitMode(StrEnum):
 #: under-resourced (memory), so its checkpoint is worth resuming.
 CONTINUE_FAVOURING_REASONS = frozenset(
     {
-        FailureReason.WALLTIME,
-        FailureReason.OUT_OF_MEMORY,
-        FailureReason.NODE_FAILURE,
-        FailureReason.INTERRUPTED,
+        EndReason.WALLTIME,
+        EndReason.OUT_OF_MEMORY,
+        EndReason.NODE_FAILURE,
+        EndReason.INTERRUPTED,
     }
 )
 
@@ -58,8 +58,7 @@ class ResubmitCandidate:
     """One relaxation offered the choice, with its probed checkpoint state."""
 
     label: str
-    status: JobStatus
-    reason: FailureReason | None
+    reason: EndReason | None
     checkpoint: CheckpointProbeStatus
 
 
@@ -117,7 +116,7 @@ def checkpoint_summary(candidates: Sequence[ResubmitCandidate]) -> str:
 
 
 def _cause_label(candidate: ResubmitCandidate) -> str:
-    if candidate.status == JobStatus.CANCELLED:
+    if candidate.reason == EndReason.CANCELLED:
         return "cancelled"
     return failure_reason_label(candidate.reason) or "no recorded cause"
 

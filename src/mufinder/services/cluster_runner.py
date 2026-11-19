@@ -14,7 +14,6 @@ from uuid import UUID
 from PySide6.QtCore import QObject, QTimer, Signal
 
 from mufinder.domain.cluster import ClusterConfig
-from mufinder.domain.enums import JobStatus
 from mufinder.domain.models import utc_now
 from mufinder.services.cluster_retrieval import retrieve_job_outputs
 from mufinder.services.cluster_queues import ProcessPlacement
@@ -30,16 +29,6 @@ from mufinder.services.scheduler import (
 )
 from mufinder.services.script_template import render_job_script
 from mufinder.services.ssh_client import SSHConnection, SSHCredentials
-
-#: The scheduler evidence each mapped scheduler status stands for.
-_SCHEDULER_STATE_BY_STATUS = {
-    JobStatus.QUEUED: SchedulerState.PENDING,
-    JobStatus.RUNNING: SchedulerState.RUNNING,
-    JobStatus.COMPLETED: SchedulerState.COMPLETED,
-    JobStatus.CANCELLED: SchedulerState.CANCELLED,
-    JobStatus.STOPPED: SchedulerState.TIMED_OUT,
-    JobStatus.FAILED: SchedulerState.FAILED,
-}
 
 _REPORTED_FINISHED = frozenset(
     {SchedulerState.COMPLETED, SchedulerState.TIMED_OUT, SchedulerState.FAILED}
@@ -510,7 +499,7 @@ class ClusterJobRunner(QObject):
             elif info is None:
                 state, detail = SchedulerState.NOT_LISTED, ""
             else:
-                state = _SCHEDULER_STATE_BY_STATUS[scheduler.map_to_job_status(info.state)]
+                state = scheduler.map_to_scheduler_state(info.state)
                 detail = scheduler.state_name(info.state)
             evidence = self._evidence(
                 target,

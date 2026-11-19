@@ -5,8 +5,8 @@ from datetime import UTC, datetime
 
 import pytest
 
+from mufinder.services.job_monitoring import job_status_word
 from mufinder.app.workflow_submission import (
-    RESUBMITTABLE_AFTER_DISMISSAL_STATUSES,
     WorkflowSubmissionCoordinator,
     effective_row_status,
     job_is_resubmittable_after_dismissal,
@@ -14,7 +14,7 @@ from mufinder.app.workflow_submission import (
 )
 from mufinder.domain.enums import JobStatus
 from mufinder.domain.models import Job
-from mufinder.services.project_service import TERMINAL_RECOVERABLE_JOB_STATUSES
+from tests.support.jobs import set_job_state
 from tests.support.jobs import make_job
 
 
@@ -23,9 +23,9 @@ class _State:
     status: str
 
 
-def _job_with(status: JobStatus, *, dismissed: bool) -> Job:
-    job = make_job(f"{status.value}-{'dismissed' if dismissed else 'active'}")
-    job.status = status
+def _job_with(status: str, *, dismissed: bool) -> Job:
+    job = make_job(f"{status}-{'dismissed' if dismissed else 'active'}")
+    set_job_state(job, status)
     if dismissed:
         job.dismissed_at = datetime(2026, 7, 28, 12, 0, tzinfo=UTC)
     return job
@@ -98,40 +98,29 @@ def test_submission_plan_reports_empty_jobs_without_ui_dependencies() -> None:
 # --------------------------------------------------------------------------- #
 
 
-def test_resubmittable_after_dismissal_matches_service_terminal_set() -> None:
-    """The app-side set must track the statuses ``dismiss_job`` accepts.
-
-    Both literals are written out independently (``services`` may not import
-    ``app``), so this comparison is what keeps them from drifting: a status that
-    can be dismissed must also be one this projection can recover.
-    """
-
-    assert RESUBMITTABLE_AFTER_DISMISSAL_STATUSES == TERMINAL_RECOVERABLE_JOB_STATUSES
-
-
 @pytest.mark.parametrize(
     "status",
-    [JobStatus.FAILED, JobStatus.STOPPED, JobStatus.CANCELLED],
+    ["failed", "stopped", "cancelled"],
 )
-def test_dismissed_terminal_job_projects_ready_row(status: JobStatus) -> None:
+def test_dismissed_terminal_job_projects_ready_row(status: str) -> None:
     job = _job_with(status, dismissed=True)
 
     assert job_is_resubmittable_after_dismissal(job) is True
     assert effective_row_status(job) == "ready"
     assert workflow_row_state_is_ready({"row": _State(effective_row_status(job))}, "row") is True
     # Dismissal is still not a status transition.
-    assert job.status is status
+    assert job_status_word(job) == status
 
 
 @pytest.mark.parametrize(
     "status",
-    [JobStatus.FAILED, JobStatus.STOPPED, JobStatus.CANCELLED],
+    ["failed", "stopped", "cancelled"],
 )
-def test_non_dismissed_terminal_job_keeps_its_own_row_status(status: JobStatus) -> None:
+def test_non_dismissed_terminal_job_keeps_its_own_row_status(status: str) -> None:
     job = _job_with(status, dismissed=False)
 
     assert job_is_resubmittable_after_dismissal(job) is False
-    assert effective_row_status(job) == status.value
+    assert effective_row_status(job) == status
     assert workflow_row_state_is_ready({"row": _State(effective_row_status(job))}, "row") is False
 
 
@@ -144,7 +133,7 @@ def test_non_terminal_job_status_is_never_rewritten(dismissed: bool) -> None:
     """
 
     completed = _job_with(JobStatus.COMPLETED, dismissed=dismissed)
-    running = _job_with(JobStatus.RUNNING, dismissed=dismissed)
+    running = _job_with("running", dismissed=dismissed)
 
     assert job_is_resubmittable_after_dismissal(completed) is False
     assert effective_row_status(completed) == "completed"

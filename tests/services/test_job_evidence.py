@@ -9,7 +9,6 @@ from pathlib import Path
 
 import pytest
 
-from mufinder.domain.enums import JobStatus
 from mufinder.services import job_evidence
 from mufinder.services.job_evidence import local_job_evidence, local_output_evidence
 from mufinder.services.job_reconcile import OutputState, ProcessState
@@ -106,8 +105,8 @@ def test_a_farmed_run_is_read_from_its_first_farm(tmp_path: Path) -> None:
 
 def test_a_job_the_runner_holds_is_not_read_from_disk(tmp_path: Path) -> None:
     _write_complete(tmp_path)
-    running = make_job(status=JobStatus.RUNNING)
-    queued = make_job(status=JobStatus.QUEUED)
+    running = make_job(status="running")
+    queued = make_job(status="queued")
     held = {"pending_ids": {queued.id}, "active_ids": {running.id}}
 
     running_evidence = local_job_evidence(
@@ -129,7 +128,7 @@ def test_a_job_the_runner_holds_is_not_read_from_disk(tmp_path: Path) -> None:
 
 def test_a_job_with_no_process_carries_its_output(tmp_path: Path) -> None:
     _write_complete(tmp_path)
-    job = make_job(status=JobStatus.RUNNING)
+    job = make_job(status="running")
 
     evidence = local_job_evidence(
         job, pending_ids=(), active_ids=(), output_dir=tmp_path, seed_name="job", now=NOW
