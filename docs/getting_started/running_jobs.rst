@@ -310,7 +310,8 @@ The ``Job Dashboard`` lists the jobs that still need attention: active jobs,
 failed jobs, stopped jobs and cancelled jobs. Completed jobs leave it after
 their results are handled, and a failed, stopped or cancelled job that you
 ``Dismiss`` is hidden without losing its records. Tick ``Show dismissed`` above
-the table to list the dismissed jobs as well: their labels are greyed, the
+the table to list the dismissed jobs as well (it starts unticked in each project
+you open): their labels are greyed, the
 tooltip says when each was dismissed, and their actions work as on any other
 row. Rows are listed in the order
 their jobs were created, and that order survives closing and reopening the

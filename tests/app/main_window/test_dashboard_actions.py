@@ -3879,3 +3879,26 @@ def test_a_dismissed_job_made_active_again_shows_without_show_dismissed(main_win
 
     assert _dashboard_labels(window) == [job.label]
     window.close()
+
+
+def test_show_dismissed_starts_unticked_in_each_project(main_window, tmp_path):
+    window = main_window
+    service = ProjectService()
+    first = service.create_project(tmp_path / "first.mufinder", "First")
+    hidden = _orphaned_cluster_job(service, first)
+    service.dismiss_job(hidden)
+    service.save_project(first)
+    second = service.create_project(tmp_path / "second.mufinder", "Second")
+    other = _orphaned_cluster_job(service, second, label="o1")
+    service.dismiss_job(other)
+    service.save_project(second)
+
+    assert window.open_project(first.project_root)
+    window._show_dismissed_jobs_box.setChecked(True)
+    assert _dashboard_labels(window) == [hidden.label]
+
+    assert window.open_project(second.project_root)
+
+    assert window._show_dismissed_jobs_box.isChecked() is False
+    assert _dashboard_labels(window) == []
+    window.close()

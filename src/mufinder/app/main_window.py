@@ -22,6 +22,7 @@ from PySide6.QtCore import (
     QEventLoop,
     QSize,
     QSettings,
+    QSignalBlocker,
     QTimer,
     QUrl,
     Qt,
@@ -2214,6 +2215,10 @@ class MainWindow(QMainWindow):
     def _refresh_ui_after_project_change(self) -> None:
         if self._document is None:
             return
+
+        # Each project opens with its dismissed jobs hidden; the refresh below redraws.
+        with QSignalBlocker(self._show_dismissed_jobs_box):
+            self._show_dismissed_jobs_box.setChecked(False)
 
         # First, so a project is reachable even if a refresh below fails, and the
         # jobs table is measured in view rather than over all its rows.
@@ -6333,8 +6338,8 @@ class MainWindow(QMainWindow):
         note = unretrieved_output_note(jobs, action="Resetting")
         answer = workflow_table_utils.confirm_choice(
             self,
-            "Reset failed jobs",
-            f"Reset {plural(len(jobs), 'failed job')} so "
+            "Reset jobs",
+            f"Reset {plural(len(jobs), 'job')} that did not finish so "
             f"{'it is' if len(jobs) == 1 else 'they are'} ready to run again?",
             [("clean", "Clean and reset"), ("keep", "Reset, keep files"), ("cancel", "Cancel")],
             default="keep",

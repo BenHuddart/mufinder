@@ -2282,3 +2282,18 @@ def test_main_window_start_again_skips_a_job_whose_output_cannot_be_cleared(
     assert job_status_word(job) == "stopped"
     assert "relax_d: could not clear its previous output (file in use)" in warnings[0]
     window.close()
+
+
+def test_reset_prompt_names_jobs_that_did_not_finish(main_window, answered_choices) -> None:
+    window = main_window
+
+    window._prompt_failed_job_cleanup([make_job("c", status="cancelled")])
+    window._prompt_failed_job_cleanup(
+        [make_job("a", status="failed"), make_job("b", status="stopped")]
+    )
+
+    assert [(prompt["title"], prompt["text"]) for prompt in answered_choices] == [
+        ("Reset jobs", "Reset 1 job that did not finish so it is ready to run again?"),
+        ("Reset jobs", "Reset 2 jobs that did not finish so they are ready to run again?"),
+    ]
+    window.close()

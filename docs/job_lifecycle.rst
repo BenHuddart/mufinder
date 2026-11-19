@@ -692,7 +692,7 @@ Dashboard
 
 The Job Dashboard lists ``active`` and ``ended`` jobs without a
 ``dismissed_at`` stamp. With ``Show dismissed`` ticked (above the table, not
-saved) it lists the dismissed ones too, with a greyed label whose tooltip says
+saved, unticked whenever a project opens) it lists the dismissed ones too, with a greyed label whose tooltip says
 when the job was dismissed. The ``Status`` cell shows the status word, with the
 reason for a failed or stopped job (``failed · SCF did not converge``,
 ``stopped · walltime``) and geometry progress for a running relaxation. Its
