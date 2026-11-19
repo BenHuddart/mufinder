@@ -16,9 +16,8 @@ State authority (who may mutate what)
 -------------------------------------
 
 Job state transitions are owned **exclusively** by ``ProjectService`` primitives
-(``submit_job``, ``mark_job_queued``, ``start_job``, ``mark_job_retrieving``,
-``complete_job``, ``stop_job``, ``fail_job``, ``cancel_job``,
-``reactivate_job``, ``reset_failed_job``). ``JobExecutionController`` mutates
+(``submit_job``, ``mark_job_active``, ``complete_job``, ``end_job``,
+``reset_failed_job``, ``prepare_job_continuation``). ``JobExecutionController`` mutates
 only bookkeeping fields on the ``Job`` (``execution_target``,
 ``num_processes``, remote metadata clears, monitor stamps) and routes every
 status change through the service.

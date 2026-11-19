@@ -61,6 +61,7 @@ from mufinder.services.definition_mappings import (
 )
 from mufinder.services.job_artifacts import ParsedJobArtifacts
 from mufinder.services.job_file_cleanup import JobCleanupItem, JobCleanupOutcome
+from mufinder.services.job_monitoring import job_status_word
 from mufinder.services.muon_sites_summary import (
     ENERGY_BARRIERS_SCOPE,
     DownstreamSiteScope,
@@ -1444,7 +1445,7 @@ class EnergyBarriersController(WorkflowJobController):
                     length_ang=(
                         float_from_source(source, "path_length_ang") if source is not None else None
                     ),
-                    status=band.job.status.value,
+                    status=job_status_word(band.job),
                     definition=definition,
                     band=band,
                 )

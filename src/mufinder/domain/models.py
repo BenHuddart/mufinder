@@ -9,7 +9,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from mufinder._version import current_version
-from mufinder.domain.enums import FailureReason, JobStatus, WorkflowStage
+from mufinder.domain.enums import EndReason, JobActivity, JobStatus, WorkflowStage
 
 
 def utc_now() -> datetime:
@@ -250,6 +250,8 @@ class Job:
     workflow_stage: WorkflowStage = WorkflowStage.MUON_RELAXATION
     calc_type: str = ""
     status: JobStatus = JobStatus.DEFINED
+    # What an ``ACTIVE`` job was last seen doing; ``None`` in every other state.
+    activity: JobActivity | None = None
     execution_target: str = "local"
     # When the job was added to the project. Unlike ``submitted_at`` it never
     # changes, so it defines the job's stable position in the dashboard.
@@ -262,9 +264,9 @@ class Job:
     num_processes: int | None = None
     tags: list[str] = field(default_factory=list)
     error_message: str | None = None
-    # Classified cause of a failed or stopped job; ``None`` when no specific
-    # cause was identified (or the job has not failed).
-    failure_reason: FailureReason | None = None
+    # Why an ``ENDED`` job did not finish (``UNKNOWN`` when no cause was
+    # identified); ``None`` in every other state.
+    end_reason: EndReason | None = None
     last_checked_at: datetime | None = None
     last_status_source: str | None = None
     last_status_message: str | None = None
@@ -347,7 +349,7 @@ def normalize_default_method(value: object) -> str | None:
 
 #: Saved-project schema version this code writes. Older projects are upgraded
 #: on load by ``mufinder.persistence.migrations``.
-PROJECT_SCHEMA_VERSION = 6
+PROJECT_SCHEMA_VERSION = 7
 
 
 @dataclass(slots=True)

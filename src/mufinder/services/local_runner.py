@@ -13,7 +13,6 @@ from uuid import UUID
 from PySide6.QtCore import QObject, QProcess, QProcessEnvironment, Signal
 
 from mufinder.castep_io.output_parser import parse_castep_output
-from mufinder.domain.enums import JobStatus
 from mufinder.native_threads import capped_thread_variables
 from mufinder.services.job_artifacts import RetrievalFlags
 from mufinder.services.job_progress import castep_output_names
@@ -167,7 +166,7 @@ class LocalJobRunner(QObject):
 
         self._pending.append(request)
         if self.running_count() >= self._max_concurrent:
-            self.status_changed.emit(job_id, JobStatus.QUEUED.value)
+            self.status_changed.emit(job_id, "queued")
         self._start_queued_jobs()
 
     def cancel(self, job_id: UUID) -> None:
@@ -263,7 +262,7 @@ class LocalJobRunner(QObject):
 
     def _on_process_started(self, job_id: UUID) -> None:
         self.job_started.emit(job_id)
-        self.status_changed.emit(job_id, JobStatus.RUNNING.value)
+        self.status_changed.emit(job_id, "running")
 
     def _on_process_error(self, job_id: UUID, process_error: QProcess.ProcessError) -> None:
         active = self._active.get(job_id)
@@ -342,19 +341,19 @@ class LocalJobRunner(QObject):
         # neither re-reads disk. Errors are captured on the carrier, never raised.
         artifacts = request.retrieval.collect(request.job_dir, request.seed_name)
         self.job_finished.emit(job_id, result, artifacts)
-        self.status_changed.emit(job_id, JobStatus.COMPLETED.value)
+        self.status_changed.emit(job_id, "completed")
 
     def _cancelled(self, job_id: UUID) -> None:
         """Report ``job_id`` as cancelled: ``job_cancelled`` then ``status_changed``."""
 
         self.job_cancelled.emit(job_id)
-        self.status_changed.emit(job_id, JobStatus.CANCELLED.value)
+        self.status_changed.emit(job_id, "cancelled")
 
     def _fail(self, job_id: UUID, message: str) -> None:
         """Report ``job_id`` as failed: ``job_failed`` then ``status_changed``."""
 
         self.job_failed.emit(job_id, message)
-        self.status_changed.emit(job_id, JobStatus.FAILED.value)
+        self.status_changed.emit(job_id, "failed")
 
     @staticmethod
     def _primary_output_path(request: _PendingJob) -> Path:

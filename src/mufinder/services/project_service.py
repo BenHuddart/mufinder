@@ -15,7 +15,7 @@ from typing import Any
 from uuid import UUID
 
 from mufinder.domain.charge_states import muon_relaxation_charge_state
-from mufinder.domain.enums import FailureReason, JobStatus, WorkflowStage
+from mufinder.domain.enums import EndReason, JobActivity, JobStatus, WorkflowStage
 from mufinder.domain.magnetic_properties import propagation_vector_from_structure
 from mufinder.domain.models import (
     CalculationDefinition,
@@ -49,6 +49,7 @@ from mufinder.persistence.migrations import (
 from mufinder.persistence.project_codec import normalized_xc_functional
 from mufinder.services import site_generation_service, supercell_assets
 from mufinder.services.job_paths import job_output_directory
+from mufinder.services.job_monitoring import job_status_word
 from mufinder.services.perf_trace import PerfTrace
 from mufinder.services.project_summary import PROJECT_HOME_STAGE_KEY
 from mufinder.services.relaxed_structure_spins import (
@@ -138,33 +139,12 @@ def _require_known_inputs(
         raise ValueError("input_site_ids must reference known sites.")
 
 
-#: Terminal job statuses a job can be recovered from without losing its record:
-#: :meth:`ProjectService.reset_failed_job` accepts exactly these, and
-#: :meth:`ProjectService.dismiss_job` hides exactly these from the dashboard.
-#: The two must stay identical — a dismissible job has to stay resettable, which
-#: is what makes a dismissed row resubmittable from its workflow table. See
-#: ``mufinder.app.workflow_submission.RESUBMITTABLE_AFTER_DISMISSAL_STATUSES``
-#: (kept in lockstep by a test) and docs/job_lifecycle.rst.
-TERMINAL_RECOVERABLE_JOB_STATUSES = frozenset(
-    {JobStatus.FAILED, JobStatus.STOPPED, JobStatus.CANCELLED}
-)
-
-#: Job statuses a calculation can be *continued* from:
-#: :meth:`ProjectService.prepare_job_continuation` accepts exactly these. The set
-#: is deliberately wider than :data:`TERMINAL_RECOVERABLE_JOB_STATUSES` because a
-#: COMPLETED relaxation is continuable — running more geometry-optimisation steps
-#: from its checkpoint is a normal outcome, not a recovery from failure.
-#: Widening it does not weaken the dismissed-row reasoning above: continuation is
-#: a distinct primitive with its own entry point, and the reset/dismiss sets stay
-#: identical to each other. See docs/job_lifecycle.rst.
-CONTINUABLE_JOB_STATUSES = frozenset(
-    {
-        JobStatus.COMPLETED,
-        JobStatus.FAILED,
-        JobStatus.STOPPED,
-        JobStatus.CANCELLED,
-    }
-)
+#: Job states a calculation can be *continued* from:
+#: :meth:`ProjectService.prepare_job_continuation` accepts exactly these. A
+#: COMPLETED relaxation is continuable as well as an ended one — running more
+#: geometry-optimisation steps from its checkpoint is a normal outcome, not a
+#: recovery from failure. See docs/job_lifecycle.rst.
+CONTINUABLE_JOB_STATUSES = frozenset({JobStatus.COMPLETED, JobStatus.ENDED})
 
 
 @dataclass(slots=True, frozen=True)
@@ -764,7 +744,7 @@ class ProjectService:
         submitted_jobs = [
             job
             for job in jobs
-            if job.status in {JobStatus.SUBMITTING, JobStatus.QUEUED, JobStatus.RUNNING}
+            if job.status == JobStatus.ACTIVE and job.activity != JobActivity.RETRIEVING
         ]
         if not submitted_jobs:
             return
@@ -796,7 +776,7 @@ class ProjectService:
                             "job_id": str(job.id),
                             "label": job.label,
                             **job_rows[job.id],
-                            "status": job.status.value,
+                            "status": job_status_word(job),
                             "execution_target": job.execution_target,
                             "remote_job_id": job.remote_job_id,
                             "remote_directory": job.remote_directory,
@@ -844,8 +824,11 @@ class ProjectService:
                 parameters["derived_structure_count"] = len(result.derived_structure_ids)
         if error_message:
             parameters["error_message"] = error_message
-        if job.failure_reason is not None and action in {"job_failed", "job_stopped"}:
-            parameters["failure_reason"] = job.failure_reason.value
+        if job.end_reason not in {None, EndReason.UNKNOWN} and action in {
+            "job_failed",
+            "job_stopped",
+        }:
+            parameters["failure_reason"] = job.end_reason.value
 
         output_entity_ids: list[UUID] = [job.id]
         if result is not None:
@@ -1766,78 +1749,78 @@ class ProjectService:
         )
 
     def submit_job(self, job: Job) -> None:
-        """Move a job from DEFINED to SUBMITTING and stamp submission time."""
-        self._assert_transition(job.status, JobStatus.SUBMITTING)
-        job.status = JobStatus.SUBMITTING
+        """Make a defined or ended job active as ``submitting`` and stamp submission time."""
+        self._assert_transition(job.status, JobStatus.ACTIVE)
+        job.status = JobStatus.ACTIVE
+        job.activity = JobActivity.SUBMITTING
         job.submitted_at = utc_now()
         job.started_at = None
         job.completed_at = None
         job.error_message = None
-        job.failure_reason = None
+        job.end_reason = None
 
-    def mark_job_queued(self, job: Job, remote_job_id: str | None = None) -> None:
-        """Mark an in-flight submission as queued."""
-        self._assert_transition(job.status, JobStatus.QUEUED)
-        job.status = JobStatus.QUEUED
+    def mark_job_active(
+        self, job: Job, activity: JobActivity, *, remote_job_id: str | None = None
+    ) -> None:
+        """Record what an active job is doing, or make an ended job active again.
+
+        ``activity`` is display only, so an active job may move to any
+        activity. An ended job becomes active when evidence shows it is alive
+        or has output still to be recorded; its end stamps are cleared and its
+        remote metadata is kept. ``started_at`` is stamped when the job starts
+        running. ``remote_job_id``, when given, replaces the scheduler job ID.
+        """
+
+        if job.status == JobStatus.DEFINED:
+            raise ValueError("A defined job becomes active only when it is submitted.")
+        if job.status != JobStatus.ACTIVE:
+            self._assert_transition(job.status, JobStatus.ACTIVE)
+            job.completed_at = None
+            job.error_message = None
+            job.end_reason = None
+        if activity == JobActivity.RUNNING and (
+            job.status != JobStatus.ACTIVE or job.activity != JobActivity.RUNNING
+        ):
+            job.started_at = utc_now()
+        job.status = JobStatus.ACTIVE
+        job.activity = activity
         if remote_job_id:
             job.remote_job_id = remote_job_id
 
-    def start_job(self, job: Job) -> None:
-        """Mark a queued job as running."""
-        self._assert_transition(job.status, JobStatus.RUNNING)
-        job.status = JobStatus.RUNNING
-        job.started_at = utc_now()
-
     def complete_job(self, job: Job) -> None:
-        """Mark a running or retrieving job as completed."""
+        """Mark an active job as completed."""
         self._assert_transition(job.status, JobStatus.COMPLETED)
         job.status = JobStatus.COMPLETED
+        job.activity = None
         job.completed_at = utc_now()
         job.error_message = None
-        job.failure_reason = None
+        job.end_reason = None
 
-    def stop_job(
-        self,
-        job: Job,
-        message: str | None = None,
-        *,
-        reason: FailureReason | None = None,
-    ) -> None:
-        """Mark a running or retrieving job as stopped (for example walltime reached)."""
-        self._assert_transition(job.status, JobStatus.STOPPED)
-        job.status = JobStatus.STOPPED
-        job.completed_at = utc_now()
-        job.error_message = message
-        job.failure_reason = reason
+    def end_job(self, job: Job, reason: EndReason, message: str | None = None) -> None:
+        """End an active job for ``reason``, recording ``message`` as its error.
 
-    def fail_job(
-        self,
-        job: Job,
-        message: str,
-        *,
-        reason: FailureReason | None = None,
-    ) -> None:
-        """Mark a job as failed with an error message and its classified cause."""
-        self._assert_transition(job.status, JobStatus.FAILED)
-        job.status = JobStatus.FAILED
-        job.completed_at = utc_now()
-        job.error_message = message
-        job.failure_reason = reason
+        A defined job can be ended only as ``CANCELLED``. A cancellation keeps
+        any message the job already holds when none is given.
+        """
 
-    def cancel_job(self, job: Job) -> None:
-        """Cancel a non-terminal job."""
-        self._assert_transition(job.status, JobStatus.CANCELLED)
-        job.status = JobStatus.CANCELLED
+        if job.status == JobStatus.DEFINED and reason != EndReason.CANCELLED:
+            raise ValueError("Only a cancellation can end a defined job.")
+        self._assert_transition(job.status, JobStatus.ENDED)
+        job.status = JobStatus.ENDED
+        job.activity = None
+        job.end_reason = reason
         job.completed_at = utc_now()
-        job.failure_reason = None
+        if message is not None or reason != EndReason.CANCELLED:
+            job.error_message = message
 
     def reset_failed_job(self, job: Job) -> None:
-        """Reset a failed, stopped, or cancelled job to defined for resubmission."""
+        """Reset an ended job to defined for resubmission."""
 
-        if job.status not in TERMINAL_RECOVERABLE_JOB_STATUSES:
+        if job.status != JobStatus.ENDED:
             raise ValueError("Only failed, stopped, or cancelled jobs can be reset.")
 
         job.status = JobStatus.DEFINED
+        job.activity = None
         job.submitted_at = None
         job.started_at = None
         job.completed_at = None
@@ -1845,88 +1828,54 @@ class ProjectService:
         job.remote_directory = None
         job.num_processes = None
         job.error_message = None
-        job.failure_reason = None
+        job.end_reason = None
         job.last_checked_at = None
         job.last_status_source = None
         job.last_status_message = None
         job.dismissed_at = None
 
     def prepare_job_continuation(self, job: Job) -> None:
-        """Return a finished job to defined for a continuation run, keeping its directory.
+        """Return a completed or ended job to defined for a continuation run, keeping its directory.
 
-        Accepts :data:`CONTINUABLE_JOB_STATUSES` (completed, failed, stopped, or
-        cancelled). Like :meth:`reset_failed_job` this direct-assigns
-        ``DEFINED`` instead of going through :meth:`_assert_transition`: DEFINED
-        is not a target in the validated transition table, and COMPLETED has no
-        validated exit at all.
+        Accepts :data:`CONTINUABLE_JOB_STATUSES`. Every field the previous run
+        stamped is cleared, but ``remote_directory`` is **deliberately
+        preserved** — that is the whole point of the primitive. A defined job
+        carrying a non-null ``remote_directory`` is the durable marker the
+        cluster submission path uses to detect a continuation: it resubmits into
+        the existing remote directory (where CASTEP's ``.check`` file lives)
+        instead of recomputing a target, checking for an existing directory, and
+        offering to delete it.
 
-        Every field the previous run stamped is cleared, but
-        ``remote_directory`` is **deliberately preserved** — that is the whole
-        point of the primitive. A DEFINED job carrying a non-null
-        ``remote_directory`` is the durable marker the cluster submission path
-        uses to detect a continuation: it resubmits into the existing remote
-        directory (where CASTEP's ``.check`` file lives) instead of recomputing
-        a target, checking for an existing directory, and offering to delete it.
-
-        No other code path can produce that status/field combination. The
+        No other code path can produce that state/field combination. The
         writers of ``remote_directory`` are: ``JobExecutionController``, which
-        sets it while moving a job to SUBMITTING and clears it on local
-        submission; :meth:`reset_failed_job`, which clears it; and the main
-        window's cluster-tracking sync, which only touches active jobs.
+        sets it while making a job active and clears it on local submission;
+        :meth:`reset_failed_job`, which clears it; and cluster checks, which
+        only touch active jobs.
         """
 
         if job.status not in CONTINUABLE_JOB_STATUSES:
             raise ValueError("Only completed, failed, stopped, or cancelled jobs can be continued.")
 
         job.status = JobStatus.DEFINED
+        job.activity = None
         job.submitted_at = None
         job.started_at = None
         job.completed_at = None
         job.remote_job_id = None
         job.num_processes = None
         job.error_message = None
-        job.failure_reason = None
+        job.end_reason = None
         job.last_checked_at = None
         job.last_status_source = None
         job.last_status_message = None
         job.dismissed_at = None
 
-    def mark_job_retrieving(self, job: Job) -> None:
-        """Set job to retrieval stage before completion for remote runs."""
-        self._assert_transition(job.status, JobStatus.RETRIEVING)
-        job.status = JobStatus.RETRIEVING
-
-    def reactivate_job(self, job: Job, status: JobStatus) -> None:
-        """Return a failed, stopped or cancelled job to an active ``status``.
-
-        Evidence can show that a job MuFinder ended is alive or has output
-        after all: the scheduler lists it as queued or running, or its folder
-        holds complete output still to be recorded. ``status`` is ``QUEUED``,
-        ``RUNNING``, or ``RETRIEVING`` for a job whose output is being
-        recorded. The failure stamps are cleared and the remote metadata is
-        kept, so checks carry on against the same scheduler job. The caller
-        (``JobExecutionController.apply_evidence``) decides when this applies.
-        """
-
-        if status not in {JobStatus.QUEUED, JobStatus.RUNNING, JobStatus.RETRIEVING}:
-            raise ValueError(f"A job cannot be reactivated as {status.value}.")
-        if job.status not in TERMINAL_RECOVERABLE_JOB_STATUSES:
-            raise ValueError("Only failed, stopped, or cancelled jobs can be reactivated.")
-        self._assert_transition(job.status, status)
-        job.status = status
-        job.completed_at = None
-        job.error_message = None
-        job.failure_reason = None
-        if status == JobStatus.RUNNING:
-            job.started_at = utc_now()
-
     def dismiss_job(self, job: Job) -> None:
-        """Hide a terminal job from the active dashboard without deleting it.
+        """Hide an ended job from the active dashboard without deleting it.
 
-        Dismissal is **not** a status transition: the job keeps its FAILED /
-        STOPPED / CANCELLED status and its record, runs, results, and provenance
-        all remain in the document. Only ``dismissed_at`` is stamped so
-        ``_refresh_jobs_table`` can filter the row out of the active dashboard.
+        Dismissal is **not** a state change: the job stays ``ENDED`` and its
+        record, runs, results, and provenance all remain in the document. Only
+        ``dismissed_at`` is stamped so the dashboard can filter the row out.
         Already-dismissed jobs are rejected so the milestone is recorded once.
 
         Dismissal is nonetheless *acknowledgement* of the failure: the app layer
@@ -1936,9 +1885,7 @@ class ProjectService:
         That projection is derived at read time and changes nothing here.
         """
 
-        if job.status not in TERMINAL_RECOVERABLE_JOB_STATUSES:
-            raise ValueError("Only failed, stopped, or cancelled jobs can be dismissed.")
-        if job.dismissed_at is not None:
+        if job.status != JobStatus.ENDED or job.dismissed_at is not None:
             raise ValueError("Only failed, stopped, or cancelled jobs can be dismissed.")
         job.dismissed_at = utc_now()
 
@@ -2364,56 +2311,10 @@ class ProjectService:
 
     def _assert_transition(self, current: JobStatus, target: JobStatus) -> None:
         allowed: dict[JobStatus, set[JobStatus]] = {
-            JobStatus.DEFINED: {JobStatus.SUBMITTING, JobStatus.CANCELLED},
-            JobStatus.SUBMITTING: {
-                JobStatus.QUEUED,
-                JobStatus.RUNNING,
-                JobStatus.STOPPED,
-                JobStatus.FAILED,
-                JobStatus.CANCELLED,
-            },
-            JobStatus.QUEUED: {
-                JobStatus.RUNNING,
-                JobStatus.STOPPED,
-                JobStatus.FAILED,
-                JobStatus.CANCELLED,
-            },
-            JobStatus.RUNNING: {
-                JobStatus.RETRIEVING,
-                JobStatus.STOPPED,
-                JobStatus.COMPLETED,
-                JobStatus.FAILED,
-                JobStatus.CANCELLED,
-            },
-            JobStatus.RETRIEVING: {
-                JobStatus.STOPPED,
-                JobStatus.COMPLETED,
-                JobStatus.FAILED,
-                JobStatus.CANCELLED,
-            },
-            # An ended job returns to QUEUED, RUNNING or RETRIEVING when
-            # evidence shows it is alive or has output (``reactivate_job``).
-            JobStatus.STOPPED: {
-                JobStatus.SUBMITTING,
-                JobStatus.QUEUED,
-                JobStatus.RUNNING,
-                JobStatus.RETRIEVING,
-                JobStatus.CANCELLED,
-            },
-            JobStatus.COMPLETED: set(),
-            JobStatus.FAILED: {
-                JobStatus.SUBMITTING,
-                JobStatus.QUEUED,
-                JobStatus.RUNNING,
-                JobStatus.RETRIEVING,
-                JobStatus.CANCELLED,
-            },
-            JobStatus.CANCELLED: {
-                JobStatus.SUBMITTING,
-                JobStatus.QUEUED,
-                JobStatus.RUNNING,
-                JobStatus.RETRIEVING,
-            },
+            JobStatus.DEFINED: {JobStatus.ACTIVE, JobStatus.ENDED},
+            JobStatus.ACTIVE: {JobStatus.COMPLETED, JobStatus.ENDED},
+            JobStatus.COMPLETED: {JobStatus.DEFINED},
+            JobStatus.ENDED: {JobStatus.DEFINED, JobStatus.ACTIVE},
         }
         if target not in allowed[current]:
             raise ValueError(f"Invalid job transition from {current.value} to {target.value}")

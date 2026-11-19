@@ -8,7 +8,7 @@ from uuid import uuid4
 
 import pytest
 
-from mufinder.domain.enums import FailureReason, JobStatus, WorkflowStage
+from mufinder.domain.enums import EndReason, JobActivity, JobStatus, WorkflowStage
 from mufinder.domain.models import (
     CONVERGED_DEFAULT_METHOD,
     GenerationRun,
@@ -45,17 +45,50 @@ def test_job_monitor_metadata_defaults_when_absent_from_payload() -> None:
     assert job.dismissed_at is None
 
 
-def test_failure_reason_loads_as_none_when_absent_or_unknown() -> None:
-    base = _job_payload(status=JobStatus.FAILED.value)
+def test_an_ended_job_reads_an_absent_or_unknown_end_reason_as_unknown() -> None:
+    # A newer build may record a reason this one does not know.
+    base = _job_payload(status="ended")
 
-    assert project_codec.job_from_dict(base).failure_reason is None
-    assert (
-        project_codec.job_from_dict({**base, "failure_reason": "cosmic_ray"}).failure_reason is None
+    assert project_codec.job_from_dict(base).end_reason == EndReason.UNKNOWN
+    assert project_codec.job_from_dict({**base, "end_reason": "cosmic_ray"}).end_reason == (
+        EndReason.UNKNOWN
     )
     assert (
-        project_codec.job_from_dict({**base, "failure_reason": "out_of_memory"}).failure_reason
-        == FailureReason.OUT_OF_MEMORY
+        project_codec.job_from_dict({**base, "end_reason": "out_of_memory"}).end_reason
+        == EndReason.OUT_OF_MEMORY
     )
+
+
+def test_an_active_job_reads_an_unknown_activity_as_none() -> None:
+    base = _job_payload(status="active")
+
+    assert project_codec.job_from_dict({**base, "activity": "running"}).activity == (
+        JobActivity.RUNNING
+    )
+    assert project_codec.job_from_dict({**base, "activity": "warming_up"}).activity is None
+    assert project_codec.job_from_dict(base).activity is None
+
+
+@pytest.mark.parametrize("status", ["defined", "completed", "ended"])
+def test_only_an_active_job_keeps_an_activity(status: str) -> None:
+    job = project_codec.job_from_dict(_job_payload(status=status, activity="running"))
+
+    assert job.activity is None
+
+
+@pytest.mark.parametrize("status", ["defined", "active", "completed"])
+def test_only_an_ended_job_keeps_an_end_reason(status: str) -> None:
+    job = project_codec.job_from_dict(_job_payload(status=status, end_reason="walltime"))
+
+    assert job.end_reason is None
+
+
+@pytest.mark.parametrize("status", ["paused", "running", None])
+def test_a_job_state_this_build_does_not_know_refuses_to_load(status: object) -> None:
+    payload = _job_payload(label="relax_1", status=status)
+
+    with pytest.raises(ValueError, match="Job relax_1 has state .* saved by a newer version"):
+        project_codec.job_from_dict(payload)
 
 
 @pytest.mark.parametrize(
@@ -70,14 +103,28 @@ def test_job_round_trips_through_to_jsonable() -> None:
         label="Roundtrip",
         workflow_stage=WorkflowStage.MUON_RELAXATION,
         calc_type="castep_muon_relaxation",
-        status=JobStatus.FAILED,
+        status=JobStatus.ENDED,
         num_processes=8,
-        failure_reason=FailureReason.WALLTIME,
+        end_reason=EndReason.WALLTIME,
     )
 
     decoded = project_codec.job_from_dict(to_jsonable(job))
 
     assert decoded == job
+
+
+@pytest.mark.parametrize("activity", list(JobActivity))
+def test_an_active_job_round_trips_with_its_activity(activity: JobActivity) -> None:
+    job = Job(label="active", status=JobStatus.ACTIVE, activity=activity)
+
+    assert project_codec.job_from_dict(to_jsonable(job)) == job
+
+
+@pytest.mark.parametrize("reason", list(EndReason))
+def test_an_ended_job_round_trips_with_its_end_reason(reason: EndReason) -> None:
+    job = Job(label="ended", status=JobStatus.ENDED, end_reason=reason)
+
+    assert project_codec.job_from_dict(to_jsonable(job)) == job
 
 
 def test_site_from_dict_maps_legacy_candidate_status_and_energy_key() -> None:

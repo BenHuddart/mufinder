@@ -29,12 +29,13 @@ from mufinder.domain.charge_states import (
     muon_charge_state_prefix,
     muon_relaxation_calc_type,
 )
-from mufinder.domain.enums import ACTIVE_JOB_STATUSES, JobStatus, WorkflowStage
+from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationDefinition, CalculationRun, Job, Result, Structure
 from mufinder.domain.text import plural
 from mufinder.persistence.codec import uuid_or_none
 from mufinder.science.ase_bridge import is_muon_label, reduced_formula
 from mufinder.services import supercell_assets
+from mufinder.services.job_monitoring import job_status_word
 from mufinder.services.magnetic_field_results import (
     MUON_POLARISATION_RESULT_TYPE,
     SIMULATION_OWNER_PREFIX,
@@ -668,7 +669,7 @@ def _job_counts(document: ProjectDocument) -> tuple[Counter[WorkflowStage], Coun
     present: Counter[WorkflowStage] = Counter()
     for job in document.jobs.values():
         present[job.workflow_stage] += 1
-        if job.status in ACTIVE_JOB_STATUSES:
+        if job.status == JobStatus.ACTIVE:
             active[job.workflow_stage] += 1
     return active, present
 
@@ -786,9 +787,9 @@ def _relaxation_facts(document: ProjectDocument) -> tuple[str, ...]:
             run = latest_run_for_job(document, job.id)
             if run is None or run.convergence_achieved is not False:
                 relaxed[charge_state] += 1
-        elif job.status in ACTIVE_JOB_STATUSES:
+        elif job.status == JobStatus.ACTIVE:
             active[charge_state] += 1
-        elif job.status == JobStatus.FAILED:
+        elif job_status_word(job) == "failed":
             failed[charge_state] += 1
     facts: list[str] = []
     for charge_state, total in totals.items():
@@ -893,17 +894,18 @@ def _job_facts(
     *,
     completed: bool = True,
 ) -> list[str]:
-    statuses = Counter(job.status for job in document.jobs.values() if job.workflow_stage == stage)
-    if not statuses:
+    jobs = [job for job in document.jobs.values() if job.workflow_stage == stage]
+    if not jobs:
         return []
+    statuses = Counter(job.status for job in jobs)
+    failed = sum(1 for job in jobs if job_status_word(job) == "failed")
     parts: list[str] = []
     if completed and statuses[JobStatus.COMPLETED]:
         parts.append(f"{plural(statuses[JobStatus.COMPLETED], f'{noun}')} complete")
-    active = sum(statuses[status] for status in ACTIVE_JOB_STATUSES)
-    if active:
-        parts.append(f"{active} active")
-    if statuses[JobStatus.FAILED]:
-        parts.append(f"{statuses[JobStatus.FAILED]} failed")
+    if statuses[JobStatus.ACTIVE]:
+        parts.append(f"{statuses[JobStatus.ACTIVE]} active")
+    if failed:
+        parts.append(f"{failed} failed")
     return [", ".join(parts)] if parts else []
 
 

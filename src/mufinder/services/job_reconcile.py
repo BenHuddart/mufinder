@@ -20,14 +20,11 @@ from datetime import datetime
 from enum import StrEnum
 
 from mufinder.castep_io.output_parser import CastepResult
-from mufinder.domain.enums import ACTIVE_JOB_STATUSES, FailureReason, JobStatus
+from mufinder.domain.enums import EndReason, JobActivity, JobStatus
 from mufinder.domain.models import Job
 from mufinder.services.failure_diagnosis import RETRIEVAL_FAILURE_PREFIX, failure_reason_summary
 from mufinder.services.job_artifacts import ParsedJobArtifacts
 from mufinder.services.job_monitoring import NO_JOB_ID_MARKER, is_cluster_job
-
-#: Statuses of a job that ended without completing.
-ENDED_JOB_STATUSES = frozenset({JobStatus.FAILED, JobStatus.STOPPED, JobStatus.CANCELLED})
 
 #: Message of a local job that no process is running and whose output is not complete.
 NO_LOCAL_PROCESS_MESSAGE = (
@@ -38,7 +35,6 @@ NO_LOCAL_PROCESS_MESSAGE = (
 INCOMPLETE_OUTPUT_MESSAGE = "CASTEP did not report successful completion."
 
 __all__ = [
-    "ENDED_JOB_STATUSES",
     "INCOMPLETE_OUTPUT_MESSAGE",
     "NO_JOB_ID_MARKER",
     "NO_LOCAL_PROCESS_MESSAGE",
@@ -141,16 +137,18 @@ class JobEvidence:
 class Decision:
     """The state the evidence supports for a job.
 
-    ``status`` equals the job's current status when nothing changes.
-    ``failure_reason`` is ``None`` for an ended job whose cause the caller
+    ``status`` and ``activity`` equal the job's own when nothing changes.
+    ``end_reason`` is ``None`` for an ended job whose cause the caller
     diagnoses from the job's logs. ``marker`` is the note shown beside an
-    active job that could not be confirmed; it is never stored as a status.
-    Whether a job's output has to be looked at is :func:`wants_output`'s
-    answer, from the scheduler state alone.
+    active job that could not be confirmed; it is never stored. Whether a
+    job's output has to be looked at is :func:`wants_output`'s answer, from the
+    scheduler state alone.
     """
 
     status: JobStatus
-    failure_reason: FailureReason | None = None
+    #: What an active job is doing; ``None`` for any other state.
+    activity: JobActivity | None = None
+    end_reason: EndReason | None = None
     #: The job's error message when the decision ends it.
     message: str | None = None
     #: One line on what was seen, for the job's "last checked" note.
@@ -188,11 +186,11 @@ def reconcile(job: Job, evidence: JobEvidence) -> Decision | None:
     cluster = is_cluster_job(job)
     if cluster and not _about_this_submission(job, evidence):
         return None
-    if job.status in ACTIVE_JOB_STATUSES:
+    if job.status == JobStatus.ACTIVE:
         return _active_cluster(job, evidence) if cluster else _active_local(job, evidence)
-    if job.status in ENDED_JOB_STATUSES and evidence.on_request:
+    if job.status == JobStatus.ENDED and evidence.on_request:
         return _ended(job, evidence, cluster=cluster)
-    return Decision(job.status)
+    return _unchanged(job)
 
 
 def _about_this_submission(job: Job, evidence: JobEvidence) -> bool:
@@ -201,22 +199,29 @@ def _about_this_submission(job: Job, evidence: JobEvidence) -> bool:
     )
 
 
+def _unchanged(job: Job, *, observation: str = "", marker: str | None = None) -> Decision:
+    return Decision(job.status, job.activity, observation=observation, marker=marker)
+
+
+def _active(activity: JobActivity, observation: str = "") -> Decision:
+    return Decision(JobStatus.ACTIVE, activity, observation=observation)
+
+
 def _active_local(job: Job, evidence: JobEvidence) -> Decision:
     process = evidence.process
     if process == ProcessState.PENDING:
-        status = JobStatus.QUEUED if job.status == JobStatus.SUBMITTING else job.status
-        return Decision(status, observation="queued locally")
+        return _active(JobActivity.QUEUED, "queued locally")
     if process == ProcessState.RUNNING:
-        return Decision(JobStatus.RUNNING, observation="process started")
+        return _active(JobActivity.RUNNING, "process started")
     if process is None:
-        return Decision(job.status)
+        return _unchanged(job)
     if evidence.output == OutputState.COMPLETE:
         return Decision(JobStatus.COMPLETED, observation="output found complete")
     if evidence.output == OutputState.NOT_LOOKED:
-        return Decision(job.status)
+        return _unchanged(job)
     return Decision(
-        JobStatus.STOPPED,
-        failure_reason=FailureReason.INTERRUPTED,
+        JobStatus.ENDED,
+        end_reason=EndReason.INTERRUPTED,
         message=NO_LOCAL_PROCESS_MESSAGE,
         observation="no local process is running this job",
     )
@@ -225,41 +230,37 @@ def _active_local(job: Job, evidence: JobEvidence) -> Decision:
 def _active_cluster(job: Job, evidence: JobEvidence) -> Decision:
     scheduler = evidence.scheduler
     if evidence.submitting or scheduler is None:
-        return Decision(job.status)
+        return _unchanged(job)
     if scheduler == SchedulerState.NO_JOB_ID:
         # With no scheduler answer, nothing ties the folder's output to this
         # run. Only a check the user asked for adopts complete output.
         if evidence.on_request and evidence.output == OutputState.COMPLETE:
             return Decision(JobStatus.COMPLETED, observation="output retrieved and parsed")
-        return Decision(job.status, marker=NO_JOB_ID_MARKER)
+        return _unchanged(job, marker=NO_JOB_ID_MARKER)
     if scheduler == SchedulerState.UNAVAILABLE:
-        return Decision(job.status, marker=f"could not be checked: {evidence.scheduler_detail}")
+        return _unchanged(job, marker=f"could not be checked: {evidence.scheduler_detail}")
     if scheduler == SchedulerState.PENDING:
-        # No transition leads back to queued: a running job the scheduler
-        # suspends or requeues stays running.
-        status = (
-            JobStatus.QUEUED
-            if job.status in {JobStatus.SUBMITTING, JobStatus.QUEUED}
-            else job.status
-        )
-        return Decision(status, observation=_scheduler_observation(evidence, "QUEUED"))
+        return _active(JobActivity.QUEUED, _scheduler_observation(evidence, "QUEUED"))
     if scheduler == SchedulerState.RUNNING:
-        status = job.status if job.status == JobStatus.RETRIEVING else JobStatus.RUNNING
-        return Decision(status, observation=_scheduler_observation(evidence, "RUNNING"))
+        return _active(JobActivity.RUNNING, _scheduler_observation(evidence, "RUNNING"))
     if scheduler == SchedulerState.CANCELLED and evidence.output != OutputState.COMPLETE:
         # Output is looked at after a cancellation only when the user asks;
         # complete output then completes the job like any other.
         return Decision(
-            JobStatus.CANCELLED, observation=_scheduler_observation(evidence, "CANCELLED")
+            JobStatus.ENDED,
+            end_reason=EndReason.CANCELLED,
+            observation=_scheduler_observation(evidence, "CANCELLED"),
         )
 
     # The scheduler no longer runs the job, or cannot say: the output decides.
     output = evidence.output
     if output == OutputState.NOT_LOOKED:
-        return _output_not_looked(job, evidence)
+        if scheduler in _REPORTED_FINISHED:
+            return _active(JobActivity.RETRIEVING)
+        return _unchanged(job)
     if output == OutputState.UNREACHABLE:
-        return Decision(
-            job.status,
+        return _unchanged(
+            job,
             observation=_queue_note(evidence, "output retrieval failed"),
             marker=f"output could not be read: {evidence.output_detail}",
         )
@@ -271,7 +272,7 @@ def _active_cluster(job: Job, evidence: JobEvidence) -> Decision:
         return _walltime_stop(_scheduler_observation(evidence, "TIMEOUT"))
     if scheduler == SchedulerState.FAILED:
         return Decision(
-            JobStatus.FAILED,
+            JobStatus.ENDED,
             message=f"Scheduler reported the job as {evidence.scheduler_detail}.",
             observation=_scheduler_observation(evidence, evidence.scheduler_detail),
         )
@@ -279,30 +280,30 @@ def _active_cluster(job: Job, evidence: JobEvidence) -> Decision:
         if evidence.walltime_seen:
             return _walltime_stop(_queue_note(evidence, "output incomplete; stopped (walltime)"))
         return Decision(
-            JobStatus.FAILED,
+            JobStatus.ENDED,
             message=evidence.output_detail or INCOMPLETE_OUTPUT_MESSAGE,
             observation=_queue_note(evidence, "output incomplete; job failed"),
         )
     if output == OutputState.UNREADABLE:
         return Decision(
-            JobStatus.FAILED,
-            failure_reason=FailureReason.OUTPUT_UNAVAILABLE,
+            JobStatus.ENDED,
+            end_reason=EndReason.OUTPUT_UNAVAILABLE,
             message=f"{RETRIEVAL_FAILURE_PREFIX}: {evidence.output_detail}",
             observation=_queue_note(evidence, "output parsing failed"),
         )
     # No output from this run.
     if scheduler == SchedulerState.COMPLETED:
         return Decision(
-            JobStatus.FAILED,
-            failure_reason=FailureReason.OUTPUT_UNAVAILABLE,
+            JobStatus.ENDED,
+            end_reason=EndReason.OUTPUT_UNAVAILABLE,
             message=(
                 "The scheduler reports the job finished, but "
                 f"{evidence.remote_directory} holds no CASTEP output from this run."
             ),
             observation=_queue_note(evidence, "no output from this run"),
         )
-    return Decision(
-        job.status,
+    return _unchanged(
+        job,
         observation=_queue_note(evidence, "not in scheduler accounting; no output from this run"),
         marker=(
             f"lost track: the scheduler does not list job {evidence.remote_job_id} "
@@ -311,36 +312,25 @@ def _active_cluster(job: Job, evidence: JobEvidence) -> Decision:
     )
 
 
-def _output_not_looked(job: Job, evidence: JobEvidence) -> Decision:
-    """Decide an active cluster job the scheduler no longer runs, before its output is read."""
-
-    status = JobStatus.RETRIEVING if evidence.scheduler in _REPORTED_FINISHED else job.status
-    return Decision(status)
-
-
 def _ended(job: Job, evidence: JobEvidence, *, cluster: bool) -> Decision:
     """Decide an ended job the user asked to have checked."""
 
     if cluster and evidence.scheduler == SchedulerState.PENDING:
-        return Decision(
-            JobStatus.QUEUED, observation=_scheduler_observation(evidence, "QUEUED") + " again"
-        )
+        return _active(JobActivity.QUEUED, _scheduler_observation(evidence, "QUEUED") + " again")
     if cluster and evidence.scheduler == SchedulerState.RUNNING:
-        return Decision(
-            JobStatus.RUNNING, observation=_scheduler_observation(evidence, "RUNNING") + " again"
-        )
+        return _active(JobActivity.RUNNING, _scheduler_observation(evidence, "RUNNING") + " again")
     if evidence.output == OutputState.COMPLETE:
         return Decision(JobStatus.COMPLETED, observation="output retrieved and parsed")
     if evidence.output == OutputState.NOT_LOOKED:
-        return Decision(job.status)
-    return Decision(job.status, observation="checked; no complete output found")
+        return _unchanged(job)
+    return _unchanged(job, observation="checked; no complete output found")
 
 
 def _walltime_stop(observation: str) -> Decision:
     return Decision(
-        JobStatus.STOPPED,
-        failure_reason=FailureReason.WALLTIME,
-        message=failure_reason_summary(FailureReason.WALLTIME),
+        JobStatus.ENDED,
+        end_reason=EndReason.WALLTIME,
+        message=failure_reason_summary(EndReason.WALLTIME),
         observation=observation,
     )
 

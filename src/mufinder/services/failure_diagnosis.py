@@ -6,7 +6,7 @@ records the cause only in its own log (``slurm-<id>.out``), while CASTEP writes
 its own errors to ``<seed>.err`` / ``<seed>.NNNN.err``. This module reads the
 logs a job left in its local output directory (the cluster runner downloads
 them before reporting a failure) and turns them into a
-:class:`~mufinder.domain.enums.FailureReason` plus the log line that shows it.
+:class:`~mufinder.domain.enums.EndReason` plus the log line that shows it.
 
 Evidence is ranked: a scheduler kill (walltime, memory, node failure) explains
 everything after it, so it wins over a CASTEP error file, which in turn wins
@@ -24,9 +24,9 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import UUID
 
-from mufinder.domain.enums import FailureReason, JobStatus
+from mufinder.domain.enums import EndReason
 from mufinder.domain.models import Job
-from mufinder.services.job_monitoring import is_cluster_job
+from mufinder.services.job_monitoring import is_cluster_job, job_status_word
 
 #: Prefix of the cluster runner's message when output download or parsing fails.
 RETRIEVAL_FAILURE_PREFIX = "Failed to retrieve or parse remote output"
@@ -52,25 +52,26 @@ RETRY_RETRIEVAL_NOT_CONNECTED_MESSAGE = (
 #: Short label shown next to the job status in the dashboard. Kept to a word
 #: or two so ``failed · <label>`` fits the Status column on a laptop screen;
 #: the cell tooltip carries the full explanation.
-FAILURE_REASON_LABELS: dict[FailureReason, str] = {
-    FailureReason.WALLTIME: "walltime",
-    FailureReason.OUT_OF_MEMORY: "memory",
-    FailureReason.NODE_FAILURE: "node fail",
-    FailureReason.CASTEP_ERROR: "CASTEP",
-    FailureReason.OUTPUT_UNAVAILABLE: "no output",
-    FailureReason.INTERRUPTED: "lost track",
-    FailureReason.SUBMISSION: "submit",
+FAILURE_REASON_LABELS: dict[EndReason, str] = {
+    EndReason.WALLTIME: "walltime",
+    EndReason.OUT_OF_MEMORY: "memory",
+    EndReason.NODE_FAILURE: "node fail",
+    EndReason.CASTEP_ERROR: "CASTEP",
+    EndReason.OUTPUT_UNAVAILABLE: "no output",
+    EndReason.INTERRUPTED: "lost track",
+    EndReason.SUBMISSION: "submit",
 }
 
 #: One-sentence explanation of each cause, for tooltips and the Inspect dialog.
-FAILURE_REASON_SUMMARIES: dict[FailureReason, str] = {
-    FailureReason.WALLTIME: "The scheduler stopped the job when it reached its walltime limit.",
-    FailureReason.OUT_OF_MEMORY: "The job ran out of memory and the scheduler killed it.",
-    FailureReason.NODE_FAILURE: "A compute node failed while the job was running.",
-    FailureReason.CASTEP_ERROR: "CASTEP stopped with an error.",
-    FailureReason.OUTPUT_UNAVAILABLE: "The job's output could not be retrieved.",
-    FailureReason.INTERRUPTED: "MuFinder lost track of the job before it finished.",
-    FailureReason.SUBMISSION: "The job could not be submitted.",
+FAILURE_REASON_SUMMARIES: dict[EndReason, str] = {
+    EndReason.WALLTIME: "The scheduler stopped the job when it reached its walltime limit.",
+    EndReason.OUT_OF_MEMORY: "The job ran out of memory and the scheduler killed it.",
+    EndReason.NODE_FAILURE: "A compute node failed while the job was running.",
+    EndReason.CASTEP_ERROR: "CASTEP stopped with an error.",
+    EndReason.OUTPUT_UNAVAILABLE: "The job's output could not be retrieved.",
+    EndReason.INTERRUPTED: "MuFinder lost track of the job before it finished.",
+    EndReason.SUBMISSION: "The job could not be submitted.",
+    EndReason.CANCELLED: "The job was cancelled.",
 }
 
 UNDIAGNOSED_SUMMARY = "No cause found in the logs."
@@ -94,21 +95,21 @@ _FRESHNESS_SLACK = timedelta(seconds=2)
 # its state names (TIMEOUT, OUT_OF_MEMORY, NODE_FAIL) appear in the runner's
 # own messages and in sacct output. The PBS forms cover templates that wrap
 # another scheduler.
-_SCHEDULER_PATTERNS: tuple[tuple[FailureReason, re.Pattern[str]], ...] = (
-    (FailureReason.WALLTIME, re.compile(r"DUE TO TIME LIMIT", re.IGNORECASE)),
-    (FailureReason.WALLTIME, re.compile(r"\bTIMEOUT\b")),
-    (FailureReason.WALLTIME, re.compile(r"walltime\s+\d+\s+exceeded\s+limit", re.IGNORECASE)),
-    (FailureReason.WALLTIME, re.compile(r"time\s+limit\s+(?:exceeded|reached)", re.IGNORECASE)),
-    (FailureReason.OUT_OF_MEMORY, re.compile(r"\boom[-_ ]kill", re.IGNORECASE)),
-    (FailureReason.OUT_OF_MEMORY, re.compile(r"out-of-memory handler", re.IGNORECASE)),
+_SCHEDULER_PATTERNS: tuple[tuple[EndReason, re.Pattern[str]], ...] = (
+    (EndReason.WALLTIME, re.compile(r"DUE TO TIME LIMIT", re.IGNORECASE)),
+    (EndReason.WALLTIME, re.compile(r"\bTIMEOUT\b")),
+    (EndReason.WALLTIME, re.compile(r"walltime\s+\d+\s+exceeded\s+limit", re.IGNORECASE)),
+    (EndReason.WALLTIME, re.compile(r"time\s+limit\s+(?:exceeded|reached)", re.IGNORECASE)),
+    (EndReason.OUT_OF_MEMORY, re.compile(r"\boom[-_ ]kill", re.IGNORECASE)),
+    (EndReason.OUT_OF_MEMORY, re.compile(r"out-of-memory handler", re.IGNORECASE)),
     (
-        FailureReason.OUT_OF_MEMORY,
+        EndReason.OUT_OF_MEMORY,
         re.compile(r"exceeded\s+(?:job|step)\s+memory\s+limit", re.IGNORECASE),
     ),
-    (FailureReason.OUT_OF_MEMORY, re.compile(r"\bOUT_OF_MEMORY\b")),
-    (FailureReason.OUT_OF_MEMORY, re.compile(r"job killed:\s+mem\b", re.IGNORECASE)),
-    (FailureReason.NODE_FAILURE, re.compile(r"DUE TO NODE FAIL", re.IGNORECASE)),
-    (FailureReason.NODE_FAILURE, re.compile(r"\bNODE_FAIL\b")),
+    (EndReason.OUT_OF_MEMORY, re.compile(r"\bOUT_OF_MEMORY\b")),
+    (EndReason.OUT_OF_MEMORY, re.compile(r"job killed:\s+mem\b", re.IGNORECASE)),
+    (EndReason.NODE_FAILURE, re.compile(r"DUE TO NODE FAIL", re.IGNORECASE)),
+    (EndReason.NODE_FAILURE, re.compile(r"\bNODE_FAIL\b")),
 )
 
 _CASTEP_ERR_NOISE = re.compile(r"^current trace stack", re.IGNORECASE)
@@ -118,7 +119,7 @@ _CASTEP_ERR_NOISE = re.compile(r"^current trace stack", re.IGNORECASE)
 class FailureDiagnosis:
     """The classified cause of a failure and the log line that shows it."""
 
-    reason: FailureReason | None = None
+    reason: EndReason | None = None
     evidence: str = ""
     evidence_source: str = ""
 
@@ -127,13 +128,13 @@ class FailureDiagnosis:
         return failure_reason_summary(self.reason)
 
 
-def failure_reason_label(reason: FailureReason | None) -> str:
+def failure_reason_label(reason: EndReason | None) -> str:
     """Return the short dashboard label for ``reason`` (empty when unknown)."""
 
     return FAILURE_REASON_LABELS.get(reason, "") if reason is not None else ""
 
 
-def failure_status_reason(reason: FailureReason | None, message: str | None) -> str:
+def failure_status_reason(reason: EndReason | None, message: str | None) -> str:
     """Return the reason shown beside a failed or stopped job's status.
 
     A CASTEP error, or a failure with no classified cause, says what happened
@@ -143,15 +144,15 @@ def failure_status_reason(reason: FailureReason | None, message: str | None) -> 
     """
 
     lines = (message or "").strip().splitlines()
-    if lines and reason in (None, FailureReason.CASTEP_ERROR):
+    if lines and reason in (None, EndReason.UNKNOWN, EndReason.CASTEP_ERROR):
         return lines[0].strip()
     return failure_reason_label(reason)
 
 
-def failure_reason_summary(reason: FailureReason | None) -> str:
+def failure_reason_summary(reason: EndReason | None) -> str:
     """Return the one-sentence explanation of ``reason``."""
 
-    if reason is None:
+    if reason in (None, EndReason.UNKNOWN):
         return UNDIAGNOSED_SUMMARY
     return FAILURE_REASON_SUMMARIES[reason]
 
@@ -186,7 +187,7 @@ def diagnose_failure(
         line = _first_castep_error_line(text)
         if line:
             return FailureDiagnosis(
-                reason=FailureReason.CASTEP_ERROR, evidence=line, evidence_source=path.name
+                reason=EndReason.CASTEP_ERROR, evidence=line, evidence_source=path.name
             )
 
     stripped = (message or "").strip()
@@ -195,7 +196,7 @@ def diagnose_failure(
         RETRY_RETRIEVAL_NOT_CONNECTED_MESSAGE,
     }:
         return FailureDiagnosis(
-            reason=FailureReason.OUTPUT_UNAVAILABLE,
+            reason=EndReason.OUTPUT_UNAVAILABLE,
             evidence=stripped,
             evidence_source="failure message",
         )
@@ -301,7 +302,8 @@ class FailedJobReport:
 
     job_id: UUID
     label: str
-    status: JobStatus
+    #: The job's status word: ``failed`` or ``stopped``.
+    status: str
     headline: str
     notes: tuple[str, ...]
     log_excerpt: str
@@ -340,7 +342,7 @@ def failed_job_report(
     return FailedJobReport(
         job_id=job.id,
         label=job.label,
-        status=job.status,
+        status=job_status_word(job),
         headline=headline,
         notes=tuple(notes),
         log_excerpt=failure_log_excerpt(job, folder, seed_name) if folder is not None else "",

@@ -127,10 +127,13 @@ Job model and execution
 Job lifecycle
 ~~~~~~~~~~~~~
 
-Job records move through ``defined``, ``submitting``, ``queued``, ``running``
-and ``retrieving`` to a terminal ``completed``, ``failed``, ``stopped`` or
-``cancelled`` state (``JobStatus`` in ``mufinder.domain.enums``); workflow rows
-show a ``defined`` job whose inputs are configured as ``ready``.
+A job record stores one of four states (``JobStatus`` in
+``mufinder.domain.enums``): ``defined``, ``active``, ``completed`` or
+``ended``. An active job also stores what it was last seen doing
+(``submitting``, ``queued``, ``running`` or ``retrieving``) and an ended job
+why it did not finish; job tables show those as the words ``failed``,
+``stopped`` and ``cancelled``. Workflow rows show a ``defined`` job whose
+inputs are configured as ``ready``.
 :doc:`/job_lifecycle` is the authoritative transition contract. The job system
 provides a centralized registry and dashboard, typed tags for stage and
 calculation type, strictly validated lifecycle transitions, and restart and

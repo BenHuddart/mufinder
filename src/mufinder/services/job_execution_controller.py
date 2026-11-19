@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID
 
-from mufinder.domain.enums import ACTIVE_JOB_STATUSES, FailureReason, JobStatus
+from mufinder.domain.enums import EndReason, JobActivity, JobStatus
 from mufinder.domain.models import CalculationRun, Job, Result, utc_now
 from mufinder.services.cluster_runner import CheckTarget
 from mufinder.services.failure_diagnosis import (
@@ -23,9 +23,13 @@ from mufinder.castep_io.output_parser import CastepResult
 from mufinder.services.job_artifacts import ParsedJobArtifacts, RetrievalFlags
 from mufinder.services.job_evidence import local_job_evidence
 from mufinder.services.job_findings import record_job_finding
-from mufinder.services.job_monitoring import is_cluster_job, job_staleness
+from mufinder.services.job_monitoring import (
+    STOPPED_END_REASONS,
+    is_cluster_job,
+    job_staleness,
+    job_status_word,
+)
 from mufinder.services.job_reconcile import (
-    ENDED_JOB_STATUSES,
     Decision,
     JobEvidence,
     OutputState,
@@ -244,7 +248,7 @@ class JobExecutionController:
         self,
         job: Job,
         *,
-        status: JobStatus = JobStatus.RUNNING,
+        status: JobStatus = JobStatus.ACTIVE,
         started: bool = False,
     ) -> CalculationRun | None:
         """Return the active run for a job, creating a fallback run when needed."""
@@ -328,7 +332,7 @@ class JobExecutionController:
             job.remote_job_id = None
             job.remote_directory = None
             job.num_processes = max(1, int(num_cores))
-            self._create_active_run(document, job, JobStatus.SUBMITTING)
+            self._create_active_run(document, job)
 
             try:
                 self._local_runner.submit(
@@ -342,10 +346,10 @@ class JobExecutionController:
                 )
             except Exception as exc:  # noqa: BLE001
                 failed_messages.append(f"- {job.label}: {exc}")
-                self.fail_job(job.id, str(exc), reason=FailureReason.SUBMISSION)
+                self.fail_job(job.id, str(exc), reason=EndReason.SUBMISSION)
                 journal_changed = True
                 continue
-            if job.status in {JobStatus.SUBMITTING, JobStatus.QUEUED, JobStatus.RUNNING}:
+            if job.status == JobStatus.ACTIVE:
                 submitted_jobs.append(job)
 
         if submitted_jobs:
@@ -373,19 +377,12 @@ class JobExecutionController:
         touched again until :meth:`finalize_cluster_submission` or
         :meth:`fail_cluster_submission`.
 
-        The accepted statuses are the ones that can legally transition to
-        SUBMITTING from outside an active run: DEFINED plus the terminal statuses
-        the resubmit paths accept.
+        A defined job is accepted, and an ended one, which the resubmit paths
+        submit again.
         """
 
         document = self._document_getter()
-        accepted_statuses = {
-            JobStatus.DEFINED,
-            JobStatus.FAILED,
-            JobStatus.STOPPED,
-            JobStatus.CANCELLED,
-        }
-        if document is None or request.job.status not in accepted_statuses:
+        if document is None or request.job.status not in {JobStatus.DEFINED, JobStatus.ENDED}:
             return None
 
         job = request.job
@@ -396,7 +393,7 @@ class JobExecutionController:
         job.num_processes = max(1, int(request.num_processes))
         job.execution_target = request.execution_target
         job.remote_directory = request.remote_target
-        run = self._create_active_run(document, job, JobStatus.SUBMITTING)
+        run = self._create_active_run(document, job)
         return PreparedClusterSubmission(
             job=job, run=run, submit_kwargs=_cluster_submit_kwargs(request)
         )
@@ -409,8 +406,10 @@ class JobExecutionController:
         job = prepared.job
         run = prepared.run
         job.remote_job_id = remote_job_id
-        if job.status == JobStatus.SUBMITTING:
-            self._project_service.mark_job_queued(job, remote_job_id=remote_job_id)
+        if job.status == JobStatus.ACTIVE and job.activity == JobActivity.SUBMITTING:
+            self._project_service.mark_job_active(
+                job, JobActivity.QUEUED, remote_job_id=remote_job_id
+            )
         run.status = job.status
         return ClusterJobSubmissionOutcome(submitted_job=job)
 
@@ -421,11 +420,11 @@ class JobExecutionController:
 
         job = prepared.job
         try:
-            self._project_service.fail_job(job, message, reason=FailureReason.SUBMISSION)
+            self._project_service.end_job(job, EndReason.SUBMISSION, message)
         except ValueError:
             pass
         self._close_active_run(
-            job, prepared.run, JobStatus.FAILED, "job_failed", error_message=message
+            job, prepared.run, JobStatus.ENDED, "job_failed", error_message=message
         )
         return ClusterJobSubmissionOutcome(
             failed_message=f"- {job.label}: {message}",
@@ -469,17 +468,15 @@ class JobExecutionController:
         job = self._job_for_id(job_id)
         if job is None:
             return LifecycleUpdate()
-        if status_value != JobStatus.QUEUED.value or job.status != JobStatus.SUBMITTING:
+        if (
+            status_value != JobActivity.QUEUED.value
+            or job.status != JobStatus.ACTIVE
+            or job.activity != JobActivity.SUBMITTING
+        ):
             return LifecycleUpdate(job=job)
 
-        try:
-            self._project_service.mark_job_queued(job, remote_job_id=None)
-        except ValueError:
-            return LifecycleUpdate(job=job)
+        self._project_service.mark_job_active(job, JobActivity.QUEUED)
         self._stamp_monitor_metadata(job, source="local_runner", message="queued locally")
-        run = self.run_for_job(job_id)
-        if run is not None:
-            run.status = JobStatus.QUEUED
         return LifecycleUpdate(job=job, changed=True)
 
     def mark_started(
@@ -489,7 +486,7 @@ class JobExecutionController:
         source: str | None = None,
         status_message: str | None = None,
     ) -> LifecycleUpdate:
-        """Mark a job and its active run as running.
+        """Mark an active job as running, and stamp its active run's start.
 
         ``source``/``status_message`` override the monitor-metadata stamp.
         When both are ``None`` (the runner signal path), local jobs are stamped
@@ -502,11 +499,8 @@ class JobExecutionController:
         if job is None:
             return LifecycleUpdate()
 
-        if job.status in {JobStatus.SUBMITTING, JobStatus.QUEUED}:
-            try:
-                self._project_service.start_job(job)
-            except ValueError:
-                pass
+        if job.status == JobStatus.ACTIVE:
+            self._project_service.mark_job_active(job, JobActivity.RUNNING)
 
         if source is not None:
             self._stamp_monitor_metadata(
@@ -518,10 +512,8 @@ class JobExecutionController:
             )
 
         run = self.run_for_job(job_id)
-        if run is not None:
-            run.status = JobStatus.RUNNING
-            if run.started_at is None:
-                run.started_at = utc_now()
+        if run is not None and run.started_at is None:
+            run.started_at = utc_now()
         return LifecycleUpdate(job=job, changed=True)
 
     def complete_job_with_result(
@@ -546,7 +538,7 @@ class JobExecutionController:
 
         run = self.run_for_job(job.id)
         if run is None:
-            run = self.ensure_run_for_job(job, status=JobStatus.RUNNING, started=True)
+            run = self.ensure_run_for_job(job, started=True)
         if run is None:
             return False
 
@@ -558,16 +550,11 @@ class JobExecutionController:
         run.warnings = list(warnings)
         run.convergence_achieved = convergence_achieved
 
-        if job.status in {JobStatus.SUBMITTING, JobStatus.QUEUED}:
-            try:
-                self._project_service.start_job(job)
-            except ValueError:
-                pass
-        if job.status in {JobStatus.RUNNING, JobStatus.RETRIEVING}:
-            try:
-                self._project_service.complete_job(job)
-            except ValueError:
-                pass
+        if job.status == JobStatus.ACTIVE:
+            if job.activity in {JobActivity.SUBMITTING, JobActivity.QUEUED}:
+                # A job that completes without being seen running still records a start.
+                self._project_service.mark_job_active(job, JobActivity.RUNNING)
+            self._project_service.complete_job(job)
 
         if is_cluster_job(job):
             resolved_source = source or "retrieval"
@@ -594,13 +581,14 @@ class JobExecutionController:
         *,
         source: str | None = None,
         status_message: str | None = None,
-        reason: FailureReason | None = None,
+        reason: EndReason | None = None,
     ) -> LifecycleUpdate:
-        """Mark a job as failed and record a terminal provenance event.
+        """End an active job as failed and record a terminal provenance event.
 
         ``reason`` records a cause the caller already knows (a rejected
         submission). Otherwise the cause is diagnosed from ``message`` and the
-        job's scheduler/CASTEP logs (see :meth:`diagnose_failure`).
+        job's scheduler/CASTEP logs (see :meth:`diagnose_failure`), and is
+        ``UNKNOWN`` when the logs do not show one.
 
         ``source``/``status_message`` override the monitor-metadata stamp.
         When ``None`` (the shared local/cluster ``job_failed`` path), the
@@ -616,18 +604,10 @@ class JobExecutionController:
         if job is None:
             return LifecycleUpdate()
 
-        if job.status in {
-            JobStatus.SUBMITTING,
-            JobStatus.QUEUED,
-            JobStatus.RUNNING,
-            JobStatus.RETRIEVING,
-        }:
+        if job.status == JobStatus.ACTIVE:
             if reason is None:
-                reason = self.diagnose_failure(job, message).reason
-            try:
-                self._project_service.fail_job(job, message, reason=reason)
-            except ValueError:
-                pass
+                reason = self.diagnose_failure(job, message).reason or EndReason.UNKNOWN
+            self._project_service.end_job(job, reason, message)
 
         if is_cluster_job(job):
             resolved_source = source or "retrieval"
@@ -641,7 +621,7 @@ class JobExecutionController:
         if run is not None:
             run.warnings = [message]
         self._close_active_run(
-            job, run, JobStatus.FAILED, "job_failed", error_message=message, mark_started=True
+            job, run, JobStatus.ENDED, "job_failed", error_message=message, mark_started=True
         )
         return LifecycleUpdate(job=job, changed=True, journal_changed=True)
 
@@ -676,7 +656,7 @@ class JobExecutionController:
 
         document = self._document_getter()
         job = self._job_for_id(job_id)
-        if document is None or job is None or job.status not in ACTIVE_JOB_STATUSES:
+        if document is None or job is None or job.status != JobStatus.ACTIVE:
             return LifecycleUpdate(job=job)
         removed = set(document.results) - results_before
         for result_id in removed:
@@ -687,25 +667,16 @@ class JobExecutionController:
         return self.fail_job(job_id, f"{RESULT_NOT_RECORDED_PREFIX}: {error}")
 
     def cancel_job(self, job_id: UUID) -> LifecycleUpdate:
-        """Mark a job as cancelled and record a terminal provenance event."""
+        """End a defined or active job as cancelled and record a terminal provenance event."""
 
         job = self._job_for_id(job_id)
         if job is None:
             return LifecycleUpdate()
 
-        if job.status in {
-            JobStatus.DEFINED,
-            JobStatus.SUBMITTING,
-            JobStatus.QUEUED,
-            JobStatus.RUNNING,
-            JobStatus.RETRIEVING,
-        }:
-            try:
-                self._project_service.cancel_job(job)
-            except ValueError:
-                pass
+        if job.status in {JobStatus.DEFINED, JobStatus.ACTIVE}:
+            self._project_service.end_job(job, EndReason.CANCELLED)
 
-        self._close_active_run(job, self.run_for_job(job_id), JobStatus.CANCELLED, "job_cancelled")
+        self._close_active_run(job, self.run_for_job(job_id), JobStatus.ENDED, "job_cancelled")
         return LifecycleUpdate(job=job, changed=True, journal_changed=True)
 
     @staticmethod
@@ -734,7 +705,7 @@ class JobExecutionController:
         active = [
             job
             for job in document.jobs.values()
-            if job.status in ACTIVE_JOB_STATUSES and not is_cluster_job(job)
+            if job.status == JobStatus.ACTIVE and not is_cluster_job(job)
         ]
         if not active:
             return []
@@ -777,7 +748,7 @@ class JobExecutionController:
         if decision is None:
             return LifecycleUpdate(job=job)
         stamped = cluster and self._note_check(job, evidence, decision)
-        if decision.status == job.status:
+        if (decision.status, decision.activity) == (job.status, job.activity):
             return LifecycleUpdate(job=job, stamped=stamped)
         update = self._apply_decision(job, evidence, decision)
         if cluster and (update.changed or update.finished is not None):
@@ -821,44 +792,42 @@ class JobExecutionController:
     def _apply_decision(
         self, job: Job, evidence: JobEvidence, decision: Decision
     ) -> LifecycleUpdate:
-        """Move ``job`` to ``decision.status``, which differs from its own."""
+        """Move ``job`` to ``decision.status`` and activity, which differ from its own."""
 
         target = decision.status
-        ended = job.status in ENDED_JOB_STATUSES
+        ended = job.status == JobStatus.ENDED
         cluster = is_cluster_job(job)
         source = _evidence_source(evidence) if cluster else "reconciliation"
         if target == JobStatus.COMPLETED:
             if evidence.parsed is None:
                 return LifecycleUpdate(job=job)
-            if ended and not self._reactivate(job, JobStatus.RETRIEVING):
+            if ended and not self._reactivate(job, JobActivity.RETRIEVING):
                 return LifecycleUpdate(job=job)
             return LifecycleUpdate(
                 job=job,
                 changed=ended,
                 finished=FinishedOutput(evidence.parsed, evidence.artifacts),
             )
-        if target in {JobStatus.QUEUED, JobStatus.RUNNING} and ended:
-            return LifecycleUpdate(job=job, changed=self._reactivate(job, target))
-        if target == JobStatus.QUEUED:
-            if cluster:
-                return self._mark_cluster_queued(job)
-            return self.mark_local_status_changed(job.id, JobStatus.QUEUED.value)
-        if target == JobStatus.RUNNING:
-            return self.mark_started(job.id)
-        if target == JobStatus.RETRIEVING:
-            return self._mark_retrieving(job)
-        if target == JobStatus.FAILED:
+        if target == JobStatus.ACTIVE and decision.activity is not None:
+            if ended:
+                return LifecycleUpdate(job=job, changed=self._reactivate(job, decision.activity))
+            if decision.activity == JobActivity.QUEUED and not cluster:
+                return self.mark_local_status_changed(job.id, JobActivity.QUEUED.value)
+            if decision.activity == JobActivity.RUNNING:
+                return self.mark_started(job.id)
+            return self._mark_activity(job, decision.activity)
+        if target == JobStatus.ENDED:
+            if decision.end_reason == EndReason.CANCELLED:
+                return self.cancel_job(job.id)
+            if decision.end_reason in STOPPED_END_REASONS:
+                return self._stop_job(job, decision, source=source, mark_started=not cluster)
             return self.fail_job(
                 job.id,
                 decision.message or "",
                 source=source,
                 status_message=decision.observation or None,
-                reason=decision.failure_reason,
+                reason=decision.end_reason,
             )
-        if target == JobStatus.STOPPED:
-            return self._stop_job(job, decision, source=source, mark_started=not cluster)
-        if target == JobStatus.CANCELLED:
-            return self.cancel_job(job.id)
         return LifecycleUpdate(job=job)
 
     def _note_check(self, job: Job, evidence: JobEvidence, decision: Decision) -> bool:
@@ -881,32 +850,14 @@ class JobExecutionController:
     def _is_submitting(self, job_id: UUID) -> bool:
         return bool(self._cluster_runner.is_submitting(job_id))
 
-    def _mark_cluster_queued(self, job: Job) -> LifecycleUpdate:
-        try:
-            self._project_service.mark_job_queued(job, remote_job_id=job.remote_job_id)
-        except ValueError:
+    def _mark_activity(self, job: Job, activity: JobActivity) -> LifecycleUpdate:
+        if job.status != JobStatus.ACTIVE:
             return LifecycleUpdate(job=job)
-        run = self.run_for_job(job.id)
-        if run is not None:
-            run.status = JobStatus.QUEUED
+        self._project_service.mark_job_active(job, activity)
         return LifecycleUpdate(job=job, changed=True)
 
-    def _mark_retrieving(self, job: Job) -> LifecycleUpdate:
-        # Only a running job has a transition to retrieving; a job that
-        # finished between two checks keeps its status while its output is read.
-        if job.status != JobStatus.RUNNING:
-            return LifecycleUpdate(job=job)
-        try:
-            self._project_service.mark_job_retrieving(job)
-        except ValueError:
-            return LifecycleUpdate(job=job)
-        run = self.run_for_job(job.id)
-        if run is not None:
-            run.status = JobStatus.RETRIEVING
-        return LifecycleUpdate(job=job, changed=True)
-
-    def _reactivate(self, job: Job, status: JobStatus) -> bool:
-        """Return an ended job to ``status`` under a fresh run; say whether it happened.
+    def _reactivate(self, job: Job, activity: JobActivity) -> bool:
+        """Make an ended job active as ``activity`` under a fresh run; say whether it happened.
 
         The ended run keeps its outcome: whatever follows is recorded on the
         new run, never over the old one.
@@ -916,11 +867,11 @@ class JobExecutionController:
         if document is None:
             return False
         try:
-            self._project_service.reactivate_job(job, status)
+            self._project_service.mark_job_active(job, activity)
         except ValueError:
             return False
-        run = self._create_active_run(document, job, status)
-        if status == JobStatus.RUNNING:
+        run = self._create_active_run(document, job)
+        if activity == JobActivity.RUNNING:
             run.started_at = utc_now()
         return True
 
@@ -931,19 +882,19 @@ class JobExecutionController:
 
         message = decision.message or ""
         try:
-            self._project_service.stop_job(job, message, reason=decision.failure_reason)
+            self._project_service.end_job(job, decision.end_reason or EndReason.UNKNOWN, message)
         except ValueError:
             return LifecycleUpdate(job=job)
 
         self._stamp_monitor_metadata(job, source=source, message=decision.observation or message)
         run = self.run_for_job(job.id)
-        if run is not None and run.status not in ACTIVE_JOB_STATUSES:
+        if run is not None and run.status != JobStatus.ACTIVE:
             # The job's latest run already ended; it is not this run to close.
             run = None
         self._close_active_run(
             job,
             run,
-            JobStatus.STOPPED,
+            JobStatus.ENDED,
             "job_stopped",
             error_message=message,
             mark_started=mark_started,
@@ -1038,9 +989,9 @@ class JobExecutionController:
             return 0
         wanted = None if job_ids is None else set(job_ids)
         statuses = (
-            ACTIVE_JOB_STATUSES | ENDED_JOB_STATUSES
+            {JobStatus.ACTIVE, JobStatus.ENDED}
             if on_request and wanted is not None
-            else ACTIVE_JOB_STATUSES
+            else {JobStatus.ACTIVE}
         )
         targets: list[CheckTarget] = []
         for job in document.jobs.values():
@@ -1079,12 +1030,12 @@ class JobExecutionController:
 
         if is_cluster_job(job):
             return (
-                job.status in ACTIVE_JOB_STATUSES | ENDED_JOB_STATUSES
+                job.status in {JobStatus.ACTIVE, JobStatus.ENDED}
                 and bool((job.remote_directory or "").strip())
                 and self._connected_to_cluster_of(job)
                 and not self._is_submitting(job.id)
             )
-        return job.status in ENDED_JOB_STATUSES and self._job_output_directory(job) is not None
+        return job.status == JobStatus.ENDED and self._job_output_directory(job) is not None
 
     def check_now(self, job_ids: Sequence[UUID]) -> tuple[list[LifecycleUpdate], int]:
         """Check the jobs in ``job_ids`` because the user asked.
@@ -1163,16 +1114,11 @@ class JobExecutionController:
         self._active_run_by_job.pop(job.id, None)
         self._record_terminal_event(event, job, error_message=error_message)
 
-    def _create_active_run(
-        self,
-        document: ProjectDocument,
-        job: Job,
-        status: JobStatus,
-    ) -> CalculationRun:
+    def _create_active_run(self, document: ProjectDocument, job: Job) -> CalculationRun:
         run = CalculationRun(
             job_id=job.id,
             run_index=self.next_run_index(job.id),
-            status=status,
+            status=JobStatus.ACTIVE,
         )
         document.runs[run.id] = run
         self._active_run_by_job[job.id] = run.id
@@ -1213,23 +1159,20 @@ def _evidence_source(evidence: JobEvidence) -> str:
 def _check_outcome(job: Job) -> str:
     """Return how a check summary describes ``job``'s state, or ``""`` to leave it out."""
 
-    if job.status == JobStatus.COMPLETED:
-        return "completed"
-    if job.status == JobStatus.RUNNING:
+    word = job_status_word(job)
+    if job.status == JobStatus.COMPLETED or word in {"queued", "cancelled"}:
+        return word
+    if word == "running":
         return "started running"
-    if job.status == JobStatus.QUEUED:
-        return "queued"
-    if job.status == JobStatus.CANCELLED:
-        return "cancelled"
-    if job.status == JobStatus.STOPPED:
-        if job.failure_reason == FailureReason.WALLTIME:
-            return "stopped at its walltime limit"
+    if job.status != JobStatus.ENDED:
+        # Submitting and retrieving are steps on the way; the pass ends with what came of them.
+        return ""
+    if job.end_reason == EndReason.WALLTIME:
+        return "stopped at its walltime limit"
+    if word == "stopped":
         return "stopped"
-    if job.status == JobStatus.FAILED:
-        label = failure_reason_label(job.failure_reason)
-        return f"failed ({label})" if label else "failed"
-    # Retrieving is a step on the way; the pass ends with what came of it.
-    return ""
+    label = failure_reason_label(job.end_reason)
+    return f"failed ({label})" if label else "failed"
 
 
 def _legacy_retrieval_flags(

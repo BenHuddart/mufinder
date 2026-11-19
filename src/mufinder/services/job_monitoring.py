@@ -1,6 +1,6 @@
-"""Staleness assessment for monitored jobs shown on the dashboard.
+"""How a job reads on the dashboard: its status word and its staleness.
 
-An active cluster job's persisted status is only as fresh as the last queue
+:func:`job_status_word` is the one word every job table shows for a job. An active cluster job's persisted status is only as fresh as the last queue
 poll that confirmed it. This module derives a human-readable staleness marker
 from the job's monitor metadata (``last_checked_at``) and the current cluster
 connection state, so the dashboard can distinguish "still queued" from "not
@@ -12,7 +12,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from datetime import UTC, datetime
 
-from mufinder.domain.enums import ACTIVE_JOB_STATUSES, FailureReason, JobStatus
+from mufinder.domain.enums import EndReason, JobStatus
 from mufinder.domain.models import Job
 
 STALENESS_THRESHOLD_SECONDS = 180
@@ -22,6 +22,29 @@ STALENESS_THRESHOLD_SECONDS = 180
 DISCONNECTED_MARKER = "cluster disconnected"
 #: Marker of an active cluster job that has no scheduler job ID.
 NO_JOB_ID_MARKER = "no scheduler job ID was recorded"
+
+
+#: End reasons under which an ended job reads ``stopped`` rather than ``failed``:
+#: something outside the calculation stopped it.
+STOPPED_END_REASONS = frozenset({EndReason.WALLTIME, EndReason.INTERRUPTED})
+
+
+def job_status_word(job: Job) -> str:
+    """Return the status word the dashboard and workflow tables show for ``job``.
+
+    An active job reads as its activity (``submitting``, ``queued``,
+    ``running``, ``retrieving``). An ended job reads ``cancelled``, ``stopped``
+    when :data:`STOPPED_END_REASONS` holds its reason, and ``failed``
+    otherwise. Every other job reads as its state.
+    """
+
+    if job.status == JobStatus.ACTIVE:
+        return str(job.activity or job.status)
+    if job.status == JobStatus.ENDED:
+        if job.end_reason == EndReason.CANCELLED:
+            return "cancelled"
+        return "stopped" if job.end_reason in STOPPED_END_REASONS else "failed"
+    return str(job.status)
 
 
 def is_cluster_job(job: Job) -> bool:
@@ -75,7 +98,7 @@ def job_staleness(
     scheduler job ID by design and is not stale.
     """
 
-    if job.status not in ACTIVE_JOB_STATUSES or not is_cluster_job(job):
+    if job.status != JobStatus.ACTIVE or not is_cluster_job(job):
         return None
     if not cluster_connected:
         return DISCONNECTED_MARKER
@@ -96,9 +119,7 @@ def job_staleness(
 
 
 #: Failure reasons under which a cluster job's output was never brought back.
-_UNRETRIEVED_OUTPUT_REASONS = frozenset(
-    {FailureReason.OUTPUT_UNAVAILABLE, FailureReason.INTERRUPTED}
-)
+_UNRETRIEVED_OUTPUT_REASONS = frozenset({EndReason.OUTPUT_UNAVAILABLE, EndReason.INTERRUPTED})
 
 
 def has_unretrieved_cluster_output(job: Job) -> bool:
@@ -111,9 +132,9 @@ def has_unretrieved_cluster_output(job: Job) -> bool:
     """
 
     return (
-        job.status in {JobStatus.FAILED, JobStatus.STOPPED}
+        job.status == JobStatus.ENDED
         and is_cluster_job(job)
-        and job.failure_reason in _UNRETRIEVED_OUTPUT_REASONS
+        and job.end_reason in _UNRETRIEVED_OUTPUT_REASONS
         and bool((job.remote_directory or "").strip())
     )
 

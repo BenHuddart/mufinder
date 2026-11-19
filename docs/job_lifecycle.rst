@@ -13,9 +13,18 @@ Technical API behavior
 State authority
 ~~~~~~~~~~~~~~~
 
-The persisted job state is stored on ``mufinder.domain.models.Job`` using the
-``JobStatus`` enum. State transitions are validated by
-``ProjectService._assert_transition``. The current transition table is:
+The persisted job state is stored on ``mufinder.domain.models.Job`` as one of
+four ``JobStatus`` values: ``defined``, ``active``, ``completed`` and
+``ended``. An ``active`` job also stores its ``activity`` (``JobActivity``:
+``submitting``, ``queued``, ``running`` or ``retrieving``), the phase it was
+last seen in, for display only and with no transitions of its own. An
+``ended`` job stores its ``end_reason`` (``EndReason``): one of the causes in
+:ref:`job-failure-reasons`, ``cancelled``, or ``unknown`` when none was
+identified. ``services.job_monitoring.job_status_word`` gives the word every
+job table shows: an active job's activity; for an ended job ``cancelled``,
+``stopped`` when the reason is ``walltime`` or ``interrupted``, and ``failed``
+otherwise; else the state. State transitions are validated by
+``ProjectService._assert_transition``:
 
 .. list-table::
    :header-rows: 1
@@ -23,80 +32,50 @@ The persisted job state is stored on ``mufinder.domain.models.Job`` using the
    * - Current state
      - Allowed next states
    * - ``defined``
-     - ``submitting``, ``cancelled``
-   * - ``submitting``
-     - ``queued``, ``running``, ``stopped``, ``failed``, ``cancelled``
-   * - ``queued``
-     - ``running``, ``stopped``, ``failed``, ``cancelled``
-   * - ``running``
-     - ``retrieving``, ``stopped``, ``completed``, ``failed``, ``cancelled``
-   * - ``retrieving``
-     - ``stopped``, ``completed``, ``failed``, ``cancelled``
-   * - ``stopped``
-     - ``submitting``, ``queued``, ``running``, ``retrieving``, ``cancelled``
+     - ``active`` (submitted); ``ended`` only as ``cancelled``
+   * - ``active``
+     - ``completed``, ``ended``
    * - ``completed``
-     - none (validated); ``defined`` via ``prepare_job_continuation``
-   * - ``failed``
-     - ``submitting``, ``queued``, ``running``, ``retrieving``, ``cancelled``
-   * - ``cancelled``
-     - ``submitting``, ``queued``, ``running``, ``retrieving``
-
-Two primitives deliberately bypass ``_assert_transition`` and direct-assign
-``defined``, which is a target the table above contains nowhere:
-``reset_failed_job`` and ``prepare_job_continuation``. Each carries its own
-status guard instead; both are described below.
+     - ``defined`` (a continuation)
+   * - ``ended``
+     - ``defined`` (reset or continuation), ``active`` (resubmitted, or found
+       alive or with output)
 
 ``ProjectService`` owns the primitive mutations:
 
-- ``submit_job`` moves an eligible job to ``submitting``, stamps
-  ``submitted_at``, clears ``started_at``/``completed_at``, and clears
-  ``error_message``.
-- ``mark_job_queued`` moves ``submitting`` to ``queued`` and may update
-  ``remote_job_id``.
-- ``start_job`` moves ``submitting`` or ``queued`` to ``running`` and stamps
-  ``started_at``.
-- ``mark_job_retrieving`` moves ``running`` to ``retrieving`` for remote output
-  copy/parsing.
-- ``complete_job`` moves ``running`` or ``retrieving`` to ``completed``, stamps
+- ``submit_job`` makes a ``defined`` or ``ended`` job ``active`` as
+  ``submitting``, stamps ``submitted_at``, clears ``started_at``,
+  ``completed_at``, ``error_message`` and ``end_reason``.
+- ``mark_job_active(job, activity, remote_job_id=None)`` records what an
+  active job is doing, from any activity to any other, and may update
+  ``remote_job_id``. It stamps ``started_at`` when the job starts running. It
+  also makes an ``ended`` job ``active`` again when evidence shows that it is
+  alive or has output still to be recorded (see :ref:`job-reconcile`),
+  clearing ``error_message``, ``end_reason`` and ``completed_at`` and keeping
+  remote metadata. A ``defined`` job becomes active only through
+  ``submit_job``.
+- ``complete_job`` makes an ``active`` job ``completed``, stamps
   ``completed_at``, and clears ``error_message``.
-- ``stop_job`` moves an active job (``submitting``, ``queued``, ``running``, or
-  ``retrieving``) to ``stopped`` and records a message and an optional
-  ``failure_reason`` (see :ref:`job-failure-reasons`). The ``submitting`` and
-  ``queued`` source edges exist so a local job left mid-submission when
-  MuFinder closed can be stopped (see :ref:`local-job-check`).
-- ``fail_job`` moves an in-flight job to ``failed`` and records a message and
-  an optional ``failure_reason``.
-- ``cancel_job`` moves a cancellable job to ``cancelled`` and clears
-  ``failure_reason``. Every transition out of ``failed``/``stopped``
-  (``submit_job``, ``complete_job``, ``reset_failed_job``,
-  ``prepare_job_continuation``, ``reactivate_job``) clears it alongside
-  ``error_message``.
-- ``reset_failed_job`` moves ``failed``, ``stopped``, or ``cancelled`` back to
-  ``defined`` and clears remote/process metadata (including the monitor
-  metadata and any ``dismissed_at`` stamp).
-- ``prepare_job_continuation`` moves ``completed``, ``failed``, ``stopped``, or
-  ``cancelled`` back to ``defined`` for a continuation run, clearing the same
-  run metadata as ``reset_failed_job`` **except** ``remote_directory``, which it
-  preserves. See :ref:`job-continuation-primitive`.
-- ``reactivate_job`` returns a ``failed``, ``stopped`` or ``cancelled`` job to
-  ``queued``, ``running`` or ``retrieving`` when evidence shows that it is
-  alive or has output still to be recorded (see :ref:`job-reconcile`). It
-  clears ``error_message``, ``failure_reason`` and ``completed_at``, stamps
-  ``started_at`` for ``running``, and preserves remote metadata. When it
-  applies is decided by ``JobExecutionController.apply_evidence``, not the
-  primitive.
-- ``dismiss_job`` stamps ``dismissed_at`` for a ``failed``/``stopped``/
-  ``cancelled`` job. It is not a status transition and rejects
-  already-dismissed jobs; ``record_job_dismissed`` appends a ``job_dismissed``
-  provenance milestone. The app layer nonetheless *derives* a submittable
-  workflow-row status from the stamp — see
-  :ref:`dismissed-rows-stay-resubmittable` — so the contract here is unchanged
-  while a dismissed job stops being a dead end.
+- ``end_job(job, reason, message=None)`` makes an ``active`` job ``ended``
+  for ``reason`` and records ``message`` as its error (a cancellation keeps
+  the message the job holds when none is given). A ``defined`` job can be
+  ended only as ``cancelled``.
+- ``reset_failed_job`` returns an ``ended`` job to ``defined`` and clears
+  remote/process metadata (including the monitor metadata and any
+  ``dismissed_at`` stamp).
+- ``prepare_job_continuation`` returns a ``completed`` or ``ended`` job to
+  ``defined`` for a continuation run, clearing the same run metadata as
+  ``reset_failed_job`` **except** ``remote_directory``, which it preserves.
+  See :ref:`job-continuation-primitive`.
+- ``dismiss_job`` stamps ``dismissed_at`` for an ``ended`` job. It is not a
+  state change and rejects already-dismissed jobs; ``record_job_dismissed``
+  appends a ``job_dismissed`` provenance milestone. The app layer
+  nonetheless *derives* a submittable workflow-row status from the stamp — see
+  :ref:`dismissed-rows-stay-resubmittable`.
 
-``reset_failed_job`` and ``dismiss_job`` accept exactly the same statuses, held
-in the module constant ``TERMINAL_RECOVERABLE_JOB_STATUSES``. Keeping the two
-identical is what makes the derived projection sound: anything the user can
-dismiss, the app can also reset back to ``defined``.
+``reset_failed_job`` and ``dismiss_job`` accept exactly the same jobs, the
+``ended`` ones, so anything the user can dismiss, the app can also reset back
+to ``defined``.
 
 .. _job-continuation-primitive:
 
@@ -110,8 +89,7 @@ service primitive ``ProjectService.prepare_job_continuation``, which exists so a
 finished calculation can be run further from its own CASTEP checkpoint.
 
 The primitive accepts the module constant ``CONTINUABLE_JOB_STATUSES`` —
-``completed``, ``failed``, ``stopped``, ``cancelled`` — and direct-assigns
-``defined``, clearing ``submitted_at``, ``started_at``, ``completed_at``,
+``completed`` and ``ended`` — and sets ``defined``, clearing ``submitted_at``, ``started_at``, ``completed_at``,
 ``remote_job_id``, ``num_processes``, ``error_message``, the monitor metadata
 (``last_checked_at``, ``last_status_source``, ``last_status_message``), and any
 ``dismissed_at`` stamp. It deliberately preserves ``remote_directory``.
@@ -122,24 +100,19 @@ the cluster submission path reads exactly that combination and resubmits into
 the existing remote directory — where the previous run's ``.check`` file lives —
 rather than recomputing a target, testing whether it already exists, and
 offering to delete it. No other code path produces the combination. Every writer
-of ``remote_directory`` either sets it while moving a job to ``submitting``
+of ``remote_directory`` either sets it while submitting a job
 (``JobExecutionController``), clears it for local submission (also
 ``JobExecutionController``), clears it on ``reset_failed_job``, or touches only
 active jobs (a cluster check filling in the folder of a job that recorded
 none; see :ref:`cluster-checks`).
 
-``CONTINUABLE_JOB_STATUSES`` is a *third* status set, wider than the shared
-reset/dismiss set, because a ``completed`` relaxation is continuable: running
-more geometry-optimisation steps from a converged-enough checkpoint is a normal
-outcome rather than a recovery from failure. This does not disturb the
-reset/dismiss reasoning restated above. That argument depends only on
-``reset_failed_job`` and ``dismiss_job`` accepting *the same* statuses as each
-other, so that anything the user can dismiss the app can also return to
-``defined``; both still read ``TERMINAL_RECOVERABLE_JOB_STATUSES``, and the
-derived ``"ready"`` projection for dismissed rows is unchanged. Continuation is
-a separate entry point with its own guard, and it also clears ``dismissed_at``,
-so continuing a dismissed job makes its dashboard row visible again on the same
-terms as a reset.
+``CONTINUABLE_JOB_STATUSES`` is wider than what reset and dismiss accept,
+because a ``completed`` relaxation is continuable: running more
+geometry-optimisation steps from a converged-enough checkpoint is a normal
+outcome rather than a recovery from failure. Continuation is a separate entry
+point with its own guard, and it also clears ``dismissed_at``, so continuing a
+dismissed job makes its dashboard row visible again on the same terms as a
+reset.
 
 A continuation keeps the job's identity rather than deleting and re-creating
 the job: the job id is what binds the workflow-table row to the calculation,
@@ -304,10 +277,10 @@ by the ``JobRunner`` protocol in ``mufinder.services.runner_protocol``:
 - **JobExecutionController** mutates only bookkeeping fields on the ``Job``
   (``execution_target``, ``num_processes``, and remote-metadata clears) and
   routes all status changes through the service primitives. For example, when
-  the local runner reports ``status_changed(job_id, "queued")`` for a
-  ``submitting`` job, ``mark_local_status_changed`` calls
-  ``ProjectService.mark_job_queued``; a queued notification for a job that is not
-  ``submitting`` is an inert no-op.
+  the local runner reports ``status_changed(job_id, "queued")`` for an active
+  job still ``submitting``, ``mark_local_status_changed`` calls
+  ``ProjectService.mark_job_active`` with ``queued``; a queued notification for
+  any other job is an inert no-op.
 - **Runners never touch ``Job`` objects.** They communicate solely by
   emitting signals keyed by job id, and the controller translates those into
   ``ProjectService`` calls. ``LocalJobRunner`` holds a process for each job and
@@ -674,17 +647,18 @@ to ``reconcile`` (the table in :ref:`job-reconcile`) and applies the decision:
 - Evidence about a job that is being submitted, or about an earlier submission
   of the job (another scheduler job ID or folder), changes nothing.
 - Every transition goes through the ``ProjectService`` primitives, with the
-  job's run and journal kept in step. ``running`` stamps the run's start;
-  ``retrieving`` applies to a ``running`` job only, since no other status has
-  a transition to it; ``stopped`` and ``failed`` close the active run and
-  record ``job_stopped`` or ``job_failed``; a ``failed`` decision with no
-  reason is diagnosed from the downloaded logs.
+  job's run and journal kept in step. An active job's activity follows the
+  decision whatever it was before; ``running`` stamps the run's start. An
+  ``ended`` decision closes the active run and records ``job_stopped`` for
+  ``walltime`` or ``interrupted``, ``job_cancelled`` for ``cancelled`` and
+  ``job_failed`` otherwise; one with no reason is diagnosed from the
+  downloaded logs, and is ``unknown`` when they show none.
 - Complete output is returned as ``finished`` rather than completing the job:
   the main window records the result through the same completion path as a
   local job, and that completes it.
-- A ``failed``, ``stopped`` or ``cancelled`` job that ``Check now`` finds
-  listed again, or with complete output, goes through
-  ``ProjectService.reactivate_job`` and gets a *fresh* ``CalculationRun``, so
+- An ``ended`` job that ``Check now`` finds listed again, or with complete
+  output, is made active again through ``ProjectService.mark_job_active`` and
+  gets a *fresh* ``CalculationRun``, so
   the ended run keeps its outcome and the new one records what follows.
 - The monitor metadata is stamped with the evidence's ``checked_at``, the
   source (``"scheduler_poll"``, or ``"retrieval"`` when the folder was looked
@@ -920,10 +894,10 @@ gates on the displayed status, and a dismissed row no longer reads as failed.
 Dismissal is therefore read as *"failure acknowledged, this row is actionable
 again"*, via two pieces in ``mufinder.app.workflow_submission``:
 
-- ``effective_row_status(job)`` — the single place the rule lives. A job whose
-  status is in ``RESUBMITTABLE_AFTER_DISMISSAL_STATUSES`` (failed, stopped,
-  cancelled) **and** which carries a ``dismissed_at`` stamp projects
-  ``"ready"``; every other job projects its own status value. Every workflow's
+- ``effective_row_status(job)`` — the single place the rule lives. An
+  ``ended`` job (failed, stopped, cancelled) that carries a ``dismissed_at``
+  stamp projects ``"ready"``; every other job projects its status word
+  (``job_status_word``). Every workflow's
   job→row-status projection goes through it. A *non*-dismissed failed job is
   unaffected: it still shows ``"failed"``, its row still refuses to submit, and
   its recovery path is the row's own ``Reset Failed Jobs…`` action plus the
@@ -996,8 +970,8 @@ and counts as no output. The evidence goes to ``reconcile`` (see
 - A job with no process and complete output is returned as ``finished``. The
   main window records its result through the same completion path as a job the
   runner reported, and the job becomes ``completed``.
-- Any other job with no process is stopped through ``ProjectService.stop_job``
-  with ``FailureReason.INTERRUPTED`` and the message *"MuFinder has no local
+- Any other job with no process is ended through ``ProjectService.end_job``
+  with ``EndReason.INTERRUPTED`` (it reads ``stopped``) and the message *"MuFinder has no local
   process for this job: it was closed while the job ran, or the process ended
   without reporting. Reset or resubmit it."* Its latest run, if still active,
   is closed as ``stopped``, a ``job_stopped`` journal event is recorded, and
@@ -1043,8 +1017,8 @@ same decision.
   about. Evidence about another submission of the job returns ``None``.
 - ``on_request``: the user asked for the check.
 
-``Decision`` holds the ``status`` (the job's own status when nothing changes),
-the ``failure_reason`` and ``message`` of a job it ends, an ``observation`` for
+``Decision`` holds the ``status`` and ``activity`` (the job's own when nothing
+changes), the ``end_reason`` and ``message`` of a job it ends, an ``observation`` for
 the job's last-checked note, and a ``marker`` for an active job that could not
 be confirmed. A ``None`` reason on an ended job is diagnosed by the caller from
 the job's logs. ``wants_output(scheduler, on_request=...)`` says, from the
@@ -1063,15 +1037,18 @@ A local job in an active state:
    * - Evidence
      - Decision
    * - process ``pending``
-     - ``queued``
+     - ``active``, ``queued``
    * - process ``running``
-     - ``running``
+     - ``active``, ``running``
    * - process ``none``, output ``complete``
      - ``completed``
    * - process ``none``, output not complete
-     - ``stopped``, ``interrupted``
+     - ``ended``, ``interrupted`` (reads ``stopped``)
 
-A cluster job in an active state:
+A cluster job in an active state. A decision word is the status word the job
+reads as: ``queued``, ``running`` and ``retrieving`` are ``active`` with that
+activity, ``failed``, ``stopped`` and ``cancelled`` are ``ended``, and the
+reason follows the comma.
 
 .. list-table::
    :header-rows: 1
@@ -1086,9 +1063,10 @@ A cluster job in an active state:
      - no change, with a marker; ``completed`` when the evidence is
        ``on_request`` and the output is ``complete``
    * - scheduler ``pending``
-     - ``queued``; a ``running`` or ``retrieving`` job keeps its status
+     - ``queued``, whatever the job was doing (a requeued or suspended job
+       reads ``queued``)
    * - scheduler ``running``
-     - ``running``; a ``retrieving`` job keeps its status
+     - ``running``
    * - scheduler ``cancelled``, output not ``complete``
      - ``cancelled``
    * - scheduler ``completed``, ``timed_out`` or ``failed``, output
@@ -1118,9 +1096,9 @@ A cluster job is therefore never ended for want of evidence, and complete
 output completes a job whatever the scheduler reports. A job whose cluster is
 not connected is not checked at all; ``job_staleness`` marks it.
 
-A ``failed``, ``stopped`` or ``cancelled`` job changes only on evidence with
-``on_request``: scheduler ``pending`` or ``running`` returns it to ``queued``
-or ``running``, and output ``complete`` completes it. Anything else leaves it
+An ``ended`` job changes only on evidence with ``on_request``: scheduler
+``pending`` or ``running`` makes it ``active`` again as ``queued`` or
+``running``, and output ``complete`` completes it. Anything else leaves it
 as it is. ``defined`` and ``completed`` jobs are never changed.
 
 What keeps a job from staying active

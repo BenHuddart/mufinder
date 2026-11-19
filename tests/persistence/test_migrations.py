@@ -9,7 +9,6 @@ from mufinder.domain.models import PROJECT_SCHEMA_VERSION, Project
 from mufinder.persistence.migrations import (
     RETIRED_UI_STATE_KEYS,
     UI_STATE_KEY,
-    _job_states_collapse_to_four,
     drop_retired_ui_state_keys,
     legacy_job_state,
     migrate_project_payloads,
@@ -29,7 +28,7 @@ def _definition(
 
 
 def test_new_projects_are_written_at_the_current_schema_version() -> None:
-    assert PROJECT_SCHEMA_VERSION == 6
+    assert PROJECT_SCHEMA_VERSION == 7
     assert Project().schema_version == PROJECT_SCHEMA_VERSION
 
 
@@ -485,8 +484,11 @@ def test_schema_6_job_payloads_store_four_states_and_drop_failure_reason() -> No
     running = {"id": "job-2", "status": "running", "failure_reason": None}
     entities = {"jobs": [stopped, running]}
 
-    changed = _job_states_collapse_to_four(entities, {})
+    manifest = {"schema_version": 6}
 
+    changed = migrate_project_payloads(manifest, entities)
+
+    assert manifest["schema_version"] == 7
     assert changed == {("jobs", "job-1"), ("jobs", "job-2")}
     assert stopped == {
         "id": "job-1",
@@ -517,7 +519,7 @@ def test_schema_6_run_payloads_store_only_the_new_status(status, expected) -> No
     run = {"id": "run-1", "job_id": "job-1", "status": status, "result_id": None}
     entities = {"runs": [run]}
 
-    changed = _job_states_collapse_to_four(entities, {})
+    changed = migrate_project_payloads({"schema_version": 6}, entities)
 
     assert changed == {("runs", "run-1")}
     assert run == {"id": "run-1", "job_id": "job-1", "status": expected, "result_id": None}
@@ -527,7 +529,7 @@ def test_schema_6_run_without_a_status_is_left_alone() -> None:
     # It loads as defined at any schema.
     run = {"id": "run-1"}
 
-    assert _job_states_collapse_to_four({"runs": [run]}, {}) == set()
+    assert migrate_project_payloads({"schema_version": 6}, {"runs": [run]}) == set()
     assert run == {"id": "run-1"}
 
 
@@ -535,8 +537,31 @@ def test_job_and_run_payloads_with_an_unknown_status_are_left_alone() -> None:
     job = {"id": "job-1", "status": "paused", "failure_reason": "walltime"}
     run = {"id": "run-1", "status": "paused"}
 
-    changed = _job_states_collapse_to_four({"jobs": [job], "runs": [run]}, {})
+    changed = migrate_project_payloads({"schema_version": 6}, {"jobs": [job], "runs": [run]})
 
     assert changed == set()
     assert job == {"id": "job-1", "status": "paused", "failure_reason": "walltime"}
     assert run == {"id": "run-1", "status": "paused"}
+
+
+def test_schema_6_jobs_reach_the_same_state_from_an_older_schema() -> None:
+    job = {"id": "job-1", "status": "failed", "failure_reason": "out_of_memory"}
+    manifest = {"schema_version": 1}
+
+    changed = migrate_project_payloads(manifest, {"jobs": [job]})
+
+    assert manifest["schema_version"] == PROJECT_SCHEMA_VERSION
+    assert ("jobs", "job-1") in changed
+    assert job == {
+        "id": "job-1",
+        "status": "ended",
+        "activity": None,
+        "end_reason": "out_of_memory",
+    }
+
+
+def test_schema_7_jobs_are_not_migrated_again() -> None:
+    job = {"id": "job-1", "status": "ended", "activity": None, "end_reason": "walltime"}
+
+    assert migrate_project_payloads({"schema_version": 7}, {"jobs": [job]}) == set()
+    assert job == {"id": "job-1", "status": "ended", "activity": None, "end_reason": "walltime"}

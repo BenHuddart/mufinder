@@ -38,7 +38,7 @@ from uuid import UUID
 from mufinder.castep_io.cell_parser import ParsedCell
 from mufinder.castep_io.output_parser import CastepResult
 from mufinder.domain.constants import IMPORTED_JOB_TAG
-from mufinder.domain.enums import ACTIVE_JOB_STATUSES, JobStatus, WorkflowStage
+from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationDefinition, CalculationRun, Job, Structure
 from mufinder.domain.text import plural
 from mufinder.services.job_artifacts import ParsedJobArtifacts
@@ -254,7 +254,7 @@ class WorkflowJobController:
         return {
             job.id
             for job in self.jobs_for_removed_rows(keys)
-            if IMPORTED_JOB_TAG not in (job.tags or ()) and job.status not in ACTIVE_JOB_STATUSES
+            if IMPORTED_JOB_TAG not in (job.tags or ()) and job.status != JobStatus.ACTIVE
         }
 
     def _folder_taken(self, directory: Path, together: Collection[UUID]) -> bool:
@@ -640,7 +640,7 @@ def locked_configuration_reason(
     for job, status in zip(jobs, statuses, strict=True):
         if job is None or status in {"ready", "defined"}:
             continue
-        if job.status in ACTIVE_JOB_STATUSES:
+        if job.status == JobStatus.ACTIVE:
             return (
                 f"Parameters are read-only while a selected row's {job_noun} is {status}; "
                 f"cancel it, then use {RESET_FAILED_ACTION_TEXT} to edit them."

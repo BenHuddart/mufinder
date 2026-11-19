@@ -16,7 +16,7 @@ from typing import Any
 from uuid import UUID
 
 from mufinder._version import current_version
-from mufinder.domain.enums import FailureReason, JobStatus, WorkflowStage
+from mufinder.domain.enums import EndReason, JobActivity, JobStatus, WorkflowStage
 from mufinder.domain.models import (
     as_aware_utc,
     CalculationDefinition,
@@ -56,15 +56,39 @@ def normalized_xc_functional(value: object) -> str | None:
     return value.strip().upper()
 
 
-def _failure_reason_from_payload(value: object) -> FailureReason | None:
-    """Parse a persisted failure reason; unknown or missing values load as ``None``."""
+def _job_status_from_payload(payload: dict[str, Any]) -> JobStatus:
+    """Parse a persisted job state; one this build does not know cannot be loaded."""
 
-    if not isinstance(value, str):
+    value = payload.get("status")
+    try:
+        return JobStatus(value)
+    except ValueError:
+        raise ValueError(
+            f"Job {payload.get('label') or payload.get('id')} has state {value!r}, which this "
+            "version of MuFinder does not know. It was probably saved by a newer version."
+        ) from None
+
+
+def _activity_from_payload(status: JobStatus, value: object) -> JobActivity | None:
+    """Parse an active job's activity; any other job, or an unknown value, has none."""
+
+    if status != JobStatus.ACTIVE or not isinstance(value, str):
         return None
     try:
-        return FailureReason(value)
+        return JobActivity(value)
     except ValueError:
         return None
+
+
+def _end_reason_from_payload(status: JobStatus, value: object) -> EndReason | None:
+    """Parse an ended job's reason; a missing or unknown one loads as ``UNKNOWN``."""
+
+    if status != JobStatus.ENDED:
+        return None
+    try:
+        return EndReason(value)
+    except ValueError:
+        return EndReason.UNKNOWN
 
 
 def project_from_dict(payload: dict[str, Any]) -> Project:
@@ -438,12 +462,14 @@ def job_from_dict(payload: dict[str, Any]) -> Job:
             parsed_num_processes = 0
         if parsed_num_processes > 0:
             num_processes = parsed_num_processes
+    status = _job_status_from_payload(payload)
     return Job(
         id=UUID(payload["id"]),
         label=payload.get("label", ""),
         workflow_stage=WorkflowStage(payload["workflow_stage"]),
         calc_type=payload.get("calc_type", ""),
-        status=JobStatus(payload["status"]),
+        status=status,
+        activity=_activity_from_payload(status, payload.get("activity")),
         execution_target=payload.get("execution_target", "local"),
         created_at=as_aware_utc(parse_datetime(payload.get("created_at")) or utc_now()),
         submitted_at=parse_datetime(payload.get("submitted_at")),
@@ -454,7 +480,7 @@ def job_from_dict(payload: dict[str, Any]) -> Job:
         num_processes=num_processes,
         tags=payload.get("tags", []),
         error_message=payload.get("error_message"),
-        failure_reason=_failure_reason_from_payload(payload.get("failure_reason")),
+        end_reason=_end_reason_from_payload(status, payload.get("end_reason")),
         last_checked_at=parse_datetime(payload.get("last_checked_at")),
         last_status_source=payload.get("last_status_source"),
         last_status_message=payload.get("last_status_message"),

@@ -411,5 +411,6 @@ _MIGRATIONS: dict[int, MigrationStep] = {
     3: _magnetic_field_results_become_results,
     4: _dipolar_tensors_convert_to_tesla_per_mu_b,
     5: _relaxed_structure_spins_are_read_from_job_files,
+    6: _job_states_collapse_to_four,
 }
 """The step that upgrades payloads saved at each version to the next one."""

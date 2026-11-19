@@ -7,7 +7,7 @@ from dataclasses import dataclass
 import re
 import shlex
 
-from mufinder.domain.enums import JobStatus
+from mufinder.services.job_reconcile import SchedulerState
 from mufinder.services.cluster_queues import ProcessPlacement
 
 
@@ -69,8 +69,8 @@ class Scheduler(ABC):
         """Return true if scheduler state is terminal."""
 
     @abstractmethod
-    def map_to_job_status(self, state: str) -> JobStatus:
-        """Map scheduler state to domain job status."""
+    def map_to_scheduler_state(self, state: str) -> SchedulerState:
+        """Map the scheduler's own state name to what it says about the job."""
 
     def state_name(self, state: str) -> str:
         """Return the scheduler's full name for ``state`` (for messages and logs)."""
@@ -269,26 +269,26 @@ class SlurmScheduler(Scheduler):
     def is_terminal(self, state: str) -> bool:
         return self._normalise_state(state) in self._TERMINAL_STATES
 
-    def map_to_job_status(self, state: str) -> JobStatus:
-        """Map a SLURM state to a job status.
+    def map_to_scheduler_state(self, state: str) -> SchedulerState:
+        """Map a SLURM state to what it says about the job.
 
         Pending, configuring, held, requeued, suspended and stopped (``SIGSTOP``)
-        jobs are ``queued``, and so is any state this table does not know: only
+        jobs are ``pending``, and so is any state this table does not know: only
         a state SLURM names as executing may report the job as ``running``.
         """
 
         normalized = self._normalise_state(state)
         if normalized in self._RUNNING_STATES:
-            return JobStatus.RUNNING
+            return SchedulerState.RUNNING
         if normalized == "CD":
-            return JobStatus.COMPLETED
+            return SchedulerState.COMPLETED
         if normalized == "CA":
-            return JobStatus.CANCELLED
+            return SchedulerState.CANCELLED
         if normalized == "TO":
-            return JobStatus.STOPPED
+            return SchedulerState.TIMED_OUT
         if normalized in self._FAILED_STATES:
-            return JobStatus.FAILED
-        return JobStatus.QUEUED
+            return SchedulerState.FAILED
+        return SchedulerState.PENDING
 
     def state_name(self, state: str) -> str:
         """Return SLURM's long state name (``OOM`` -> ``OUT_OF_MEMORY``)."""

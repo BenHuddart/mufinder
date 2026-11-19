@@ -22,25 +22,38 @@ class WorkflowStage(StrEnum):
 
 
 class JobStatus(StrEnum):
-    """Lifecycle states for project jobs."""
+    """The stored state of a project job.
+
+    An ``ACTIVE`` job also stores its :class:`JobActivity` and an ``ENDED`` job
+    its :class:`EndReason`; the other states store neither.
+    """
 
     DEFINED = "defined"
+    ACTIVE = "active"
+    COMPLETED = "completed"
+    #: The job did not finish: it failed, was stopped or was cancelled.
+    ENDED = "ended"
+
+
+class JobActivity(StrEnum):
+    """What an active job was last seen doing.
+
+    Kept for display only: it follows the latest evidence and has no
+    transitions of its own.
+    """
+
     SUBMITTING = "submitting"
     QUEUED = "queued"
     RUNNING = "running"
     RETRIEVING = "retrieving"
-    STOPPED = "stopped"
-    COMPLETED = "completed"
-    FAILED = "failed"
-    CANCELLED = "cancelled"
 
 
-class FailureReason(StrEnum):
-    """Why a failed or stopped job did not complete.
+class EndReason(StrEnum):
+    """Why an ended job did not finish.
 
-    Recorded on ``Job.failure_reason`` when the job reaches a terminal
-    failure state, from the scheduler state and the job's scheduler and CASTEP
-    logs. ``None`` on the job means no specific cause was identified.
+    Recorded on ``Job.end_reason`` when the job ends, from the user's
+    cancellation, the scheduler state and the job's scheduler and CASTEP logs.
+    ``UNKNOWN`` means no specific cause was identified.
     """
 
     WALLTIME = "walltime"
@@ -50,16 +63,10 @@ class FailureReason(StrEnum):
     OUTPUT_UNAVAILABLE = "output_unavailable"
     INTERRUPTED = "interrupted"
     SUBMISSION = "submission"
+    CANCELLED = "cancelled"
+    UNKNOWN = "unknown"
 
 
-#: Statuses of a job that is still active in the local execution pipeline
-#: (submitted but not yet stopped, completed, failed, or cancelled). Used for
-#: cancel-eligibility, dashboard visibility, and reattachment across the app.
-ACTIVE_JOB_STATUSES: frozenset[JobStatus] = frozenset(
-    {
-        JobStatus.SUBMITTING,
-        JobStatus.QUEUED,
-        JobStatus.RUNNING,
-        JobStatus.RETRIEVING,
-    }
-)
+#: Import alias for :class:`EndReason`, kept for one minor release
+#: (see ``docs/compatibility_policy.rst``).
+FailureReason = EndReason
