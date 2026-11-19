@@ -38,7 +38,7 @@ def test_job_check_stops_a_local_job_with_no_process(main_window, tmp_path: Path
     job = _running_local_job(window, service, document)
     # The local runner holds no process for it and its folder has no output.
 
-    window._on_job_check_tick()
+    window._jobs.check_jobs()
 
     stopped = document.jobs[job.id]
     assert job_status_word(stopped) == "stopped"
@@ -63,7 +63,7 @@ def test_job_check_leaves_a_local_job_the_runner_holds(
     job = _running_local_job(window, service, document)
     monkeypatch.setattr(window._local_runner, "active_job_ids", lambda: frozenset({job.id}))
 
-    window._on_job_check_tick()
+    window._jobs.check_jobs()
 
     assert job_status_word(document.jobs[job.id]) == "running"
 
@@ -76,8 +76,8 @@ def test_job_check_noop_without_active_jobs(main_window, tmp_path: Path) -> None
     window._refresh_ui_after_project_change()
 
     # No active jobs: the handler returns early and does not raise.
-    window._on_job_check_tick()
-    window._on_job_check_tick()
+    window._jobs.check_jobs()
+    window._jobs.check_jobs()
 
 
 def test_job_check_leaves_an_untracked_cluster_job_active(main_window, tmp_path: Path) -> None:
@@ -100,8 +100,8 @@ def test_job_check_leaves_an_untracked_cluster_job_active(main_window, tmp_path:
     window._cluster_runner._connected = True
     window._cluster_runner._connected_cluster_name = "SCARF"
 
-    window._on_job_check_tick()
-    window._on_job_check_tick()
+    window._jobs.check_jobs()
+    window._jobs.check_jobs()
 
     assert job_status_word(document.jobs[job.id]) == "running"
     assert document.jobs[job.id].end_reason is None

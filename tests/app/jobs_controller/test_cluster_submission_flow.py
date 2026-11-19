@@ -109,7 +109,6 @@ def test_main_window_submit_jobs_on_cluster_creates_run_and_calls_runner(
     monkeypatch.setattr(jobs_controller_module, "ClusterSubmissionDialog", _FakeDialog)
     monkeypatch.setattr(main_window_module, "load_cluster_configs", lambda _settings: [cluster])
     monkeypatch.setattr(jobs_controller_module, "load_cluster_configs", lambda _settings: [cluster])
-    monkeypatch.setattr(main_window_module, "load_cluster_config", lambda _settings, _name: cluster)
     monkeypatch.setattr(
         jobs_controller_module, "load_cluster_config", lambda _settings, _name: cluster
     )
@@ -260,7 +259,6 @@ def test_main_window_submit_jobs_on_cluster_passes_jump_host_credentials(
     monkeypatch.setattr(jobs_controller_module, "ClusterSubmissionDialog", _FakeDialog)
     monkeypatch.setattr(main_window_module, "load_cluster_configs", lambda _settings: [cluster])
     monkeypatch.setattr(jobs_controller_module, "load_cluster_configs", lambda _settings: [cluster])
-    monkeypatch.setattr(main_window_module, "load_cluster_config", lambda _settings, _name: cluster)
     monkeypatch.setattr(
         jobs_controller_module, "load_cluster_config", lambda _settings, _name: cluster
     )
@@ -384,7 +382,6 @@ def test_main_window_resubmits_failed_cluster_job_without_replacing_remote_files
     monkeypatch.setattr(jobs_controller_module, "ClusterSubmissionDialog", _FakeDialog)
     monkeypatch.setattr(main_window_module, "load_cluster_configs", lambda _settings: [cluster])
     monkeypatch.setattr(jobs_controller_module, "load_cluster_configs", lambda _settings: [cluster])
-    monkeypatch.setattr(main_window_module, "load_cluster_config", lambda _settings, _name: cluster)
     monkeypatch.setattr(
         jobs_controller_module, "load_cluster_config", lambda _settings, _name: cluster
     )
@@ -524,7 +521,6 @@ def test_main_window_resubmit_passes_updated_resources_to_runner(
     monkeypatch.setattr(jobs_controller_module, "ClusterSubmissionDialog", _FakeDialog)
     monkeypatch.setattr(main_window_module, "load_cluster_configs", lambda _settings: [cluster])
     monkeypatch.setattr(jobs_controller_module, "load_cluster_configs", lambda _settings: [cluster])
-    monkeypatch.setattr(main_window_module, "load_cluster_config", lambda _settings, _name: cluster)
     monkeypatch.setattr(
         jobs_controller_module, "load_cluster_config", lambda _settings, _name: cluster
     )
@@ -890,7 +886,6 @@ def test_main_window_submit_jobs_on_cluster_persists_last_submission_defaults(
     monkeypatch.setattr(jobs_controller_module, "ClusterSubmissionDialog", _FakeDialog)
     monkeypatch.setattr(main_window_module, "load_cluster_configs", lambda _settings: [redwood])
     monkeypatch.setattr(jobs_controller_module, "load_cluster_configs", lambda _settings: [redwood])
-    monkeypatch.setattr(main_window_module, "load_cluster_config", lambda _settings, _name: redwood)
     monkeypatch.setattr(
         jobs_controller_module, "load_cluster_config", lambda _settings, _name: redwood
     )
@@ -977,7 +972,6 @@ def test_main_window_submit_jobs_on_cluster_connection_failure_warns(
     monkeypatch.setattr(jobs_controller_module, "ClusterSubmissionDialog", _FakeDialog)
     monkeypatch.setattr(main_window_module, "load_cluster_configs", lambda _settings: [cluster])
     monkeypatch.setattr(jobs_controller_module, "load_cluster_configs", lambda _settings: [cluster])
-    monkeypatch.setattr(main_window_module, "load_cluster_config", lambda _settings, _name: cluster)
     monkeypatch.setattr(
         jobs_controller_module, "load_cluster_config", lambda _settings, _name: cluster
     )
@@ -1051,7 +1045,6 @@ def test_main_window_submit_jobs_on_cluster_blocks_unsafe_remote_labels(
     monkeypatch.setattr(jobs_controller_module, "ClusterSubmissionDialog", _FakeDialog)
     monkeypatch.setattr(main_window_module, "load_cluster_configs", lambda _settings: [cluster])
     monkeypatch.setattr(jobs_controller_module, "load_cluster_configs", lambda _settings: [cluster])
-    monkeypatch.setattr(main_window_module, "load_cluster_config", lambda _settings, _name: cluster)
     monkeypatch.setattr(
         jobs_controller_module, "load_cluster_config", lambda _settings, _name: cluster
     )
@@ -1149,7 +1142,6 @@ def test_main_window_submit_jobs_on_cluster_existing_remote_dir_yes_deletes(
     monkeypatch.setattr(jobs_controller_module, "ClusterSubmissionDialog", _FakeDialog)
     monkeypatch.setattr(main_window_module, "load_cluster_configs", lambda _settings: [cluster])
     monkeypatch.setattr(jobs_controller_module, "load_cluster_configs", lambda _settings: [cluster])
-    monkeypatch.setattr(main_window_module, "load_cluster_config", lambda _settings, _name: cluster)
     monkeypatch.setattr(
         jobs_controller_module, "load_cluster_config", lambda _settings, _name: cluster
     )
@@ -1288,7 +1280,6 @@ def test_main_window_submit_jobs_on_cluster_sends_a_quantum_phonon_job_to_its_ow
     monkeypatch.setattr(jobs_controller_module, "ClusterSubmissionDialog", _FakeDialog)
     monkeypatch.setattr(main_window_module, "load_cluster_configs", lambda _settings: [cluster])
     monkeypatch.setattr(jobs_controller_module, "load_cluster_configs", lambda _settings: [cluster])
-    monkeypatch.setattr(main_window_module, "load_cluster_config", lambda _settings, _name: cluster)
     monkeypatch.setattr(
         jobs_controller_module, "load_cluster_config", lambda _settings, _name: cluster
     )
@@ -1737,7 +1728,6 @@ def test_main_window_submit_jobs_on_cluster_yes_to_all_requires_confirmation(
     monkeypatch.setattr(jobs_controller_module, "ClusterSubmissionDialog", _FakeDialog)
     monkeypatch.setattr(main_window_module, "load_cluster_configs", lambda _settings: [cluster])
     monkeypatch.setattr(jobs_controller_module, "load_cluster_configs", lambda _settings: [cluster])
-    monkeypatch.setattr(main_window_module, "load_cluster_config", lambda _settings, _name: cluster)
     monkeypatch.setattr(
         jobs_controller_module, "load_cluster_config", lambda _settings, _name: cluster
     )
@@ -1807,7 +1797,7 @@ def test_main_window_connect_with_trust_handles_jump_and_target_host_keys(
         _ = credentials, password
         connect_attempts.append(len(connect_attempts) + 1)
         if len(connect_attempts) == 1:
-            raise main_window_module.SSHUnknownHostKeyError(
+            raise jobs_controller_module.SSHUnknownHostKeyError(
                 hostname="bastion.physics.ox.ac.uk",
                 port=22,
                 algorithm="ssh-ed25519",
@@ -1816,7 +1806,7 @@ def test_main_window_connect_with_trust_handles_jump_and_target_host_keys(
                 endpoint="jump",
             )
         if len(connect_attempts) == 2:
-            raise main_window_module.SSHUnknownHostKeyError(
+            raise jobs_controller_module.SSHUnknownHostKeyError(
                 hostname="glamdring.physics.ox.ac.uk",
                 port=22,
                 algorithm="ssh-ed25519",
@@ -1827,12 +1817,12 @@ def test_main_window_connect_with_trust_handles_jump_and_target_host_keys(
 
     monkeypatch.setattr(window._cluster_runner._runner, "connect_to_cluster", _connect)
     monkeypatch.setattr(
-        main_window_module,
+        jobs_controller_module,
         "prompt_to_trust_host_key",
         lambda _parent, _config, exc: prompts.append(exc.endpoint) or True,
     )
 
-    window._connect_to_cluster_with_trust(config, credentials=credentials)
+    window._jobs._connect_to_cluster_with_trust(config, credentials=credentials)
 
     assert connect_attempts == [1, 2, 3]
     assert prompts == ["jump", "target"]
@@ -1975,7 +1965,6 @@ def test_main_window_submit_jobs_on_cluster_no_to_all_skips_deletion(
     monkeypatch.setattr(jobs_controller_module, "ClusterSubmissionDialog", _FakeDialog)
     monkeypatch.setattr(main_window_module, "load_cluster_configs", lambda _settings: [cluster])
     monkeypatch.setattr(jobs_controller_module, "load_cluster_configs", lambda _settings: [cluster])
-    monkeypatch.setattr(main_window_module, "load_cluster_config", lambda _settings, _name: cluster)
     monkeypatch.setattr(
         jobs_controller_module, "load_cluster_config", lambda _settings, _name: cluster
     )
@@ -2090,7 +2079,6 @@ def test_main_window_submit_jobs_on_cluster_no_skips_submission(
     monkeypatch.setattr(jobs_controller_module, "ClusterSubmissionDialog", _FakeDialog)
     monkeypatch.setattr(main_window_module, "load_cluster_configs", lambda _settings: [cluster])
     monkeypatch.setattr(jobs_controller_module, "load_cluster_configs", lambda _settings: [cluster])
-    monkeypatch.setattr(main_window_module, "load_cluster_config", lambda _settings, _name: cluster)
     monkeypatch.setattr(
         jobs_controller_module, "load_cluster_config", lambda _settings, _name: cluster
     )
@@ -2203,7 +2191,6 @@ def test_main_window_submit_jobs_on_cluster_reuses_connection_without_success_di
     monkeypatch.setattr(jobs_controller_module, "ClusterSubmissionDialog", _FakeDialog)
     monkeypatch.setattr(main_window_module, "load_cluster_configs", lambda _settings: [cluster])
     monkeypatch.setattr(jobs_controller_module, "load_cluster_configs", lambda _settings: [cluster])
-    monkeypatch.setattr(main_window_module, "load_cluster_config", lambda _settings, _name: cluster)
     monkeypatch.setattr(
         jobs_controller_module, "load_cluster_config", lambda _settings, _name: cluster
     )
@@ -2400,7 +2387,6 @@ def test_main_window_cluster_submission_sends_a_legacy_phonon_job_to_any_cluster
     monkeypatch.setattr(jobs_controller_module, "ClusterSubmissionDialog", _FakeDialog)
     monkeypatch.setattr(main_window_module, "load_cluster_configs", lambda _settings: [beta])
     monkeypatch.setattr(jobs_controller_module, "load_cluster_configs", lambda _settings: [beta])
-    monkeypatch.setattr(main_window_module, "load_cluster_config", lambda _settings, _name: beta)
     monkeypatch.setattr(
         jobs_controller_module, "load_cluster_config", lambda _settings, _name: beta
     )

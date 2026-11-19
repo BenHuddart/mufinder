@@ -1181,7 +1181,6 @@ def _wire_fake_cluster_submission(
     )
     monkeypatch.setattr(main_window_module, "load_cluster_configs", lambda _settings: [cluster])
     monkeypatch.setattr(jobs_controller_module, "load_cluster_configs", lambda _settings: [cluster])
-    monkeypatch.setattr(main_window_module, "load_cluster_config", lambda _settings, _name: cluster)
     monkeypatch.setattr(
         jobs_controller_module, "load_cluster_config", lambda _settings, _name: cluster
     )
@@ -1894,11 +1893,6 @@ def test_continue_relaxation_cross_cluster_misroute_guard(
     monkeypatch.setattr(main_window_module, "load_cluster_configs", lambda _settings: [alpha, beta])
     monkeypatch.setattr(
         jobs_controller_module, "load_cluster_configs", lambda _settings: [alpha, beta]
-    )
-    monkeypatch.setattr(
-        main_window_module,
-        "load_cluster_config",
-        lambda _settings, name: beta if name == "beta" else alpha,
     )
     monkeypatch.setattr(
         jobs_controller_module,

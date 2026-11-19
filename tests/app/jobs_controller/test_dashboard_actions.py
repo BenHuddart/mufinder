@@ -1,4 +1,4 @@
-"""Job Dashboard actions in the main window: flushes, the status bar, queue checks and what each action does."""
+"""Job Dashboard actions carried out by the jobs controller: flushes, the status bar, queue checks and what each action does."""
 
 from __future__ import annotations
 
@@ -214,7 +214,7 @@ def test_cluster_queue_checked_schedules_deferred_flush(main_window, tmp_path: P
     window._request_dashboard_flush(failure_message="x")
     assert save_calls == []
 
-    window._on_cluster_queue_checked(SimpleNamespace(checked_at=None, elapsed_by_job_id={}))
+    window._jobs._on_cluster_queue_checked(SimpleNamespace(checked_at=None, elapsed_by_job_id={}))
     # Not synchronous: the write is still only scheduled.
     assert save_calls == []
     assert window._dashboard_flush_pending is True
@@ -238,7 +238,7 @@ def test_cluster_queue_checked_with_no_activity_does_not_schedule_flush(
     doc = service.create_project(tmp_path / "queue_no_activity.mufinder", "QueueNoActivity")
     window._document = doc
 
-    window._on_cluster_queue_checked(SimpleNamespace(checked_at=None, elapsed_by_job_id={}))
+    window._jobs._on_cluster_queue_checked(SimpleNamespace(checked_at=None, elapsed_by_job_id={}))
     assert window._dashboard_flush_pending is False
     assert window._dashboard_flush_timer.isActive() is False
     window.close()
@@ -334,9 +334,9 @@ def test_dashboard_flush_stream_is_rate_limited_to_min_interval(
 
 def _cluster_widgets(window) -> tuple:
     return (
-        window._cluster_connection_label,
-        window._cluster_queue_checked_label,
-        window._cluster_refresh_button,
+        window._jobs._cluster_connection_label,
+        window._jobs._cluster_queue_checked_label,
+        window._jobs._cluster_refresh_button,
     )
 
 
@@ -375,14 +375,14 @@ def _connect_status_bar(window, monkeypatch: pytest.MonkeyPatch, name: str | Non
     monkeypatch.setattr(
         type(window._cluster_runner), "is_connected", property(lambda _self: name is not None)
     )
-    window._on_cluster_connection_status_changed(name is not None)
+    window._jobs._on_cluster_connection_status_changed(name is not None)
 
 
 def test_status_bar_hides_cluster_widgets_with_no_project(main_window) -> None:
     assert main_window._document is None
     assert _shown(main_window) == [False, False, False]
-    assert main_window._cluster_refresh_button.isEnabled() is False
-    assert "nothing to check" in main_window._cluster_refresh_button.toolTip()
+    assert main_window._jobs._cluster_refresh_button.isEnabled() is False
+    assert "nothing to check" in main_window._jobs._cluster_refresh_button.toolTip()
 
 
 def test_status_bar_hides_cluster_widgets_for_a_local_only_project(
@@ -398,9 +398,9 @@ def test_status_bar_shows_cluster_widgets_for_an_active_cluster_job(
     _project_with_job(main_window, tmp_path)
 
     assert _shown(main_window) == [True, True, True]
-    assert main_window._cluster_connection_label.text() == "Not connected to SCARF"
-    assert main_window._cluster_queue_checked_label.text() == "Queue last checked: never"
-    assert main_window._cluster_refresh_button.isEnabled() is True
+    assert main_window._jobs._cluster_connection_label.text() == "Not connected to SCARF"
+    assert main_window._jobs._cluster_queue_checked_label.text() == "Queue last checked: never"
+    assert main_window._jobs._cluster_refresh_button.isEnabled() is True
 
 
 def test_status_bar_hides_cluster_widgets_when_the_last_cluster_job_ends(
@@ -416,8 +416,8 @@ def test_status_bar_connection_colour_follows_the_state(
     main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     window = main_window
-    palette = main_window_module.current_palette()
-    label = window._cluster_connection_label
+    palette = jobs_controller_module.current_palette()
+    label = window._jobs._cluster_connection_label
     monkeypatch.setattr(main_window_module, "show_detailed_warning", lambda *_a, **_k: None)
     monkeypatch.setattr(jobs_controller_module, "show_detailed_warning", lambda *_a, **_k: None)
     _project_with_job(window, tmp_path)
@@ -438,7 +438,7 @@ def test_status_bar_connection_colour_follows_the_state(
     # The runner signals the disconnect, then the failed poll.
     _connect_status_bar(window, monkeypatch, "SCARF")
     _connect_status_bar(window, monkeypatch, None)
-    window._on_cluster_poll_failed("Queue polling failed for SCARF: timeout")
+    window._jobs._on_cluster_poll_failed("Queue polling failed for SCARF: timeout")
     assert label.text() == "Connection to SCARF lost"
     assert palette.danger in label.styleSheet()
 
@@ -457,16 +457,16 @@ def test_status_bar_opening_a_project_forgets_the_previous_drop_and_check(
     monkeypatch.setattr(jobs_controller_module, "show_detailed_warning", lambda *_a, **_k: None)
     _project_with_job(window, tmp_path)
     _connect_status_bar(window, monkeypatch, "SCARF")
-    window._on_cluster_queue_checked("12:34:56")
+    window._jobs._on_cluster_queue_checked("12:34:56")
     _connect_status_bar(window, monkeypatch, None)
-    window._on_cluster_poll_failed("Queue polling failed for SCARF: timeout")
-    assert window._cluster_queue_checked_label.text() == "Queue last checked: 12:34:56"
+    window._jobs._on_cluster_poll_failed("Queue polling failed for SCARF: timeout")
+    assert window._jobs._cluster_queue_checked_label.text() == "Queue last checked: 12:34:56"
 
-    window._reset_job_tracking_for_project_change()
+    window._jobs.reset_tracking_for_project_change()
     window._refresh_jobs_table()
 
-    assert window._cluster_connection_label.text() == "Not connected to SCARF"
-    assert window._cluster_queue_checked_label.text() == "Queue last checked: never"
+    assert window._jobs._cluster_connection_label.text() == "Not connected to SCARF"
+    assert window._jobs._cluster_queue_checked_label.text() == "Queue last checked: never"
 
 
 def test_status_bar_ignores_a_poll_from_the_previous_project(main_window, tmp_path: Path) -> None:
@@ -478,17 +478,17 @@ def test_status_bar_ignores_a_poll_from_the_previous_project(main_window, tmp_pa
         job_ids=(uuid4(),),
     )
 
-    window._on_cluster_queue_checked(previous_project_poll)
-    assert window._cluster_queue_checked_label.text() == "Queue last checked: never"
+    window._jobs._on_cluster_queue_checked(previous_project_poll)
+    assert window._jobs._cluster_queue_checked_label.text() == "Queue last checked: never"
 
-    window._on_cluster_queue_checked(
+    window._jobs._on_cluster_queue_checked(
         SimpleNamespace(
             checked_at="12:35:56",
             elapsed_by_job_id={},
             job_ids=(job.id,),
         )
     )
-    assert window._cluster_queue_checked_label.text() == "Queue last checked: 12:35:56"
+    assert window._jobs._cluster_queue_checked_label.text() == "Queue last checked: 12:35:56"
 
 
 def test_status_bar_refresh_disabled_with_a_tooltip_when_no_job_can_be_polled(
@@ -500,7 +500,7 @@ def test_status_bar_refresh_disabled_with_a_tooltip_when_no_job_can_be_polled(
         status="submitting",
         remote_job_id=None,
     )
-    button = main_window._cluster_refresh_button
+    button = main_window._jobs._cluster_refresh_button
 
     assert _shown(main_window) == [True, True, True]
     assert button.isEnabled() is False
@@ -530,16 +530,16 @@ def test_status_bar_reports_the_result_of_a_queue_refresh(
         elapsed_by_job_id={},
         job_ids=(job.id,),
     )
-    window._on_cluster_queue_checked(snapshot)
+    window._jobs._on_cluster_queue_checked(snapshot)
     assert window.statusBar().currentMessage() == "Ready"
 
-    window._cluster_refresh_button.click()
+    window._jobs._cluster_refresh_button.click()
     assert calls == ["refresh"]
-    window._on_cluster_queue_checked(snapshot)
+    window._jobs._on_cluster_queue_checked(snapshot)
     assert window.statusBar().currentMessage() == "Refreshed queue: checked 1 job at 12:34:56"
 
     window.statusBar().showMessage("Ready")
-    window._on_cluster_queue_checked(snapshot)
+    window._jobs._on_cluster_queue_checked(snapshot)
     assert window.statusBar().currentMessage() == "Ready"
 
 
@@ -549,7 +549,7 @@ def test_status_bar_refresh_reconnects_when_connected_to_another_cluster(
     window = main_window
     _project_with_job(window, tmp_path)
     _connect_status_bar(window, monkeypatch, "PSI")
-    assert window._cluster_connection_label.text() == "Not connected to SCARF"
+    assert window._jobs._cluster_connection_label.text() == "Not connected to SCARF"
 
     scarf = ClusterConfig(
         name="SCARF",
@@ -576,7 +576,7 @@ def test_status_bar_refresh_reconnects_when_connected_to_another_cluster(
         window._cluster_runner, "check_jobs", lambda _targets, **_kwargs: polls.append("poll")
     )
 
-    window._cluster_refresh_button.click()
+    window._jobs._cluster_refresh_button.click()
 
     assert connected == ["SCARF"]
     assert polls == ["poll"]
@@ -631,7 +631,7 @@ def test_status_bar_names_clusters_a_refresh_could_not_reach_before_the_warning(
         lambda *_a, **_k: shown_during_warning.append(window.statusBar().currentMessage()),
     )
 
-    window._on_refresh_cluster_queue()
+    window._jobs._on_refresh_cluster_queue()
 
     assert shown_during_warning == ["Failed to check queue on SCARF, PSI"]
     assert window.statusBar().currentMessage() == "Failed to check queue on SCARF, PSI"
@@ -647,9 +647,9 @@ def test_status_bar_reports_a_failed_queue_refresh(
     _connect_status_bar(window, monkeypatch, "SCARF")
     monkeypatch.setattr(window._cluster_runner, "check_jobs", lambda _targets, **_kwargs: None)
 
-    window._cluster_refresh_button.click()
+    window._jobs._cluster_refresh_button.click()
     _connect_status_bar(window, monkeypatch, None)
-    window._on_cluster_poll_failed("Queue polling failed for SCARF: timeout")
+    window._jobs._on_cluster_poll_failed("Queue polling failed for SCARF: timeout")
 
     assert window.statusBar().currentMessage() == "Failed to check queue on SCARF"
 
@@ -672,9 +672,9 @@ def test_main_window_cluster_queue_checked_formats_timezone_aware_times_locally(
         def strftime(self, _format: str) -> str:
             return "11:34:56"
 
-    window._on_cluster_queue_checked(_AwareTime())
+    window._jobs._on_cluster_queue_checked(_AwareTime())
 
-    assert "12:34:56" in window._cluster_queue_checked_label.text()
+    assert "12:34:56" in window._jobs._cluster_queue_checked_label.text()
     window.close()
 
 
@@ -686,19 +686,21 @@ def test_main_window_cluster_queue_checked_uses_snapshot_timestamp(main_window) 
         elapsed_by_job_id={},
     )
 
-    window._on_cluster_queue_checked(snapshot)
+    window._jobs._on_cluster_queue_checked(snapshot)
 
     expected = snapshot.checked_at.astimezone().strftime("%H:%M:%S")
-    assert window._cluster_queue_checked_label.text() == f"Queue last checked: {expected}"
+    assert window._jobs._cluster_queue_checked_label.text() == f"Queue last checked: {expected}"
     window.close()
 
 
 def test_main_window_cluster_queue_checked_unknown_object_stays_compact(main_window) -> None:
     window = main_window
 
-    window._on_cluster_queue_checked(SimpleNamespace(checked_at=object(), elapsed_by_job_id={}))
+    window._jobs._on_cluster_queue_checked(
+        SimpleNamespace(checked_at=object(), elapsed_by_job_id={})
+    )
 
-    assert window._cluster_queue_checked_label.text() == "Queue last checked: unknown"
+    assert window._jobs._cluster_queue_checked_label.text() == "Queue last checked: unknown"
     window.close()
 
 
@@ -822,7 +824,7 @@ def test_main_window_disconnected_refresh_attempts_active_cluster_targets(
         lambda _parent, title, _message: warnings.append(title),
     )
 
-    window._on_refresh_cluster_queue()
+    window._jobs._on_refresh_cluster_queue()
 
     assert connect_calls == ["Redwood", "SCARF"]
     assert refresh_calls == ["refresh", "refresh"]
@@ -884,7 +886,7 @@ def test_main_window_disconnected_refresh_prompts_password_for_password_cluster(
         lambda _targets, **_kwargs: refresh_calls.append("refresh"),
     )
     monkeypatch.setattr(
-        main_window_module,
+        jobs_controller_module,
         "prompt_for_cluster_credentials",
         lambda *_args, **_kwargs: SSHCredentials(target_secret="secret"),
     )
@@ -896,7 +898,7 @@ def test_main_window_disconnected_refresh_prompts_password_for_password_cluster(
         lambda _parent, title, _message: warnings.append(title),
     )
 
-    window._on_refresh_cluster_queue()
+    window._jobs._on_refresh_cluster_queue()
 
     assert connect_calls == [("Redwood", None), ("Redwood", "secret")]
     assert refresh_calls == ["refresh"]
@@ -958,7 +960,7 @@ def test_main_window_disconnected_refresh_prompts_passphrase_for_key_cluster(
         lambda _targets, **_kwargs: refresh_calls.append("refresh"),
     )
     monkeypatch.setattr(
-        main_window_module,
+        jobs_controller_module,
         "prompt_for_cluster_credentials",
         lambda *_args, **_kwargs: SSHCredentials(target_secret="secret-passphrase"),
     )
@@ -970,7 +972,7 @@ def test_main_window_disconnected_refresh_prompts_passphrase_for_key_cluster(
         lambda _parent, title, _message: warnings.append(title),
     )
 
-    window._on_refresh_cluster_queue()
+    window._jobs._on_refresh_cluster_queue()
 
     assert connect_calls == [("Redwood", None), ("Redwood", "secret-passphrase")]
     assert refresh_calls == ["refresh"]
@@ -995,7 +997,7 @@ def test_main_window_cluster_poll_failed_shows_detailed_warning(
         lambda _parent, title, _message, **_kwargs: warnings.append(title),
     )
 
-    window._on_cluster_poll_failed("Queue polling failed for alpha: timeout")
+    window._jobs._on_cluster_poll_failed("Queue polling failed for alpha: timeout")
 
     assert warnings == ["Queue polling failed"]
     window.close()
@@ -1679,15 +1681,15 @@ def test_a_finished_cluster_job_whose_result_cannot_be_recorded_fails_with_the_r
     def _raise(*_args, **_kwargs):
         raise RuntimeError("unexpected output layout")
 
-    monkeypatch.setattr(main_window_module, "merge_controller_result", _raise)
+    monkeypatch.setattr(jobs_controller_module, "merge_controller_result", _raise)
 
-    window._on_cluster_job_checked(
+    window._jobs._on_cluster_job_checked(
         job.id,
         JobEvidence(
             checked_at=datetime.now(UTC),
             scheduler=SchedulerState.COMPLETED,
             output=OutputState.COMPLETE,
-            parsed=main_window_module.CastepResult(completed=True, total_energy=-1.0),
+            parsed=jobs_controller_module.CastepResult(completed=True, total_energy=-1.0),
             remote_job_id="4127731",
             remote_directory="/remote/f0",
         ),
@@ -1721,8 +1723,8 @@ def test_an_error_after_a_job_completed_keeps_its_result(main_window, tmp_path, 
 
     monkeypatch.setattr(window, "_request_dashboard_flush", _raise)
 
-    window._on_local_job_finished(
-        job.id, main_window_module.CastepResult(completed=True, total_energy=-1.0)
+    window._jobs._on_local_job_finished(
+        job.id, jobs_controller_module.CastepResult(completed=True, total_energy=-1.0)
     )
 
     assert job.status == JobStatus.COMPLETED
@@ -1742,10 +1744,10 @@ def test_dashboard_buttons_follow_the_cluster_connecting_and_disconnecting(main_
     assert action_button(window).text() == "Inspect…"
 
     _connect_to_scarf(window)
-    window._on_cluster_connection_status_changed(True)
+    window._jobs._on_cluster_connection_status_changed(True)
     assert action_button(window).text() == "Check now"
 
     window._cluster_runner._connected = False
-    window._on_cluster_connection_status_changed(False)
+    window._jobs._on_cluster_connection_status_changed(False)
     assert action_button(window).text() == "Inspect…"
     window.close()

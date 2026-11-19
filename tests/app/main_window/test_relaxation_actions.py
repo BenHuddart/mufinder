@@ -88,7 +88,7 @@ def test_main_window_local_finish_pristine_relaxation_uses_first_three_lattice_p
         warnings=(),
         geom_converged=True,
     )
-    window._on_local_job_finished(job.id, parsed)
+    window._jobs._on_local_job_finished(job.id, parsed)
 
     assert job.status == JobStatus.COMPLETED
     assert run.status == JobStatus.COMPLETED
@@ -144,7 +144,7 @@ def test_main_window_local_finish_pristine_relaxation_missing_out_cell_fails_job
         warnings=(),
         geom_converged=True,  # clears the geom prologue so we reach the out.cell guard
     )
-    window._on_local_job_finished(job.id, parsed)
+    window._jobs._on_local_job_finished(job.id, parsed)
 
     assert job_status_word(job) == "failed"
     assert run.result_id is None
@@ -247,7 +247,7 @@ def test_main_window_local_finish_relaxation_stale_out_cell_fails_job(
         warnings=(),
         geom_converged=True,  # clears the geom prologue so we reach the stale guard
     )
-    window._on_local_job_finished(job.id, parsed)
+    window._jobs._on_local_job_finished(job.id, parsed)
 
     assert job_status_word(job) == "failed"
     assert "predates this run" in (job.error_message or "")
@@ -303,7 +303,7 @@ def test_main_window_pristine_relaxation_recompletion_keeps_trail_and_references
 
     run_one = _start_pristine_run(window, service, doc, job, run_index=1)
     (output_dir / f"{job.label}-out.cell").write_text(_PRISTINE_OUT_CELL_FIRST, encoding="utf-8")
-    window._on_local_job_finished(job.id, parsed)
+    window._jobs._on_local_job_finished(job.id, parsed)
 
     assert job.status == JobStatus.COMPLETED
     first_result = doc.results[run_one.result_id]
@@ -331,7 +331,7 @@ def test_main_window_pristine_relaxation_recompletion_keeps_trail_and_references
     (output_dir / f"{job.label}-out.cell").write_text(
         _PRISTINE_OUT_CELL_CONTINUED, encoding="utf-8"
     )
-    window._on_local_job_finished(job.id, parsed)
+    window._jobs._on_local_job_finished(job.id, parsed)
 
     assert job.status == JobStatus.COMPLETED
     assert pristine_relaxation_complete(doc) is True

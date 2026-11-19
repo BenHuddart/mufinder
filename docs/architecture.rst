@@ -486,7 +486,9 @@ defined by two of these modules, and a pinned count may only fall.
      - Carrying out job actions (``JobsController``): local and cluster
        submission with their dialogs, the cluster connection and the waits on
        the cluster worker, resubmission, Continue relaxation, reset, cancel,
-       inspect, ``Check now`` and dismiss. Every change of job state goes
+       inspect, ``Check now`` and dismiss; the local and cluster runner
+       signals, the check of every active job, and the status bar's cluster
+       widgets (``ClusterQueueStatus``). Every change of job state goes
        through ``JobExecutionController`` or ``ProjectService``; what it needs
        from the window comes through ``JobsControllerDeps``.
    * - ``mufinder.app.job_dashboard``
@@ -495,6 +497,7 @@ defined by two of these modules, and a pinned count may only fall.
        context menus, ``Show dismissed``, the Delete and Backspace keys, and
        the Cancel and Dismiss confirmations. It decides which action applies to
        which job and emits the confirmed action; it changes no job itself.
+       ``ClusterQueueStatus`` holds the status bar's cluster widgets.
    * - ``mufinder.app.workflow_controllers.base``
      - The submit, materialize, result and refresh cycle (see Workflow
        controllers), ``dedupe_jobs`` for the jobs a ``materialize`` or

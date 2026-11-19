@@ -761,7 +761,7 @@ def test_main_window_local_finish_muon_relaxation_records_folded_final_muon_posi
     )
     assert window._muon_relaxation_controller.active_definition().id == newer_definition.id
 
-    window._on_local_job_finished(job.id, parsed)
+    window._jobs._on_local_job_finished(job.id, parsed)
 
     assert run.result_id is not None
     result = doc.results[run.result_id]
