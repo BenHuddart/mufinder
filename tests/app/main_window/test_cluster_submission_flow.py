@@ -16,7 +16,6 @@ from mufinder.app.main_window import MainWindow
 from mufinder.domain.cluster import ClusterConfig
 from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationRun, Job, MuonSite, Result, Structure
-from mufinder.services.failure_diagnosis import MISSING_SCHEDULER_ENTRY_FAILURE_MESSAGE
 from mufinder.services.project_service import ProjectService
 from mufinder.services.ssh_client import SSHCredentials
 from mufinder.workflow.quantum import QUANTUM_PHONON_CALC_TYPE, QUANTUM_SINGLEPOINT_CALC_TYPE
@@ -1716,98 +1715,6 @@ def test_main_window_submit_jobs_on_cluster_yes_to_all_requires_confirmation(
     window.close()
 
 
-def test_main_window_cluster_status_handlers_update_job_and_run(
-    main_window, tmp_path: Path
-) -> None:
-    window = main_window
-    service = ProjectService()
-    doc = service.create_project(tmp_path / "cluster_status_ui.mufinder", "ClusterStatus")
-    job = service.add_job(
-        doc,
-        label="cluster_job",
-        workflow_stage=main_window_module.WorkflowStage.CONVERGENCE_CUTOFF,
-        calc_type="castep_convergence_cutoff",
-        execution_target="alpha",
-    )
-    service.submit_job(job)
-    run = CalculationRun(job_id=job.id, run_index=1, status=JobStatus.SUBMITTING)
-    doc.runs[run.id] = run
-    window._document = doc
-
-    window._on_cluster_job_status_changed(job.id, JobStatus.QUEUED.value)
-    assert job.status == JobStatus.QUEUED
-
-    window._on_cluster_job_status_changed(job.id, JobStatus.RUNNING.value)
-    assert job.status == JobStatus.RUNNING
-    assert run.status == JobStatus.RUNNING
-
-    window._on_cluster_job_status_changed(job.id, JobStatus.RETRIEVING.value)
-    assert job.status == JobStatus.RETRIEVING
-
-    window._on_cluster_job_status_changed(job.id, JobStatus.STOPPED.value)
-    assert job.status == JobStatus.STOPPED
-    assert run.status == JobStatus.STOPPED
-    assert run.completed_at is not None
-    assert doc.provenance[-1].action == "job_stopped"
-
-    window.close()
-
-
-def test_main_window_refresh_ui_seeds_cluster_tracking_for_active_remote_jobs(
-    main_window,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    window = main_window
-    service = ProjectService()
-    doc = service.create_project(tmp_path / "cluster_tracking_seed.mufinder", "ClusterTrackingSeed")
-
-    tracked_job = service.add_job(
-        doc,
-        label="kpoint_convergence_kgrid_15x15x15",
-        workflow_stage=main_window_module.WorkflowStage.CONVERGENCE_KPOINT,
-        calc_type="castep_convergence_kpoint",
-        execution_target="Redwood",
-    )
-    tracked_job.status = JobStatus.RUNNING
-    tracked_job.remote_job_id = "661459"
-    tracked_job.remote_directory = "/mnt/redwoodfs/alice/project/kpoint_convergence_kgrid_15x15x15"
-
-    local_job = service.add_job(
-        doc,
-        label="local_job",
-        workflow_stage=main_window_module.WorkflowStage.CONVERGENCE_KPOINT,
-        calc_type="castep_convergence_kpoint",
-        execution_target="local",
-    )
-    local_job.status = JobStatus.RUNNING
-
-    job_dir = doc.project_root / "files" / tracked_job.workflow_stage.value / tracked_job.label
-    job_dir.mkdir(parents=True, exist_ok=True)
-
-    clear_calls: list[str] = []
-    track_calls: list[dict[str, object]] = []
-    monkeypatch.setattr(
-        window._cluster_runner, "clear_tracked_jobs", lambda: clear_calls.append("clear")
-    )
-    monkeypatch.setattr(
-        window._cluster_runner,
-        "track_existing_job",
-        lambda **kwargs: track_calls.append(kwargs),
-    )
-
-    window._document = doc
-    window._refresh_ui_after_project_change()
-
-    assert clear_calls == ["clear"]
-    assert len(track_calls) == 1
-    assert track_calls[0]["job_id"] == tracked_job.id
-    assert track_calls[0]["remote_job_id"] == "661459"
-    assert track_calls[0]["cluster_name"] == "Redwood"
-    assert track_calls[0]["status"] == JobStatus.RUNNING
-    window.close()
-
-
 def test_main_window_connect_with_trust_handles_jump_and_target_host_keys(
     main_window,
     monkeypatch: pytest.MonkeyPatch,
@@ -2479,50 +2386,6 @@ def _queued_cluster_job(window: MainWindow, tmp_path: Path) -> Job:
     return job
 
 
-def test_main_window_reports_a_cluster_job_that_starts_running(main_window, tmp_path: Path) -> None:
-    window = main_window
-    job = _queued_cluster_job(window, tmp_path)
-
-    window._on_cluster_job_status_changed(job.id, JobStatus.RUNNING.value)
-    window._on_cluster_job_started(job.id)
-
-    assert job.status == JobStatus.RUNNING
-    assert window.statusBar().currentMessage() == "Cluster job started running: long_queue_job"
-    window.close()
-
-
-def test_main_window_resumes_a_failed_job_the_scheduler_lists_again(
-    main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    window = main_window
-    job = _queued_cluster_job(window, tmp_path)
-    tracked: list[dict[str, object]] = []
-    monkeypatch.setattr(
-        window._cluster_runner, "track_existing_job", lambda **kwargs: tracked.append(kwargs)
-    )
-    monkeypatch.setattr(window, "_job_output_directory", lambda _job: tmp_path / "out")
-    window._on_cluster_job_failed(job.id, MISSING_SCHEDULER_ENTRY_FAILURE_MESSAGE)
-    assert job.status == JobStatus.FAILED
-
-    window._on_cluster_job_reappeared(job.id, JobStatus.RUNNING.value)
-
-    assert job.status == JobStatus.RUNNING
-    assert job.error_message is None
-    assert len(tracked) == 1
-    assert tracked[0]["job_id"] == job.id
-    assert tracked[0]["remote_job_id"] == "4242"
-    assert tracked[0]["status"] == JobStatus.RUNNING
-    assert tracked[0]["watch_for_recovery"] is False
-    assert window.statusBar().currentMessage() == (
-        "Cluster job long_queue_job is listed by the scheduler again; tracking resumed"
-    )
-
-    # A second report for a job no longer failed changes nothing.
-    window._on_cluster_job_reappeared(job.id, JobStatus.RUNNING.value)
-    assert len(tracked) == 1
-    window.close()
-
-
 def test_main_window_batch_timeout_stops_the_worker_submitting(
     main_window, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2549,32 +2412,6 @@ def test_main_window_batch_timeout_stops_the_worker_submitting(
     assert failed == [
         "- Cluster submission stopped responding after 3 minutes; 1 pending job was cancelled."
     ]
-    window.close()
-
-
-def test_main_window_ends_watches_of_jobs_reset_since_failing(
-    main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    window = main_window
-    job = _queued_cluster_job(window, tmp_path)
-    window._on_cluster_job_failed(job.id, MISSING_SCHEDULER_ENTRY_FAILURE_MESSAGE)
-    window._project_service.reset_failed_job(job)
-    stopped: list[list[object]] = []
-    monkeypatch.setattr(
-        window._cluster_runner, "stop_watching", lambda job_ids: stopped.append(list(job_ids))
-    )
-
-    window._on_cluster_queue_checked(
-        SimpleNamespace(
-            checked_at=main_window_module.utc_now(),
-            elapsed_by_job_id={},
-            observations_by_job_id={job.id: "watching for the job to reappear"},
-            watched_job_ids=frozenset({job.id}),
-        )
-    )
-
-    assert stopped == [[job.id]]
-    assert job.last_status_message is None
     window.close()
 
 

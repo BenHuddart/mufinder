@@ -337,3 +337,32 @@ def test_monitor_ignores_unknown_job_ids(monitor) -> None:
 
     assert recorder.remote_requests == []
     assert recorder.changes == []
+
+
+def test_monitor_does_not_wait_for_cluster_jobs_that_cannot_be_asked_about(qapp) -> None:
+    requests: list[list] = []
+    cannot_ask: set = set()
+
+    def request(job_ids: list) -> list:
+        requests.append(list(job_ids))
+        return [job_id for job_id in job_ids if job_id in cannot_ask]
+
+    clock = [1000.0]
+    monitor = JobProgressMonitor(
+        local_output_paths=lambda _job_id: (),
+        request_remote_progress=request,
+        run_in_background=lambda task: task(),
+        clock=lambda: clock[0],
+    )
+    job = _job(target="SCARF")
+    cannot_ask.add(job.id)
+    monitor.follow([job])
+    assert requests == [[job.id]]
+
+    # No answer will come, so the job is asked about again on the next refresh.
+    clock[0] += 3600
+    cannot_ask.clear()
+    monitor.refresh()
+
+    assert requests == [[job.id], [job.id]]
+    monitor.deleteLater()

@@ -1,35 +1,33 @@
 """Threaded facade around :class:`ClusterJobRunner`.
 
-All paramiko SSH/SFTP work is blocking. Running it on the Qt GUI thread froze
-the window during cluster submission and, worst of all, whenever the 60-second
-queue poll discovered finished jobs and downloaded their output inline.
+All paramiko SSH/SFTP work is blocking, and on the Qt GUI thread it would
+freeze the window: during cluster submission and, worst of all, whenever a
+check finds finished jobs and downloads their output.
 
 ``ClusterController`` moves the runner onto a dedicated worker ``QThread`` so
-that *all* SSH activity — connection, polling, result retrieval, submission,
-cancellation — executes off the GUI thread. The controller exposes the same
-public surface as :class:`ClusterJobRunner` (identical signal names, the same
-methods and connection-state properties) so it is a drop-in replacement for
-the ``main_window`` call sites.
+that *all* SSH activity — connection, job checks, output retrieval, submission,
+cancellation — executes off the GUI thread. It forwards the runner's signals,
+mirrors its connection state, and is what ``main_window`` holds.
 
 All GUI-initiated work is marshalled onto the worker **asynchronously**: the GUI
 thread never blocks waiting on the worker. This matters because the worker also
-runs the queue poll, which serially downloads and parses the output of every
-completed job in a batch (minutes, in the worst case). A GUI-thread call that
+runs the job checks, each of which serially downloads and parses the output of
+every finished job it finds (minutes, in the worst case). A GUI-thread call that
 blocked on the worker would freeze the window until that batch drained. Nothing
 here uses ``BlockingQueuedConnection`` except :meth:`ClusterController.shutdown`,
-which runs at teardown (the app is already closing) to stop the worker's poll
-timer on its own thread.
+which runs at teardown (the app is already closing) to close the connection on
+the thread that owns it.
 
 Two asynchronous styles are used:
 
-* **Fire-and-forget with forwarded signals** (``refresh_queue``, ``cancel``,
-  ``track_existing_job``, ``connect_async``/``connect_finished``,
+* **Fire-and-forget with forwarded signals** (``check_jobs``, ``cancel``,
+  ``connect_async``/``connect_finished``,
   ``check_remote_dirs``/``remote_dirs_checked``,
   ``check_remote_files``/``remote_files_checked``,
   ``read_geometry_progress``/``geometry_progress_read``, ``submit_batch`` and its
   progress signals): the GUI returns immediately and results arrive later via a
   purpose-built signal.
-* **Request/completion bridge** (``clear_tracked_jobs``, and the low-level
+* **Request/completion bridge** (the low-level
   ``connect_to_cluster`` / ``submit`` / ``remote_directory_exists`` /
   ``remove_remote_directory`` helpers): the operation is queued on the worker and
   its outcome is delivered back to the GUI thread via
@@ -57,14 +55,8 @@ from PySide6.QtCore import (
 )
 
 from mufinder.domain.cluster import ClusterConfig
-from mufinder.domain.enums import ACTIVE_JOB_STATUSES, JobStatus
-from mufinder.services.cluster_runner import ClusterJobRunner
+from mufinder.services.cluster_runner import CheckTarget, ClusterJobRunner
 from mufinder.services.ssh_client import SSHCredentials
-
-# Status values that mean a tracked cluster job is still active (mirror of the
-# domain ACTIVE_JOB_STATUSES as their serialised strings, which is what the
-# runner emits via ``status_changed``).
-_ACTIVE_STATUS_VALUES = frozenset(status.value for status in ACTIVE_JOB_STATUSES)
 
 
 class _SshTaskRunner(QObject):
@@ -136,12 +128,9 @@ class ClusterController(QObject):
     """GUI-thread facade that runs cluster SSH work on a worker thread."""
 
     # Re-exposed runner signals (emitted on the GUI thread).
-    job_started = Signal(object)
-    job_finished = Signal(object, object)
-    job_failed = Signal(object, str)
     job_cancelled = Signal(object)
-    status_changed = Signal(object, object)
-    job_reappeared = Signal(object, object)
+    #: ``(job_id, JobEvidence)``: what a check saw of one job.
+    job_checked = Signal(object, object)
     connection_status_changed = Signal(bool)
     queue_checked = Signal(object)
     poll_failed = Signal(str)
@@ -163,6 +152,8 @@ class ClusterController(QObject):
     job_submit_finished = Signal(object, object, str)  # job_id, remote_job_id|None, error
     submit_batch_finished = Signal()
 
+    # Internal: a check pass left the worker, however it ended.
+    _check_finished = Signal()
     # Internal: marshals a fire-and-forget callable onto the worker thread.
     _async_task = Signal(object)
     # Internal: marshals a request/completion op onto the worker thread as
@@ -174,7 +165,6 @@ class ClusterController(QObject):
     OP_SUBMIT = "submit"
     OP_REMOTE_DIR_EXISTS = "remote_directory_exists"
     OP_REMOVE_REMOTE_DIR = "remove_remote_directory"
-    OP_CLEAR_TRACKED = "clear_tracked_jobs"
 
     def __init__(self, parent: QObject | None = None, *, settings: Any = None) -> None:
         super().__init__(parent)
@@ -201,31 +191,26 @@ class ClusterController(QObject):
         # incremented on the GUI thread (single-threaded), so no lock is needed.
         self._request_ids = count(1)
 
-        # GUI-thread mirror of the runner's active tracked-job ids, maintained
-        # from the signals/calls this controller already sees. The runner's own
-        # ``_tracked_jobs`` live on the worker thread and must not be read from
-        # the GUI thread; this set lets the dashboard ask "is this cluster job
-        # being monitored?" without crossing threads. It is deliberately NOT
-        # cleared on disconnect: the runner keeps its tracked jobs across a
-        # disconnect (only ``clear_tracked_jobs`` drops them, on project switch)
-        # and polls them again after a reconnect.
-        self._tracked_active_job_ids: set[UUID] = set()
+        # Check passes queued on the worker or running there, so the
+        # once-a-minute check is not queued behind one that has not finished.
+        self._checks_in_flight = 0
+        # Jobs handed to the worker for submission that it has not answered
+        # for. Such a job has no scheduler job ID yet, by design.
+        self._submitting_job_ids: set[UUID] = set()
 
         # Forward worker signals to the GUI thread. These cross-thread
         # connections are queued automatically.
-        self._runner.job_started.connect(self.job_started)
-        self._runner.job_finished.connect(self.job_finished)
-        self._runner.job_failed.connect(self.job_failed)
         self._runner.job_cancelled.connect(self.job_cancelled)
-        self._runner.status_changed.connect(self.status_changed)
-        self._runner.job_reappeared.connect(self.job_reappeared)
-        # Maintain the GUI-thread tracked-id mirror from the same status stream.
-        # Queued automatically (cross-thread) and runs on the GUI thread.
-        self._runner.status_changed.connect(self._mirror_status_changed)
+        self._runner.job_checked.connect(self.job_checked)
         self._runner.queue_checked.connect(self.queue_checked)
         self._runner.poll_failed.connect(self.poll_failed)
         self._runner.geometry_progress_read.connect(self.geometry_progress_read)
         self._runner.connection_status_changed.connect(self._on_connection_status_changed)
+        self._check_finished.connect(self._on_check_finished)
+        # Connected before any outside listener, so a job stops counting as
+        # being submitted before its result is applied.
+        self.job_submit_finished.connect(self._on_job_submit_finished)
+        self.submit_batch_finished.connect(self._on_submit_batch_finished)
 
         self._async_task.connect(self._tasks.run_task, Qt.ConnectionType.QueuedConnection)
         self._async_op.connect(self._tasks.run_async_op, Qt.ConnectionType.QueuedConnection)
@@ -250,36 +235,24 @@ class ClusterController(QObject):
         return self._connected_username if self._connected else None
 
     # ------------------------------------------------------------------
-    # Tracked-job mirror (GUI-thread safe; never touches the runner's dicts)
+    # Submissions in flight (GUI thread)
     # ------------------------------------------------------------------
-    def tracked_active_job_ids(self) -> frozenset[UUID]:
-        """Return the ids of cluster jobs the runner is actively tracking.
+    def is_submitting(self, job_id: UUID) -> bool:
+        """Return whether ``job_id`` was handed to the worker and has no answer yet."""
 
-        A GUI-thread mirror of the runner's non-terminal ``_tracked_jobs``. The
-        dashboard uses it to mark active cluster jobs that nothing is
-        monitoring. Conservative by construction: a job is only dropped when a
-        terminal ``status_changed`` is observed for it, so an in-flight job is
-        never briefly absent.
-        """
+        return job_id in self._submitting_job_ids
 
-        return frozenset(self._tracked_active_job_ids)
+    @Slot(object, object, str)
+    def _on_job_submit_finished(self, job_id: Any, _remote_job_id: Any, _error: str) -> None:
+        self._submitting_job_ids.discard(job_id)
 
-    def is_tracking(self, job_id: UUID) -> bool:
-        """Return whether the runner is actively tracking the cluster job ``job_id``."""
+    @Slot()
+    def _on_submit_batch_finished(self) -> None:
+        self._submitting_job_ids.clear()
 
-        return job_id in self._tracked_active_job_ids
-
-    @Slot(object, object)
-    def _mirror_status_changed(self, job_id: Any, status_value: Any) -> None:
-        try:
-            normalized = job_id if isinstance(job_id, UUID) else UUID(str(job_id))
-        except (TypeError, ValueError, AttributeError):
-            return
-        value = status_value.value if isinstance(status_value, JobStatus) else str(status_value)
-        if value in _ACTIVE_STATUS_VALUES:
-            self._tracked_active_job_ids.add(normalized)
-        else:
-            self._tracked_active_job_ids.discard(normalized)
+    @Slot()
+    def _on_check_finished(self) -> None:
+        self._checks_in_flight = max(0, self._checks_in_flight - 1)
 
     @Slot(bool)
     def _on_connection_status_changed(self, connected: bool) -> None:
@@ -368,63 +341,43 @@ class ClusterController(QObject):
             lambda: self._runner.remove_remote_directory(remote_directory),
         )
 
-    def clear_tracked_jobs(self) -> object:
-        """Drop all tracked jobs on the worker thread; returns immediately.
-
-        Fast, but must run on the worker thread because it mutates state the poll
-        loop also touches. Queued (never blocking) so switching projects can never
-        freeze the GUI while the worker is mid-retrieval. The GUI mirror is cleared
-        synchronously here so the dashboard sees the drop at once; any subsequent
-        ``track_existing_job`` calls queue *after* this op on the same worker, so
-        re-registration is never wiped by a late clear.
-
-        Returns the request id; the outcome is delivered via
-        :attr:`operation_finished` with ``kind == OP_CLEAR_TRACKED``.
-        """
-
-        # Clear the GUI mirror to match: this is the only place the runner drops
-        # all tracked jobs.
-        self._tracked_active_job_ids.clear()
-        return self._run_async_op(self.OP_CLEAR_TRACKED, self._runner.clear_tracked_jobs)
-
     # ------------------------------------------------------------------
     # Asynchronous (fire-and-forget) operations
     # ------------------------------------------------------------------
-    def refresh_queue(self) -> None:
-        self._async_task.emit(self._runner.refresh_queue)
+    def check_jobs(self, targets: list[CheckTarget], *, skip_if_busy: bool = False) -> bool:
+        """Look at ``targets`` on the worker; evidence arrives via :attr:`job_checked`.
 
-    def stop_watching(self, job_ids: list[Any]) -> None:
-        self._async_task.emit(lambda: self._runner.stop_watching(job_ids))
-
-    def read_geometry_progress(self, job_ids: list[Any]) -> None:
-        """Read jobs' geometry progress on the worker; results via :attr:`geometry_progress_read`."""
-
-        ids = list(job_ids)
-        self._async_task.emit(lambda: self._runner.read_geometry_progress(ids))
-
-    def cancel(self, job_id: Any) -> None:
-        self._async_task.emit(lambda: self._runner.cancel(job_id))
-
-    def track_existing_job(self, **kwargs: Any) -> None:
-        # The runner emits no signal when re-tracking a persisted job, so mirror
-        # the addition here on the GUI thread. Only active jobs are tracked; a
-        # terminal status means the runner will mark it terminal and never poll,
-        # so it must not enter the active mirror.
-        status = kwargs.get("status")
-        job_id = kwargs.get("job_id")
-        if status in ACTIVE_JOB_STATUSES and isinstance(job_id, UUID):
-            self._tracked_active_job_ids.add(job_id)
-        self._async_task.emit(lambda: self._runner.track_existing_job(**kwargs))
-
-    def retrieve_outputs_for(self, job_id: Any, **kwargs: Any) -> None:
-        """Re-attempt output retrieval for one job on the worker thread.
-
-        Fire-and-forget, mirroring :meth:`refresh_queue`: the blocking SSH
-        download runs off the GUI thread and results arrive via the forwarded
-        ``job_finished`` / ``job_failed`` / ``status_changed`` signals.
+        Returns whether the check was queued. ``skip_if_busy`` drops it while an
+        earlier check is still on the worker, so a slow download does not pile
+        up one check per minute behind it.
         """
 
-        self._async_task.emit(lambda: self._runner.retrieve_outputs_for(job_id, **kwargs))
+        if skip_if_busy and self._checks_in_flight:
+            return False
+        self._checks_in_flight += 1
+        batch = list(targets)
+        self._async_task.emit(lambda: self._run_check(batch))
+        return True
+
+    def _run_check(self, targets: list[CheckTarget]) -> None:
+        # Runs on the worker. The finish is always reported, or one error
+        # would leave every later once-a-minute check skipped.
+        try:
+            self._runner.check_jobs(targets)
+        finally:
+            self._check_finished.emit()
+
+    def forget_progress(self) -> None:
+        self._async_task.emit(self._runner.forget_progress)
+
+    def read_geometry_progress(self, targets: list[CheckTarget]) -> None:
+        """Read jobs' geometry progress on the worker; results via :attr:`geometry_progress_read`."""
+
+        batch = list(targets)
+        self._async_task.emit(lambda: self._runner.read_geometry_progress(batch))
+
+    def cancel(self, job_id: Any, remote_job_id: str = "") -> None:
+        self._async_task.emit(lambda: self._runner.cancel(job_id, remote_job_id))
 
     def connect_async(self, config: ClusterConfig, *, credentials: SSHCredentials) -> None:
         """Connect on the worker thread; result is delivered via connect_finished.
@@ -520,6 +473,7 @@ class ClusterController(QObject):
         """
 
         self._batch_cancelled = False
+        self._submitting_job_ids.update(item["job_id"] for item in items)
         self._async_task.emit(lambda: self._run_submit_batch(items))
 
     def cancel_batch(self) -> None:
@@ -560,12 +514,11 @@ class ClusterController(QObject):
         """Disconnect and stop the worker thread. Safe to call more than once.
 
         The disconnect runs synchronously *on the worker thread* (blocking bridge)
-        so the poll ``QTimer`` — which lives on that thread — is stopped before the
-        event loop quits. Doing it asynchronously and then calling ``quit()`` races:
-        the loop can exit before the disconnect runs, leaving the timer active and
-        later killed from the GUI thread ("Timers cannot be stopped from another
-        thread"). The cost is that closing while a large download is in flight
-        waits for it, which matches how the app's other worker threads shut down.
+        so the connection is closed by the thread that owns it before the event
+        loop quits. Doing it asynchronously and then calling ``quit()`` races: the
+        loop can exit before the disconnect runs. The cost is that closing while a
+        large download is in flight waits for it, which matches how the app's
+        other worker threads shut down.
         """
 
         if not self._thread.isRunning():
@@ -612,7 +565,7 @@ class ClusterController(QObject):
         """Run ``fn`` on the worker thread and return its result (or re-raise).
 
         **Teardown only.** The one remaining caller is :meth:`shutdown`, which must
-        stop the worker's poll ``QTimer`` on the worker thread before quitting its
+        close the connection on the worker thread before quitting its
         event loop; blocking there is acceptable because the app is already
         closing. No responsiveness-sensitive GUI path uses this — those go through
         :meth:`_run_async_op`. Only ever called from the GUI thread, which is

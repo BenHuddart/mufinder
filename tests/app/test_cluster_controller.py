@@ -22,8 +22,7 @@ from PySide6.QtCore import QObject, QThread, Signal
 from mufinder.app import cluster_controller
 from mufinder.app.cluster_controller import ClusterController
 from mufinder.castep_io.geometry_progress import parse_geometry_progress
-from mufinder.domain.enums import JobStatus
-from mufinder.services.cluster_runner import _TrackedClusterJob
+from mufinder.services.cluster_runner import CheckTarget
 from mufinder.services.job_progress import REMOTE_READ_CHUNK_BYTES
 from tests.support.cluster_ssh import GrowingOutputSSH
 from tests.support.qt import pump_until
@@ -44,12 +43,8 @@ class _FakeCredentials:
 class _FakeRunner(QObject):
     """Stand-in for ClusterJobRunner that records the thread each call runs on."""
 
-    job_started = Signal(object)
-    job_finished = Signal(object, object)
-    job_failed = Signal(object, str)
     job_cancelled = Signal(object)
-    status_changed = Signal(object, object)
-    job_reappeared = Signal(object, object)
+    job_checked = Signal(object, object)
     connection_status_changed = Signal(bool)
     queue_checked = Signal(object)
     poll_failed = Signal(str)
@@ -71,6 +66,7 @@ class _FakeRunner(QObject):
         # When set, ``block_worker`` holds the worker thread inside a long op so a
         # test can prove a later GUI-thread call does not wait for it.
         self.block_worker: threading.Event | None = None
+        self.check_should_raise = False
 
     def connect_to_cluster(self, config, password=None, *, credentials=None) -> None:
         self.threads["connect"] = QThread.currentThread()
@@ -114,26 +110,28 @@ class _FakeRunner(QObject):
         self.calls.append(("scheduler_check", remote_job_id))
         return remote_job_id in self.active_scheduler_jobs
 
-    def refresh_queue(self) -> None:
-        self.threads["refresh"] = QThread.currentThread()
-        self.calls.append(("refresh",))
+    def check_jobs(self, targets) -> None:
+        self.threads["check"] = QThread.currentThread()
+        self.calls.append(("check", tuple(targets)))
+        if self.block_worker is not None:
+            self.block_worker.wait(2.0)
+        if self.check_should_raise:
+            raise RuntimeError("check blew up")
+        for target in targets:
+            self.job_checked.emit(target, f"evidence-{target}")
+        self.queue_checked.emit("snapshot")
 
-    def read_geometry_progress(self, job_ids) -> None:
+    def read_geometry_progress(self, targets) -> None:
         self.threads["progress"] = QThread.currentThread()
-        self.calls.append(("progress", tuple(job_ids)))
-        self.geometry_progress_read.emit({job_id: f"progress-{job_id}" for job_id in job_ids})
+        self.calls.append(("progress", tuple(targets)))
+        self.geometry_progress_read.emit({target: f"progress-{target}" for target in targets})
 
-    def cancel(self, job_id) -> None:
+    def forget_progress(self) -> None:
+        self.calls.append(("forget_progress",))
+
+    def cancel(self, job_id, remote_job_id="") -> None:
         self.threads["cancel"] = QThread.currentThread()
-        self.calls.append(("cancel", job_id))
-
-    def track_existing_job(self, **kwargs) -> None:
-        self.threads["track"] = QThread.currentThread()
-        self.calls.append(("track", kwargs.get("job_id")))
-
-    def clear_tracked_jobs(self) -> None:
-        self.threads["clear"] = QThread.currentThread()
-        self.calls.append(("clear",))
+        self.calls.append(("cancel", job_id, remote_job_id))
 
     def hold(self) -> str:
         """A long op that pins the worker thread until ``block_worker`` is set."""
@@ -185,33 +183,19 @@ def test_bridge_ops_run_on_worker_thread_and_report_via_signal(controller) -> No
     rid_submit = ctrl.submit(seed_name="seed")
     rid_exists = ctrl.remote_directory_exists("/remote/dir")
     rid_rm = ctrl.remove_remote_directory("/remote/dir")
-    rid_clear = ctrl.clear_tracked_jobs()
 
     # Every call returned a distinct request id immediately.
-    assert len({rid_submit, rid_exists, rid_rm, rid_clear}) == 4
+    assert len({rid_submit, rid_exists, rid_rm}) == 3
 
-    assert pump_until(lambda: len(ops) == 4)
+    assert pump_until(lambda: len(ops) == 3)
     by_kind = {kind: (result, error) for _rid, kind, result, error in ops}
     assert by_kind[ctrl.OP_SUBMIT] == ("JOB-1", None)
     assert by_kind[ctrl.OP_REMOTE_DIR_EXISTS] == (True, None)
     assert by_kind[ctrl.OP_REMOVE_REMOTE_DIR][1] is None
-    assert by_kind[ctrl.OP_CLEAR_TRACKED][1] is None
 
-    for key in ("submit", "exists", "rmtree", "clear"):
+    for key in ("submit", "exists", "rmtree"):
         assert fake.threads[key] is ctrl._thread
         assert fake.threads[key] is not gui_thread
-
-
-def test_clear_tracked_jobs_clears_mirror_eagerly(controller) -> None:
-    # The GUI-thread mirror is cleared synchronously so the watchdog sees the drop
-    # immediately, even before the queued worker op runs.
-    ctrl, _fake = controller
-    from uuid import uuid4
-
-    job_id = uuid4()
-    ctrl._tracked_active_job_ids.add(job_id)
-    ctrl.clear_tracked_jobs()
-    assert ctrl.tracked_active_job_ids() == frozenset()
 
 
 def test_bridge_op_does_not_block_gui_while_worker_is_busy(controller) -> None:
@@ -228,7 +212,7 @@ def test_bridge_op_does_not_block_gui_while_worker_is_busy(controller) -> None:
 
     # This call must return immediately even though the worker is busy.
     start = time.monotonic()
-    rid_fast = ctrl.clear_tracked_jobs()
+    rid_fast = ctrl.remote_directory_exists("/remote/dir")
     assert time.monotonic() - start < 0.2
     assert rid_fast != rid_slow
 
@@ -241,15 +225,107 @@ def test_async_calls_run_on_worker_thread(controller) -> None:
     ctrl, fake = controller
     gui_thread = QThread.currentThread()
 
-    ctrl.refresh_queue()
-    ctrl.cancel("job-7")
-    ctrl.track_existing_job(job_id="job-9")
+    ctrl.check_jobs(["job-1"])
+    ctrl.cancel("job-7", "4242")
+    ctrl.forget_progress()
 
-    assert pump_until(lambda: {"refresh", "cancel", "track"} <= set(fake.threads))
-    assert fake.threads["refresh"] is ctrl._thread
-    assert fake.threads["refresh"] is not gui_thread
+    assert pump_until(lambda: ("forget_progress",) in fake.calls)
+    assert fake.threads["check"] is ctrl._thread
+    assert fake.threads["check"] is not gui_thread
     assert fake.threads["cancel"] is ctrl._thread
-    assert fake.threads["track"] is ctrl._thread
+    assert ("cancel", "job-7", "4242") in fake.calls
+
+
+def test_check_reports_evidence_and_the_pass_on_the_gui_thread(controller) -> None:
+    ctrl, fake = controller
+    gui_thread = QThread.currentThread()
+    received: list[tuple] = []
+    ctrl.job_checked.connect(
+        lambda job_id, evidence: received.append((job_id, evidence, QThread.currentThread()))
+    )
+    snapshots: list[object] = []
+    ctrl.queue_checked.connect(snapshots.append)
+
+    assert ctrl.check_jobs(["job-1", "job-2"]) is True
+
+    assert pump_until(lambda: snapshots == ["snapshot"])
+    assert received == [
+        ("job-1", "evidence-job-1", gui_thread),
+        ("job-2", "evidence-job-2", gui_thread),
+    ]
+    assert ("check", ("job-1", "job-2")) in fake.calls
+
+
+def test_a_check_is_skipped_while_another_is_on_the_worker(controller) -> None:
+    ctrl, fake = controller
+    gate = threading.Event()
+    fake.block_worker = gate
+
+    assert ctrl.check_jobs(["job-1"]) is True
+    assert pump_until(lambda: "check" in fake.threads)  # the worker is inside the check
+
+    # The once-a-minute check does not pile up behind it; a requested one queues.
+    assert ctrl.check_jobs(["job-1"], skip_if_busy=True) is False
+    assert ctrl.check_jobs(["job-2"]) is True
+
+    gate.set()
+    assert pump_until(lambda: ctrl._checks_in_flight == 0)
+    assert [call for call in fake.calls if call[0] == "check"] == [
+        ("check", ("job-1",)),
+        ("check", ("job-2",)),
+    ]
+    assert ctrl.check_jobs([], skip_if_busy=True) is True
+
+
+def test_a_check_that_raises_does_not_leave_later_checks_skipped(controller) -> None:
+    ctrl, fake = controller
+    fake.check_should_raise = True
+
+    ctrl.check_jobs(["job-1"])
+
+    assert pump_until(lambda: ctrl._checks_in_flight == 0 and "check" in fake.threads)
+    fake.check_should_raise = False
+    assert ctrl.check_jobs([], skip_if_busy=True) is True
+
+
+def test_a_job_counts_as_being_submitted_until_its_result_arrives(controller) -> None:
+    ctrl, fake = controller
+    gate = threading.Event()
+    fake.on_submit = lambda: gate.wait(2.0)
+    seen_at_result: list[bool] = []
+    ctrl.job_submit_finished.connect(
+        lambda job_id, _remote_id, _error: seen_at_result.append(ctrl.is_submitting(job_id))
+    )
+    items = [
+        {"job_id": "a", "label": "a", "submit_kwargs": {"seed_name": "a"}},
+        {"job_id": "b", "label": "b", "submit_kwargs": {"seed_name": "b"}},
+    ]
+
+    assert not ctrl.is_submitting("a")
+    ctrl.submit_batch(items)
+    assert ctrl.is_submitting("a") and ctrl.is_submitting("b")
+
+    gate.set()
+    assert pump_until(lambda: len(seen_at_result) == 2)
+    # A listener applying the result already sees the job as submitted.
+    assert seen_at_result == [False, False]
+    assert not ctrl.is_submitting("a") and not ctrl.is_submitting("b")
+
+
+def test_a_cancelled_batch_stops_counting_its_unsubmitted_jobs(controller) -> None:
+    ctrl, fake = controller
+    finished: list[bool] = []
+    ctrl.submit_batch_finished.connect(lambda: finished.append(True))
+    fake.on_submit = ctrl.cancel_batch
+    items = [
+        {"job_id": "a", "label": "a", "submit_kwargs": {"seed_name": "a"}},
+        {"job_id": "b", "label": "b", "submit_kwargs": {"seed_name": "b"}},
+    ]
+
+    ctrl.submit_batch(items)
+
+    assert pump_until(lambda: finished == [True])
+    assert not ctrl.is_submitting("b")
 
 
 def test_geometry_progress_is_read_on_the_worker_and_reported_on_the_gui_thread(controller) -> None:
@@ -385,11 +461,11 @@ def test_two_ops_queued_back_to_back_route_to_own_continuation(controller) -> No
 def test_worker_signals_forward_to_gui(controller) -> None:
     ctrl, fake = controller
     received: list[tuple] = []
-    ctrl.job_finished.connect(lambda job_id, parsed: received.append((job_id, parsed)))
+    ctrl.job_cancelled.connect(received.append)
 
-    fake.job_finished.emit("job-1", "parsed")
+    fake.job_cancelled.emit("job-1")
 
-    assert pump_until(lambda: received == [("job-1", "parsed")])
+    assert pump_until(lambda: received == ["job-1"])
 
 
 def test_pure_passthrough_helpers(controller) -> None:
@@ -655,9 +731,9 @@ def test_bridge_op_falls_back_after_shutdown(controller) -> None:
     assert ctrl._thread.isRunning() is False
     # With the worker stopped, the bridge runs the call directly (no dead-thread
     # queue) and emits the completion synchronously so continuations still fire.
-    rid = ctrl.clear_tracked_jobs()
-    assert ("clear",) in fake.calls
-    assert ops and ops[-1] == (rid, ctrl.OP_CLEAR_TRACKED, None, None)
+    rid = ctrl.remove_remote_directory("/remote/dir")
+    assert ("rmtree", "/remote/dir") in fake.calls
+    assert ops and ops[-1] == (rid, ctrl.OP_REMOVE_REMOTE_DIR, None, None)
 
 
 def test_shutdown_stops_worker_thread(qapp, monkeypatch) -> None:
@@ -675,20 +751,17 @@ def test_shutdown_stops_worker_thread(qapp, monkeypatch) -> None:
     ctrl.shutdown()
 
 
-def test_real_runner_poll_timer_is_stopped_by_shutdown(qapp) -> None:
-    # Use the real ClusterJobRunner so its worker-thread poll QTimer exists, then
-    # confirm shutdown leaves it inactive (and on no live thread) so destruction
-    # does not stop a timer from the wrong thread.
+def test_real_runner_is_disconnected_by_shutdown(qapp) -> None:
     from mufinder.app.cluster_controller import ClusterController as RealController
 
     ctrl = RealController(settings=None)
-    # Start the poll timer on the worker thread, as submit/connect/track do.
-    ctrl._call_blocking(ctrl._runner._poll_timer.start)
-    assert ctrl._call_blocking(ctrl._runner._poll_timer.isActive) is True
+    events: list[bool] = []
+    ctrl.connection_status_changed.connect(events.append)
 
     ctrl.shutdown()
+
     assert ctrl._thread.isRunning() is False
-    assert ctrl._runner._poll_timer.isActive() is False
+    assert ctrl._runner.is_connected is False
 
 
 def test_run_submit_batch_deletes_a_finished_runs_directory(controller) -> None:
@@ -736,15 +809,17 @@ def test_checkpoint_probe_is_not_held_up_by_progress_reads_of_large_logs(qapp, t
         runner = ctrl._runner
         runner._ssh = ssh
         job_ids = [uuid4() for _ in range(3)]
+        targets = []
         for index, job_id in enumerate(job_ids):
             ssh.remote_files[f"/remote/job{index}/seed.castep"] = log
-            runner._tracked_jobs[job_id] = _TrackedClusterJob(
-                job_id=job_id,
-                remote_job_id=str(index),
-                remote_dir=f"/remote/job{index}",
-                seed_name="seed",
-                local_output_dir=tmp_path,
-                status=JobStatus.RUNNING,
+            targets.append(
+                CheckTarget(
+                    job_id=job_id,
+                    remote_job_id=str(index),
+                    remote_dir=f"/remote/job{index}",
+                    seed_name="seed",
+                    local_output_dir=tmp_path,
+                )
             )
         ssh.remote_files["/remote/job0/seed.check"] = b"checkpoint"
         progress: dict = {}
@@ -752,7 +827,7 @@ def test_checkpoint_probe_is_not_held_up_by_progress_reads_of_large_logs(qapp, t
         probes: list[dict] = []
         ctrl.remote_files_checked.connect(probes.append)
 
-        ctrl.read_geometry_progress(job_ids)
+        ctrl.read_geometry_progress(targets)
         ctrl.check_remote_files([(job_ids[0], "/remote/job0/seed.check")])
 
         assert pump_until(lambda: probes and len(progress) == 3, timeout=20.0)

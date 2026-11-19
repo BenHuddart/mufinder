@@ -68,10 +68,10 @@ def test_status_tooltip_carries_the_last_check(qapp, tmp_path: Path) -> None:
     job.last_status_source = "poll"
     job.last_status_message = "queued on scarf"
     window._document = doc
-    # Connected to the job's cluster, which holds the job, so the row is NOT stale.
+    job.remote_job_id = "4127731"
+    # Connected to the job's cluster and checked recently, so the row is NOT stale.
     window._cluster_runner._connected = True
     window._cluster_runner._connected_cluster_name = "scarf"
-    window._cluster_runner._tracked_active_job_ids.add(job.id)
     window._refresh_jobs_table()
 
     item = _status_item(window)

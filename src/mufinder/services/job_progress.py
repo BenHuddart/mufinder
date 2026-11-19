@@ -241,7 +241,7 @@ class JobProgressMonitor(QObject):
         self,
         *,
         local_output_paths: Callable[[UUID], Sequence[Path]],
-        request_remote_progress: Callable[[list[UUID]], None],
+        request_remote_progress: Callable[[list[UUID]], Iterable[UUID] | None],
         run_in_background: Callable[[Callable[[], None]], None] = _start_daemon_thread,
         clock: Callable[[], float] = time.monotonic,
         parent: QObject | None = None,
@@ -323,7 +323,10 @@ class JobProgressMonitor(QObject):
             self._read_local(local_ids)
         if remote_ids:
             self._remote_in_flight.update(remote_ids)
-            self._request_remote_progress(remote_ids)
+            unasked = self._request_remote_progress(remote_ids)
+            if unasked:
+                # No answer will come for these, so they must not stay in flight.
+                self.accept_remote_progress(dict.fromkeys(unasked))
 
     def accept_remote_progress(self, results: Mapping[UUID, GeometryProgress | None]) -> None:
         """Take the progress the cluster runner read for some jobs."""

@@ -4,28 +4,34 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, fields
-from datetime import datetime
+from dataclasses import dataclass, fields, replace
 from pathlib import Path
 from typing import Any
 from uuid import UUID
 
 from mufinder.domain.enums import ACTIVE_JOB_STATUSES, FailureReason, JobStatus
 from mufinder.domain.models import CalculationRun, Job, Result, utc_now
+from mufinder.services.cluster_runner import CheckTarget
 from mufinder.services.failure_diagnosis import (
-    MISSING_SCHEDULER_ENTRY_FAILURE_MESSAGE,
     RESULT_NOT_RECORDED_PREFIX,
     FailureDiagnosis,
     diagnose_failure,
-    failure_reason_summary,
+    failure_reason_label,
     find_failure_log_files,
 )
 from mufinder.castep_io.output_parser import CastepResult
 from mufinder.services.job_artifacts import ParsedJobArtifacts, RetrievalFlags
 from mufinder.services.job_evidence import local_job_evidence
 from mufinder.services.job_findings import record_job_finding
-from mufinder.services.job_monitoring import is_cluster_job
-from mufinder.services.job_reconcile import Decision, JobEvidence, reconcile
+from mufinder.services.job_monitoring import is_cluster_job, job_staleness
+from mufinder.services.job_reconcile import (
+    ENDED_JOB_STATUSES,
+    Decision,
+    JobEvidence,
+    OutputState,
+    SchedulerState,
+    reconcile,
+)
 from mufinder.services.project_service import ProjectDocument, ProjectService
 
 LOGGER = logging.getLogger(__name__)
@@ -167,6 +173,8 @@ class LifecycleUpdate:
     changed: bool = False
     journal_changed: bool = False
     finished: FinishedOutput | None = None
+    #: Only the job's last-checked note changed.
+    stamped: bool = False
 
 
 class JobExecutionController:
@@ -182,6 +190,8 @@ class JobExecutionController:
         job_output_directory: Callable[[Job], Path | None],
         job_seed_name: Callable[[Job], str],
         active_run_by_job: dict[UUID, UUID] | None = None,
+        retrieval_for_job: Callable[[Job], RetrievalFlags] | None = None,
+        remote_directory_for_job: Callable[[Job], str] | None = None,
     ) -> None:
         self._document_getter = document_getter
         self._project_service = project_service
@@ -190,6 +200,14 @@ class JobExecutionController:
         self._job_output_directory = job_output_directory
         self._job_seed_name = job_seed_name
         self._active_run_by_job = active_run_by_job if active_run_by_job is not None else {}
+        self._retrieval_for_job = retrieval_for_job
+        self._remote_directory_for_job = remote_directory_for_job
+        # The marker each active job's last check left, when it could not
+        # confirm the job. Derived, never saved: the next check rebuilds it.
+        self._markers: dict[UUID, str] = {}
+        # Cluster jobs that evidence changed since the last check summary, in
+        # the order they changed.
+        self._changed_by_checks: dict[UUID, None] = {}
 
     @property
     def active_run_by_job(self) -> dict[UUID, UUID]:
@@ -432,48 +450,6 @@ class JobExecutionController:
             return self.fail_cluster_submission(prepared, str(exc))
         return self.finalize_cluster_submission(prepared, remote_job_id)
 
-    def prepare_retry_retrieval(self, job_id: UUID) -> Job | None:
-        """Move a failed/stopped cluster job back into RETRIEVING for re-download.
-
-        Validates the retry preconditions (failed or stopped, cluster target,
-        remote id and directory present), calls
-        :meth:`ProjectService.retry_job_retrieval`, stamps the user-initiated
-        monitor metadata, and registers a *fresh* ``CalculationRun`` (status
-        RETRIEVING) as the job's active run.
-
-        A fresh run is required: the failure/stop path already popped the active
-        run and marked the previous run terminal, so without a new active run
-        ``run_for_job`` would fall back to that terminal run and the eventual
-        completion would overwrite a FAILED run to COMPLETED. Returning the job
-        lets the GUI dispatch the retrieval; ``None`` means the job was
-        ineligible (the button is normally disabled in that case).
-        """
-
-        document = self._document_getter()
-        if document is None:
-            return None
-        job = document.jobs.get(job_id)
-        if job is None:
-            return None
-        if job.status not in {JobStatus.FAILED, JobStatus.STOPPED}:
-            return None
-        target = (job.execution_target or "").strip()
-        if not target or target.casefold() == "local":
-            return None
-        if not (job.remote_job_id or "").strip() or not (job.remote_directory or "").strip():
-            return None
-
-        try:
-            self._project_service.retry_job_retrieval(job)
-        except ValueError:
-            return None
-
-        job.last_checked_at = utc_now()
-        job.last_status_source = "user"
-        job.last_status_message = "Retry retrieval requested"
-        self._create_active_run(document, job, JobStatus.RETRIEVING)
-        return job
-
     def record_submission(self, jobs: Sequence[Job], execution_target: str) -> bool:
         """Record one provenance event for a batch of submitted jobs."""
 
@@ -518,8 +494,8 @@ class JobExecutionController:
         ``source``/``status_message`` override the monitor-metadata stamp.
         When both are ``None`` (the runner signal path), local jobs are stamped
         ``local_runner`` / ``"process started"``; cluster jobs are left
-        unchanged because their monitor metadata is stamped from queue polls
-        via :meth:`mark_queue_checked`.
+        unchanged because their monitor metadata is stamped from each check
+        by :meth:`apply_evidence`.
         """
 
         job = self._job_for_id(job_id)
@@ -732,159 +708,6 @@ class JobExecutionController:
         self._close_active_run(job, self.run_for_job(job_id), JobStatus.CANCELLED, "job_cancelled")
         return LifecycleUpdate(job=job, changed=True, journal_changed=True)
 
-    def mark_cluster_status_changed(self, job_id: UUID, status_value: str) -> LifecycleUpdate:
-        """Apply cluster-runner status polling notifications."""
-
-        job = self._job_for_id(job_id)
-        if job is None:
-            return LifecycleUpdate()
-
-        status_map = {
-            JobStatus.QUEUED.value: JobStatus.QUEUED,
-            JobStatus.RUNNING.value: JobStatus.RUNNING,
-            JobStatus.RETRIEVING.value: JobStatus.RETRIEVING,
-            JobStatus.STOPPED.value: JobStatus.STOPPED,
-        }
-        mapped = status_map.get(status_value)
-        if mapped is None:
-            return LifecycleUpdate(job=job)
-
-        try:
-            if mapped == JobStatus.QUEUED and job.status == JobStatus.SUBMITTING:
-                self._project_service.mark_job_queued(job, remote_job_id=job.remote_job_id)
-            elif mapped == JobStatus.RUNNING and job.status in {
-                JobStatus.SUBMITTING,
-                JobStatus.QUEUED,
-            }:
-                self._project_service.start_job(job)
-            elif mapped == JobStatus.RETRIEVING and job.status == JobStatus.RUNNING:
-                self._project_service.mark_job_retrieving(job)
-            elif mapped == JobStatus.STOPPED and job.status in ACTIVE_JOB_STATUSES:
-                # The cluster runner reports ``stopped`` only for a walltime
-                # stop: the scheduler's TIMEOUT state, or a time-limit kill in
-                # the scheduler log of a run with incomplete output. The job may
-                # have run and stopped between two polls, so the document can
-                # still hold it as submitting or queued.
-                self._project_service.stop_job(
-                    job,
-                    failure_reason_summary(FailureReason.WALLTIME),
-                    reason=FailureReason.WALLTIME,
-                )
-            else:
-                return LifecycleUpdate(job=job)
-        except ValueError:
-            return LifecycleUpdate(job=job)
-
-        run = self.run_for_job(job_id)
-        if mapped == JobStatus.STOPPED:
-            self._close_active_run(
-                job, run, JobStatus.STOPPED, "job_stopped", error_message=job.error_message
-            )
-            return LifecycleUpdate(job=job, changed=True, journal_changed=True)
-        if run is not None:
-            run.status = mapped
-            if mapped == JobStatus.RUNNING and run.started_at is None:
-                run.started_at = utc_now()
-        return LifecycleUpdate(job=job, changed=True)
-
-    def resume_reappeared_cluster_job(self, job_id: UUID, status_value: str) -> LifecycleUpdate:
-        """Resume a job failed for a missing scheduler entry that the scheduler lists again.
-
-        Applies the cluster runner's ``job_reappeared`` notification. Only a job
-        for which :func:`awaits_scheduler_reappearance` holds is resumed: a
-        ``queued`` or ``running`` report returns it to that status, and a
-        ``completed`` report to ``retrieving`` so its output is fetched. The
-        transition goes through ``ProjectService.resume_reappeared_job``, and a
-        *fresh* ``CalculationRun`` becomes the active run, as for
-        :meth:`prepare_retry_retrieval`, so the outcome cannot overwrite the
-        failed run. The caller re-registers the job with the cluster runner.
-        """
-
-        document = self._document_getter()
-        job = self._job_for_id(job_id)
-        if document is None or job is None:
-            return LifecycleUpdate()
-        if not awaits_scheduler_reappearance(job):
-            return LifecycleUpdate(job=job)
-        status = {
-            JobStatus.QUEUED.value: JobStatus.QUEUED,
-            JobStatus.RUNNING.value: JobStatus.RUNNING,
-            JobStatus.COMPLETED.value: JobStatus.RETRIEVING,
-        }.get(status_value)
-        if status is None:
-            return LifecycleUpdate(job=job)
-
-        try:
-            self._project_service.resume_reappeared_job(job, status)
-        except ValueError:
-            return LifecycleUpdate(job=job)
-        self._stamp_monitor_metadata(
-            job,
-            source="scheduler_poll",
-            message=f"scheduler reports {status_value.upper()} again; tracking resumed",
-        )
-        run = self._create_active_run(document, job, status)
-        if status == JobStatus.RUNNING:
-            run.started_at = utc_now()
-        return LifecycleUpdate(job=job, changed=True)
-
-    def mark_queue_checked(self, snapshot: Any) -> bool:
-        """Stamp per-job monitor metadata from one queue polling pass.
-
-        ``snapshot`` is a ``QueueCheckSnapshot`` (duck-typed: any object with a
-        ``checked_at`` datetime and an ``observations_by_job_id`` mapping).
-        Every observed job that exists in the document gets
-        ``last_checked_at``/``last_status_source``/``last_status_message``
-        stamped with the poll observation, except a reappearance watch whose
-        job no longer awaits it (see :meth:`stale_reappearance_watches`). No
-        status transitions and no run mutations happen here — this is
-        bookkeeping only.
-
-        :returns: ``True`` when at least one job was stamped.
-        """
-
-        document = self._document_getter()
-        if document is None:
-            return False
-        checked_at = getattr(snapshot, "checked_at", None)
-        observations = getattr(snapshot, "observations_by_job_id", None)
-        if not isinstance(checked_at, datetime) or not isinstance(observations, Mapping):
-            return False
-
-        stale = set(self.stale_reappearance_watches(snapshot))
-        changed = False
-        for job_id, observation in observations.items():
-            job = document.jobs.get(job_id)
-            if job is None or job_id in stale:
-                continue
-            job.last_checked_at = checked_at
-            job.last_status_source = "scheduler_poll"
-            job.last_status_message = str(observation)
-            changed = True
-        return changed
-
-    def stale_reappearance_watches(self, snapshot: Any) -> list[UUID]:
-        """Return the watched jobs in ``snapshot`` the runner should stop watching.
-
-        A poll's ``watched_job_ids`` are jobs the cluster runner checks only for
-        the scheduler listing them again. One whose job has since been reset,
-        dismissed, deleted, or otherwise no longer satisfies
-        :func:`awaits_scheduler_reappearance` (and has not resumed) is stale.
-        """
-
-        document = self._document_getter()
-        watched = getattr(snapshot, "watched_job_ids", None)
-        if document is None or not watched:
-            return []
-        stale: list[UUID] = []
-        for job_id in watched:
-            job = document.jobs.get(job_id)
-            if job is None or not (
-                job.status in ACTIVE_JOB_STATUSES or awaits_scheduler_reappearance(job)
-            ):
-                stale.append(job_id)
-        return stale
-
     @staticmethod
     def _stamp_monitor_metadata(job: Job, *, source: str, message: str) -> None:
         """Record when, from where, and with what observation a job was last seen.
@@ -939,30 +762,171 @@ class JobExecutionController:
         Every transition goes through the ``ProjectService`` primitives, with
         the job's run, journal and monitor stamps kept in step. Complete output
         is returned as ``finished`` instead of completing the job, because the
-        caller builds the result first.
+        caller builds the result first. Evidence about a cluster job is told
+        here whether the job is still being submitted, which only this side
+        knows.
         """
 
         job = self._job_for_id(job_id)
         if job is None:
             return LifecycleUpdate()
+        cluster = is_cluster_job(job)
+        if cluster:
+            evidence = replace(evidence, submitting=self._is_submitting(job_id))
         decision = reconcile(job, evidence)
-        if decision is None or decision.status == job.status:
+        if decision is None:
             return LifecycleUpdate(job=job)
-        if decision.status == JobStatus.COMPLETED:
+        stamped = cluster and self._note_check(job, evidence, decision)
+        if decision.status == job.status:
+            return LifecycleUpdate(job=job, stamped=stamped)
+        update = self._apply_decision(job, evidence, decision)
+        if cluster and (update.changed or update.finished is not None):
+            self._changed_by_checks[job.id] = None
+        if update.changed or update.finished is not None:
+            return update
+        return replace(update, stamped=stamped)
+
+    def take_check_summary(self, checked: int) -> str:
+        """Return one status-bar line for what cluster checks changed, and start afresh.
+
+        ``checked`` is how many jobs the pass that just ended looked at. The
+        line covers every cluster job that evidence has changed since the last
+        call, described by the state it is in now: one job is named, several
+        are counted by outcome. Empty when nothing changed.
+        """
+
+        document = self._document_getter()
+        changed, self._changed_by_checks = list(self._changed_by_checks), {}
+        if document is None:
+            return ""
+        outcomes = [
+            (job, outcome)
+            for job in (document.jobs.get(job_id) for job_id in changed)
+            if job is not None and (outcome := _check_outcome(job))
+        ]
+        if not outcomes:
+            return ""
+        if len(outcomes) == 1:
+            job, outcome = outcomes[0]
+            if job.status == JobStatus.COMPLETED:
+                return f"Completed cluster job {job.label}"
+            return f"Cluster job {outcome}: {job.label}"
+        counts: dict[str, int] = {}
+        for _job, outcome in outcomes:
+            counts[outcome] = counts.get(outcome, 0) + 1
+        looked_at = max(checked, len(outcomes))
+        parts = ", ".join(f"{count} {outcome}" for outcome, count in counts.items())
+        return f"Checked {looked_at} cluster jobs: {parts}"
+
+    def _apply_decision(
+        self, job: Job, evidence: JobEvidence, decision: Decision
+    ) -> LifecycleUpdate:
+        """Move ``job`` to ``decision.status``, which differs from its own."""
+
+        target = decision.status
+        ended = job.status in ENDED_JOB_STATUSES
+        cluster = is_cluster_job(job)
+        source = _evidence_source(evidence) if cluster else "reconciliation"
+        if target == JobStatus.COMPLETED:
             if evidence.parsed is None:
                 return LifecycleUpdate(job=job)
+            if ended and not self._reactivate(job, JobStatus.RETRIEVING):
+                return LifecycleUpdate(job=job)
             return LifecycleUpdate(
-                job=job, finished=FinishedOutput(evidence.parsed, evidence.artifacts)
+                job=job,
+                changed=ended,
+                finished=FinishedOutput(evidence.parsed, evidence.artifacts),
             )
-        if decision.status == JobStatus.QUEUED:
-            return self.mark_local_status_changed(job_id, JobStatus.QUEUED.value)
-        if decision.status == JobStatus.RUNNING:
-            return self.mark_started(job_id)
-        if decision.status == JobStatus.STOPPED:
-            return self._stop_job(job, decision)
+        if target in {JobStatus.QUEUED, JobStatus.RUNNING} and ended:
+            return LifecycleUpdate(job=job, changed=self._reactivate(job, target))
+        if target == JobStatus.QUEUED:
+            if cluster:
+                return self._mark_cluster_queued(job)
+            return self.mark_local_status_changed(job.id, JobStatus.QUEUED.value)
+        if target == JobStatus.RUNNING:
+            return self.mark_started(job.id)
+        if target == JobStatus.RETRIEVING:
+            return self._mark_retrieving(job)
+        if target == JobStatus.FAILED:
+            return self.fail_job(
+                job.id,
+                decision.message or "",
+                source=source,
+                status_message=decision.observation or None,
+                reason=decision.failure_reason,
+            )
+        if target == JobStatus.STOPPED:
+            return self._stop_job(job, decision, source=source, mark_started=not cluster)
+        if target == JobStatus.CANCELLED:
+            return self.cancel_job(job.id)
         return LifecycleUpdate(job=job)
 
-    def _stop_job(self, job: Job, decision: Decision) -> LifecycleUpdate:
+    def _note_check(self, job: Job, evidence: JobEvidence, decision: Decision) -> bool:
+        """Record what a check of cluster ``job`` saw; return whether its note changed."""
+
+        if decision.marker:
+            self._markers[job.id] = decision.marker
+        else:
+            self._markers.pop(job.id, None)
+        if evidence.scheduler in {None, SchedulerState.UNAVAILABLE}:
+            return False
+        message = decision.observation or decision.marker
+        if not message:
+            return False
+        job.last_checked_at = evidence.checked_at
+        job.last_status_source = _evidence_source(evidence)
+        job.last_status_message = message
+        return True
+
+    def _is_submitting(self, job_id: UUID) -> bool:
+        return bool(self._cluster_runner.is_submitting(job_id))
+
+    def _mark_cluster_queued(self, job: Job) -> LifecycleUpdate:
+        try:
+            self._project_service.mark_job_queued(job, remote_job_id=job.remote_job_id)
+        except ValueError:
+            return LifecycleUpdate(job=job)
+        run = self.run_for_job(job.id)
+        if run is not None:
+            run.status = JobStatus.QUEUED
+        return LifecycleUpdate(job=job, changed=True)
+
+    def _mark_retrieving(self, job: Job) -> LifecycleUpdate:
+        # Only a running job has a transition to retrieving; a job that
+        # finished between two checks keeps its status while its output is read.
+        if job.status != JobStatus.RUNNING:
+            return LifecycleUpdate(job=job)
+        try:
+            self._project_service.mark_job_retrieving(job)
+        except ValueError:
+            return LifecycleUpdate(job=job)
+        run = self.run_for_job(job.id)
+        if run is not None:
+            run.status = JobStatus.RETRIEVING
+        return LifecycleUpdate(job=job, changed=True)
+
+    def _reactivate(self, job: Job, status: JobStatus) -> bool:
+        """Return an ended job to ``status`` under a fresh run; say whether it happened.
+
+        The ended run keeps its outcome: whatever follows is recorded on the
+        new run, never over the old one.
+        """
+
+        document = self._document_getter()
+        if document is None:
+            return False
+        try:
+            self._project_service.reactivate_job(job, status)
+        except ValueError:
+            return False
+        run = self._create_active_run(document, job, status)
+        if status == JobStatus.RUNNING:
+            run.started_at = utc_now()
+        return True
+
+    def _stop_job(
+        self, job: Job, decision: Decision, *, source: str, mark_started: bool
+    ) -> LifecycleUpdate:
         """Stop ``job`` as ``decision`` says, closing its run and recording the stop."""
 
         message = decision.message or ""
@@ -971,17 +935,207 @@ class JobExecutionController:
         except ValueError:
             return LifecycleUpdate(job=job)
 
-        self._stamp_monitor_metadata(
-            job, source="reconciliation", message=decision.observation or message
-        )
+        self._stamp_monitor_metadata(job, source=source, message=decision.observation or message)
         run = self.run_for_job(job.id)
         if run is not None and run.status not in ACTIVE_JOB_STATUSES:
             # The job's latest run already ended; it is not this run to close.
             run = None
         self._close_active_run(
-            job, run, JobStatus.STOPPED, "job_stopped", error_message=message, mark_started=True
+            job,
+            run,
+            JobStatus.STOPPED,
+            "job_stopped",
+            error_message=message,
+            mark_started=mark_started,
         )
         return LifecycleUpdate(job=job, changed=True, journal_changed=True)
+
+    # ------------------------------------------------------------------
+    # Cluster checks
+    # ------------------------------------------------------------------
+    def check_target(self, job: Job, *, on_request: bool = False) -> CheckTarget | None:
+        """Return where to look for cluster ``job``, or ``None`` when there is nowhere.
+
+        A job needs a local output folder and either a scheduler job ID or a
+        remote folder. A job with an ID but no recorded folder gets the folder
+        its cluster profile would have given it.
+        """
+
+        if not is_cluster_job(job):
+            return None
+        remote_job_id = (job.remote_job_id or "").strip()
+        remote_dir = (job.remote_directory or "").strip()
+        if remote_job_id and not remote_dir and self._remote_directory_for_job is not None:
+            remote_dir = self._remote_directory_for_job(job).strip()
+            if remote_dir:
+                job.remote_directory = remote_dir
+        if not remote_dir:
+            return None
+        output_dir = self._job_output_directory(job)
+        if output_dir is None:
+            return None
+        return CheckTarget(
+            job_id=job.id,
+            remote_job_id=remote_job_id,
+            remote_dir=remote_dir,
+            seed_name=self._job_seed_name(job),
+            local_output_dir=output_dir,
+            cluster_name=job.execution_target.strip(),
+            retrieval=(
+                self._retrieval_for_job(job)
+                if self._retrieval_for_job is not None
+                else RetrievalFlags()
+            ),
+            on_request=on_request,
+        )
+
+    def check_targets_for(self, job_ids: Sequence[UUID]) -> list[CheckTarget]:
+        """Return the check targets of the jobs in ``job_ids`` that have one."""
+
+        document = self._document_getter()
+        if document is None:
+            return []
+        jobs = (document.jobs.get(job_id) for job_id in job_ids)
+        targets = (self.check_target(job) for job in jobs if job is not None)
+        return [target for target in targets if target is not None]
+
+    def read_cluster_progress(self, job_ids: Sequence[UUID]) -> list[UUID]:
+        """Ask the cluster worker for jobs' geometry progress; return the jobs it cannot ask about.
+
+        A job with nowhere to look (no remote folder, no local output folder,
+        or no longer in the project) gets no answer from the worker, so the
+        caller must not wait for one.
+        """
+
+        targets = self.check_targets_for(job_ids)
+        if targets:
+            self._cluster_runner.read_geometry_progress(targets)
+        asked = {target.job_id for target in targets}
+        return [job_id for job_id in job_ids if job_id not in asked]
+
+    def check_cluster_jobs(
+        self,
+        job_ids: Sequence[UUID] | None = None,
+        *,
+        on_request: bool = False,
+        skip_if_busy: bool = False,
+    ) -> int:
+        """Ask the connected cluster about this project's jobs; return how many.
+
+        Without ``job_ids`` every active job on the connected cluster is
+        looked at. With them, only those jobs, and ``on_request`` also allows
+        ended ones. A job still being submitted is left out: the scheduler has
+        not answered for it yet. A job with no scheduler job ID is left out
+        unless the user asked: there is no one to ask about it, and its folder
+        is looked at only on request. Nothing is asked while no cluster is
+        connected. ``skip_if_busy`` drops the request while an earlier check is
+        still running, which is what the once-a-minute check wants. The answers
+        arrive as evidence for :meth:`apply_evidence`.
+        """
+
+        document = self._document_getter()
+        if document is None or not self._cluster_runner.is_connected:
+            return 0
+        wanted = None if job_ids is None else set(job_ids)
+        statuses = (
+            ACTIVE_JOB_STATUSES | ENDED_JOB_STATUSES
+            if on_request and wanted is not None
+            else ACTIVE_JOB_STATUSES
+        )
+        targets: list[CheckTarget] = []
+        for job in document.jobs.values():
+            if wanted is not None and job.id not in wanted:
+                continue
+            if job.status not in statuses or not self._connected_to_cluster_of(job):
+                continue
+            if self._is_submitting(job.id):
+                continue
+            target = self.check_target(job, on_request=on_request)
+            if target is not None and (on_request or target.remote_job_id):
+                targets.append(target)
+        if targets or wanted is None:
+            self._cluster_runner.check_jobs(targets, skip_if_busy=skip_if_busy)
+        return len(targets)
+
+    def can_cancel_on_cluster(self, job: Job) -> bool:
+        """Return whether cancelling ``job`` can be put to its cluster.
+
+        The scheduler is asked only about a job with a scheduler job ID on the
+        connected cluster. A job still being submitted counts: its request is
+        already with the worker.
+        """
+
+        if self._is_submitting(job.id):
+            return True
+        return bool((job.remote_job_id or "").strip()) and self._connected_to_cluster_of(job)
+
+    def can_check_now(self, job: Job) -> bool:
+        """Return whether ``Check now`` has somewhere to look for ``job``.
+
+        A cluster job that is active or ended needs a remote folder and a
+        connection to its cluster. A local job qualifies once it has ended:
+        while it is active the local runner reports on it.
+        """
+
+        if is_cluster_job(job):
+            return (
+                job.status in ACTIVE_JOB_STATUSES | ENDED_JOB_STATUSES
+                and bool((job.remote_directory or "").strip())
+                and self._connected_to_cluster_of(job)
+                and not self._is_submitting(job.id)
+            )
+        return job.status in ENDED_JOB_STATUSES and self._job_output_directory(job) is not None
+
+    def check_now(self, job_ids: Sequence[UUID]) -> tuple[list[LifecycleUpdate], int]:
+        """Check the jobs in ``job_ids`` because the user asked.
+
+        Local jobs are decided at once from their output folder and returned as
+        updates. Cluster jobs are asked about on the worker; the count of those
+        is returned and their evidence follows.
+        """
+
+        document = self._document_getter()
+        if document is None:
+            return [], 0
+        updates: list[LifecycleUpdate] = []
+        cluster_ids: list[UUID] = []
+        now = utc_now()
+        for job_id in dict.fromkeys(job_ids):
+            job = document.jobs.get(job_id)
+            if job is None or not self.can_check_now(job):
+                continue
+            if is_cluster_job(job):
+                cluster_ids.append(job_id)
+                continue
+            evidence = local_job_evidence(
+                job,
+                pending_ids=(),
+                active_ids=(),
+                output_dir=self._job_output_directory(job),
+                seed_name=self._job_seed_name(job),
+                now=now,
+                on_request=True,
+            )
+            updates.append(self.apply_evidence(job_id, evidence))
+        requested = self.check_cluster_jobs(cluster_ids, on_request=True) if cluster_ids else 0
+        return updates, requested
+
+    def staleness(self, job: Job, *, now: Any) -> str | None:
+        """Return why ``job``'s displayed status may be out of date, or ``None``."""
+
+        return job_staleness(
+            job,
+            now=now,
+            cluster_connected=self._connected_to_cluster_of(job),
+            marker=self._markers.get(job.id),
+            submitting=self._is_submitting(job.id),
+        )
+
+    def _connected_to_cluster_of(self, job: Job) -> bool:
+        if not is_cluster_job(job) or not self._cluster_runner.is_connected:
+            return False
+        connected = (self._cluster_runner.connected_cluster_name or "").strip().casefold()
+        return connected == job.execution_target.strip().casefold()
 
     def _close_active_run(
         self,
@@ -1050,21 +1204,32 @@ class JobExecutionController:
         )
 
 
-def awaits_scheduler_reappearance(job: Job) -> bool:
-    """Return whether ``job`` failed only because the scheduler stopped listing it.
+def _evidence_source(evidence: JobEvidence) -> str:
+    """Return the monitor source of cluster ``evidence``: the queue, or the output folder."""
 
-    Such a cluster job may still be waiting in a queue the poll cannot see, so
-    the cluster runner keeps watching it and the job resumes if the scheduler
-    lists it again. A dismissed job has been acknowledged and is not watched.
-    """
+    return "scheduler_poll" if evidence.output == OutputState.NOT_LOOKED else "retrieval"
 
-    return (
-        job.status == JobStatus.FAILED
-        and job.dismissed_at is None
-        and is_cluster_job(job)
-        and bool((job.remote_job_id or "").strip())
-        and job.error_message == MISSING_SCHEDULER_ENTRY_FAILURE_MESSAGE
-    )
+
+def _check_outcome(job: Job) -> str:
+    """Return how a check summary describes ``job``'s state, or ``""`` to leave it out."""
+
+    if job.status == JobStatus.COMPLETED:
+        return "completed"
+    if job.status == JobStatus.RUNNING:
+        return "started running"
+    if job.status == JobStatus.QUEUED:
+        return "queued"
+    if job.status == JobStatus.CANCELLED:
+        return "cancelled"
+    if job.status == JobStatus.STOPPED:
+        if job.failure_reason == FailureReason.WALLTIME:
+            return "stopped at its walltime limit"
+        return "stopped"
+    if job.status == JobStatus.FAILED:
+        label = failure_reason_label(job.failure_reason)
+        return f"failed ({label})" if label else "failed"
+    # Retrieving is a step on the way; the pass ends with what came of it.
+    return ""
 
 
 def _legacy_retrieval_flags(

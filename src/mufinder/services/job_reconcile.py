@@ -24,7 +24,7 @@ from mufinder.domain.enums import ACTIVE_JOB_STATUSES, FailureReason, JobStatus
 from mufinder.domain.models import Job
 from mufinder.services.failure_diagnosis import RETRIEVAL_FAILURE_PREFIX, failure_reason_summary
 from mufinder.services.job_artifacts import ParsedJobArtifacts
-from mufinder.services.job_monitoring import is_cluster_job
+from mufinder.services.job_monitoring import NO_JOB_ID_MARKER, is_cluster_job
 
 #: Statuses of a job that ended without completing.
 ENDED_JOB_STATUSES = frozenset({JobStatus.FAILED, JobStatus.STOPPED, JobStatus.CANCELLED})
@@ -37,8 +37,19 @@ NO_LOCAL_PROCESS_MESSAGE = (
 #: Message used when CASTEP output ends without a completion summary and names no error.
 INCOMPLETE_OUTPUT_MESSAGE = "CASTEP did not report successful completion."
 
-#: Marker of an active cluster job that has no scheduler job ID.
-NO_JOB_ID_MARKER = "no scheduler job ID was recorded"
+__all__ = [
+    "ENDED_JOB_STATUSES",
+    "INCOMPLETE_OUTPUT_MESSAGE",
+    "NO_JOB_ID_MARKER",
+    "NO_LOCAL_PROCESS_MESSAGE",
+    "Decision",
+    "JobEvidence",
+    "OutputState",
+    "ProcessState",
+    "SchedulerState",
+    "reconcile",
+    "wants_output",
+]
 
 
 class ProcessState(StrEnum):

@@ -55,9 +55,8 @@ def _signal_param_count(runner: object, name: str) -> int:
     return meta.parameterCount()
 
 
-@pytest.mark.parametrize("runner_factory", [LocalJobRunner, ClusterJobRunner])
-def test_runner_satisfies_protocol_structurally(qapp, runner_factory) -> None:
-    runner = runner_factory()
+def test_local_runner_satisfies_protocol_structurally(qapp) -> None:
+    runner = LocalJobRunner()
 
     # runtime_checkable only verifies attribute presence; it is the secondary
     # check. The explicit assertions below carry the load-bearing failure detail.
@@ -144,3 +143,8 @@ def test_cluster_submit_raises_without_connection(qapp, tmp_path: Path) -> None:
             template_script_path="",
             cores_per_node=1,
         )
+
+
+def test_cluster_runner_is_not_a_job_runner(qapp) -> None:
+    # It holds no job and reports evidence instead of lifecycle signals.
+    assert not isinstance(ClusterJobRunner(), JobRunner)

@@ -1025,7 +1025,6 @@ def test_main_window_muon_relaxation_recovers_active_dashboard_job_mapping(
     # Post-Milestone-6.3, the only active jobs still present on project open are
     # cluster jobs (active local jobs are reconciled to STOPPED). Use a cluster
     # target so this test keeps exercising the active-mapping recovery path.
-    monkeypatch.setattr(window._cluster_runner, "track_existing_job", lambda **kwargs: None)
     monkeypatch.setattr(window, "_job_output_directory", lambda job: tmp_path / "out" / job.label)
     monkeypatch.setattr(window, "_job_seed_name", lambda job: job.label)
 
@@ -1111,7 +1110,6 @@ def test_main_window_muon_relaxation_added_form_rows_preserve_existing_job_state
     # Cluster target so the running job survives orphaned-local-job
     # reconciliation on refresh (Milestone 6.3); this test is about existing
     # row-status preservation when a new row is added, not local reconciliation.
-    monkeypatch.setattr(window._cluster_runner, "track_existing_job", lambda **kwargs: None)
     monkeypatch.setattr(window, "_job_output_directory", lambda job: tmp_path / "out" / job.label)
     monkeypatch.setattr(window, "_job_seed_name", lambda job: job.label)
     job = service.add_job(

@@ -11,17 +11,15 @@ import mufinder.services.cluster_retrieval as cluster_retrieval_module
 from mufinder.castep_io.output_parser import CastepResult
 from mufinder.services.cluster_retrieval import (
     REMOTE_STALE_OUTPUT_SLACK_SECONDS,
-    RetrievalOutcome,
     RetrievalResult,
-    queue_observation,
     remote_error_file_names,
     remote_output_predates_submission,
     retrieve_error_files,
     retrieve_job_outputs,
     submission_marker_mtime,
 )
-from mufinder.services.failure_diagnosis import RETRIEVAL_FAILURE_PREFIX
 from mufinder.services.job_artifacts import RetrievalFlags
+from mufinder.services.job_reconcile import OutputState
 from tests.support.cluster_ssh import FakeSSH, OutputUnavailableSSH, TimestampedFakeSSH
 
 _REMOTE_DIR = "/remote/job"
@@ -33,7 +31,6 @@ def _retrieve(
     *,
     remote_job_id: str = "125",
     retrieval: RetrievalFlags = RetrievalFlags(),
-    missing_from_queue: bool = False,
 ) -> RetrievalResult:
     return retrieve_job_outputs(
         ssh,
@@ -42,7 +39,6 @@ def _retrieve(
         seed_name="seed",
         local_output_dir=local_output_dir,
         retrieval=retrieval,
-        missing_from_queue=missing_from_queue,
     )
 
 
@@ -67,52 +63,37 @@ _COMPLETED = CastepResult(completed=True, total_energy=-1.0)
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    ("missing_from_queue", "observation"),
-    [
-        (False, "output retrieved and parsed"),
-        (True, "missing from scheduler queue; output retrieved and parsed"),
-    ],
-)
 def test_completed_output_is_parsed_with_its_artifacts(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, missing_from_queue: bool, observation: str
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     ssh = FakeSSH()
     ssh.remote_files["/remote/job/seed.castep"] = b"castep output"
     _parse_as(monkeypatch, _COMPLETED)
 
-    result = _retrieve(
-        ssh,
-        tmp_path,
-        retrieval=RetrievalFlags(retrieve_out_cell=True),
-        missing_from_queue=missing_from_queue,
-    )
+    result = _retrieve(ssh, tmp_path, retrieval=RetrievalFlags(retrieve_out_cell=True))
 
-    assert result.outcome is RetrievalOutcome.COMPLETED
-    assert result.observation == observation
+    assert result.output is OutputState.COMPLETE
     assert result.parsed is _COMPLETED
-    assert result.failure is None
+    assert (result.detail, result.walltime_seen) == ("", False)
     # The flags asked for a relaxed cell the run did not write.
     assert result.artifacts is not None and result.artifacts.cell_missing is True
 
 
-def test_incomplete_output_fails_with_the_castep_error(
+def test_incomplete_output_carries_the_castep_error(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     ssh = FakeSSH()
     ssh.remote_files["/remote/job/seed.castep"] = b"castep output"
     _parse_as(monkeypatch, CastepResult(completed=False, error_message="not converged"))
 
-    result = _retrieve(ssh, tmp_path, missing_from_queue=True)
+    result = _retrieve(ssh, tmp_path)
 
-    assert result.outcome is RetrievalOutcome.FAILED
-    assert result.failure is not None
-    assert result.failure.message == "not converged"
-    assert result.failure.retry_eligible is False
-    assert result.observation == "missing from scheduler queue; output incomplete; job failed"
+    assert result.output is OutputState.INCOMPLETE
+    assert (result.detail, result.walltime_seen) == ("not converged", False)
+    assert result.parsed is not None and result.artifacts is None
 
 
-def test_missing_job_cut_off_during_stress_is_not_completed(tmp_path: Path) -> None:
+def test_job_cut_off_during_stress_is_not_complete(tmp_path: Path) -> None:
     # Regression: a job that vanished from the queue (walltime, OOM, or a
     # transient squeue omission) while CASTEP was computing the stress tensor
     # has "Final energy" in its output but no stress and no closing summary.
@@ -128,19 +109,14 @@ def test_missing_job_cut_off_during_stress_is_not_completed(tmp_path: Path) -> N
         b" ************************************************************************************\n"
     )
 
-    result = _retrieve(ssh, tmp_path, remote_job_id="121", missing_from_queue=True)
+    result = _retrieve(ssh, tmp_path, remote_job_id="121")
 
-    assert result.outcome is RetrievalOutcome.FAILED
-    assert result.failure is not None
-    assert result.failure.retry_eligible is False
+    assert result.output is OutputState.INCOMPLETE
 
 
-@pytest.mark.parametrize("missing_from_queue", [False, True])
-def test_parse_exception_is_a_final_failure(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, missing_from_queue: bool
+def test_output_that_cannot_be_parsed_is_unreadable(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Output that downloaded but cannot be read gets no grace window."""
-
     ssh = FakeSSH()
     ssh.remote_files["/remote/job/seed.castep"] = b"castep output"
 
@@ -149,38 +125,32 @@ def test_parse_exception_is_a_final_failure(
 
     monkeypatch.setattr(cluster_retrieval_module, "parse_castep_output", _raise)
 
-    result = _retrieve(ssh, tmp_path, missing_from_queue=missing_from_queue)
+    result = _retrieve(ssh, tmp_path)
 
-    assert result.outcome is RetrievalOutcome.FAILED
-    assert result.failure is not None
-    assert result.failure.message == f"{RETRIEVAL_FAILURE_PREFIX}: parse boom"
-    assert result.failure.retry_eligible is False
-    assert result.observation == queue_observation(
-        "output parsing failed", missing_from_queue=missing_from_queue
-    )
+    assert (result.output, result.detail) == (OutputState.UNREADABLE, "parse boom")
 
 
-@pytest.mark.parametrize("missing_from_queue", [False, True])
-def test_unavailable_output_is_retry_eligible_only_when_missing_from_queue(
-    tmp_path: Path, missing_from_queue: bool
-) -> None:
+def test_a_failed_download_is_an_unreachable_folder(tmp_path: Path) -> None:
     ssh = OutputUnavailableSSH()
     ssh.remote_files["/remote/job/seed.castep"] = b"castep output"
 
-    result = _retrieve(ssh, tmp_path, missing_from_queue=missing_from_queue)
+    result = _retrieve(ssh, tmp_path)
 
-    assert result.outcome is RetrievalOutcome.FAILED
-    assert result.failure is not None
-    assert result.failure.message.startswith(f"{RETRIEVAL_FAILURE_PREFIX}: SFTP download failed")
-    assert result.failure.retry_eligible is missing_from_queue
-    assert result.observation == queue_observation(
-        "output retrieval failed", missing_from_queue=missing_from_queue
-    )
+    assert result.output is OutputState.UNREACHABLE
+    assert result.detail.startswith("SFTP download failed")
 
 
-def test_incomplete_walltime_run_is_stopped(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_a_folder_with_no_castep_output_is_absent(tmp_path: Path) -> None:
+    ssh = FakeSSH()
+    ssh.remote_files["/remote/job/seed.param"] = b"param"
+
+    result = _retrieve(ssh, tmp_path)
+
+    assert result == RetrievalResult(OutputState.ABSENT)
+    assert not (tmp_path / "seed.castep").exists()
+
+
+def test_incomplete_walltime_run_is_marked(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     # A walltime kill leaves nothing in the .castep file; only the scheduler
     # log (downloaded during retrieval) records it.
     ssh = FakeSSH()
@@ -193,12 +163,10 @@ def test_incomplete_walltime_run_is_stopped(
 
     result = _retrieve(ssh, tmp_path, remote_job_id="130")
 
-    assert result.outcome is RetrievalOutcome.STOPPED
-    assert result.failure is None
-    assert result.observation == "output incomplete; stopped (walltime)"
+    assert (result.output, result.walltime_seen) == (OutputState.INCOMPLETE, True)
 
 
-def test_incomplete_without_scheduler_evidence_fails(
+def test_incomplete_without_scheduler_evidence_is_not_a_walltime_stop(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """A CASTEP error that merely mentions wall time is not a walltime stop."""
@@ -212,9 +180,8 @@ def test_incomplete_without_scheduler_evidence_fails(
 
     result = _retrieve(ssh, tmp_path, remote_job_id="131")
 
-    assert result.outcome is RetrievalOutcome.FAILED
-    assert result.failure is not None
-    assert result.failure.message == "ERROR: wall clock estimate failed"
+    assert (result.output, result.walltime_seen) == (OutputState.INCOMPLETE, False)
+    assert result.detail == "ERROR: wall clock estimate failed"
 
 
 def test_an_earlier_runs_scheduler_log_is_ignored_when_classifying(
@@ -234,20 +201,11 @@ def test_an_earlier_runs_scheduler_log_is_ignored_when_classifying(
 
     result = _retrieve(ssh, tmp_path, remote_job_id="201")
 
-    assert result.outcome is RetrievalOutcome.FAILED
-
-
-def test_incomplete_output_without_a_castep_error_has_a_default_message(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    ssh = FakeSSH()
-    ssh.remote_files["/remote/job/seed.castep"] = b"partial"
-    _parse_as(monkeypatch, CastepResult(completed=False, error_message=None))
-
-    result = _retrieve(ssh, tmp_path)
-
-    assert result.failure is not None
-    assert result.failure.message == "CASTEP did not report successful completion."
+    assert (result.output, result.walltime_seen, result.detail) == (
+        OutputState.INCOMPLETE,
+        False,
+        "",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -494,7 +452,7 @@ def test_out_cell_predating_this_submission_is_not_downloaded(
     # The .castep is this run's, so the job still completes here; the relaxed
     # cell is reported missing exactly as it would be if the remote file did
     # not exist, which is what the workflow layer fails on.
-    assert result.outcome is RetrievalOutcome.COMPLETED
+    assert result.output is OutputState.COMPLETE
     assert result.artifacts is not None and result.artifacts.cell_missing is True
 
 
@@ -576,15 +534,14 @@ def test_out_cell_written_by_this_run_is_downloaded(
     assert (tmp_path / "seed-out.cell").read_bytes() == b"relaxed cell"
 
 
-@pytest.mark.parametrize("missing_from_queue", [False, True])
-def test_castep_predating_this_submission_is_an_unavailable_output(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, missing_from_queue: bool
+def test_castep_predating_this_submission_is_no_output(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """The failed-to-start continuation: CASTEP never ran, so the ``.castep``
     left in the reused directory still ends with the PREVIOUS run's success
     banner. Parsing it would complete the job on the old geometry under
-    parameters that were never applied, so retrieval aborts before the parse,
-    and a job missing from the queue keeps its grace window."""
+    parameters that were never applied, so it is not parsed and counts as no
+    output from this run."""
 
     ssh = TimestampedFakeSSH()
     _seed_continuation_files(
@@ -592,19 +549,10 @@ def test_castep_predating_this_submission_is_an_unavailable_output(
     )
     seen = _parse_as(monkeypatch, _COMPLETED)
 
-    result = _retrieve(
-        ssh,
-        tmp_path,
-        remote_job_id="900",
-        retrieval=_CONTINUATION_FLAGS,
-        missing_from_queue=missing_from_queue,
-    )
+    result = _retrieve(ssh, tmp_path, remote_job_id="900", retrieval=_CONTINUATION_FLAGS)
 
     assert seen == []
-    assert result.outcome is RetrievalOutcome.FAILED
-    assert result.failure is not None
-    assert "predates this submission" in result.failure.message
-    assert result.failure.retry_eligible is missing_from_queue
+    assert result == RetrievalResult(OutputState.ABSENT)
 
 
 def test_retrieval_fails_open_without_remote_mtimes(
@@ -625,7 +573,7 @@ def test_retrieval_fails_open_without_remote_mtimes(
 
         result = _retrieve(ssh, local_dir, remote_job_id="900", retrieval=_CONTINUATION_FLAGS)
 
-        assert result.outcome is RetrievalOutcome.COMPLETED
+        assert result.output is OutputState.COMPLETE
         assert (local_dir / "seed-out.cell").read_bytes() == b"relaxed cell"
 
 

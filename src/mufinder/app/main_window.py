@@ -293,7 +293,6 @@ from mufinder.services.cluster_runner import CheckpointProbeResult
 from mufinder.services.cluster_status import (
     ClusterConnectionTone,
     cluster_status,
-    is_monitored_cluster_job,
     monitored_cluster_names,
 )
 from mufinder.services.cluster_submission_planner import (
@@ -305,7 +304,6 @@ from mufinder.services.cluster_submission_planner import (
 from mufinder.services.job_execution_controller import (
     JobExecutionController,
     PreparedClusterSubmission,
-    awaits_scheduler_reappearance,
     remember_local_cores,
     remembered_local_cores,
 )
@@ -351,10 +349,9 @@ from mufinder.services.job_results import (
     max_stress_for_job,
     total_energy_for_job,
 )
+from mufinder.services.job_reconcile import JobEvidence
 from mufinder.services.job_monitoring import (
     has_unretrieved_cluster_output,
-    is_unmonitored_cluster_job,
-    job_staleness,
     job_where_text,
     unretrieved_output_note,
 )
@@ -616,7 +613,9 @@ class MainWindow(QMainWindow):
         self._cluster_runner = ClusterController(self, settings=self._settings)
         self._job_progress = JobProgressMonitor(
             local_output_paths=self._local_runner.output_candidates,
-            request_remote_progress=self._cluster_runner.read_geometry_progress,
+            request_remote_progress=lambda job_ids: self._job_execution.read_cluster_progress(
+                job_ids
+            ),
             parent=self,
         )
         self._cluster_runner.geometry_progress_read.connect(
@@ -633,6 +632,8 @@ class MainWindow(QMainWindow):
             job_output_directory=self._job_output_directory,
             job_seed_name=self._job_seed_name,
             active_run_by_job=self._active_run_by_job,
+            retrieval_for_job=self._retrieval_flags_for_job,
+            remote_directory_for_job=self._infer_remote_job_directory,
         )
         self._job_file_cleanup = JobFileCleanup(
             document_getter=lambda: self._document,
@@ -665,9 +666,9 @@ class MainWindow(QMainWindow):
         self._dashboard_flush_timer.setSingleShot(True)
         self._dashboard_flush_timer.setInterval(self._DASHBOARD_FLUSH_DEBOUNCE_MS)
         self._dashboard_flush_timer.timeout.connect(self._flush_dashboard)
-        # Every minute, check each active local job against the local runner
-        # and its output folder, so a job nothing will report on cannot stay
-        # active. The handler is cheap when no local job is active.
+        # Every minute, check each active job: a local one against the local
+        # runner and its output folder, a cluster one against the scheduler
+        # and its remote folder. The handler is cheap when no job is active.
         self._job_check_timer = QTimer(self)
         self._job_check_timer.setInterval(60_000)
         self._job_check_timer.timeout.connect(self._on_job_check_tick)
@@ -1190,12 +1191,8 @@ class MainWindow(QMainWindow):
         self._local_runner.job_cancelled.connect(self._on_local_job_cancelled)
         self._local_runner.status_changed.connect(self._on_local_job_status_changed)
 
-        self._cluster_runner.job_started.connect(self._on_cluster_job_started)
-        self._cluster_runner.job_finished.connect(self._on_cluster_job_finished)
-        self._cluster_runner.job_failed.connect(self._on_cluster_job_failed)
         self._cluster_runner.job_cancelled.connect(self._on_cluster_job_cancelled)
-        self._cluster_runner.status_changed.connect(self._on_cluster_job_status_changed)
-        self._cluster_runner.job_reappeared.connect(self._on_cluster_job_reappeared)
+        self._cluster_runner.job_checked.connect(self._on_cluster_job_checked)
         self._cluster_runner.connection_status_changed.connect(
             self._on_cluster_connection_status_changed
         )
@@ -2281,20 +2278,14 @@ class MainWindow(QMainWindow):
 
     def _reset_job_tracking_for_project_change(self) -> None:
         assert self._document is not None
-        # Clear then re-register tracked cluster jobs. Both are queued onto the
-        # cluster worker thread and return immediately (never blocking the GUI,
-        # even mid-retrieval); FIFO ordering guarantees the clear runs before the
-        # re-registrations, and the GUI-side tracked-id mirror is cleared eagerly
-        # inside clear_tracked_jobs so the dashboard sees the drop at once.
-        self._cluster_runner.clear_tracked_jobs()
-        self._sync_cluster_tracking_from_document()
+        self._cluster_runner.forget_progress()
         self._cluster_lost_names.clear()
         self._queue_refreshes_pending = 0
         self._cluster_queue_checked_label.setText("Queue last checked: never")
 
         # Local jobs that were in progress when MuFinder closed have no process
         # now. This runs before the jobs table is rebuilt, so no such job is
-        # ever shown as running.
+        # ever shown as running. Cluster jobs are asked about on the worker.
         self._on_job_check_tick()
 
     def _apply_project_change_titles(self) -> None:
@@ -2723,8 +2714,8 @@ class MainWindow(QMainWindow):
             return "cancel", "Cancel"
         if job.status == JobStatus.CANCELLED:
             return "resubmit", "Resubmit…"
-        if has_unretrieved_cluster_output(job) and self._can_retry_retrieval(job):
-            return "retry_retrieval", "Retry retrieval"
+        if has_unretrieved_cluster_output(job) and self._job_execution.can_check_now(job):
+            return "check_now", "Check now"
         return "inspect", "Inspect…"
 
     @staticmethod
@@ -3070,12 +3061,7 @@ class MainWindow(QMainWindow):
         elif job.status == JobStatus.RUNNING:
             progress = self._job_progress.progress_for(job.id)
             detail = progress_status_text(progress)
-        stale_reason = job_staleness(
-            job,
-            now=now,
-            cluster_connected=self._is_cluster_connected_for_job(job),
-            tracked=self._cluster_runner.is_tracking(job.id),
-        )
+        stale_reason = self._job_execution.staleness(job, now=now)
         check_lines = self._last_check_lines(job, stale_reason, now=now)
         if check_lines:
             tooltip_parts.append("\n".join(check_lines))
@@ -3131,20 +3117,6 @@ class MainWindow(QMainWindow):
                 else cls._WALLTIME_NEXT_STEP
             )
         return "\n\n".join(parts)
-
-    def _can_retry_retrieval(self, job: Job) -> bool:
-        """Return True when the "Retry retrieval" action is eligible for a job.
-
-        Eligible iff the job is failed/stopped, targets a cluster with both a
-        remote job id and remote directory persisted, and the cluster runner is
-        currently connected to that job's cluster.
-        """
-
-        if job.status not in {JobStatus.FAILED, JobStatus.STOPPED}:
-            return False
-        if not (job.remote_job_id or "").strip() or not (job.remote_directory or "").strip():
-            return False
-        return self._is_cluster_connected_for_job(job)
 
     def _is_cluster_connected_for_job(self, job: Job) -> bool:
         """Return True when the cluster runner is connected to this job's cluster.
@@ -3811,45 +3783,33 @@ class MainWindow(QMainWindow):
             cleaned.append(job)
         return cleaned, errors
 
-    def _on_retry_retrieval_from_dashboard(self, job_ids: list[UUID]) -> None:
+    def _on_check_now_from_dashboard(self, job_ids: list[UUID]) -> None:
         if self._document is None:
             return
 
-        jobs = [self._document.jobs.get(job_id) for job_id in job_ids]
-        eligible = [job for job in jobs if job is not None and self._can_retry_retrieval(job)]
-        if not eligible:
+        updates, requested = self._job_execution.check_now(job_ids)
+        if not updates and not requested:
             QMessageBox.information(
                 self,
-                "No jobs to retry",
-                "Retry retrieval is available for failed or stopped cluster jobs that still "
-                "have remote metadata while their cluster is connected.",
+                "No jobs to check",
+                "Check now is available for cluster jobs with a remote folder while their "
+                "cluster is connected, and for local jobs that did not complete.",
             )
             return
-
-        retried = 0
-        for job in self._dedupe_jobs(eligible):
-            output_dir = self._job_output_directory(job)
-            if output_dir is None:
-                continue
-            prepared = self._job_execution.prepare_retry_retrieval(job.id)
-            if prepared is None:
-                continue
-            self._cluster_runner.retrieve_outputs_for(
-                job.id,
-                remote_job_id=(job.remote_job_id or "").strip(),
-                remote_directory=(job.remote_directory or "").strip(),
-                seed_name=self._job_seed_name(job),
-                local_output_dir=output_dir,
-                cluster_name=job.execution_target,
-                **self._retrieval_flags_for_job(job).as_kwargs(),
+        completed = 0
+        for update in updates:
+            if update.job is not None and update.finished is not None:
+                self._on_local_job_finished(
+                    update.job.id, update.finished.parsed, update.finished.artifacts
+                )
+                completed += update.job.status == JobStatus.COMPLETED
+        self._request_dashboard_flush(failure_message="Jobs were checked, but autosave failed.")
+        if requested:
+            self.statusBar().showMessage(f"Checking {plural(requested, 'cluster job')}")
+        elif not completed:
+            self.statusBar().showMessage(
+                f"Checked {plural(len(updates), 'local job')}: no complete output found"
             )
-            retried += 1
-
-        if retried:
-            self._request_dashboard_flush(
-                failure_message="Retry retrieval was requested, but autosave failed.",
-            )
-            self.statusBar().showMessage(f"Retrying retrieval for {plural(retried, 'cluster job')}")
 
     def _on_dismiss_from_dashboard(self, job_ids: list[UUID]) -> None:
         if self._document is None:
@@ -3913,7 +3873,7 @@ class MainWindow(QMainWindow):
 
         actions = {
             "resubmit": "Resubmit",
-            "retry_retrieval": "Retry retrieval for",
+            "check_now": "Check",
             "cancel": "Cancel",
             "inspect": "Inspect",
             "reset": "Reset",
@@ -3985,9 +3945,9 @@ class MainWindow(QMainWindow):
             )
         if kind == "open":
             return True
-        if kind == "retry_retrieval":
-            # Retry needs remote metadata + a live connection, not just a status.
-            return self._can_retry_retrieval(job)
+        if kind == "check_now":
+            # Needs somewhere to look and a live connection, not just a status.
+            return self._job_execution.can_check_now(job)
         if kind == "inspect" and job.status == JobStatus.RUNNING:
             # A running geometry optimisation opens its convergence progress.
             return job_reports_geometry_progress(job)
@@ -4005,7 +3965,7 @@ class MainWindow(QMainWindow):
         # Looked up by name at call time so a replaced handler is honoured.
         names = {
             "resubmit": "_on_resubmit_from_dashboard",
-            "retry_retrieval": "_on_retry_retrieval_from_dashboard",
+            "check_now": "_on_check_now_from_dashboard",
             "cancel": "_on_cancel_from_dashboard",
             "inspect": "_on_inspect_from_dashboard",
             "reset": "_on_reset_failed_from_dashboard",
@@ -4019,7 +3979,7 @@ class MainWindow(QMainWindow):
     _DASHBOARD_MENU_ACTIONS = (
         ("Cancel", "cancel"),
         ("Inspect…", "inspect"),
-        ("Retry retrieval", "retry_retrieval"),
+        ("Check now", "check_now"),
         ("Resubmit…", "resubmit"),
         ("Continue relaxation…", "continue_relaxation"),
         ("Reset…", "reset"),
@@ -5458,18 +5418,16 @@ class MainWindow(QMainWindow):
         cancelled = 0
         uncontacted: dict[str, str] = {}
         project_only = 0
-        now = utc_now()
         for job in jobs:
             if job.status not in ACTIVE_JOB_STATUSES:
                 continue
             if job.execution_target == "local":
                 self._local_runner.cancel(job.id)
-            elif is_unmonitored_cluster_job(
-                job, tracked=self._cluster_runner.is_tracking(job.id), now=now
-            ):
-                # The cluster runner cancels only jobs it holds. One it does not
-                # hold is cancelled in the project, or the row could never leave
-                # its active state.
+            elif not self._job_execution.can_cancel_on_cluster(job):
+                # The scheduler can only be asked to cancel a job with a
+                # scheduler job ID on the connected cluster. Any other job is
+                # cancelled in the project, or the row could never leave its
+                # active state.
                 self._on_cluster_job_cancelled(job.id)
                 target = job.execution_target.strip()
                 uncontacted.setdefault(target.casefold(), target)
@@ -5477,7 +5435,7 @@ class MainWindow(QMainWindow):
                 continue
             else:
                 try:
-                    self._cluster_runner.cancel(job.id)
+                    self._cluster_runner.cancel(job.id, (job.remote_job_id or "").strip())
                 except Exception as exc:  # noqa: BLE001
                     show_detailed_warning(
                         self,
@@ -5492,7 +5450,7 @@ class MainWindow(QMainWindow):
         if project_only:
             where = " or ".join(uncontacted.values())
             in_project = f"ancelled {plural(project_only, 'job')} in the project"
-            not_contacted = f"{where} was not contacted for jobs MuFinder is not monitoring"
+            not_contacted = f"{where} was not contacted for jobs it could not be asked about"
             self.statusBar().showMessage(
                 f"{requested}; c{in_project} ({not_contacted})"
                 if cancelled
@@ -6608,62 +6566,24 @@ class MainWindow(QMainWindow):
         )
         self.statusBar().showMessage(f"Cancelled local job {update.job.label}")
 
-    def _on_cluster_job_status_changed(self, job_id: UUID, status_value: str) -> None:
-        if self._document is None:
-            return
-        update = self._job_execution.mark_cluster_status_changed(job_id, status_value)
-        if not update.changed:
-            return
-        self._request_dashboard_flush(
-            failure_message="Cluster job status changed, but autosave failed.",
-        )
+    def _on_cluster_job_checked(self, job_id: UUID, evidence: JobEvidence) -> None:
+        """Apply what a check saw of one cluster job."""
 
-    def _on_cluster_job_started(self, job_id: UUID) -> None:
         if self._document is None:
             return
-        update = self._job_execution.mark_started(job_id)
-        if update.changed:
+        update = self._job_execution.apply_evidence(job_id, evidence)
+        job = update.job
+        if job is None:
+            return
+        if update.finished is not None:
+            self._on_local_job_finished(job_id, update.finished.parsed, update.finished.artifacts)
+            # Recording the result can fail the job instead; that path reports itself.
+            if job.status == JobStatus.COMPLETED:
+                self.statusBar().showMessage(f"Completed cluster job {job.label}")
+        if update.changed or update.stamped:
             self._request_dashboard_flush(
-                failure_message="Cluster job start was recorded, but autosave failed.",
+                failure_message="Cluster job state was recorded, but autosave failed.",
             )
-        if update.job is not None:
-            self.statusBar().showMessage(f"Cluster job started running: {update.job.label}")
-
-    def _on_cluster_job_reappeared(self, job_id: UUID, status_value: str) -> None:
-        if self._document is None:
-            return
-        update = self._job_execution.resume_reappeared_cluster_job(job_id, status_value)
-        if not update.changed or update.job is None:
-            return
-        self._track_cluster_job(update.job)
-        self._request_dashboard_flush(
-            failure_message="Resumed cluster job state was recorded, but autosave failed.",
-        )
-        self.statusBar().showMessage(
-            f"Cluster job {update.job.label} is listed by the scheduler again; tracking resumed"
-        )
-
-    def _on_cluster_job_finished(
-        self,
-        job_id: UUID,
-        parsed: CastepResult,
-        artifacts: ParsedJobArtifacts | None = None,
-    ) -> None:
-        self._on_local_job_finished(job_id, parsed, artifacts)
-        if self._document is None:
-            return
-        job = self._document.jobs.get(job_id)
-        # Recording the result can fail the job instead; that path reports itself.
-        if job is not None and job.status == JobStatus.COMPLETED:
-            self.statusBar().showMessage(f"Completed cluster job {job.label}")
-
-    def _on_cluster_job_failed(self, job_id: UUID, message: str) -> None:
-        self._on_local_job_failed(job_id, message)
-        if self._document is None:
-            return
-        job = self._document.jobs.get(job_id)
-        if job is not None:
-            self.statusBar().showMessage(f"Cluster job failed: {job.label}")
 
     def _on_cluster_job_cancelled(self, job_id: UUID) -> None:
         self._on_local_job_cancelled(job_id)
@@ -6688,6 +6608,8 @@ class MainWindow(QMainWindow):
         # table follows it at once instead of waiting for the next queue poll.
         if self._document is not None:
             self._refresh_jobs_table()
+            if connected:
+                self._job_execution.check_cluster_jobs(skip_if_busy=True)
 
     def _sync_cluster_status_widgets(self) -> None:
         """Show the cluster widgets only while the project has cluster jobs to follow."""
@@ -6722,31 +6644,18 @@ class MainWindow(QMainWindow):
             self._cluster_connection_label.setStyleSheet(style)
 
     def _on_cluster_queue_checked(self, checked_at) -> None:
-        # A poll in flight when another project opened reports the jobs of the
+        # A check in flight when another project opened reports the jobs of the
         # project it started in; it says nothing about the one now open.
-        observed = getattr(checked_at, "observations_by_job_id", None)
+        observed = getattr(checked_at, "job_ids", None)
         if (
             self._document is not None
             and observed
             and self._document.jobs.keys().isdisjoint(observed)
         ):
             return
-        # Stamp per-job monitor metadata (last_checked_at/source/message) from
-        # the snapshot's observations; these land in the in-memory document
-        # either way, so a deferred flush (below) is fine — nothing is lost by
-        # not persisting them immediately.
-        stamped = self._job_execution.mark_queue_checked(checked_at)
-        stale_watches = self._job_execution.stale_reappearance_watches(checked_at)
-        if stale_watches:
-            self._cluster_runner.stop_watching(stale_watches)
-        # A queue poll fires this once after any jobs it retrieved have been
-        # applied, so this also drains whatever those completions' own handlers
-        # already marked pending. Routed through the debounced/rate-limited
-        # scheduler rather than flushing synchronously: on a serial cluster
-        # retrieval, queue polls land every few seconds, and flushing every
-        # poll defeats the burst coalescing (this was the bypass that caused
-        # 15 flushes in 80s in the field trace).
-        if stamped or self._dashboard_flush_pending:
+        # Each job's evidence was applied before this arrives, and asked for
+        # its own flush; this drains whatever is still pending.
+        if self._dashboard_flush_pending:
             self._request_dashboard_flush(
                 failure_message="Queue check was recorded, but autosave failed.",
             )
@@ -6783,10 +6692,15 @@ class MainWindow(QMainWindow):
         self._cluster_queue_checked_label.setText(f"Queue last checked: {stamp}")
         if self._queue_refreshes_pending:
             self._queue_refreshes_pending -= 1
-            checked = len(getattr(checked_at, "observations_by_job_id", ()))
+            checked = len(getattr(checked_at, "job_ids", ()))
             self.statusBar().showMessage(
                 f"Refreshed queue: checked {plural(checked, 'job')} at {stamp}"
             )
+        # One line for everything this pass changed; it outranks the plain
+        # "refreshed" line, which says less.
+        summary = self._job_execution.take_check_summary(len(getattr(checked_at, "job_ids", ())))
+        if summary:
+            self.statusBar().showMessage(summary)
         self._sync_job_runtime_timer()
         self._refresh_active_job_runtime_cells()
 
@@ -6798,6 +6712,8 @@ class MainWindow(QMainWindow):
         if name:
             self._cluster_lost_names.add(name.strip().casefold())
         self._queue_refreshes_pending = 0
+        # The pass did not finish, so what it changed goes unsummarised.
+        self._job_execution.take_check_summary(0)
         self._sync_cluster_status_widgets()
         self.statusBar().showMessage(f"Failed to check queue on {name or 'the cluster'}")
         show_detailed_warning(
@@ -6838,7 +6754,6 @@ class MainWindow(QMainWindow):
 
     def _on_refresh_cluster_queue(self) -> None:
         try:
-            self._sync_cluster_tracking_from_document()
             if not self._connected_to_a_monitored_cluster():
                 self._refresh_queue_for_active_dashboard_clusters()
                 return
@@ -6864,8 +6779,9 @@ class MainWindow(QMainWindow):
     def _request_queue_poll(self) -> None:
         # The poll runs on the cluster worker; its result reaches the status bar
         # through the queue_checked or poll_failed signal.
+        # A pass already on the worker answers this request too.
         self._queue_refreshes_pending += 1
-        self._cluster_runner.refresh_queue()
+        self._job_execution.check_cluster_jobs(skip_if_busy=True)
 
     def _refresh_queue_for_active_dashboard_clusters(self) -> None:
         target_clusters = self._active_dashboard_cluster_targets()
@@ -6935,14 +6851,17 @@ class MainWindow(QMainWindow):
         return monitored_cluster_names(self._document.jobs.values())
 
     def _on_job_check_tick(self) -> None:
-        """Check active local jobs against the local runner and their output folders.
+        """Check every active job against what can be seen of it.
 
-        Runs on project open and off a 60 s timer. A job the runner holds no
-        process for is completed from complete output, and stopped otherwise.
+        Runs on project open and off a 60 s timer. A local job the runner holds
+        no process for is completed from complete output, and stopped
+        otherwise. Cluster jobs are asked about on the worker, unless an
+        earlier check is still running there; their evidence arrives later.
         """
 
         if self._document is None:
             return
+        self._job_execution.check_cluster_jobs(skip_if_busy=True)
         stopped = 0
         for update in self._job_execution.check_local_jobs():
             if update.job is None:
@@ -6963,60 +6882,11 @@ class MainWindow(QMainWindow):
             f"process for {'it' if stopped == 1 else 'them'}"
         )
 
-    def _sync_cluster_tracking_from_document(self) -> None:
-        """Register active cluster jobs, and jobs awaiting reappearance, with the runner."""
-
-        if self._document is None:
-            return
-
-        for job in self._document.jobs.values():
-            if is_monitored_cluster_job(job):
-                self._track_cluster_job(job)
-
-    def _track_cluster_job(self, job: Job) -> None:
-        """Register one cluster job for queue polling, if its remote metadata allows.
-
-        A job failed for a missing scheduler entry is registered to be watched
-        for the scheduler listing it again.
-        """
-
-        target = job.execution_target.strip()
-        if not target or target.casefold() == "local":
-            return
-
-        remote_job_id = (job.remote_job_id or "").strip()
-        if not remote_job_id:
-            return
-
-        remote_dir = (job.remote_directory or "").strip()
-        if not remote_dir:
-            remote_dir = self._infer_remote_job_directory(job, target)
-            if remote_dir:
-                job.remote_directory = remote_dir
-        if not remote_dir:
-            return
-
-        output_dir = self._job_output_directory(job)
-        if output_dir is None:
-            return
-
-        self._cluster_runner.track_existing_job(
-            job_id=job.id,
-            remote_job_id=remote_job_id,
-            remote_dir=remote_dir,
-            seed_name=self._job_seed_name(job),
-            local_output_dir=output_dir,
-            cluster_name=target,
-            status=job.status,
-            watch_for_recovery=awaits_scheduler_reappearance(job),
-            **self._retrieval_flags_for_job(job).as_kwargs(),
-        )
-
     def _retrieval_flags_for_job(self, job: Job) -> RetrievalFlags:
         """Return the retrieval flags and farm count both runners need for ``job``.
 
-        Shared by local and cluster submission, cluster re-attachment and the
-        dashboard "Retry retrieval" action, so every path collects the same
+        Shared by local and cluster submission and by every cluster check,
+        so every path collects the same
         optional outputs (``.den_fmt`` / ``-out.cell`` / ``.phonon`` / ``.ts``)
         under the same farmed names.
         """
@@ -7039,8 +6909,8 @@ class MainWindow(QMainWindow):
             "retrieve_magres": flags.retrieve_magres,
         }
 
-    def _infer_remote_job_directory(self, job: Job, cluster_name: str) -> str:
-        config = load_cluster_config(self._settings, cluster_name)
+    def _infer_remote_job_directory(self, job: Job) -> str:
+        config = load_cluster_config(self._settings, job.execution_target.strip())
         if config is None:
             return ""
 

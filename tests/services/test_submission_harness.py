@@ -12,6 +12,7 @@ from pathlib import Path
 from mufinder.castep_io.output_parser import CastepResult
 from mufinder.domain.enums import JobStatus
 
+from mufinder.services.job_reconcile import OutputState, SchedulerState
 from tests.support.submission_harness import build_submission_harness
 
 
@@ -71,15 +72,17 @@ def test_harness_cluster_job_full_lifecycle(qapp, tmp_path: Path) -> None:
     assert job.status == JobStatus.QUEUED
     assert job.remote_job_id == "12345"
 
-    # Cluster runner reports progress via status polling, then a finished signal.
-    harness.emit_cluster_status(job.id, JobStatus.RUNNING)
+    # Each check reports what it saw; the last one carries the complete output.
+    harness.emit_cluster_checked(job.id, SchedulerState.RUNNING)
     assert job.status == JobStatus.RUNNING
-    harness.emit_cluster_status(job.id, JobStatus.RETRIEVING)
+    harness.emit_cluster_checked(job.id, SchedulerState.COMPLETED)
     assert job.status == JobStatus.RETRIEVING
 
-    harness.emit_cluster_finished(
+    harness.emit_cluster_checked(
         job.id,
-        CastepResult(completed=True, total_energy=-10.0),
+        SchedulerState.COMPLETED,
+        OutputState.COMPLETE,
+        parsed=CastepResult(completed=True, total_energy=-10.0),
     )
 
     run = harness.controller.run_for_job(job.id)
@@ -90,26 +93,13 @@ def test_harness_cluster_job_full_lifecycle(qapp, tmp_path: Path) -> None:
     assert harness.document.provenance[-1].action == "job_completed"
 
 
-def test_harness_cluster_job_started_signal_marks_running(qapp, tmp_path: Path) -> None:
-    # The cluster runner normally advances jobs via status polling, but MainWindow
-    # also wires job_started -> mark_started; the harness mirrors that wiring.
-    harness = build_submission_harness(tmp_path)
-    job = harness.add_job("cluster-started", execution_target="test-cluster")
-
-    harness.submit_cluster(job)
-    assert job.status == JobStatus.QUEUED
-
-    harness.emit_cluster_started(job.id)
-    assert job.status == JobStatus.RUNNING
-
-
 def test_harness_cluster_job_stopped_is_terminal(qapp, tmp_path: Path) -> None:
     harness = build_submission_harness(tmp_path)
     job = harness.add_job("cluster-stopped", execution_target="test-cluster")
 
     harness.submit_cluster(job)
-    harness.emit_cluster_status(job.id, JobStatus.RUNNING)
-    harness.emit_cluster_status(job.id, JobStatus.STOPPED)
+    harness.emit_cluster_checked(job.id, SchedulerState.RUNNING)
+    harness.emit_cluster_checked(job.id, SchedulerState.TIMED_OUT, OutputState.ABSENT)
 
     run = harness.controller.run_for_job(job.id)
     assert job.status == JobStatus.STOPPED

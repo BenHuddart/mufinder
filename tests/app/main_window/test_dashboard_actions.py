@@ -35,6 +35,7 @@ from mufinder.domain.cluster import ClusterConfig
 from mufinder.app.convergence_types import ConvergenceConfig
 from mufinder.domain.enums import FailureReason, JobStatus
 from mufinder.domain.models import CalculationRun, ProvenanceRecord
+from mufinder.services.job_reconcile import JobEvidence, OutputState, SchedulerState
 from mufinder.services.project_service import ProjectService
 from mufinder.services.project_summary import job_stage_key, job_stage_name
 from mufinder.services.ssh_client import SSHAuthenticationError, SSHCredentials
@@ -391,7 +392,7 @@ def test_status_bar_hides_cluster_widgets_with_no_project(main_window) -> None:
     assert main_window._document is None
     assert _shown(main_window) == [False, False, False]
     assert main_window._cluster_refresh_button.isEnabled() is False
-    assert "nothing to poll" in main_window._cluster_refresh_button.toolTip()
+    assert "nothing to check" in main_window._cluster_refresh_button.toolTip()
 
 
 def test_status_bar_hides_cluster_widgets_for_a_local_only_project(
@@ -482,7 +483,7 @@ def test_status_bar_ignores_a_poll_from_the_previous_project(main_window, tmp_pa
     previous_project_poll = SimpleNamespace(
         checked_at="12:34:56",
         elapsed_by_job_id={},
-        observations_by_job_id={uuid4(): "scheduler reports RUNNING"},
+        job_ids=(uuid4(),),
     )
 
     window._on_cluster_queue_checked(previous_project_poll)
@@ -492,7 +493,7 @@ def test_status_bar_ignores_a_poll_from_the_previous_project(main_window, tmp_pa
         SimpleNamespace(
             checked_at="12:35:56",
             elapsed_by_job_id={},
-            observations_by_job_id={job.id: "scheduler reports RUNNING"},
+            job_ids=(job.id,),
         )
     )
     assert window._cluster_queue_checked_label.text() == "Queue last checked: 12:35:56"
@@ -506,7 +507,7 @@ def test_status_bar_refresh_disabled_with_a_tooltip_when_no_job_can_be_polled(
 
     assert _shown(main_window) == [True, True, True]
     assert button.isEnabled() is False
-    assert "no active cluster job has a remote job ID" in button.toolTip()
+    assert "no active cluster job has a scheduler job ID" in button.toolTip()
 
     job.remote_job_id = "12345"
     main_window._refresh_jobs_table()
@@ -521,14 +522,16 @@ def test_status_bar_reports_the_result_of_a_queue_refresh(
     job = _project_with_job(window, tmp_path)
     _connect_status_bar(window, monkeypatch, "SCARF")
     calls: list[str] = []
-    monkeypatch.setattr(window._cluster_runner, "refresh_queue", lambda: calls.append("refresh"))
+    monkeypatch.setattr(
+        window._cluster_runner, "check_jobs", lambda _targets, **_kwargs: calls.append("refresh")
+    )
 
     # A periodic poll says nothing in the status bar.
     window.statusBar().showMessage("Ready")
     snapshot = SimpleNamespace(
         checked_at="12:34:56",
         elapsed_by_job_id={},
-        observations_by_job_id={job.id: "scheduler reports RUNNING"},
+        job_ids=(job.id,),
     )
     window._on_cluster_queue_checked(snapshot)
     assert window.statusBar().currentMessage() == "Ready"
@@ -571,7 +574,9 @@ def test_status_bar_refresh_reconnects_when_connected_to_another_cluster(
         lambda config, password=None: connected.append(config.name),
     )
     polls: list[str] = []
-    monkeypatch.setattr(window._cluster_runner, "refresh_queue", lambda: polls.append("poll"))
+    monkeypatch.setattr(
+        window._cluster_runner, "check_jobs", lambda _targets, **_kwargs: polls.append("poll")
+    )
 
     window._cluster_refresh_button.click()
 
@@ -634,7 +639,7 @@ def test_status_bar_reports_a_failed_queue_refresh(
     monkeypatch.setattr(main_window_module, "show_detailed_warning", lambda *_a, **_k: None)
     _project_with_job(window, tmp_path)
     _connect_status_bar(window, monkeypatch, "SCARF")
-    monkeypatch.setattr(window._cluster_runner, "refresh_queue", lambda: None)
+    monkeypatch.setattr(window._cluster_runner, "check_jobs", lambda _targets, **_kwargs: None)
 
     window._cluster_refresh_button.click()
     _connect_status_bar(window, monkeypatch, None)
@@ -922,10 +927,14 @@ def test_main_window_disconnected_refresh_attempts_active_cluster_targets(
     def _connect(config, password=None):
         _ = password
         connect_calls.append(config.name)
+        window._cluster_runner._connected = True
+        window._cluster_runner._connected_cluster_name = config.name
 
     monkeypatch.setattr(window._cluster_runner._runner, "connect_to_cluster", _connect)
     monkeypatch.setattr(
-        window._cluster_runner, "refresh_queue", lambda: refresh_calls.append("refresh")
+        window._cluster_runner,
+        "check_jobs",
+        lambda _targets, **_kwargs: refresh_calls.append("refresh"),
     )
 
     warnings: list[str] = []
@@ -984,11 +993,15 @@ def test_main_window_disconnected_refresh_prompts_password_for_password_cluster(
         connect_calls.append((config.name, password))
         if password is None:
             raise RuntimeError("Password is required for password authentication.")
+        window._cluster_runner._connected = True
+        window._cluster_runner._connected_cluster_name = config.name
 
     refresh_calls: list[str] = []
     monkeypatch.setattr(window._cluster_runner._runner, "connect_to_cluster", _connect)
     monkeypatch.setattr(
-        window._cluster_runner, "refresh_queue", lambda: refresh_calls.append("refresh")
+        window._cluster_runner,
+        "check_jobs",
+        lambda _targets, **_kwargs: refresh_calls.append("refresh"),
     )
     monkeypatch.setattr(
         main_window_module,
@@ -1052,11 +1065,15 @@ def test_main_window_disconnected_refresh_prompts_passphrase_for_key_cluster(
         connect_calls.append((config.name, password))
         if password is None:
             raise SSHAuthenticationError("SSH key authentication failed: private key is encrypted")
+        window._cluster_runner._connected = True
+        window._cluster_runner._connected_cluster_name = config.name
 
     refresh_calls: list[str] = []
     monkeypatch.setattr(window._cluster_runner._runner, "connect_to_cluster", _connect)
     monkeypatch.setattr(
-        window._cluster_runner, "refresh_queue", lambda: refresh_calls.append("refresh")
+        window._cluster_runner,
+        "check_jobs",
+        lambda _targets, **_kwargs: refresh_calls.append("refresh"),
     )
     monkeypatch.setattr(
         main_window_module,
@@ -1200,14 +1217,14 @@ def test_dashboard_action_button_retries_a_failed_retrieval_only_while_connected
 
     window._refresh_jobs_table()
     assert action_button(window).text() == "Inspect…"
-    assert open_more_menu(window, monkeypatch).action("Retry retrieval") is None
+    assert open_more_menu(window, monkeypatch).action("Check now") is None
 
     window._cluster_runner._connected = True
     window._cluster_runner._connected_cluster_name = "SCARF"
     window._refresh_jobs_table()
-    assert action_button(window).text() == "Retry retrieval"
+    assert action_button(window).text() == "Check now"
     menu = open_more_menu(window, monkeypatch)
-    assert menu.action("Retry retrieval") is None
+    assert menu.action("Check now") is None
     assert menu.action("Inspect…") is not None
     window.close()
 
@@ -2984,7 +3001,7 @@ def test_main_window_dashboard_menu_acts_on_the_eligible_selected_jobs(
     assert [action.text for action in menu.actions] == [
         "Cancel (1 of 3)",
         "Inspect… (1 of 3)",
-        "Retry retrieval",
+        "Check now",
         "Resubmit… (2 of 3)",
         "Continue relaxation…",
         "Reset… (2 of 3)",
@@ -2993,7 +3010,7 @@ def test_main_window_dashboard_menu_acts_on_the_eligible_selected_jobs(
     ]
     assert menu.separators_before == [7]
     assert {action.text for action in menu.actions if not action.enabled} == {
-        "Retry retrieval",
+        "Check now",
         "Continue relaxation…",
     }
 
@@ -3568,7 +3585,7 @@ def test_dashboard_offers_retrieval_for_a_cluster_job_mufinder_lost_track_of(mai
 
     window._refresh_jobs_table()
 
-    assert action_button(window).text() == "Retry retrieval"
+    assert action_button(window).text() == "Check now"
     window.close()
 
 
@@ -3594,7 +3611,7 @@ def test_dismissing_a_job_with_unretrieved_output_says_so(main_window, tmp_path,
             "Dismiss job 'o0' from the dashboard?",
             "The job stays in the project; its workflow row can still resubmit it.\n\n"
             "Its output may still be on SCARF and has not been retrieved. Dismissing "
-            "does not retrieve it; use Retry retrieval first to keep the result.",
+            "does not retrieve it; use Check now first to keep the result.",
             "Dismiss job",
         )
     ]
@@ -3602,9 +3619,11 @@ def test_dismissing_a_job_with_unretrieved_output_says_so(main_window, tmp_path,
     window.close()
 
 
-def test_cancelling_a_cluster_job_nothing_tracks_cancels_it_in_the_project(main_window, tmp_path):
-    # The runner cannot cancel a job it does not hold, so the row would
-    # otherwise stay active with no way out.
+def test_cancelling_a_cluster_job_with_no_scheduler_id_cancels_it_in_the_project(
+    main_window, tmp_path
+):
+    # The scheduler cannot be asked to cancel a job it gave no ID for, so the
+    # row would otherwise stay active with no way out.
     window = main_window
     service = ProjectService()
     doc = service.create_project(tmp_path / "cancel_untracked.mufinder", "CancelUntracked")
@@ -3619,8 +3638,8 @@ def test_cancelling_a_cluster_job_nothing_tracks_cancels_it_in_the_project(main_
 
     assert job.status == JobStatus.CANCELLED
     assert window.statusBar().currentMessage() == (
-        "Cancelled 1 job in the project; SCARF was not contacted for jobs MuFinder is not "
-        "monitoring"
+        "Cancelled 1 job in the project; SCARF was not contacted for jobs it could not be "
+        "asked about"
     )
     window.close()
 
@@ -3628,8 +3647,8 @@ def test_cancelling_a_cluster_job_nothing_tracks_cancels_it_in_the_project(main_
 def test_cancelling_a_job_that_is_still_being_submitted_goes_to_the_cluster(
     main_window, tmp_path, monkeypatch
 ):
-    # The scheduler has not answered yet, so the runner does not hold the job.
-    # Cancelling it in the project alone would leave the submission to run.
+    # The scheduler has not answered yet. Cancelling the job in the project
+    # alone would leave the submission to run.
     window = main_window
     service = ProjectService()
     doc = service.create_project(tmp_path / "cancel_submitting.mufinder", "CancelSubmitting")
@@ -3637,18 +3656,19 @@ def test_cancelling_a_job_that_is_still_being_submitted_goes_to_the_cluster(
     job.execution_target = "SCARF"
     service.submit_job(job)
     window._document = doc
-    requested: list[object] = []
-    monkeypatch.setattr(window._cluster_runner, "cancel", requested.append)
+    window._cluster_runner._submitting_job_ids.add(job.id)
+    requested: list[tuple] = []
+    monkeypatch.setattr(window._cluster_runner, "cancel", lambda *args: requested.append(args))
 
     window._cancel_jobs([job])
 
-    assert requested == [job.id]
+    assert requested == [(job.id, "")]
     assert job.status == JobStatus.SUBMITTING
     assert window.statusBar().currentMessage() == "Cancellation requested for 1 job"
     window.close()
 
 
-def test_cancel_reports_monitored_and_unmonitored_jobs_separately(
+def test_cancel_reports_jobs_the_cluster_was_and_was_not_asked_about_separately(
     main_window, tmp_path, monkeypatch
 ):
     window = main_window
@@ -3662,25 +3682,29 @@ def test_cancel_reports_monitored_and_unmonitored_jobs_separately(
         service.submit_job(job)
         job.submitted_at = old
         jobs.append(job)
-    for job in jobs[:2]:
-        window._cluster_runner._tracked_active_job_ids.add(job.id)
+    for index, job in enumerate(jobs[:2]):
+        job.remote_job_id = f"41277{index}"
+    window._cluster_runner._connected = True
+    window._cluster_runner._connected_cluster_name = "SCARF"
     window._document = doc
-    monkeypatch.setattr(window._cluster_runner, "cancel", lambda _job_id: None)
+    requested: list[tuple] = []
+    monkeypatch.setattr(window._cluster_runner, "cancel", lambda *args: requested.append(args))
 
     window._cancel_jobs(jobs)
 
     assert window.statusBar().currentMessage() == (
         "Cancellation requested for 2 jobs; cancelled 1 job in the project (SCARF was not "
-        "contacted for jobs MuFinder is not monitoring)"
+        "contacted for jobs it could not be asked about)"
     )
+    assert requested == [(jobs[0].id, "412770"), (jobs[1].id, "412771")]
     window.close()
 
 
 def test_a_finished_cluster_job_whose_result_cannot_be_recorded_fails_with_the_reason(
     main_window, tmp_path, monkeypatch
 ):
-    # The runner has already dropped the job as finished. If recording the
-    # result raises, the job must not stay active with nothing tracking it.
+    # If recording the result raises, the job fails with the reason instead of
+    # staying active.
     window = main_window
     service = ProjectService()
     doc = service.create_project(tmp_path / "record_fails.mufinder", "RecordFails")
@@ -3699,8 +3723,16 @@ def test_a_finished_cluster_job_whose_result_cannot_be_recorded_fails_with_the_r
 
     monkeypatch.setattr(main_window_module, "merge_controller_result", _raise)
 
-    window._on_cluster_job_finished(
-        job.id, main_window_module.CastepResult(completed=True, total_energy=-1.0)
+    window._on_cluster_job_checked(
+        job.id,
+        JobEvidence(
+            checked_at=datetime.now(UTC),
+            scheduler=SchedulerState.COMPLETED,
+            output=OutputState.COMPLETE,
+            parsed=main_window_module.CastepResult(completed=True, total_energy=-1.0),
+            remote_job_id="4127731",
+            remote_directory="/remote/f0",
+        ),
     )
 
     assert job.status == JobStatus.FAILED
@@ -3753,7 +3785,7 @@ def test_dashboard_buttons_follow_the_cluster_connecting_and_disconnecting(main_
 
     _connect_to_scarf(window)
     window._on_cluster_connection_status_changed(True)
-    assert action_button(window).text() == "Retry retrieval"
+    assert action_button(window).text() == "Check now"
 
     window._cluster_runner._connected = False
     window._on_cluster_connection_status_changed(False)

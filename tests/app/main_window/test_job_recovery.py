@@ -349,7 +349,9 @@ def _make_failed_cluster_job(service, doc, *, label: str, cluster: str = "scarf"
     return job
 
 
-def test_dashboard_retry_retrieval_button_enablement(main_window, tmp_path: Path) -> None:
+def test_dashboard_check_now_is_offered_where_there_is_somewhere_to_look(
+    main_window, tmp_path: Path
+) -> None:
     window = main_window
     service = ProjectService()
     doc = service.create_project(tmp_path / "retry.mufinder", "Retry")
@@ -358,6 +360,8 @@ def test_dashboard_retry_retrieval_button_enablement(main_window, tmp_path: Path
     disconnected_job = _make_failed_cluster_job(service, doc, label="disc", cluster="other")
     no_meta_job = _make_failed_cluster_job(service, doc, label="nometa", cluster="scarf")
     no_meta_job.remote_directory = None
+    active_job = _make_failed_cluster_job(service, doc, label="active", cluster="scarf")
+    active_job.status = JobStatus.RUNNING
     local_job = service.add_job(
         doc,
         label="localjob",
@@ -369,22 +373,26 @@ def test_dashboard_retry_retrieval_button_enablement(main_window, tmp_path: Path
 
     window._document = doc
     _connect_cluster_runner(window, "scarf")
+    window._job_execution._job_output_directory = lambda _job: tmp_path
     window._refresh_jobs_table()
 
-    def offers_retry(job) -> bool:
-        return window._dashboard_action_applies("retry_retrieval", job)
+    def offers_check(job) -> bool:
+        return window._dashboard_action_applies("check_now", job)
 
-    assert offers_retry(connected_job) is True
+    assert offers_check(connected_job) is True
+    assert offers_check(active_job) is True
     # Cluster not connected for this job's target -> not offered.
-    assert offers_retry(disconnected_job) is False
+    assert offers_check(disconnected_job) is False
     # Missing remote directory -> not offered.
-    assert offers_retry(no_meta_job) is False
-    # Local job -> not offered.
-    assert offers_retry(local_job) is False
+    assert offers_check(no_meta_job) is False
+    # A local job that ended has its output folder to look at.
+    assert offers_check(local_job) is True
+    local_job.status = JobStatus.RUNNING
+    assert offers_check(local_job) is False
     window.close()
 
 
-def test_dashboard_retry_retrieval_click_dispatches_to_runner(
+def test_dashboard_check_now_asks_the_cluster_and_leaves_the_job_as_it_is(
     main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     window = main_window
@@ -394,26 +402,64 @@ def test_dashboard_retry_retrieval_click_dispatches_to_runner(
 
     window._document = doc
     _connect_cluster_runner(window, "scarf")
-    monkeypatch.setattr(window, "_job_output_directory", lambda _job: tmp_path)
+    monkeypatch.setattr(window._job_execution, "_job_output_directory", lambda _job: tmp_path)
 
-    retrieve_calls: list[tuple[object, dict]] = []
+    checks: list[tuple[list, bool]] = []
     monkeypatch.setattr(
         window._cluster_runner,
-        "retrieve_outputs_for",
-        lambda job_id, **kwargs: retrieve_calls.append((job_id, kwargs)),
+        "check_jobs",
+        lambda targets, *, skip_if_busy=False: checks.append((list(targets), skip_if_busy)),
     )
     monkeypatch.setattr(window, "_request_dashboard_flush", lambda **kwargs: None)
 
     window._refresh_jobs_table()
-    open_more_menu(window, monkeypatch).action("Retry retrieval").triggered.emit()
+    open_more_menu(window, monkeypatch).action("Check now").triggered.emit()
 
-    # The job moved to RETRIEVING and the runner was asked to re-download.
-    assert job.status == JobStatus.RETRIEVING
-    assert len(retrieve_calls) == 1
-    called_job_id, kwargs = retrieve_calls[0]
-    assert called_job_id == job.id
-    assert kwargs["remote_job_id"] == "99123"
-    assert kwargs["remote_directory"] == "/remote/work/conn"
+    # The job changes only when the evidence comes back.
+    assert job.status == JobStatus.FAILED
+    ((targets, skip_if_busy),) = checks
+    assert skip_if_busy is False
+    assert [(t.job_id, t.remote_job_id, t.on_request) for t in targets] == [(job.id, "99123", True)]
+    assert window.statusBar().currentMessage() == "Checking 1 cluster job"
+    window.close()
+
+
+def test_dashboard_check_now_completes_a_local_job_whose_output_is_complete(
+    main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = main_window
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "check_local.mufinder", "CheckLocal")
+    job = service.add_job(
+        doc,
+        label="localjob",
+        workflow_stage=main_window_module.WorkflowStage.CONVERGENCE_CUTOFF,
+        calc_type="castep_convergence_cutoff",
+    )
+    job.execution_target = "local"
+    job.status = JobStatus.STOPPED
+    fixture = Path(__file__).parents[2] / "fixtures" / "uep" / "Si2.castep"
+    (tmp_path / "localjob.castep").write_bytes(fixture.read_bytes())
+    window._document = doc
+    monkeypatch.setattr(window._job_execution, "_job_output_directory", lambda _job: tmp_path)
+    monkeypatch.setattr(window._job_execution, "_job_seed_name", lambda job: job.label)
+    monkeypatch.setattr(window, "_job_output_directory", lambda _job: tmp_path)
+    monkeypatch.setattr(window, "_job_seed_name", lambda job: job.label)
+
+    window._on_check_now_from_dashboard([job.id])
+
+    assert job.status == JobStatus.COMPLETED
+    assert len(doc.results) == 1
+
+    job.status = JobStatus.COMPLETED
+    shown: list[str] = []
+    monkeypatch.setattr(
+        main_window_module.QMessageBox,
+        "information",
+        lambda _parent, title, _text: shown.append(title),
+    )
+    window._on_check_now_from_dashboard([job.id])
+    assert shown == ["No jobs to check"]
     window.close()
 
 
@@ -1398,6 +1444,7 @@ def test_dashboard_opens_a_muon_relaxation_on_its_charge_state_row(
 
     menu = open_more_menu(window, monkeypatch)
     assert [action.text for action in menu.actions] == [
+        "Check now",
         "Resubmit…",
         "Continue relaxation…",
         "Reset…",
