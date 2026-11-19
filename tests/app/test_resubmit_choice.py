@@ -9,6 +9,9 @@ import pytest
 import mufinder.app.main_window as main_window_module
 import mufinder.app.workflow_table_utils as workflow_table_utils
 from mufinder.services.job_monitoring import job_status_word
+from mufinder.app.job_dashboard import JobDashboard
+from mufinder.app.workflow_submission import job_resumes_from_checkpoint
+from mufinder.domain.constants import IMPORTED_JOB_TAG
 from mufinder.app.main_window import MainWindow
 from mufinder.app.resubmit_choice_dialog import (
     ResubmitCandidate,
@@ -362,9 +365,9 @@ def test_imported_relaxations_are_never_offered_a_fresh_start(
     qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     window, jobs = _window_with_jobs(tmp_path, [("relax_a", WorkflowStage.MUON_RELAXATION)])
-    jobs[0].tags.append(main_window_module.IMPORTED_JOB_TAG)
+    jobs[0].tags.append(IMPORTED_JOB_TAG)
 
-    assert MainWindow._job_resumes_from_checkpoint(jobs[0]) is False
+    assert job_resumes_from_checkpoint(jobs[0]) is False
     window.close()
 
 
@@ -397,6 +400,8 @@ def test_walltime_tooltip_offers_the_choice_for_relaxations(qapp, tmp_path: Path
         ],
     )
 
-    assert window._failure_tooltip(jobs[0]).endswith(MainWindow._RELAXATION_WALLTIME_NEXT_STEP)
-    assert window._failure_tooltip(jobs[1]).endswith(MainWindow._WALLTIME_NEXT_STEP)
+    assert JobDashboard.failure_tooltip(jobs[0]).endswith(
+        JobDashboard._RELAXATION_WALLTIME_NEXT_STEP
+    )
+    assert JobDashboard.failure_tooltip(jobs[1]).endswith(JobDashboard._WALLTIME_NEXT_STEP)
     window.close()

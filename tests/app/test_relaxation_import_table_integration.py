@@ -26,7 +26,8 @@ from uuid import uuid4
 
 import pytest
 
-from mufinder.app.main_window import MainWindow, job_is_imported
+from mufinder.app.main_window import MainWindow
+from mufinder.app.workflow_submission import job_is_imported
 from mufinder.app.workflow_config_codecs import deserialize_muon_relaxation_config
 from mufinder.domain.constants import IMPORTED_JOB_TAG
 from mufinder.domain.enums import JobStatus, WorkflowStage

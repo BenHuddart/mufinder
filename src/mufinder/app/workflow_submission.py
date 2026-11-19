@@ -6,7 +6,8 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Generic, TypeVar
 
-from mufinder.domain.enums import JobStatus
+from mufinder.domain.constants import IMPORTED_JOB_TAG
+from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.domain.models import Job
 from mufinder.services.job_monitoring import job_status_word
 
@@ -27,6 +28,35 @@ READY_WORKFLOW_ROW_STATUSES = UNSUBMITTED_WORKFLOW_ROW_STATUSES | {
     "cancelled",
 }
 _READY_WORKFLOW_ROW_STATUSES = READY_WORKFLOW_ROW_STATUSES
+
+#: Every ended job is resubmittable, a stopped one too (walltime, lost track): the
+#: submit script is regenerated, so a longer walltime takes effect.
+RESUBMITTABLE_JOB_STATES = frozenset({JobStatus.ENDED})
+
+
+def job_is_imported(job: Job) -> bool:
+    """Return whether ``job`` records a calculation performed outside MuFinder.
+
+    Imported jobs must never be reset, resubmitted, or continued: MuFinder did
+    not run them, and their directories hold the only copy of the imported
+    results together with the archived originals.
+    """
+
+    return IMPORTED_JOB_TAG in (job.tags or ())
+
+
+def job_resumes_from_checkpoint(job: Job) -> bool:
+    """Return whether resubmitting ``job`` in place resumes from its checkpoint.
+
+    Relaxation inputs always carry ``CONTINUATION : DEFAULT``, so CASTEP
+    picks up a ``{seed}.check`` left in the run directory. Imported jobs are
+    excluded: their directories hold the only copy of the imported results.
+    """
+
+    return job.workflow_stage in {
+        WorkflowStage.PRISTINE_RELAXATION,
+        WorkflowStage.MUON_RELAXATION,
+    } and not job_is_imported(job)
 
 
 def effective_row_status(job: Job | None, *, ready_status: str = "ready") -> str:

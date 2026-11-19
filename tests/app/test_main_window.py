@@ -3045,21 +3045,27 @@ def test_main_window_jobs_table_includes_cluster_columns(qapp) -> None:
     window = MainWindow()
 
     headers = [
-        window._jobs_table.horizontalHeaderItem(index).text()
-        for index in range(window._jobs_table.columnCount())
+        window._job_dashboard.table.horizontalHeaderItem(index).text()
+        for index in range(window._job_dashboard.table.columnCount())
     ]
 
     assert headers == ["Job", "Stage", "Status", "Where", "Runtime", "Cores", "Action"]
-    assert window._jobs_table.property("squareTopCorners") == "true"
-    header = window._jobs_table.horizontalHeader()
-    assert header.sectionResizeMode(window._JOB_LABEL_COLUMN) == QHeaderView.ResizeMode.Stretch
-    assert header.sectionResizeMode(window._JOB_STATUS_COLUMN) == QHeaderView.ResizeMode.Stretch
+    assert window._job_dashboard.table.property("squareTopCorners") == "true"
+    header = window._job_dashboard.table.horizontalHeader()
+    assert (
+        header.sectionResizeMode(window._job_dashboard.LABEL_COLUMN)
+        == QHeaderView.ResizeMode.Stretch
+    )
+    assert (
+        header.sectionResizeMode(window._job_dashboard.STATUS_COLUMN)
+        == QHeaderView.ResizeMode.Stretch
+    )
     for column in (
-        window._JOB_STAGE_COLUMN,
-        window._JOB_WHERE_COLUMN,
-        window._JOB_RUNTIME_COLUMN,
-        window._JOB_CORES_COLUMN,
-        window._JOB_ACTION_COLUMN,
+        window._job_dashboard.STAGE_COLUMN,
+        window._job_dashboard.WHERE_COLUMN,
+        window._job_dashboard.RUNTIME_COLUMN,
+        window._job_dashboard.CORES_COLUMN,
+        window._job_dashboard.ACTION_COLUMN,
     ):
         assert header.sectionResizeMode(column) == QHeaderView.ResizeMode.Fixed
     dock = window.findChild(QDockWidget, "jobDashboardDock")

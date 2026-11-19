@@ -1180,7 +1180,7 @@ def test_main_window_configured_cutoff_shows_ready_and_stays_off_dashboard(
     window._document = doc
     window._refresh_ui_after_project_change()
 
-    assert window._jobs_table.rowCount() == 0
+    assert window._job_dashboard.table.rowCount() == 0
     assert (
         window._convergence_view._table.item(0, window._convergence_view._STATUS_COLUMN).text()
         == "ready"
@@ -1213,7 +1213,7 @@ def test_main_window_form_cutoff_shows_ready_before_submission(main_window, tmp_
     window._document = doc
     window._refresh_ui_after_project_change()
 
-    assert window._jobs_table.rowCount() == 0
+    assert window._job_dashboard.table.rowCount() == 0
     assert (
         window._convergence_view._table.item(0, window._convergence_view._STATUS_COLUMN).text()
         == "ready"
@@ -1318,7 +1318,7 @@ def test_main_window_reset_failed_convergence_job_restores_ready_state(
 
     window._reset_failed_jobs([job])
 
-    assert window._jobs_table.rowCount() == 0
+    assert window._job_dashboard.table.rowCount() == 0
     assert window._convergence_controller.build_states()[300.0].status == "ready"
     window.close()
 

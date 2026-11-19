@@ -615,7 +615,7 @@ def test_main_window_form_pristine_relaxation_shows_ready_before_submission(
     window._document = doc
     window._refresh_ui_after_project_change()
 
-    assert window._jobs_table.rowCount() == 0
+    assert window._job_dashboard.table.rowCount() == 0
     assert (
         window._pristine_relaxation_view._table.item(
             0, window._pristine_relaxation_view._STATUS_COLUMN
