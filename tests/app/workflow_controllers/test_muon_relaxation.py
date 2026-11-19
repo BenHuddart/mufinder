@@ -190,7 +190,7 @@ def test_muon_controller_ready_predicate_matches_bare_and_qualified_labels() -> 
     )
     states = {
         "muonium:Site 1": FakeRowState("ready"),
-        "positivemuon:Site 2": FakeRowState("failed"),
+        "positivemuon:Site 2": FakeRowState("running"),
     }
     # Charge-qualified keys match their own state only.
     assert controller.is_ready(states, "muonium:Site 1") is True
@@ -198,9 +198,10 @@ def test_muon_controller_ready_predicate_matches_bare_and_qualified_labels() -> 
     # A bare label matches any charge-qualified key ending in ":{label}".
     assert controller.is_ready(states, "Site 1") is True
     assert controller.is_ready(states, "Site 2") is False
-    # "defined" and "not generated" also count as ready (unlike the sweep predicate).
-    assert controller.is_ready({"s": FakeRowState("defined")}, "s") is True
-    assert controller.is_ready({"s": FakeRowState("not generated")}, "s") is True
+    # The shared ready set: unsubmitted rows and rows whose job ended.
+    for status in ("defined", "not generated", "failed", "stopped", "cancelled"):
+        assert controller.is_ready({"s": FakeRowState(status)}, "s") is True
+    assert controller.is_ready({"s": FakeRowState("completed")}, "s") is False
 
 
 def test_muon_controller_refresh_view_without_document_clears_rows() -> None:

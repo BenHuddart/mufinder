@@ -19,7 +19,7 @@ from uuid import UUID, uuid4
 import pytest
 
 from mufinder.castep_io.output_parser import CastepResult
-from mufinder.domain.enums import EndReason, JobActivity, JobStatus, WorkflowStage
+from mufinder.domain.enums import JobActivity, JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationRun, Job, Result, Structure
 from mufinder.science.quantum_phonons import mode_width_angstrom
 from mufinder.services.job_artifacts import ParsedJobArtifacts, collect_job_artifacts
@@ -1156,7 +1156,11 @@ def test_quantum_controller_keeps_an_unselected_charge_state_out_of_the_sources(
 
 
 def test_quantum_controller_materialize_reuses_a_rows_job(tmp_path: Path) -> None:
-    """A defined job is rewritten from the row's configuration; a finished one is left alone."""
+    """A defined job is rewritten from the row's configuration; an ended one waits for its reset.
+
+    Both rows are ready, but a controller writes a job directory only for a
+    defined job: the submit cycle resets an ended job, then materializes again.
+    """
 
     service = ProjectService()
     document, definition, candidates, output_root = _seed_quantum_document(service, tmp_path)
@@ -1168,8 +1172,8 @@ def test_quantum_controller_materialize_reuses_a_rows_job(tmp_path: Path) -> Non
 
     jobs = controller.materialize([first, second])
 
-    # Only the ready row is materialized; the failed row is not ready.
-    assert jobs == [defined]
+    # Both rows keep their own job; only the defined one is written now.
+    assert jobs == [defined, failed]
     assert len(document.jobs) == 2 + 2  # two source relaxations, two phonon jobs
     assert "NUM_FARMS : 2" in (output_root / "quantum_siteA" / "quantum_siteA.param").read_text(
         encoding="utf-8"
@@ -1201,7 +1205,7 @@ def test_quantum_controller_row_lifecycle_from_ready_to_a_completed_result(tmp_p
     assert extras == {}
     (job,) = submitted
     assert job.calc_type == QUANTUM_PHONON_CALC_TYPE
-    assert controller.build_states()[key].status == "defined"
+    assert controller.build_states()[key].status == "ready"
     assert controller.jobs_for_keys([key]) == [job]
 
     job.status = JobStatus.ACTIVE
@@ -1270,7 +1274,7 @@ def test_quantum_controller_submit_cluster_reaches_cluster_backend(tmp_path: Pat
 def test_quantum_controller_dismissed_failed_job_resubmits_without_a_new_job(
     tmp_path: Path,
 ) -> None:
-    """A dismissed failed row reads ready; the shared submit cycle resets and rewrites its job."""
+    """A dismissed failed row reads failed; the shared submit cycle resets and rewrites its job."""
 
     service = ProjectService()
     document, definition, candidates, output_root = _seed_quantum_document(service, tmp_path)
@@ -1290,7 +1294,7 @@ def test_quantum_controller_dismissed_failed_job_resubmits_without_a_new_job(
         service, document, output_root, local_backend=local, prepare_jobs_for_resubmission=_reset
     )
 
-    assert controller.build_states()[key].status == "ready"
+    assert controller.build_states()[key].status == "failed"
     controller.submit([key], target="local")
 
     assert reset == [[phonon]]
@@ -1327,20 +1331,13 @@ def test_quantum_controller_configure_request_opens_editable_ready_rows(tmp_path
     )
 
 
-@pytest.mark.parametrize("dismissed", [False, True])
-def test_quantum_controller_configure_request_edits_a_defined_or_dismissed_job(
-    tmp_path: Path, dismissed: bool
-) -> None:
-    """A job still defined (or dismissed, so its row reads ready) is rewritten on submit."""
+def test_quantum_controller_configure_request_edits_a_defined_job(tmp_path: Path) -> None:
+    """A job still defined is rewritten on submit, so its row stays editable."""
 
     service = ProjectService()
     document, definition, candidates, output_root = _seed_quantum_document(service, tmp_path)
     key = next(iter(candidates))
-    phonon = _bind_phonon(service, document, definition, key)
-    if dismissed:
-        phonon.status = JobStatus.ENDED
-        phonon.end_reason = EndReason.UNKNOWN
-        phonon.dismissed_at = datetime.now(timezone.utc)
+    _bind_phonon(service, document, definition, key)
     controller = _quantum_document_controller(service, document, output_root)
 
     request = controller.configure_request([key])
@@ -1349,6 +1346,32 @@ def test_quantum_controller_configure_request_edits_a_defined_or_dismissed_job(
     assert request.read_only is False
     assert request.title == "Configure Quantum Corrections Parameters"
     assert request.locked_reason == ""
+
+
+@pytest.mark.parametrize("dismissed", [False, True])
+def test_quantum_controller_configure_request_keeps_an_ended_job_read_only(
+    tmp_path: Path, dismissed: bool
+) -> None:
+    """An ended row can be submitted, but its parameters change only after a reset.
+
+    The dashboard's Resubmit reruns the job's own inputs, so an edit to an ended
+    row would otherwise be ignored, and a changed farm count would disagree with
+    the ``NUM_FARMS`` its ``.param`` holds.
+    """
+
+    service = ProjectService()
+    document, definition, candidates, output_root = _seed_quantum_document(service, tmp_path)
+    key = next(iter(candidates))
+    phonon = _bind_phonon(service, document, definition, key, status="failed")
+    if dismissed:
+        phonon.dismissed_at = datetime.now(timezone.utc)
+    controller = _quantum_document_controller(service, document, output_root)
+
+    request = controller.configure_request([key])
+
+    assert request is not None
+    assert request.read_only is True
+    assert "use Reset Failed Jobs… to edit" in request.locked_reason
 
 
 @pytest.mark.parametrize(
@@ -1961,7 +1984,7 @@ def test_quantum_controller_fresh_seed_and_legacy_binding_survive_a_reload(tmp_p
     assert controller.legacy_singlepoint_job_for_key(loaded_definition, key).id == singlepoint.id
     assert loaded_definition.parameters["job_seed_names_by_label"][key] == "quantum_siteA_phonon"
     assert loaded_definition.parameters["singlepoint_seed_names_by_label"] == {key: "quantum_siteA"}
-    assert controller.build_states()[key].status == "defined"
+    assert controller.build_states()[key].status == "ready"
 
     def seed(owner, row: str) -> str:
         return quantum_seed_name_for_key(loaded, owner, row)

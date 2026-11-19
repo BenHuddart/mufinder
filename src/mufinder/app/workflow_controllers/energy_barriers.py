@@ -163,7 +163,10 @@ from mufinder.app.workflow_parameters import (
     merge_species_options,
     workflow_basic_parameter_names,
 )
-from mufinder.app.workflow_submission import effective_row_status, workflow_row_state_is_ready
+from mufinder.app.workflow_submission import (
+    effective_row_status,
+    workflow_row_state_is_unsubmitted,
+)
 from mufinder.app.workflow_table_utils import format_energy_mev
 
 # The NEB dialog's default rows after the shared ones: the two NEB settings that
@@ -968,7 +971,7 @@ class EnergyBarriersController(WorkflowJobController):
             num_farms_values.append(num_farms_from_extras(extras))
         states = self.build_states()
         read_only = any(
-            not workflow_row_state_is_ready(states, candidate.key) for candidate in candidates
+            not workflow_row_state_is_unsubmitted(states, candidate.key) for candidate in candidates
         )
         first = candidates[0]
         return SourceConfigureRequest(

@@ -256,7 +256,7 @@ class PristineRelaxationController(WorkflowJobController):
                 states[row.label] = RelaxationRunState(status="ready")
                 continue
 
-            status_value = "ready" if job.status == JobStatus.DEFINED else effective_row_status(job)
+            status_value = effective_row_status(job)
             run = self._context.run_for_job(job.id)
             if (
                 status_value == JobStatus.COMPLETED.value
@@ -491,11 +491,10 @@ class PristineRelaxationController(WorkflowJobController):
 
         Resolves the row's job through :meth:`jobs_for_keys` — never from a
         table's *displayed* status text, which reads "not converged" for a
-        completed-but-unconverged job and "ready" for a dismissed failed job
-        (see ``mufinder.app.workflow_submission.effective_row_status``). Both
-        of those rows must still gate on the job's real, durable status. Called
-        live at context-menu-open time (not cached), so a status change between
-        refreshes (e.g. a dashboard dismissal) is always reflected.
+        completed-but-unconverged job; that row must still gate on the job's
+        real, durable status. Called live at context-menu-open time (not
+        cached), so a status change between refreshes (e.g. a reset from the
+        dashboard) is always reflected.
         """
 
         jobs = self.jobs_for_keys([key])

@@ -1210,7 +1210,8 @@ def test_main_window_materializes_a_configured_quantum_phonon_job_and_shows_its_
     assert table.item(0, 8).text() == "ready"
 
     phonon_jobs = window._quantum_corrections_controller.materialize([str(site.id)])
-    assert table.item(0, 8).text() == "defined"
+    # A staged phonon job has not run: its row still reads ready.
+    assert table.item(0, 8).text() == "ready"
 
     assert len(phonon_jobs) == 1
     assert phonon_jobs[0].calc_type == QUANTUM_PHONON_CALC_TYPE
@@ -3620,8 +3621,8 @@ def test_main_window_neb_submit_passes_farm_settings_to_local_runner(
 
 
 def test_main_window_neb_configure_is_read_only_once_a_job_exists(qapp, tmp_path: Path) -> None:
-    """A row whose NEB job is FAILED is not "ready", so its configuration --
-    including the farm count -- cannot be edited.
+    """A row whose NEB job is FAILED can be submitted, but its configuration --
+    including the farm count -- cannot be edited until it is reset.
 
     This is what keeps the farm count in the row extras (which decides the
     filenames the runner looks for) in step with the NUM_FARMS already written
@@ -3630,12 +3631,12 @@ def test_main_window_neb_configure_is_read_only_once_a_job_exists(qapp, tmp_path
     could be reconfigured the two would diverge and a successful run would be
     reported as a missing .ts."""
 
-    from mufinder.app.workflow_submission import READY_WORKFLOW_ROW_STATUSES
+    from mufinder.app.workflow_submission import UNSUBMITTED_WORKFLOW_ROW_STATUSES
 
-    assert "failed" not in READY_WORKFLOW_ROW_STATUSES
-    assert "cancelled" not in READY_WORKFLOW_ROW_STATUSES
-    assert JobStatus.COMPLETED.value not in READY_WORKFLOW_ROW_STATUSES
-    assert JobStatus.DEFINED.value in READY_WORKFLOW_ROW_STATUSES
+    assert "failed" not in UNSUBMITTED_WORKFLOW_ROW_STATUSES
+    assert "cancelled" not in UNSUBMITTED_WORKFLOW_ROW_STATUSES
+    assert JobStatus.COMPLETED.value not in UNSUBMITTED_WORKFLOW_ROW_STATUSES
+    assert JobStatus.DEFINED.value in UNSUBMITTED_WORKFLOW_ROW_STATUSES
 
 
 def test_main_window_fallback_collection_reads_farmed_ts(

@@ -9,8 +9,8 @@ from mufinder.services.job_monitoring import job_status_word
 from mufinder.app.workflow_submission import (
     WorkflowSubmissionCoordinator,
     effective_row_status,
-    job_is_resubmittable_after_dismissal,
     workflow_row_state_is_ready,
+    workflow_row_state_is_unsubmitted,
 )
 from mufinder.domain.enums import JobStatus
 from mufinder.domain.models import Job
@@ -48,7 +48,11 @@ def test_submission_plan_normalizes_dedupes_and_materializes_ready_values() -> N
     plan = coordinator.submission_plan(
         [300, "300", 360, 420],
         normalize=lambda value: int(value),
-        build_states=lambda: {300: _State("queued"), 360: _State("ready"), 420: _State("failed")},
+        build_states=lambda: {
+            300: _State("queued"),
+            360: _State("ready"),
+            420: _State("completed"),
+        },
         jobs_for_values=_existing_jobs,
         materialize_values=_materialized_jobs,
         is_ready=workflow_row_state_is_ready,
@@ -94,54 +98,60 @@ def test_submission_plan_reports_empty_jobs_without_ui_dependencies() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Dismissed-terminal row projection
+# Row projection from job state alone
 # --------------------------------------------------------------------------- #
 
 
-@pytest.mark.parametrize(
-    "status",
-    ["failed", "stopped", "cancelled"],
-)
-def test_dismissed_terminal_job_projects_ready_row(status: str) -> None:
-    job = _job_with(status, dismissed=True)
+@pytest.mark.parametrize("dismissed", [False, True])
+@pytest.mark.parametrize("status", ["failed", "stopped", "cancelled"])
+def test_ended_job_row_reads_its_status_word_and_is_ready(status: str, dismissed: bool) -> None:
+    """An ended row says what happened and can be submitted, dismissed or not."""
 
-    assert job_is_resubmittable_after_dismissal(job) is True
-    assert effective_row_status(job) == "ready"
+    job = _job_with(status, dismissed=dismissed)
+
+    assert effective_row_status(job) == status == job_status_word(job)
     assert workflow_row_state_is_ready({"row": _State(effective_row_status(job))}, "row") is True
-    # Dismissal is still not a status transition.
-    assert job_status_word(job) == status
-
-
-@pytest.mark.parametrize(
-    "status",
-    ["failed", "stopped", "cancelled"],
-)
-def test_non_dismissed_terminal_job_keeps_its_own_row_status(status: str) -> None:
-    job = _job_with(status, dismissed=False)
-
-    assert job_is_resubmittable_after_dismissal(job) is False
-    assert effective_row_status(job) == status
-    assert workflow_row_state_is_ready({"row": _State(effective_row_status(job))}, "row") is False
 
 
 @pytest.mark.parametrize("dismissed", [False, True])
-def test_non_terminal_job_status_is_never_rewritten(dismissed: bool) -> None:
-    """Only the terminal-recoverable statuses participate in the rule.
-
-    ``dismissed_at`` cannot legitimately be set on a completed or running job,
-    but the projection must not depend on that invariant holding.
-    """
+def test_active_and_completed_rows_are_not_ready(dismissed: bool) -> None:
+    """The projection must not depend on ``dismissed_at`` being set only on ended jobs."""
 
     completed = _job_with(JobStatus.COMPLETED, dismissed=dismissed)
     running = _job_with("running", dismissed=dismissed)
 
-    assert job_is_resubmittable_after_dismissal(completed) is False
     assert effective_row_status(completed) == "completed"
     assert effective_row_status(running) == "running"
+    for job in (completed, running):
+        assert not workflow_row_state_is_ready({"row": _State(effective_row_status(job))}, "row")
 
 
-def test_defined_job_projects_defined_and_missing_job_projects_ready() -> None:
-    assert effective_row_status(_job_with(JobStatus.DEFINED, dismissed=False)) == "defined"
-    assert job_is_resubmittable_after_dismissal(None) is False
+def test_defined_and_missing_jobs_both_project_ready() -> None:
+    """A staged or reset job has not run, so its row reads like a row with no job."""
+
+    assert effective_row_status(_job_with(JobStatus.DEFINED, dismissed=False)) == "ready"
+    assert (
+        effective_row_status(_job_with(JobStatus.DEFINED, dismissed=False), ready_status="x") == "x"
+    )
     assert effective_row_status(None) == "ready"
     assert effective_row_status(None, ready_status="not generated") == "not generated"
+
+
+@pytest.mark.parametrize(
+    ("status", "unsubmitted"),
+    [
+        ("ready", True),
+        ("defined", True),
+        ("not generated", True),
+        ("failed", False),
+        ("cancelled", False),
+        ("running", False),
+        ("completed", False),
+    ],
+)
+def test_only_rows_without_a_submitted_job_are_configurable(status: str, unsubmitted: bool) -> None:
+    """An ended row is ready to submit but keeps the inputs its job ran with until a reset."""
+
+    states = {"row": _State(status)}
+
+    assert workflow_row_state_is_unsubmitted(states, "row") is unsubmitted

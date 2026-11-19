@@ -825,7 +825,7 @@ def test_main_window_form_muon_relaxation_shows_ready_before_submission(
     window.close()
 
 
-def test_main_window_muon_relaxation_existing_defined_job_shows_defined(
+def test_main_window_muon_relaxation_existing_defined_job_shows_ready(
     main_window, tmp_path: Path
 ) -> None:
     window = main_window
@@ -872,9 +872,9 @@ def test_main_window_muon_relaxation_existing_defined_job_shows_defined(
     window._refresh_ui_after_project_change()
 
     table = window._muon_relaxation_view._tables_by_charge_state["positive_muon"]
-    assert table.item(0, window._muon_relaxation_view._STATUS_COLUMN).text() == "defined"
+    assert table.item(0, window._muon_relaxation_view._STATUS_COLUMN).text() == "ready"
     assert (
-        window._muon_relaxation_controller.build_states()["positivemuon:Site 1"].status == "defined"
+        window._muon_relaxation_controller.build_states()["positivemuon:Site 1"].status == "ready"
     )
     window.close()
 
@@ -942,7 +942,7 @@ def test_main_window_muon_relaxation_sync_prefers_defined_job_over_cancelled_his
 
     table = window._muon_relaxation_view._tables_by_charge_state["positive_muon"]
     assert active_definition.parameters["job_ids_by_label"][key] == str(defined_job.id)
-    assert table.item(0, window._muon_relaxation_view._STATUS_COLUMN).text() == "defined"
+    assert table.item(0, window._muon_relaxation_view._STATUS_COLUMN).text() == "ready"
     assert window._muon_relaxation_controller.jobs_for_keys([key]) == [defined_job]
     window.close()
 

@@ -103,11 +103,12 @@ The page shows the flow as three numbered steps above one table of sites.
 **Changing your mind or recovering from a failure.** Once a row's job has been
 submitted its parameters are locked, so the stored inputs stay traceable to the
 run. When ``Configure…`` opens a locked row read-only, the dialog says why in
-one line. A row recovers through the shared failed-job reset, as in every
-workflow table: ``Reset Failed Jobs…`` in step 2 and in the
-right-click menu returns a failed, stopped or cancelled phonon job to
-``defined`` (see :doc:`/getting_started/running_jobs`). The reset asks first and
-offers to clean the job directory:
+one line. A row whose phonon job failed, stopped or was cancelled can be run
+again as it is, as in every workflow table; running it resets the job first.
+To change its parameters, use ``Reset Failed Jobs…`` in step 2 or in the
+right-click menu, which returns the row to ``ready`` (see
+:doc:`/getting_started/running_jobs`). The reset asks first and offers to clean
+the job directory:
 
 - **Clean the directory** to start the row again. The rerun is a fresh phonon
   job and can go to any execution target.
@@ -118,13 +119,12 @@ offers to clean the job directory:
   directory again and asks before deleting one that already exists, so it
   starts again.
 
-The row then reads ``defined`` with every parameter editable; submit it again.
+The row then reads ``ready`` with every parameter editable; submit it again.
 Cancel an active job before resetting it. A completed phonon job is not reset:
 to run the row again with other parameters, delete the job from the Job
-Dashboard. A job still ``defined`` (staged but never submitted) stays editable,
+Dashboard. A job staged but never submitted (its row reads ``ready``) stays editable,
 because submitting the row rewrites its input files from the stored
-configuration, and dismissing a failed job from the Job Dashboard reopens its
-row, as for every workflow.
+configuration. Dismissing a job from the Job Dashboard does not change its row.
 
 A project holding the singlepoint jobs that older versions ran before each
 phonon job loads them as records; see
@@ -303,7 +303,7 @@ between rows are marked as mixed and are left untouched unless you edit them.
 
    * - Row state
      - What you can change
-   * - ``ready`` (no job, or its failed job dismissed) or ``defined``
+   * - ``ready`` (no job, or a job not yet submitted)
      - Everything.
    * - Anything else, for any selected row
      - Nothing; the dialog opens read-only as ``Inspect Quantum Corrections

@@ -100,7 +100,7 @@ from mufinder.app.workflow_controllers.base import (
     relaxation_artifact_failure,
     upsert_job_derived_structure,
 )
-from mufinder.app.workflow_submission import effective_row_status
+from mufinder.app.workflow_submission import effective_row_status, workflow_row_state_is_ready
 
 
 #: The definition mapping that holds each row's job seed name.
@@ -372,22 +372,19 @@ class MuonRelaxationController(WorkflowJobController):
 
     def is_ready(self, states: Mapping[object, object], key: object) -> bool:
         """A row is ready when its own key — or, for a bare label, any
-        charge-qualified key ending in ``":{label}"`` — is in a ready status.
-
-        Behavior-preserving move of ``MainWindow._muon_relaxation_label_is_ready``.
+        charge-qualified key ending in ``":{label}"`` — is ready by the shared
+        :func:`~mufinder.app.workflow_submission.workflow_row_state_is_ready`.
         """
 
-        ready_statuses = {"ready", "defined", "not generated"}
-        state = states.get(key)
-        if state is not None and state.status in ready_statuses:
+        if workflow_row_state_is_ready(states, key):
             return True
         if ":" in str(key):
             return False
         suffix = f":{key}"
         return any(
-            candidate.status in ready_statuses
-            for candidate_key, candidate in states.items()
-            if candidate_key.endswith(suffix)
+            workflow_row_state_is_ready(states, candidate_key)
+            for candidate_key in states
+            if str(candidate_key).endswith(suffix)
         )
 
     def pre_submit_check(self, keys: list[object]) -> bool:
@@ -764,11 +761,9 @@ class MuonRelaxationController(WorkflowJobController):
         one label can be shared by two rows (one per charge state), so a bare
         label would be ambiguous here. Resolves the row's job through
         :meth:`jobs_for_keys` — never from a table's *displayed* status text,
-        which reads "not converged" for a completed-but-unconverged job and
-        "ready" for a dismissed failed job (see
-        ``mufinder.app.workflow_submission.effective_row_status``). Called live
-        at context-menu-open time (not cached), so a status change between
-        refreshes (e.g. a dashboard dismissal) is always reflected.
+        which reads "not converged" for a completed-but-unconverged job. Called
+        live at context-menu-open time (not cached), so a status change between
+        refreshes (e.g. a reset from the dashboard) is always reflected.
         """
 
         jobs = self.jobs_for_keys([key])

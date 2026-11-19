@@ -154,7 +154,12 @@ from mufinder.app.workflow_parameters import (
     merge_species_options,
     workflow_basic_parameter_names,
 )
-from mufinder.app.workflow_submission import effective_row_status, workflow_row_state_is_ready
+from mufinder.app.workflow_submission import (
+    UNSUBMITTED_WORKFLOW_ROW_STATUSES,
+    effective_row_status,
+    workflow_row_state_is_ready,
+    workflow_row_state_is_unsubmitted,
+)
 
 _CONFIG_KEYWORD_NAMES = workflow_basic_parameter_names()
 #: ``PHONON_METHOD`` is fixed at finite displacement, so the Configure dialog
@@ -275,7 +280,7 @@ def _locked_reason(jobs: Sequence[Job | None], statuses: Sequence[str]) -> str:
     """
 
     for job, status in zip(jobs, statuses, strict=True):
-        if job is None or status in {"ready", "defined"}:
+        if job is None or status in UNSUBMITTED_WORKFLOW_ROW_STATUSES:
             continue
         if job.calc_type == QUANTUM_SINGLEPOINT_CALC_TYPE:
             return (
@@ -576,7 +581,7 @@ class QuantumCorrectionsController(WorkflowJobController):
             )
             num_farms_values.append(num_farms_from_extras(extras))
         read_only = any(
-            not workflow_row_state_is_ready(states, candidate.key) for candidate in candidates
+            not workflow_row_state_is_unsubmitted(states, candidate.key) for candidate in candidates
         )
         locked_reason = (
             _locked_reason(

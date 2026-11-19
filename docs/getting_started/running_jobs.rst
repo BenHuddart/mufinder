@@ -25,7 +25,12 @@ To submit jobs from a workflow page:
 3. Click the run button below the table. With nothing selected the buttons read
    ``Run All Locally`` and ``Run All on Cluster`` and every row is submitted;
    rows that are not ready are skipped. With rows selected they read ``Run
-   Selected Locally`` and ``Run Selected on Cluster``.
+   Selected Locally`` and ``Run Selected on Cluster``. A row is ready when it
+   has not run yet (it reads ``ready``), or its job ``failed``, ``stopped`` or
+   was ``cancelled``, whether or not you dismissed it from the Job Dashboard.
+   Running a row whose job ended first asks the ``Reset…`` question (see
+   `Reset and its clean-up`_) for all of them at once; ``Cancel`` there submits
+   nothing.
 4. Fill in the submission dialog (see `Local submission`_ and
    `Cluster submission`_) and click ``OK``.
 
@@ -304,7 +309,11 @@ The Job Dashboard
 The ``Job Dashboard`` lists the jobs that still need attention: active jobs,
 failed jobs, stopped jobs and cancelled jobs. Completed jobs leave it after
 their results are handled, and a failed, stopped or cancelled job that you
-``Dismiss`` is hidden without losing its records. Rows are listed in the order
+``Dismiss`` is hidden without losing its records. Tick ``Show dismissed`` above
+the table to list the dismissed jobs as well (it starts unticked in each project
+you open): their labels are greyed, the
+tooltip says when each was dismissed, and their actions work as on any other
+row. Rows are listed in the order
 their jobs were created, and that order survives closing and reopening the
 project: resubmitting, resetting or continuing a job does not move its row. The
 dock opens tall enough for about five rows when the window has the room.
@@ -357,9 +366,10 @@ Job states
 
 The ``Status`` column shows where each job is:
 
-``defined``
-   The job has been created but has not been submitted yet. Submit it from the
-   workflow table that created it (see `Submitting jobs`_).
+``ready``
+   Shown in a workflow table for a row that has not run: it has no job yet, or
+   its job has been created or reset but not submitted. Submit it from that
+   table (see `Submitting jobs`_). The Job Dashboard does not list these.
 
 ``submitting``
    MuFinder is handing the job to a local process or a cluster scheduler.
@@ -474,15 +484,17 @@ when it is partial (``Reset… (2 of 3)``).
    continued (see :ref:`continue-relaxation`). It opens for one job at a time.
 
 ``Reset…``
-   Returns a failed, stopped or cancelled job to ``defined``, with an option to
+   Returns a failed, stopped or cancelled job to ``ready``, with an option to
    clean its output folder. See `Reset and its clean-up`_.
 
 ``Dismiss``
    Hides a failed, stopped or cancelled job from the dashboard, after asking
-   for confirmation. Its records are kept. The confirmation says when the
-   job's output may still be on the cluster: dismissing does not retrieve it,
-   and the job's workflow row then reads as ready to run again, so use ``Retry
-   retrieval`` first to keep the result.
+   for confirmation. Nothing else changes: its records are kept, its workflow
+   row still reads ``failed``, ``stopped`` or ``cancelled``, and ``Show
+   dismissed`` lists it again. The confirmation says when the job's output may
+   still be on the cluster: dismissing does not retrieve it, so use ``Check
+   now`` first to keep the result. A job that runs again, after a reset, a
+   resubmission or a ``Check now`` that finds it, is listed again.
 
 ``Open in <stage>``
    Shows the stage's page with the job's row selected. When a job has no row on
@@ -543,7 +555,8 @@ Reset and its clean-up
 ~~~~~~~~~~~~~~~~~~~~~~
 
 ``Reset…`` asks ``Clean and reset``, ``Reset, keep files`` (the default) or
-``Cancel``. The clean-up deletes everything in a job's output folder
+``Cancel``. It warns when a job's output may still be on the cluster, since
+resetting does not retrieve it. The clean-up deletes everything in a job's output folder
 except its ``.cell``/``.param`` inputs, and applies the same ownership check as
 :ref:`starting a relaxation again <resubmit-continue-or-start-again>`, limited
 to the local folder (Reset never touches the cluster). The folder is kept, and

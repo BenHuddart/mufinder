@@ -22,6 +22,7 @@ from PySide6.QtCore import (
     QEventLoop,
     QSize,
     QSettings,
+    QSignalBlocker,
     QTimer,
     QUrl,
     Qt,
@@ -42,6 +43,7 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
+    QCheckBox,
     QDialog,
     QFrame,
     QFileDialog,
@@ -221,10 +223,12 @@ from mufinder.app.submission_dialog import LocalSubmissionDialog
 from mufinder.app.theme import (
     THEME_DARK,
     THEME_LIGHT,
+    SPACING,
     THEME_SYSTEM,
     apply_theme,
     current_palette,
     load_theme_mode,
+    muted_text_brush,
     save_theme_mode,
     status_brush,
     use_square_top_table_corners,
@@ -252,10 +256,7 @@ from mufinder.app.workflow_parameters import (
     reorder_workflow_parameter_specs,
     structure_species_options,
 )
-from mufinder.app.workflow_submission import (
-    WorkflowSubmissionCoordinator,
-    job_is_resubmittable_after_dismissal,
-)
+from mufinder.app.workflow_submission import WorkflowSubmissionCoordinator
 from mufinder.app.workflow_controllers.comparison_tables import (
     ComparisonTablesController,
     ComparisonTablesDeps,
@@ -1302,7 +1303,17 @@ class MainWindow(QMainWindow):
         jobs_panel_layout = QVBoxLayout(jobs_panel)
         jobs_panel_layout.setContentsMargins(0, 0, 0, 0)
         jobs_panel_layout.setSpacing(0)
-        jobs_panel_layout.addWidget(self._jobs_selection_hint)
+        jobs_header = QHBoxLayout()
+        jobs_header.setContentsMargins(0, 0, SPACING.sm, 0)
+        jobs_header.addWidget(self._jobs_selection_hint, 1)
+        self._show_dismissed_jobs_box = QCheckBox("Show dismissed", jobs_panel)
+        self._show_dismissed_jobs_box.setAccessibleName("Show dismissed jobs")
+        self._show_dismissed_jobs_box.setToolTip(
+            "Show the jobs dismissed from the dashboard, greyed, with their actions"
+        )
+        self._show_dismissed_jobs_box.toggled.connect(lambda _shown: self._refresh_jobs_table())
+        jobs_header.addWidget(self._show_dismissed_jobs_box, 0, Qt.AlignmentFlag.AlignRight)
+        jobs_panel_layout.addLayout(jobs_header)
         jobs_panel_layout.addWidget(self._jobs_table, 1)
         jobs_dock.setWidget(jobs_panel)
         self._jobs_delete_shortcut = QShortcut(QKeySequence.StandardKey.Delete, jobs_dock)
@@ -2205,6 +2216,10 @@ class MainWindow(QMainWindow):
         if self._document is None:
             return
 
+        # Each project opens with its dismissed jobs hidden; the refresh below redraws.
+        with QSignalBlocker(self._show_dismissed_jobs_box):
+            self._show_dismissed_jobs_box.setChecked(False)
+
         # First, so a project is reachable even if a refresh below fails, and the
         # jobs table is measured in view rather than over all its rows.
         self._sync_project_panels()
@@ -2696,7 +2711,8 @@ class MainWindow(QMainWindow):
         desired_jobs = [
             job
             for job in self._document.jobs.values()
-            if job.status in _VISIBLE_DASHBOARD_STATES and job.dismissed_at is None
+            if job.status in _VISIBLE_DASHBOARD_STATES
+            and (job.dismissed_at is None or self._show_dismissed_jobs_box.isChecked())
         ]
         self._job_progress.follow(desired_jobs)
         self._sync_jobs_table_rows(desired_jobs, now=now)
@@ -2802,6 +2818,7 @@ class MainWindow(QMainWindow):
 
         label_item = QTableWidgetItem(job.label)
         label_item.setData(Qt.ItemDataRole.UserRole, str(job.id))
+        self._apply_job_label_cell(label_item, job, now=now)
         self._jobs_table.setItem(row, self._JOB_LABEL_COLUMN, label_item)
         self._jobs_table.setItem(
             row, self._JOB_STAGE_COLUMN, QTableWidgetItem(job_stage_name(job.workflow_stage))
@@ -2883,6 +2900,9 @@ class MainWindow(QMainWindow):
         }
 
         self._set_row_item_text(row, self._JOB_LABEL_COLUMN, job.label)
+        label_item = table.item(row, self._JOB_LABEL_COLUMN)
+        if label_item is not None:
+            self._apply_job_label_cell(label_item, job, now=now)
         self._set_row_item_text(row, self._JOB_STAGE_COLUMN, job_stage_name(job.workflow_stage))
 
         status_item = table.item(row, self._JOB_STATUS_COLUMN)
@@ -2911,6 +2931,16 @@ class MainWindow(QMainWindow):
             if more.accessibleName() != more_name:
                 more.setAccessibleName(more_name)
         return changed
+
+    def _apply_job_label_cell(self, item: QTableWidgetItem, job: Job, *, now) -> None:
+        """Grey a dismissed job's label, shown with ``Show dismissed``, and say when."""
+
+        dismissed = job.dismissed_at is not None
+        _set_item_foreground(item, muted_text_brush() if dismissed else QBrush())
+        tooltip = (
+            f"Dismissed {self._format_relative_age(job.dismissed_at, now=now)}" if dismissed else ""
+        )
+        _set_item_tooltip(item, tooltip)
 
     def _set_row_item_text(self, row: int, column: int, text: str) -> None:
         """Set a cell's text in place when it differs, or create the item if it is missing."""
@@ -3962,6 +3992,8 @@ class MainWindow(QMainWindow):
             "reset": {JobStatus.ENDED},
             "dismiss": {JobStatus.ENDED},
         }
+        if kind == "dismiss" and job.dismissed_at is not None:
+            return False
         return job.status in eligible_statuses[kind]
 
     def _dashboard_action_handler(self, kind: str) -> Callable[[list[UUID]], None]:
@@ -4305,14 +4337,12 @@ class MainWindow(QMainWindow):
                 self,
                 "Dismiss job",
                 f"Dismiss job '{dismiss_labels[0]}' from the dashboard?",
-                with_note("The job stays in the project; its workflow row can still resubmit it."),
+                with_note("The job stays in the project. Show it again with Show dismissed."),
                 "Dismiss job",
             )
         cancel_phrase = plural(len(cancel_labels), "job")
         dismiss_phrase = plural(len(dismiss_labels), "job")
-        dismiss_note = (
-            "Dismissed jobs stay in the project; their workflow rows can still resubmit them."
-        )
+        dismiss_note = "Dismissed jobs stay in the project. Show them again with Show dismissed."
         if not dismiss_labels:
             return workflow_table_utils.confirm_destructive(
                 self,
@@ -4659,7 +4689,7 @@ class MainWindow(QMainWindow):
         jobs: list[Job],
         *,
         eligible_statuses: set[JobStatus] | None = None,
-        no_eligible_message: str = "Selected jobs must be in the 'defined' state for local submission.",
+        no_eligible_message: str = "Selected jobs must be ready for local submission.",
         success_message: Callable[[int], str] | None = None,
         fresh_start_job_ids: Collection[UUID] = (),
     ) -> None:
@@ -4775,7 +4805,7 @@ class MainWindow(QMainWindow):
         *,
         default_cluster_name: str | None = None,
         eligible_statuses: set[JobStatus] | None = None,
-        no_eligible_message: str = "Selected jobs must be in the 'defined' state for cluster submission.",
+        no_eligible_message: str = "Selected jobs must be ready for cluster submission.",
         reuse_existing_remote_files: bool = False,
         success_message: Callable[[int, str], str] | None = None,
         fresh_start_job_ids: Collection[UUID] = (),
@@ -5607,7 +5637,7 @@ class MainWindow(QMainWindow):
             return
 
         if cleanup_choice is None:
-            cleanup_choice = self._prompt_failed_job_cleanup(len(resettable_jobs))
+            cleanup_choice = self._prompt_failed_job_cleanup(resettable_jobs)
         if cleanup_choice is None:
             return
 
@@ -5637,7 +5667,7 @@ class MainWindow(QMainWindow):
         """Repaint every workflow table that can show a just-reset job.
 
         Shared by the explicit per-row/dashboard Reset action and by the lazy
-        reset a dismissed row performs on resubmit. ``_refresh_jobs_table``
+        reset a workflow row performs when it resubmits an ended job. ``_refresh_jobs_table``
         already re-renders the dashboard plus the convergence, pristine, muon,
         and UEP tables; the convergence controllers are refreshed explicitly
         because a reset also detaches a cutoff sweep point, and the two
@@ -5663,7 +5693,7 @@ class MainWindow(QMainWindow):
         """Clean, reset, and record provenance for already-vetted terminal jobs.
 
         Shared core of the dashboard/table "Reset failed jobs" action and of the
-        lazy reset the workflow-row submit cycle performs for dismissed jobs
+        lazy reset the workflow-row submit cycle performs for ended jobs
         (:meth:`_prepare_jobs_for_resubmission`). Callers own the "nothing to
         reset" dialog, the cleanup prompt, the view refreshes, the autosave and
         the status-bar message; this helper only mutates job state and returns
@@ -5751,34 +5781,30 @@ class MainWindow(QMainWindow):
         return reset_count, cleanup_errors, (list(cleaned_folders), list(kept_folders.values()))
 
     def _prepare_jobs_for_resubmission(self, jobs: Sequence[Job]) -> bool:
-        """Reset dismissed terminal jobs so a workflow row can resubmit them.
+        """Reset ended jobs so a workflow row can resubmit them.
 
         Bound into every controller's
         :class:`~mufinder.app.workflow_controllers.base.WorkflowControllerContext`
-        and called from the shared submit cycle just before dispatch. Dismissing
-        a failed job from the jobs dashboard removes its Reset/Resubmit controls
-        while its workflow row keeps pointing at it, so the row's own submit is
-        the recovery path: it runs the same stale-output cleanup prompt the Reset
-        action uses, then resets the jobs back to ``defined`` so they clear the
-        ``{DEFINED}`` gate in the submit backends.
+        and called from the shared submit cycle just before dispatch. A row
+        whose job ended can be submitted: this runs the same stale-output
+        cleanup prompt the Reset action uses, then resets the jobs back to
+        ``defined`` so they clear the ``{DEFINED}`` gate in the submit backends.
 
         Returns ``False`` only when the user cancels the cleanup prompt, which
-        aborts the submission without an error dialog. Jobs that are *not*
-        dismissed terminal jobs are never touched here.
+        aborts the submission without an error dialog. Jobs that have not ended,
+        and imported jobs, are never touched here.
         """
 
         if self._document is None:
             return False
 
         resettable_jobs = [
-            job
-            for job in jobs
-            if job_is_resubmittable_after_dismissal(job) and not job_is_imported(job)
+            job for job in jobs if job.status == JobStatus.ENDED and not job_is_imported(job)
         ]
         if not resettable_jobs:
             return True
 
-        cleanup_choice = self._prompt_failed_job_cleanup(len(resettable_jobs))
+        cleanup_choice = self._prompt_failed_job_cleanup(resettable_jobs)
         if cleanup_choice is None:
             return False
 
@@ -5937,8 +5963,8 @@ class MainWindow(QMainWindow):
         this job was first submitted, and offers no sensible resolution for
         resubmitting that same site. Because ``continue_job`` already leaves
         the job ``DEFINED`` before either submit path runs,
-        ``job_is_resubmittable_after_dismissal`` is false for it, so the
-        dismissed-job cleanup prompt (``_prepare_jobs_for_resubmission``) is
+        the submit cycle has no ended job to reset, so the cleanup prompt
+        (``_prepare_jobs_for_resubmission``) is
         never reached — Continue never asks about deleting the very directory
         it just preserved and rewrote.
         """
@@ -6298,18 +6324,27 @@ class MainWindow(QMainWindow):
             return fresh
         return FailureDiagnosis(reason=job.end_reason)
 
-    def _prompt_failed_job_cleanup(self, job_count: int) -> bool | None:
+    def _prompt_failed_job_cleanup(self, jobs: Sequence[Job]) -> bool | None:
+        """Ask how to reset ``jobs``: clean their folders, keep them, or cancel.
+
+        Shared by every Reset and by a workflow row's Submit of an ended job.
+        It warns when a job's output may still be on its cluster.
+        """
+
+        detail = (
+            "Choose 'Clean and reset' to clean each job directory before reset, "
+            "'Reset, keep files' to keep existing files, or 'Cancel' to abort."
+        )
+        note = unretrieved_output_note(jobs, action="Resetting")
         answer = workflow_table_utils.confirm_choice(
             self,
-            "Reset failed jobs",
-            f"Reset {plural(job_count, 'failed job')} to the 'defined' state?",
+            "Reset jobs",
+            f"Reset {plural(len(jobs), 'job')} that did not finish so "
+            f"{'it is' if len(jobs) == 1 else 'they are'} ready to run again?",
             [("clean", "Clean and reset"), ("keep", "Reset, keep files"), ("cancel", "Cancel")],
             default="keep",
             escape="cancel",
-            detail=(
-                "Choose 'Clean and reset' to clean each job directory before reset, "
-                "'Reset, keep files' to keep existing files, or 'Cancel' to abort."
-            ),
+            detail=f"{note}\n\n{detail}" if note else detail,
             destructive=("clean",),
         )
         if answer == "cancel":

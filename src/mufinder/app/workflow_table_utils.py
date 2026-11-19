@@ -40,11 +40,8 @@ from mufinder.science.kpoint_grids import spacing_from_grid
 #: Displayed row statuses whose job can be reset back to ``defined`` from the
 #: workflow table itself. It mirrors ``ProjectService.reset_failed_job``'s
 #: accepted statuses, but as the lowercased strings the Status cell holds.
-#:
-#: A *dismissed* terminal job is deliberately absent: after
-#: :func:`mufinder.app.workflow_submission.effective_row_status` its row already
-#: reads ``"ready"``, and its recovery path is the row's own Submit (which
-#: performs the same reset lazily). See ``docs/job_lifecycle.rst``.
+#: These rows can also be submitted directly: the submit cycle performs the
+#: same reset first. See ``docs/job_lifecycle.rst``.
 RESETTABLE_ROW_STATUSES = frozenset({"failed", "stopped", "cancelled"})
 
 #: Menu text for the per-row reset action, shared so every workflow table names
@@ -632,8 +629,8 @@ def standard_row_actions(
     def _rows(callback: Callable[[Sequence[int]], None]) -> Callable[[Sequence[object]], None]:
         return lambda rows: callback([int(row) for row in rows])
 
-    # Run follows the submit filter, not the edit lock: a cancelled row is
-    # editable, but the dashboard's Resubmit/Reset is its way back to running.
+    # Run follows the submit filter, which accepts rows whose job ended: the
+    # submit cycle resets the job first.
     is_ready = _status_is(lambda status: not status or status in READY_WORKFLOW_ROW_STATUSES)
     before: list[RowMenuAction] = []
     if run_local is not None:

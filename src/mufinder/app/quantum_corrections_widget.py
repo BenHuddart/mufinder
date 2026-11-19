@@ -19,7 +19,7 @@ from mufinder.app.pinned_sites_scope import PinnedSitesScopeBar
 from mufinder.app.theme import form_spacing, page_margins, style_section_title
 from mufinder.app.workflow_row_widget import RelaxedSiteSourceTableWidget
 from mufinder.app.workflow_steps import WorkflowSteps
-from mufinder.app.workflow_submission import READY_WORKFLOW_ROW_STATUSES
+from mufinder.app.workflow_submission import UNSUBMITTED_WORKFLOW_ROW_STATUSES
 from mufinder.app.workflow_table_utils import (
     RESET_FAILED_ACTION_TEXT,
     SelectionFeedback,
@@ -150,7 +150,7 @@ class QuantumCorrectionsWidget(RelaxedSiteSourceTableWidget):
         self._submit_cluster_button = QPushButton()
         self._reset_failed_button = QPushButton(RESET_FAILED_ACTION_TEXT)
         self._reset_failed_button.setToolTip(
-            "Return the selected failed, stopped or cancelled phonon jobs to 'defined' for a rerun."
+            "Return the selected failed, stopped or cancelled phonon jobs to 'ready' for a rerun."
         )
         self._batch_configure_button.clicked.connect(self._emit_configure_targets)
         self._submit_local_button.clicked.connect(self._emit_submit_local)
@@ -297,7 +297,9 @@ class QuantumCorrectionsWidget(RelaxedSiteSourceTableWidget):
             keys = self.selected_source_keys()
         else:
             keys = [
-                row.key for row in self._site_rows() if row.status in READY_WORKFLOW_ROW_STATUSES
+                row.key
+                for row in self._site_rows()
+                if row.status in UNSUBMITTED_WORKFLOW_ROW_STATUSES
             ] or [row.key for row in self._site_rows()]
         if keys:
             self.configure_requested.emit(keys)

@@ -57,8 +57,8 @@ def _answer_cleanup(monkeypatch: pytest.MonkeyPatch, answer: bool | None) -> lis
 
     asked: list[int] = []
 
-    def prompt(_self, job_count: int) -> bool | None:
-        asked.append(job_count)
+    def prompt(_self, jobs) -> bool | None:
+        asked.append(len(jobs))
         return answer
 
     monkeypatch.setattr(main_window_module.MainWindow, "_prompt_failed_job_cleanup", prompt)
@@ -87,7 +87,7 @@ def test_quantum_row_reset_with_cleanup_reruns_as_a_fresh_job(
     if singlepoint is not None:
         assert doc.jobs[singlepoint.id].status == JobStatus.COMPLETED
     controller = window._quantum_corrections_controller
-    assert controller.build_states()[candidate.key].status == "defined"
+    assert controller.build_states()[candidate.key].status == "ready"
     request = controller.configure_request([candidate.key])
     assert request is not None and request.read_only is False
     window.close()

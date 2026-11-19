@@ -390,9 +390,9 @@ from scratch dressed as a warm start.
 
 **Failed imports.** The "already blocked" reasoning above holds only for
 ``COMPLETED``. A ``FAILED`` job is visible in the Job Dashboard with Resubmit,
-Reset and Dismiss actions. One dismissal makes the row's effective status read
-"ready", after which the ordinary submit cycle resets the job to ``DEFINED`` and
-launches a real local calculation in the imported directory. Worse, the reset
+Reset and Dismiss actions, and its row reads ``failed``, which the ordinary
+submit cycle accepts: it resets the job to ``DEFINED`` and launches a real local
+calculation in the imported directory. Worse, the reset
 cleanup keeps only ``.cell`` and ``.param`` and recursively removes
 subdirectories — destroying the byte-exact ``.castep``, the relaxed output cell,
 **and the entire archive of original inputs**. Resubmit, reset, and directory
@@ -847,8 +847,8 @@ Phasing
    lookup through its definition row, because every guard that must respect it
    already holds the job and may not hold the row. The reset guard sits inside
    the shared reset core, not only at its call sites: that core is reached both
-   from the dashboard Reset action and from the lazy reset a dismissed row
-   performs on resubmit, and its cleanup is irreversible.
+   from the dashboard Reset action and from the lazy reset a workflow row
+   performs when it resubmits an ended job, and its cleanup is irreversible.
 
    Read-only rendering reuses the widget's existing lock predicates rather than
    adding parallel checks, so an imported row locks exactly where a queued row
@@ -980,7 +980,7 @@ Verification checklist
   a batch parameter edit.
 - The imported flag survives a reconfigure: change an unrelated native row,
   re-register the definition, and confirm imported rows are still gated.
-- An imported job cannot be dismissed and then resubmitted, and no reset path
+- An imported job cannot be resubmitted from its row, and no reset path
   can delete its ``.castep``, relaxed output cell, or archive. Assert the files
   still exist afterwards. (The importer never creates ``FAILED`` jobs, but the
   gates key on the ``imported`` tag and hold for any status.)

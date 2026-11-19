@@ -100,7 +100,11 @@ from mufinder.app.workflow_parameters import (
     merge_species_options,
     workflow_basic_parameter_names,
 )
-from mufinder.app.workflow_submission import effective_row_status, workflow_row_state_is_ready
+from mufinder.app.workflow_submission import (
+    effective_row_status,
+    workflow_row_state_is_ready,
+    workflow_row_state_is_unsubmitted,
+)
 
 _CONFIG_KEYWORD_NAMES = workflow_basic_parameter_names()
 _DEFAULT_ELEC_ENERGY_TOL = ValueWithUnit(1e-9, "eV")
@@ -273,7 +277,7 @@ class HyperfineCouplingController(WorkflowJobController):
             )
             advanced_names.update(row_advanced_names)
         read_only = any(
-            not workflow_row_state_is_ready(states, candidate.key) for candidate in candidates
+            not workflow_row_state_is_unsubmitted(states, candidate.key) for candidate in candidates
         )
         locked_reason = (
             locked_configuration_reason(

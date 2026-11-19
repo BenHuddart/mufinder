@@ -30,6 +30,7 @@ from mufinder.castep_setup import CastepSetup
 from mufinder.domain.cluster import ClusterConfig
 from mufinder.domain.enums import EndReason, JobActivity, JobStatus, WorkflowStage
 from tests.support.dashboard import more_button, open_more_menu
+from tests.support.jobs import make_job
 from mufinder.domain.models import CalculationRun, Job, MuonSite, Structure
 from mufinder.services.job_file_cleanup import JobFileCleanup
 from mufinder.services.project_service import ProjectService
@@ -65,7 +66,7 @@ def test_main_window_reset_failed_jobs_can_clean_output_directory(
     (output_dir / f"{job.label}.param").write_text("param", encoding="utf-8")
     (output_dir / "stale.err").write_text("old failure", encoding="utf-8")
 
-    monkeypatch.setattr(window, "_prompt_failed_job_cleanup", lambda _count: True)
+    monkeypatch.setattr(window, "_prompt_failed_job_cleanup", lambda _jobs: True)
 
     window._reset_failed_jobs([job])
 
@@ -122,7 +123,7 @@ def test_main_window_reset_failed_jobs_accepts_cancelled_jobs(
     job.error_message = "stopped"
     window._document = doc
 
-    monkeypatch.setattr(window, "_prompt_failed_job_cleanup", lambda _count: False)
+    monkeypatch.setattr(window, "_prompt_failed_job_cleanup", lambda _jobs: False)
 
     window._reset_failed_jobs([job])
 
@@ -148,7 +149,7 @@ def test_main_window_reset_failed_jobs_cancelled_by_user(
     job.error_message = "boom"
     window._document = doc
 
-    monkeypatch.setattr(window, "_prompt_failed_job_cleanup", lambda _count: None)
+    monkeypatch.setattr(window, "_prompt_failed_job_cleanup", lambda _jobs: None)
 
     window._reset_failed_jobs([job])
 
@@ -177,7 +178,7 @@ def test_main_window_reset_failed_jobs_warns_when_cleanup_fails(
     output_dir.mkdir(parents=True, exist_ok=True)
     (output_dir / "stale.log").write_text("stale", encoding="utf-8")
 
-    monkeypatch.setattr(window, "_prompt_failed_job_cleanup", lambda _count: True)
+    monkeypatch.setattr(window, "_prompt_failed_job_cleanup", lambda _jobs: True)
     monkeypatch.setattr(
         window._job_file_cleanup,
         "clear_directory_contents",
@@ -313,8 +314,9 @@ def test_main_window_prompt_failed_job_cleanup_choices(
 ) -> None:
     window = main_window
 
+    jobs = [make_job("a", status="failed"), make_job("b", status="failed")]
     # The stub answers with the default: reset and keep the files.
-    assert window._prompt_failed_job_cleanup(2) is False
+    assert window._prompt_failed_job_cleanup(jobs) is False
     (prompt,) = answered_choices
     assert prompt["choices"] == [
         ("clean", "Clean and reset"),
@@ -323,11 +325,36 @@ def test_main_window_prompt_failed_job_cleanup_choices(
     ]
     assert (prompt["default"], prompt["escape"]) == ("keep", "cancel")
 
+    assert "Check now" not in prompt["detail"]
+
     monkeypatch.setattr(workflow_table_utils, "confirm_choice", lambda *_a, **_k: "clean")
-    assert window._prompt_failed_job_cleanup(2) is True
+    assert window._prompt_failed_job_cleanup(jobs) is True
 
     monkeypatch.setattr(workflow_table_utils, "confirm_choice", lambda *_a, **_k: "cancel")
-    assert window._prompt_failed_job_cleanup(2) is None
+    assert window._prompt_failed_job_cleanup(jobs) is None
+
+
+def test_reset_prompt_warns_when_output_may_still_be_on_the_cluster(
+    main_window, answered_choices
+) -> None:
+    """Resetting, from a row's Submit or from Reset, does not retrieve the output first."""
+
+    window = main_window
+    lost = make_job(
+        "lost",
+        status=JobStatus.ENDED,
+        end_reason=EndReason.INTERRUPTED,
+        execution_target="scarf",
+        remote_directory="/work/lost",
+    )
+
+    window._prompt_failed_job_cleanup([lost])
+
+    (prompt,) = answered_choices
+    assert prompt["detail"].startswith(
+        "Its output may still be on scarf and has not been retrieved. Resetting does not "
+        "retrieve it; use Check now first to keep the result."
+    )
     window.close()
 
 
@@ -620,18 +647,17 @@ def test_dismissed_pristine_relaxation_job_row_is_resubmittable(
     status_column = window._pristine_relaxation_view._STATUS_COLUMN
     assert window._pristine_relaxation_view._table.item(0, status_column).text() == "failed"
 
-    # Dismissing from the dashboard removes the job's only generic controls...
+    # Dismissing only hides the dashboard row: the workflow row still says what happened.
     window._on_dismiss_from_dashboard([job.id])
     window._refresh_ui_after_project_change()
 
-    # ...so the workflow row becomes the recovery path.
-    assert window._pristine_relaxation_view._table.item(0, status_column).text() == "ready"
+    assert window._pristine_relaxation_view._table.item(0, status_column).text() == "failed"
 
     submitted: list[list[Job]] = []
     monkeypatch.setattr(
         window, "_submit_jobs_locally", lambda jobs, **_kwargs: submitted.append(list(jobs))
     )
-    monkeypatch.setattr(window, "_prompt_failed_job_cleanup", lambda _count: False)
+    monkeypatch.setattr(window, "_prompt_failed_job_cleanup", lambda _jobs: False)
 
     window._pristine_relaxation_controller.submit(["row_1"], target="local")
 
@@ -690,16 +716,17 @@ def test_dismissed_convergence_cutoff_job_row_is_resubmittable(
     window._on_dismiss_from_dashboard([job.id])
     window._refresh_ui_after_project_change()
 
-    assert window._convergence_view._table.item(0, status_column).text() == "ready"
+    assert window._convergence_view._table.item(0, status_column).text() == "failed"
     # The cutoff panel's Submit actions are gated on the projected row status,
-    # so they become available again for the dismissed row.
-    assert not workflow_table_utils.workflow_row_is_locked(window._convergence_view._row_status(0))
+    # which accepts a row whose job ended; its inputs stay locked until a reset.
+    assert window._convergence_view._row_status(0) in READY_WORKFLOW_ROW_STATUSES
+    assert workflow_table_utils.workflow_row_is_locked(window._convergence_view._row_status(0))
 
     submitted: list[list[Job]] = []
     monkeypatch.setattr(
         window, "_submit_jobs_locally", lambda jobs, **_kwargs: submitted.append(list(jobs))
     )
-    monkeypatch.setattr(window, "_prompt_failed_job_cleanup", lambda _count: False)
+    monkeypatch.setattr(window, "_prompt_failed_job_cleanup", lambda _jobs: False)
 
     window._convergence_controller.submit([300.0], target="local")
 
@@ -757,7 +784,7 @@ def test_dismissed_row_submit_aborts_when_cleanup_prompt_cancelled(
     monkeypatch.setattr(
         window, "_submit_jobs_locally", lambda jobs, **_kwargs: submitted.append(list(jobs))
     )
-    monkeypatch.setattr(window, "_prompt_failed_job_cleanup", lambda _count: None)
+    monkeypatch.setattr(window, "_prompt_failed_job_cleanup", lambda _jobs: None)
 
     window._convergence_controller.submit([300.0], target="local")
 
@@ -767,13 +794,13 @@ def test_dismissed_row_submit_aborts_when_cleanup_prompt_cancelled(
     window.close()
 
 
-def test_non_dismissed_failed_row_keeps_failed_status_and_is_not_reset(
+def test_non_dismissed_failed_row_is_resubmitted_from_its_workflow_row(
     main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A failed job that was never dismissed keeps its current behavior.
+    """A failed job that was never dismissed is resubmitted from its row like any other.
 
-    Its recovery path is still the dashboard Resubmit/Reset controls, which are
-    still on screen because the row was never filtered out.
+    The row reads ``failed``; Submit asks the reset question once, resets the
+    job and submits it.
     """
 
     window = main_window
@@ -816,22 +843,21 @@ def test_non_dismissed_failed_row_keeps_failed_status_and_is_not_reset(
         == "failed"
     )
 
-    prompted: list[int] = []
+    prompted: list[list[Job]] = []
     monkeypatch.setattr(
-        window, "_prompt_failed_job_cleanup", lambda count: prompted.append(count) or False
+        window, "_prompt_failed_job_cleanup", lambda jobs: prompted.append(list(jobs)) or False
     )
-    infos: list[tuple[str, str]] = []
+    submitted: list[list[Job]] = []
     monkeypatch.setattr(
-        main_window_module.QMessageBox,
-        "information",
-        lambda *args, **_kwargs: infos.append((args[1], args[2])),
+        window, "_submit_jobs_locally", lambda jobs, **_kwargs: submitted.append(list(jobs))
     )
 
     window._convergence_controller.submit([300.0], target="local")
 
-    assert prompted == []
-    assert job_status_word(job) == "failed"
-    assert job.dismissed_at is None
+    assert prompted == [[job]]
+    assert [[j.id for j in jobs] for jobs in submitted] == [[job.id]]
+    assert job.status is JobStatus.DEFINED
+    assert len(doc.jobs) == 1
     window.close()
 
 
@@ -880,7 +906,7 @@ def test_dismissed_row_submit_regenerates_job_inputs(
     monkeypatch.setattr(
         window, "_submit_jobs_locally", lambda jobs, **_kwargs: submitted.append(list(jobs))
     )
-    monkeypatch.setattr(window, "_prompt_failed_job_cleanup", lambda _count: False)
+    monkeypatch.setattr(window, "_prompt_failed_job_cleanup", lambda _jobs: False)
 
     window._pristine_relaxation_controller.submit(["row_1"], target="local")
 
@@ -981,7 +1007,7 @@ def test_main_window_reset_refreshes_the_lazily_created_workflow_views(
     monkeypatch.setattr(
         window, "_refresh_quantum_corrections_view", lambda: refreshed.append("quantum")
     )
-    monkeypatch.setattr(window, "_prompt_failed_job_cleanup", lambda _count: False)
+    monkeypatch.setattr(window, "_prompt_failed_job_cleanup", lambda _jobs: False)
 
     window._reset_failed_jobs([job])
 
@@ -1048,7 +1074,7 @@ def test_main_window_row_reset_clears_the_displayed_status_for_a_bound_job(
     assert view._row_status(0) in workflow_table_utils.RESETTABLE_ROW_STATUSES
 
     # Decline the output cleanup so this asserts the state change alone.
-    monkeypatch.setattr(window, "_prompt_failed_job_cleanup", lambda _count: False)
+    monkeypatch.setattr(window, "_prompt_failed_job_cleanup", lambda _jobs: False)
 
     window._pristine_relaxation_view.reset_failed_requested.emit(["row_1"])
 
@@ -1288,9 +1314,8 @@ def test_continue_relaxation_pristine_cluster_dismissed_failed_row_end_to_end(
     job.error_message = "previous castep failure"
     job.dismissed_at = datetime.now(UTC)
     window._refresh_ui_after_project_change()
-    assert (
-        window._pristine_relaxation_view._row_status(0) == "ready"
-    )  # dismissed -> displays "ready"
+    # Dismissal does not change what the row says.
+    assert window._pristine_relaxation_view._row_status(0) == "failed"
 
     fake_continue_dialog.result_to_return = ({"geom_max_iter": 500}, ())
     submit_calls = _wire_fake_cluster_submission(window, monkeypatch, cluster_name="alpha")
@@ -1300,7 +1325,7 @@ def test_continue_relaxation_pristine_cluster_dismissed_failed_row_end_to_end(
         "_prompt_failed_job_cleanup",
         lambda count: (
             cleanup_prompted.append(count)
-            or pytest.fail("Continue must never trigger the dismissed-job cleanup prompt")
+            or pytest.fail("Continue must never trigger the reset cleanup prompt")
         ),
     )
 
@@ -2256,4 +2281,19 @@ def test_main_window_start_again_skips_a_job_whose_output_cannot_be_cleared(
     assert recorded["deleted"] == []
     assert job_status_word(job) == "stopped"
     assert "relax_d: could not clear its previous output (file in use)" in warnings[0]
+    window.close()
+
+
+def test_reset_prompt_names_jobs_that_did_not_finish(main_window, answered_choices) -> None:
+    window = main_window
+
+    window._prompt_failed_job_cleanup([make_job("c", status="cancelled")])
+    window._prompt_failed_job_cleanup(
+        [make_job("a", status="failed"), make_job("b", status="stopped")]
+    )
+
+    assert [(prompt["title"], prompt["text"]) for prompt in answered_choices] == [
+        ("Reset jobs", "Reset 1 job that did not finish so it is ready to run again?"),
+        ("Reset jobs", "Reset 2 jobs that did not finish so they are ready to run again?"),
+    ]
     window.close()

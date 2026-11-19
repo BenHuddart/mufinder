@@ -16,39 +16,30 @@ _WorkflowKey = TypeVar("_WorkflowKey")
 #: This is the single source of truth shared by the submit predicate
 #: (:func:`workflow_row_state_is_ready`) and by widget-level submit-enablement
 #: gates, so run-button enablement and the submit filter cannot drift apart.
-READY_WORKFLOW_ROW_STATUSES = frozenset({"ready", "defined", "not generated"})
+#: A row whose job ended (``failed``, ``stopped``, ``cancelled``) is
+#: submittable: the shared submit cycle resets the job to ``defined`` first.
+#: Only :data:`UNSUBMITTED_WORKFLOW_ROW_STATUSES` rows are configurable, so an
+#: ended row's inputs stay those its job ran with until it is reset.
+UNSUBMITTED_WORKFLOW_ROW_STATUSES = frozenset({"ready", "defined", "not generated"})
+READY_WORKFLOW_ROW_STATUSES = UNSUBMITTED_WORKFLOW_ROW_STATUSES | {
+    "failed",
+    "stopped",
+    "cancelled",
+}
 _READY_WORKFLOW_ROW_STATUSES = READY_WORKFLOW_ROW_STATUSES
-
-
-def job_is_resubmittable_after_dismissal(job: Job | None) -> bool:
-    """Return whether ``job`` is a dismissed ended job awaiting a reset.
-
-    Dismissing an ended job from the jobs dashboard removes its row — and with
-    it the only generic Reset/Resubmit controls — so dismissal is read as
-    "failure acknowledged, this row is actionable again". Such a job stays
-    ended (dismissal is not a state change)
-    but has been acknowledged by the user, so its workflow row becomes
-    submittable again and the shared controller submit cycle resets the job back
-    to ``defined`` before dispatching it.
-    """
-
-    if job is None:
-        return False
-    return job.status == JobStatus.ENDED and job.dismissed_at is not None
 
 
 def effective_row_status(job: Job | None, *, ready_status: str = "ready") -> str:
     """Project ``job`` onto the status string its workflow table row shows.
 
-    This is the **only** place the dismissed-terminal rule lives: a dismissed
-    failed/stopped/cancelled job reads as ``ready_status`` so its row can be
-    submitted again, while every other job (including a *non*-dismissed failed
-    one, whose recovery path is still the dashboard Resubmit/Reset controls)
-    reads as its status word (:func:`~mufinder.services.job_monitoring.job_status_word`). A ``None`` job also reads as ``ready_status``
-    — a row with no job has nothing to run yet.
+    A row with no job, or whose job is ``defined`` (staged or reset, never
+    run), reads ``ready_status``: either way it is ready to run. Every other
+    row reads its job's status word
+    (:func:`~mufinder.services.job_monitoring.job_status_word`), from the job's
+    state alone. Dismissing a job from the Job Dashboard does not change it.
     """
 
-    if job is None or job_is_resubmittable_after_dismissal(job):
+    if job is None or job.status == JobStatus.DEFINED:
         return ready_status
     return job_status_word(job)
 
@@ -75,6 +66,15 @@ def workflow_row_state_is_ready(
     """Return whether a workflow row can be materialized and submitted."""
 
     return str(getattr(states.get(key), "status", "")) in _READY_WORKFLOW_ROW_STATUSES
+
+
+def workflow_row_state_is_unsubmitted(
+    states: Mapping[_WorkflowKey, object],
+    key: _WorkflowKey,
+) -> bool:
+    """Return whether a workflow row has no submitted job, so its configuration can change."""
+
+    return str(getattr(states.get(key), "status", "")) in UNSUBMITTED_WORKFLOW_ROW_STATUSES
 
 
 class WorkflowSubmissionCoordinator:
