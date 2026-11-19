@@ -9,7 +9,9 @@ from mufinder.domain.models import PROJECT_SCHEMA_VERSION, Project
 from mufinder.persistence.migrations import (
     RETIRED_UI_STATE_KEYS,
     UI_STATE_KEY,
+    _job_states_collapse_to_four,
     drop_retired_ui_state_keys,
+    legacy_job_state,
     migrate_project_payloads,
     stored_schema_version,
 )
@@ -421,3 +423,120 @@ def test_dropping_retired_keys_leaves_a_malformed_ui_state_alone() -> None:
     # state.json can hold any JSON value; only a mapping has keys to drop.
     assert drop_retired_ui_state_keys(None) == set()  # type: ignore[arg-type]
     assert drop_retired_ui_state_keys(["default_cut_off_energy"]) == set()  # type: ignore[arg-type]
+
+
+_FAILURE_REASONS = (
+    "walltime",
+    "out_of_memory",
+    "node_failure",
+    "castep_error",
+    "output_unavailable",
+    "interrupted",
+    "submission",
+)
+
+
+@pytest.mark.parametrize(
+    ("status", "failure_reason", "expected"),
+    [
+        ("defined", None, ("defined", None, None)),
+        ("defined", "walltime", ("defined", None, None)),
+        ("submitting", None, ("active", "submitting", None)),
+        ("queued", None, ("active", "queued", None)),
+        ("running", None, ("active", "running", None)),
+        ("retrieving", None, ("active", "retrieving", None)),
+        ("completed", None, ("completed", None, None)),
+        ("completed", "castep_error", ("completed", None, None)),
+        *[("stopped", reason, ("ended", None, reason)) for reason in _FAILURE_REASONS],
+        ("stopped", None, ("ended", None, "unknown")),
+        ("stopped", "solar_flare", ("ended", None, "unknown")),
+        *[("failed", reason, ("ended", None, reason)) for reason in _FAILURE_REASONS],
+        ("failed", None, ("ended", None, "unknown")),
+        ("failed", "solar_flare", ("ended", None, "unknown")),
+        ("cancelled", None, ("ended", None, "cancelled")),
+        ("cancelled", "walltime", ("ended", None, "cancelled")),
+    ],
+)
+def test_each_schema_6_job_status_and_reason_has_one_schema_7_state(
+    status, failure_reason, expected
+) -> None:
+    new_status, activity, end_reason = expected
+
+    assert legacy_job_state(status, failure_reason) == {
+        "status": new_status,
+        "activity": activity,
+        "end_reason": end_reason,
+    }
+
+
+@pytest.mark.parametrize("status", ["active", "ended", "paused", None])
+def test_a_status_schema_6_did_not_store_has_no_legacy_state(status) -> None:
+    assert legacy_job_state(status) is None
+
+
+def test_schema_6_job_payloads_store_four_states_and_drop_failure_reason() -> None:
+    stopped = {
+        "id": "job-1",
+        "status": "stopped",
+        "failure_reason": "walltime",
+        "error_message": "Walltime reached.",
+        "dismissed_at": "2026-11-01T00:00:00+00:00",
+    }
+    running = {"id": "job-2", "status": "running", "failure_reason": None}
+    entities = {"jobs": [stopped, running]}
+
+    changed = _job_states_collapse_to_four(entities, {})
+
+    assert changed == {("jobs", "job-1"), ("jobs", "job-2")}
+    assert stopped == {
+        "id": "job-1",
+        "status": "ended",
+        "activity": None,
+        "end_reason": "walltime",
+        "error_message": "Walltime reached.",
+        "dismissed_at": "2026-11-01T00:00:00+00:00",
+    }
+    assert running == {"id": "job-2", "status": "active", "activity": "running", "end_reason": None}
+
+
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    [
+        ("defined", "defined"),
+        ("submitting", "active"),
+        ("queued", "active"),
+        ("running", "active"),
+        ("retrieving", "active"),
+        ("completed", "completed"),
+        ("stopped", "ended"),
+        ("failed", "ended"),
+        ("cancelled", "ended"),
+    ],
+)
+def test_schema_6_run_payloads_store_only_the_new_status(status, expected) -> None:
+    run = {"id": "run-1", "job_id": "job-1", "status": status, "result_id": None}
+    entities = {"runs": [run]}
+
+    changed = _job_states_collapse_to_four(entities, {})
+
+    assert changed == {("runs", "run-1")}
+    assert run == {"id": "run-1", "job_id": "job-1", "status": expected, "result_id": None}
+
+
+def test_schema_6_run_without_a_status_is_left_alone() -> None:
+    # It loads as defined at any schema.
+    run = {"id": "run-1"}
+
+    assert _job_states_collapse_to_four({"runs": [run]}, {}) == set()
+    assert run == {"id": "run-1"}
+
+
+def test_job_and_run_payloads_with_an_unknown_status_are_left_alone() -> None:
+    job = {"id": "job-1", "status": "paused", "failure_reason": "walltime"}
+    run = {"id": "run-1", "status": "paused"}
+
+    changed = _job_states_collapse_to_four({"jobs": [job], "runs": [run]}, {})
+
+    assert changed == set()
+    assert job == {"id": "job-1", "status": "paused", "failure_reason": "walltime"}
+    assert run == {"id": "run-1", "status": "paused"}

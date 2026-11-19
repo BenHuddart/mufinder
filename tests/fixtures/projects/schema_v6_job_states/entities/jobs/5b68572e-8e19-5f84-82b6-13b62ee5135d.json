@@ -1,0 +1,22 @@
+{
+  "calc_type": "castep_singlepoint",
+  "completed_at": null,
+  "created_at": "2026-11-01T09:01:00+00:00",
+  "dismissed_at": null,
+  "error_message": null,
+  "execution_target": "scarf",
+  "failure_reason": null,
+  "id": "5b68572e-8e19-5f84-82b6-13b62ee5135d",
+  "label": "submitting",
+  "last_checked_at": null,
+  "last_status_message": null,
+  "last_status_source": null,
+  "num_processes": 4,
+  "remote_directory": "/home/user/mufinder/submitting",
+  "remote_job_id": "1001",
+  "started_at": "2026-11-01T09:01:00+00:00",
+  "status": "submitting",
+  "submitted_at": "2026-11-01T09:01:00+00:00",
+  "tags": [],
+  "workflow_stage": "convergence_cutoff"
+}

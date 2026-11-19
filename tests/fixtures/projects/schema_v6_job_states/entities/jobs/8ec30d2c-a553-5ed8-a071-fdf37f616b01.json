@@ -1,0 +1,22 @@
+{
+  "calc_type": "castep_singlepoint",
+  "completed_at": "2026-11-01T09:08:00+00:00",
+  "created_at": "2026-11-01T09:07:00+00:00",
+  "dismissed_at": null,
+  "error_message": "stopped_out_of_memory message",
+  "execution_target": "scarf",
+  "failure_reason": "out_of_memory",
+  "id": "8ec30d2c-a553-5ed8-a071-fdf37f616b01",
+  "label": "stopped_out_of_memory",
+  "last_checked_at": null,
+  "last_status_message": null,
+  "last_status_source": null,
+  "num_processes": 4,
+  "remote_directory": "/home/user/mufinder/stopped_out_of_memory",
+  "remote_job_id": "1007",
+  "started_at": "2026-11-01T09:07:00+00:00",
+  "status": "stopped",
+  "submitted_at": "2026-11-01T09:07:00+00:00",
+  "tags": [],
+  "workflow_stage": "convergence_cutoff"
+}

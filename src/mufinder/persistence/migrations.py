@@ -336,6 +336,75 @@ def _relaxed_structure_spins_are_read_from_job_files(
     return set()
 
 
+#: Stored job statuses of schema 6 and below that became ``active``; each names the job's activity.
+_ACTIVE_STATUSES = frozenset({"submitting", "queued", "running", "retrieving"})
+#: Schema 6 ``failure_reason`` values; each is kept as the ``end_reason`` of an ended job.
+_FAILURE_REASONS = frozenset(
+    {
+        "walltime",
+        "out_of_memory",
+        "node_failure",
+        "castep_error",
+        "output_unavailable",
+        "interrupted",
+        "submission",
+    }
+)
+
+
+def legacy_job_state(status: object, failure_reason: object = None) -> dict[str, str | None] | None:
+    """Return the schema 7 state of a job stored at schema 6 with ``status`` and ``failure_reason``.
+
+    The result holds ``status`` (``defined``, ``active``, ``completed`` or
+    ``ended``), ``activity`` (the old status of an active job, else ``None``)
+    and ``end_reason`` (else ``None``). A stopped or failed job keeps its
+    failure reason; one with none, or with a value schema 6 did not know, ended
+    for an ``unknown`` reason. A cancelled job ended because it was
+    ``cancelled``. ``None`` means ``status`` is not a schema 6 status, and the
+    job is left as it is.
+    """
+
+    if status in {"defined", "completed"}:
+        return {"status": str(status), "activity": None, "end_reason": None}
+    if status in _ACTIVE_STATUSES:
+        return {"status": "active", "activity": str(status), "end_reason": None}
+    if status == "cancelled":
+        return {"status": "ended", "activity": None, "end_reason": "cancelled"}
+    if status in {"stopped", "failed"}:
+        reason = failure_reason if failure_reason in _FAILURE_REASONS else "unknown"
+        return {"status": "ended", "activity": None, "end_reason": str(reason)}
+    return None
+
+
+def _job_states_collapse_to_four(
+    entities: EntityPayloads, ui_state: dict[str, Any]
+) -> set[EntityKey]:
+    """Schema 6 to 7: a job stores one of four states, with its activity or end reason.
+
+    Schema 6 stored nine job statuses and a ``failure_reason``. Each job
+    payload's ``status``, ``activity`` and ``end_reason`` are set by
+    :func:`legacy_job_state` and ``failure_reason`` is removed. A run stores
+    no activity or reason, so only its ``status`` is rewritten. A payload with
+    no status, or one schema 6 did not know, is left as it is.
+    """
+
+    changed: set[EntityKey] = set()
+    for payload in entities.get("jobs", []):
+        state = legacy_job_state(payload.get("status"), payload.get("failure_reason"))
+        if state is None:
+            continue
+        payload.pop("failure_reason", None)
+        payload.update(state)
+        changed.add(("jobs", str(payload.get("id"))))
+    for payload in entities.get("runs", []):
+        state = legacy_job_state(payload.get("status"))
+        if state is None:
+            continue
+        payload["status"] = state["status"]
+        changed.add(("runs", str(payload.get("id"))))
+    return changed
+
+
 _MIGRATIONS: dict[int, MigrationStep] = {
     1: _sweep_values_replace_cutoff_energies,
     2: _site_positions_split_initial_and_relaxed,

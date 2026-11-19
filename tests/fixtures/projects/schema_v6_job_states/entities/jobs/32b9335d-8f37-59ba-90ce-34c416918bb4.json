@@ -1,0 +1,22 @@
+{
+  "calc_type": "castep_singlepoint",
+  "completed_at": "2026-11-01T09:12:00+00:00",
+  "created_at": "2026-11-01T09:11:00+00:00",
+  "dismissed_at": null,
+  "error_message": "stopped_interrupted message",
+  "execution_target": "scarf",
+  "failure_reason": "interrupted",
+  "id": "32b9335d-8f37-59ba-90ce-34c416918bb4",
+  "label": "stopped_interrupted",
+  "last_checked_at": null,
+  "last_status_message": null,
+  "last_status_source": null,
+  "num_processes": 4,
+  "remote_directory": "/home/user/mufinder/stopped_interrupted",
+  "remote_job_id": "1011",
+  "started_at": "2026-11-01T09:11:00+00:00",
+  "status": "stopped",
+  "submitted_at": "2026-11-01T09:11:00+00:00",
+  "tags": [],
+  "workflow_stage": "convergence_cutoff"
+}
