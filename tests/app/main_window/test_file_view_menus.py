@@ -454,7 +454,7 @@ def test_a_failed_quiet_save_keeps_the_window_open_and_the_next_close_asks(
     assert window.isVisible()
     assert answered_choices == []
     assert messages == [("Save blocked", str(OSError(28, "No space left on device")))]
-    assert window._job_watchdog_timer.isActive()
+    assert window._job_check_timer.isActive()
 
     # The way out of a folder that stays unwritable: the next close offers Don't save.
     monkeypatch.setattr(

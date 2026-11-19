@@ -15,7 +15,7 @@ from typing import Any
 from uuid import UUID
 
 from mufinder.domain.charge_states import muon_relaxation_charge_state
-from mufinder.domain.enums import ACTIVE_JOB_STATUSES, FailureReason, JobStatus, WorkflowStage
+from mufinder.domain.enums import FailureReason, JobStatus, WorkflowStage
 from mufinder.domain.magnetic_properties import propagation_vector_from_structure
 from mufinder.domain.models import (
     CalculationDefinition,
@@ -164,13 +164,6 @@ CONTINUABLE_JOB_STATUSES = frozenset(
         JobStatus.STOPPED,
         JobStatus.CANCELLED,
     }
-)
-
-#: Message stamped on a local job that was still in progress when MuFinder was
-#: closed and is reconciled to STOPPED on the next project open. See
-#: ``ProjectService.reconcile_orphaned_local_jobs`` and docs/job_lifecycle.rst.
-ORPHANED_LOCAL_JOB_STOP_MESSAGE = (
-    "MuFinder was closed while this job was in progress locally; reset or resubmit it."
 )
 
 
@@ -1969,67 +1962,6 @@ class ProjectService:
         if job.dismissed_at is not None:
             raise ValueError("Only failed, stopped, or cancelled jobs can be dismissed.")
         job.dismissed_at = utc_now()
-
-    def reconcile_orphaned_local_jobs(self, document: ProjectDocument) -> list[Job]:
-        """Stop local jobs left mid-flight when MuFinder closed.
-
-        A local job left in an active state (submitting/queued/running/
-        retrieving) when the app exits has no live process behind it on the next
-        launch, yet the dashboard would keep showing it as running. Cluster jobs
-        are re-attached separately (see
-        ``MainWindow._sync_cluster_tracking_from_document``) and are left
-        untouched here.
-
-        Selection matches the local semantics pinned by the cluster
-        reattachment characterization tests: an ``execution_target`` that is
-        blank/empty or equals ``"local"`` (case-insensitively). Each selected
-        job is moved to STOPPED with ``ORPHANED_LOCAL_JOB_STOP_MESSAGE`` and its
-        latest non-terminal run is closed out to keep run/job status consistent.
-        A ``job_stopped`` provenance milestone is recorded per job.
-
-        :param document: Loaded project document to reconcile in place.
-        :returns: The jobs that were stopped, for the caller's status message.
-        """
-
-        reconciled: list[Job] = []
-        for job in document.jobs.values():
-            if job.status not in ACTIVE_JOB_STATUSES:
-                continue
-            target = (job.execution_target or "").strip()
-            if target and target.casefold() != "local":
-                continue
-
-            self.stop_job(job, ORPHANED_LOCAL_JOB_STOP_MESSAGE, reason=FailureReason.INTERRUPTED)
-            # Monitor metadata is bookkeeping, not a status transition: record
-            # that reconciliation was the last observer of this job.
-            job.last_checked_at = utc_now()
-            job.last_status_source = "reconciliation"
-            job.last_status_message = ORPHANED_LOCAL_JOB_STOP_MESSAGE
-            self._close_orphaned_run_for_job(document, job)
-            self.record_job_terminal_event(
-                document,
-                action="job_stopped",
-                job=job,
-                error_message=job.error_message,
-            )
-            reconciled.append(job)
-
-        return reconciled
-
-    @staticmethod
-    def _close_orphaned_run_for_job(document: ProjectDocument, job: Job) -> None:
-        """Mark the job's latest in-flight run as stopped, mirroring walltime stops."""
-
-        active_runs = [
-            run
-            for run in document.runs.values()
-            if run.job_id == job.id and run.status in ACTIVE_JOB_STATUSES
-        ]
-        if not active_runs:
-            return
-        run = max(active_runs, key=lambda run: run.run_index)
-        run.status = JobStatus.STOPPED
-        run.completed_at = utc_now()
 
     def generate_candidate_sites(
         self,

@@ -1,9 +1,10 @@
-"""Tests for the cluster tracked-id mirror that feeds the job watchdog (REC #7).
+"""The cluster tracked-id mirror, and the main window's once-a-minute job check.
 
 The ``ClusterController`` maintains a GUI-thread mirror of the runner's active
-tracked-job ids (``tracked_active_job_ids``). These tests exercise how that
-mirror is maintained from the signals and calls the controller already sees,
-using the same fake-runner/worker-thread harness as ``test_cluster_controller``.
+tracked-job ids (``tracked_active_job_ids``). The first half exercises how that
+mirror is maintained, using the same fake-runner/worker-thread harness as
+``test_cluster_controller``. The second half drives the job check that stops a
+local job no process is running.
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ from PySide6.QtCore import QObject, Signal
 from mufinder.app import cluster_controller
 from mufinder.app.cluster_controller import ClusterController
 from mufinder.app.main_window import MainWindow
-from mufinder.domain.enums import JobStatus, WorkflowStage
+from mufinder.domain.enums import FailureReason, JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationRun
 from mufinder.services.project_service import ProjectService
 from tests.support.qt import pump_until
@@ -159,7 +160,7 @@ def test_mirror_survives_disconnect(controller) -> None:
 
 
 # ----------------------------------------------------------------------------
-# MainWindow handler wiring (timer -> snapshots -> evaluate -> stop_stuck_job)
+# MainWindow handler wiring (timer -> local runner snapshot -> reconcile)
 # ----------------------------------------------------------------------------
 def _running_local_job(window: MainWindow, service: ProjectService, document) -> object:
     job = service.add_job(
@@ -178,7 +179,7 @@ def _running_local_job(window: MainWindow, service: ProjectService, document) ->
     return job
 
 
-def test_watchdog_handler_stops_confirmed_stuck_local_job(main_window, tmp_path: Path) -> None:
+def test_job_check_stops_a_local_job_with_no_process(main_window, tmp_path: Path) -> None:
     window = main_window
     service = ProjectService()
     document = service.create_project(tmp_path / "watchdog_wiring.mufinder", "Watchdog Wiring")
@@ -186,25 +187,39 @@ def test_watchdog_handler_stops_confirmed_stuck_local_job(main_window, tmp_path:
     window._refresh_ui_after_project_change()
 
     job = _running_local_job(window, service, document)
-    # No local runner entry and no cluster tracking: the job is genuinely stuck.
+    # The local runner holds no process for it and its folder has no output.
 
-    # First tick: two-tick gate means nothing is stopped yet.
-    window._on_job_watchdog_tick()
-    assert document.jobs[job.id].status == JobStatus.RUNNING
+    window._on_job_check_tick()
 
-    # Second consecutive tick: confirmed and stopped.
-    window._on_job_watchdog_tick()
     stopped = document.jobs[job.id]
     assert stopped.status == JobStatus.STOPPED
-    assert stopped.last_status_source == "watchdog"
+    assert stopped.failure_reason == FailureReason.INTERRUPTED
+    assert stopped.last_status_source == "reconciliation"
     assert stopped.last_status_message
     # The active run was closed out and unmapped, mirroring the walltime-stop path.
     assert job.id not in window._active_run_by_job
     stopped_runs = [run for run in document.runs.values() if run.job_id == job.id]
     assert stopped_runs and all(run.status == JobStatus.STOPPED for run in stopped_runs)
+    assert "1 local job was stopped" in window.statusBar().currentMessage()
 
 
-def test_watchdog_handler_noop_without_active_jobs(main_window, tmp_path: Path) -> None:
+def test_job_check_leaves_a_local_job_the_runner_holds(
+    main_window, tmp_path: Path, monkeypatch
+) -> None:
+    window = main_window
+    service = ProjectService()
+    document = service.create_project(tmp_path / "watchdog_held.mufinder", "Watchdog Held")
+    window._document = document
+    window._refresh_ui_after_project_change()
+    job = _running_local_job(window, service, document)
+    monkeypatch.setattr(window._local_runner, "active_job_ids", lambda: frozenset({job.id}))
+
+    window._on_job_check_tick()
+
+    assert document.jobs[job.id].status == JobStatus.RUNNING
+
+
+def test_job_check_noop_without_active_jobs(main_window, tmp_path: Path) -> None:
     window = main_window
     service = ProjectService()
     document = service.create_project(tmp_path / "watchdog_empty.mufinder", "Watchdog Empty")
@@ -212,13 +227,11 @@ def test_watchdog_handler_noop_without_active_jobs(main_window, tmp_path: Path) 
     window._refresh_ui_after_project_change()
 
     # No active jobs: the handler returns early and does not raise.
-    window._on_job_watchdog_tick()
-    window._on_job_watchdog_tick()
+    window._on_job_check_tick()
+    window._on_job_check_tick()
 
 
-def test_watchdog_handler_leaves_an_untracked_cluster_job_active(
-    main_window, tmp_path: Path
-) -> None:
+def test_job_check_leaves_an_untracked_cluster_job_active(main_window, tmp_path: Path) -> None:
     # The cluster is connected and nothing tracks the job. It may be queued,
     # running or finished there, so MuFinder does not end it.
     window = main_window
@@ -238,8 +251,8 @@ def test_watchdog_handler_leaves_an_untracked_cluster_job_active(
     window._cluster_runner._connected = True
     window._cluster_runner._connected_cluster_name = "SCARF"
 
-    window._on_job_watchdog_tick()
-    window._on_job_watchdog_tick()
+    window._on_job_check_tick()
+    window._on_job_check_tick()
 
     assert document.jobs[job.id].status == JobStatus.RUNNING
     assert document.jobs[job.id].failure_reason is None

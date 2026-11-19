@@ -19,10 +19,10 @@ from pathlib import Path
 from mufinder.app.main_window import MainWindow
 from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationRun
-from mufinder.services.project_service import (
-    ORPHANED_LOCAL_JOB_STOP_MESSAGE,
-    ProjectService,
-)
+from mufinder.services.job_execution_controller import JobExecutionController
+from mufinder.services.job_reconcile import NO_LOCAL_PROCESS_MESSAGE
+from mufinder.services.local_runner import LocalJobRunner
+from mufinder.services.project_service import ProjectService
 from mufinder.services.project_summary import muon_relaxation_job_for_row
 
 
@@ -79,7 +79,7 @@ def test_open_project_stops_orphaned_local_job_and_shows_message(
 
     # Local job reconciled to STOPPED with the exact message; its run closed.
     assert local_job.status == JobStatus.STOPPED
-    assert local_job.error_message == ORPHANED_LOCAL_JOB_STOP_MESSAGE
+    assert local_job.error_message == NO_LOCAL_PROCESS_MESSAGE
     latest_run = next(r for r in document.runs.values() if r.job_id == local_id)
     assert latest_run.status == JobStatus.STOPPED
 
@@ -116,7 +116,7 @@ def test_reopen_does_not_re_reconcile_already_stopped_job(qapp, tmp_path, monkey
 
     # Reopen the same project; the stopped job must not be reconciled again.
     assert window._open_project_from_path(root) is True
-    assert window._reconciled_orphaned_local_jobs == []
+    assert window.statusBar().currentMessage() == "Opened project Orphan"
     assert window._document.jobs[local_id].status == JobStatus.STOPPED
     stopped_records = [
         record
@@ -209,8 +209,15 @@ def test_stopped_local_muon_job_stays_linked_and_resettable(qapp, tmp_path, monk
     service.save_project(document)
 
     reloaded = service.load_project(root)
-    reconciled = service.reconcile_orphaned_local_jobs(reloaded)
-    assert [j.id for j in reconciled] == [job.id]
+    controller = JobExecutionController(
+        document_getter=lambda: reloaded,
+        project_service=service,
+        local_runner=LocalJobRunner(),
+        cluster_runner=None,
+        job_output_directory=lambda _job: None,
+        job_seed_name=lambda job: job.label,
+    )
+    assert [update.job.id for update in controller.check_local_jobs()] == [job.id]
 
     reloaded_definition = reloaded.calculations[definition.id]
     resolved = muon_relaxation_job_for_row(reloaded, reloaded_definition, "Site 1", "positive_muon")
@@ -244,6 +251,36 @@ def test_open_project_without_orphans_shows_opened_message(qapp, tmp_path, monke
 
     message = window.statusBar().currentMessage()
     assert message == "Opened project Clean"
-    assert window._reconciled_orphaned_local_jobs == []
+
+    window.close()
+
+
+def test_open_project_completes_a_local_job_whose_output_is_complete(
+    qapp, tmp_path, monkeypatch
+) -> None:
+    # MuFinder closed while the job ran, and CASTEP went on to finish.
+    root, local_id, _ = _seed_project_with_jobs(tmp_path)
+    output_dir = tmp_path / "out" / "local_running"
+    output_dir.mkdir(parents=True)
+    fixture = Path(__file__).parents[1] / "fixtures" / "uep" / "Si2.castep"
+    (output_dir / "local_running.castep").write_bytes(fixture.read_bytes())
+
+    window = MainWindow()
+    monkeypatch.setattr(window._cluster_runner, "track_existing_job", lambda **kwargs: None)
+    monkeypatch.setattr(window, "_job_output_directory", lambda job: tmp_path / "out" / job.label)
+    monkeypatch.setattr(window, "_job_seed_name", lambda job: job.label)
+    # The execution controller holds its own references to the two lookups.
+    monkeypatch.setattr(
+        window._job_execution, "_job_output_directory", lambda job: tmp_path / "out" / job.label
+    )
+    monkeypatch.setattr(window._job_execution, "_job_seed_name", lambda job: job.label)
+
+    assert window._open_project_from_path(root) is True
+
+    job = window._document.jobs[local_id]
+    assert job.status == JobStatus.COMPLETED
+    run = next(r for r in window._document.runs.values() if r.job_id == local_id)
+    assert run.status == JobStatus.COMPLETED
+    assert window._document.results[run.result_id].data["completed"] is True
 
     window.close()

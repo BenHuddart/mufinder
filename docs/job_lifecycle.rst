@@ -62,9 +62,8 @@ status guard instead; both are described below.
 - ``stop_job`` moves an active job (``submitting``, ``queued``, ``running``, or
   ``retrieving``) to ``stopped`` and records a message and an optional
   ``failure_reason`` (see :ref:`job-failure-reasons`). The ``submitting`` and
-  ``queued`` source edges exist so orphaned local jobs left mid-submission when
-  MuFinder closed can be reconciled on the next project open (see
-  ``reconcile_orphaned_local_jobs`` below).
+  ``queued`` source edges exist so a local job left mid-submission when
+  MuFinder closed can be stopped (see :ref:`local-job-check`).
 - ``fail_job`` moves an in-flight job to ``failed`` and records a message and
   an optional ``failure_reason``.
 - ``cancel_job`` moves a cancellable job to ``cancelled`` and clears
@@ -368,9 +367,9 @@ bookkeeping (never a status transition), with a fixed source vocabulary:
 ``"scheduler_poll"`` (queue-poll observations via ``mark_queue_checked``),
 ``"retrieval"`` (cluster output retrieval outcomes), ``"local_runner"``
 (local lifecycle events such as "queued locally", "process started",
-"process completed", "process failed"), ``"reconciliation"`` (orphaned
-local-job reconciliation on project open), ``"watchdog"`` (active-job
-watchdog stops), and ``"user"`` (dashboard retry-retrieval requests). A job
+"process completed", "process failed"), ``"reconciliation"`` (the local job check
+stopping a job no process is running), and ``"user"`` (dashboard
+retry-retrieval requests). A job
 resumed because the scheduler lists it again is stamped ``"scheduler_poll"``. The
 shared completion/failure paths infer the source from the job's execution
 target; explicit ``source=`` / ``status_message=`` keyword overrides are
@@ -1000,50 +999,43 @@ active cluster jobs that have enough metadata to poll with the cluster runner:
 non-local execution target, active status, remote job id, remote directory or an
 inferable remote directory, and a local output directory.
 
-Active-job watchdog
-~~~~~~~~~~~~~~~~~~~
+.. _local-job-check:
 
-Orphaned-local reconciliation (safeguard 1) only covers the app-restart
-case. A running session can still leave a local job active with nothing
-executing it: a ``QProcess`` that died without a finish event, or a queue
-entry that never reached the runner. A once-a-minute watchdog closes this gap.
+Local job check
+~~~~~~~~~~~~~~~
 
-The detection core, ``mufinder.services.job_watchdog.detect_stuck_jobs``, is a
-pure, Qt-free function. Given the project's jobs plus the local runner's
-introspection snapshots, it flags:
+A local job is reported on by the local runner, which holds its process. A job
+the runner holds no process for has nothing left to report on it: MuFinder was
+closed while it ran, or its process ended without a finish event.
 
-- a local ``queued`` job absent from both the local runner's pending and
-  active id sets;
-- a local ``running`` job absent from the local runner's active id set;
-- a local ``submitting`` job older than a 120-second grace period (by
-  ``submitted_at``; skipped when ``submitted_at`` is ``None``) and absent from
-  the pending and active id sets.
+``JobExecutionController.check_local_jobs`` looks at every active local job
+(an ``execution_target`` that is blank or ``"local"``, case-insensitively). For
+each one ``services.job_evidence.local_job_evidence`` reads the local runner's
+``pending_job_ids()`` and ``active_job_ids()``, and, only when the runner holds
+no process for the job, its output folder: ``<seed>_farm001.castep`` when a
+task-farmed run wrote one, otherwise ``<seed>.castep``. A file last written
+before the job's ``submitted_at`` belongs to an earlier run in the same folder
+and counts as no output. The evidence goes to ``reconcile`` (see
+:ref:`job-reconcile`) through ``JobExecutionController.apply_evidence``:
 
-Cluster jobs are never flagged. For a local job, the absence of a process is
-evidence that it ended. A cluster job that the cluster runner does not hold may
-still be queued, running or finished on the cluster, so it stays active and the
-dashboard marks it as not monitored instead (safeguard 3).
+- A job the runner holds keeps its status.
+- A job with no process and complete output is returned as ``finished``. The
+  main window records its result through the same completion path as a job the
+  runner reported, and the job becomes ``completed``.
+- Any other job with no process is stopped through ``ProjectService.stop_job``
+  with ``FailureReason.INTERRUPTED`` and the message *"MuFinder has no local
+  process for this job: it was closed while the job ran, or the process ended
+  without reporting. Reset or resubmit it."* Its latest run, if still active,
+  is closed as ``stopped``, a ``job_stopped`` journal event is recorded, and
+  the monitor metadata is stamped with ``last_status_source =
+  "reconciliation"``. The stopped row stays visible and can be reset or
+  resubmitted like a walltime stop.
 
-Runner introspection is exposed by ``LocalJobRunner.active_job_ids()`` /
-``pending_job_ids()``.
-
-To ride out an in-flight runner signal that has not yet reached the document, a
-finding is acted on only when it is confirmed in **two consecutive**
-evaluations (``StuckJobWatchdog``). A confirmed finding is applied by
-``JobExecutionController.stop_stuck_job``, which routes the transition through
-``ProjectService.stop_job`` (the single authority for the ``-> stopped`` edge),
-closes out the job's active ``CalculationRun``, records a ``job_stopped``
-journal event, and stamps the monitor bookkeeping fields
-(``last_checked_at``, ``last_status_source = "watchdog"``,
-``last_status_message``). Stopped rows remain visible and resettable, exactly
-like a walltime stop.
-
-``MainWindow`` owns the 60-second ``QTimer`` (services must not create widgets)
-and a single handler that snapshots the local runner, runs the watchdog, applies
-``stop_stuck_job`` per confirmed finding, requests a coalesced dashboard flush,
-and shows *"N job(s) were stopped by the job watchdog because no runner was
-tracking them."* when any were stopped. The handler is cheap when no jobs are
-active.
+The check runs when a project is opened, before the jobs table is drawn, so a
+job with no process is never shown as running, and once a minute from a timer
+the main window owns. The status bar reports how many jobs were stopped. Cluster
+jobs are not part of this check: a cluster job with no process on this machine
+may still be queued, running or finished on the cluster.
 
 .. _job-reconcile:
 
@@ -1086,7 +1078,7 @@ scheduler state alone, whether the job's output folder is to be read: never
 while the job is listed as pending or running or the scheduler was not heard
 from, and after a cancellation or with no scheduler job ID only on request.
 
-A local job in an active state:
+A local job in an active state (applied by the :ref:`local-job-check`):
 
 .. list-table::
    :header-rows: 1
@@ -1156,33 +1148,14 @@ as it is. ``defined`` and ``completed`` jobs are never changed.
 Stuck-job safeguards
 --------------------
 
-Nine safeguards together ensure that no failure mode leaves a job in the
+Eight safeguards together ensure that no failure mode leaves a job in the
 dashboard indefinitely. Each entry records the behavior and where it lives.
 
-1. Orphaned local-job reconciliation on project open.
-   A local job left ``submitting``, ``queued``, ``running``, or ``retrieving``
-   when MuFinder closes has no live process behind it on the next launch, yet
-   would otherwise show as running forever. On every project open/switch,
-   ``ProjectService.reconcile_orphaned_local_jobs`` selects active jobs whose
-   ``execution_target`` is blank/empty or ``"local"`` (case-insensitively),
-   moves each to ``stopped`` with the message *"MuFinder was closed while this
-   job was in progress locally; reset or resubmit it."*, and closes out the
-   job's latest non-terminal ``CalculationRun`` (``stopped`` with a
-   ``completed_at`` stamp) to keep run and job status consistent. A
-   ``job_stopped`` provenance milestone is recorded per reconciled job. The
-   stopped rows remain visible and resettable, and the reset/resubmit action
-   is unchanged. Reconciliation runs from ``MainWindow`` while the UI is being
-   refreshed for the new project, before the jobs table is rendered, so the
-   user never sees a phantom running row, and opening a project surfaces a
-   status-bar message such as *"N local job(s) were stopped because
-   MuFinder closed while they were in progress."* when any jobs are reconciled.
-
-   Cluster jobs are deliberately left untouched by this path: they re-attach to
-   the cluster runner instead through the project-open re-tracking described
-   above (which re-registers active cluster jobs, including ``submitting``, that
-   still carry a remote job id and directory). Cluster jobs that lack enough metadata to re-register —
-   missing remote id, remote directory, cluster config, or local output
-   directory — stay active and are surfaced by the staleness marker
+1. Local jobs with no process.
+   An active local job that the local runner holds no process for is completed
+   from complete output and stopped otherwise, on project open and once a
+   minute. See :ref:`local-job-check`. Cluster jobs are left to the queue poll;
+   one that cannot be polled stays active and carries the staleness marker
    (safeguards 2–3).
 
 2. Persist monitor metadata and last-observed status.
@@ -1190,7 +1163,7 @@ dashboard indefinitely. Each entry records the behavior and where it lives.
    ``last_status_message`` (optional, ``None``-defaulted, persisted through the
    codec and cleared by ``reset_failed_job``). They are stamped from queue
    polls (``JobExecutionController.mark_queue_checked``), retrieval outcomes,
-   local-runner lifecycle events, project-open reconciliation, watchdog stops,
+   local-runner lifecycle events, the local job check,
    and user retry requests, with the fixed source vocabulary described under
    "Execution orchestration". The dashboard's ``Status`` tooltip renders the
    age with the source and observation.
@@ -1239,15 +1212,7 @@ dashboard indefinitely. Each entry records the behavior and where it lives.
    event. A late ``finished`` event for that job is a no-op. Other
    ``ProcessError`` values keep the store-and-wait behaviour.
 
-7. Add an active-job watchdog.
-   A once-a-minute watchdog (``mufinder.services.job_watchdog``) detects
-   active local jobs with no process behind them — ``queued``/``running``/
-   ``submitting`` local jobs missing from the local runner's pending/active
-   sets — and, after two-tick confirmation, stops them via ``JobExecutionController.stop_stuck_job``
-   (through ``ProjectService.stop_job``) with a diagnostic message and
-   ``last_status_source = "watchdog"``. See "Active-job watchdog" above.
-
-8. Separate terminal history from the active dashboard.
+7. Separate terminal history from the active dashboard.
    A ``Dismiss`` action stamps ``dismissed_at`` on a failed/stopped/cancelled
    job so the dashboard filters the row out, while keeping the job record,
    runs, results, and provenance intact (a ``job_dismissed`` milestone is
@@ -1255,13 +1220,13 @@ dashboard indefinitely. Each entry records the behavior and where it lives.
    ``reset_failed_job``, which the job's workflow row triggers on its next
    submit (see :ref:`dismissed-rows-stay-resubmittable`).
 
-9. Tests around stuck-row prevention.
-   Project-open reconciliation, poll-failure inertness, the missing-entry
-   grace window, the accounting fallback and reappearance recovery, ``QProcess`` startup failure, watchdog detection and wiring,
+8. Tests around stuck-row prevention.
+   The local job check, poll-failure inertness, the missing-entry
+   grace window, the accounting fallback and reappearance recovery, ``QProcess`` startup failure,
    retry-retrieval run bookkeeping, and dismissal visibility are all pinned by
    tests beside the existing ``JobExecutionController``, ``LocalJobRunner``,
    ``ClusterJobRunner``, and main-window action suites (see
-   ``tests/services/test_job_watchdog.py``,
+   ``tests/services/test_job_reconcile.py``, ``tests/services/test_job_evidence.py``,
    ``tests/services/test_retry_retrieval.py``,
    ``tests/services/test_job_dismissal.py``, and
    ``tests/app/test_dashboard_monitoring_columns.py``).

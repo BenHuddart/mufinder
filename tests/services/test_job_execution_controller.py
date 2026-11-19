@@ -20,11 +20,22 @@ from mufinder.services.job_execution_controller import (
     remember_local_cores,
     remembered_local_cores,
 )
+from mufinder.services.job_reconcile import NO_LOCAL_PROCESS_MESSAGE
 from mufinder.services.project_service import ProjectDocument, ProjectService
 from tests.support.jobs import make_job
 
 
 class FakeLocalRunner:
+    #: Jobs the fake holds a queue entry or a process for.
+    pending: frozenset = frozenset()
+    active: frozenset = frozenset()
+
+    def pending_job_ids(self) -> frozenset:
+        return self.pending
+
+    def active_job_ids(self) -> frozenset:
+        return self.active
+
     def __init__(self, *, raise_on_submit: Exception | None = None) -> None:
         self.max_concurrent = 1
         self.submitted: list[dict[str, object]] = []
@@ -1096,12 +1107,12 @@ def test_fail_job_stamp_accepts_explicit_source_override(tmp_path: Path) -> None
 
     controller.fail_job(
         job.id,
-        "watchdog detected an impossible state",
-        source="watchdog",
+        "detected an impossible state",
+        source="user",
         status_message="impossible state detected",
     )
 
-    assert job.last_status_source == "watchdog"
+    assert job.last_status_source == "user"
     assert job.last_status_message == "impossible state detected"
 
 
@@ -1508,3 +1519,122 @@ def test_local_cores_are_remembered_in_the_project_ui_state() -> None:
 @pytest.mark.parametrize("saved", [0, -2, "8", 2.5, True, None])
 def test_remembered_local_cores_ignores_a_saved_value_that_is_not_a_core_count(saved) -> None:
     assert remembered_local_cores({LOCAL_SUBMISSION_CORES_KEY: saved}) is None
+
+
+# --- Local jobs checked against the runner and their output folder -------------
+
+_COMPLETE_OUTPUT = Path(__file__).parents[1] / "fixtures" / "uep" / "Si2.castep"
+
+
+def _active_local_job(service, document, label: str, status: JobStatus):
+    job = make_job(label, service=service, document=document, execution_target="local")
+    service.submit_job(job)
+    if status in {JobStatus.QUEUED, JobStatus.RUNNING}:
+        service.mark_job_queued(job)
+    if status == JobStatus.RUNNING:
+        service.start_job(job)
+    run = CalculationRun(job_id=job.id, run_index=1, status=status)
+    document.runs[run.id] = run
+    return job, run
+
+
+@pytest.mark.parametrize("status", [JobStatus.SUBMITTING, JobStatus.QUEUED, JobStatus.RUNNING])
+def test_local_job_with_no_process_and_no_output_is_stopped(tmp_path: Path, status) -> None:
+    service, document = _document(tmp_path)
+    controller = _controller(document=document, service=service, output_dir=tmp_path)
+    job, run = _active_local_job(service, document, "orphan", status)
+    controller.active_run_by_job[job.id] = run.id
+
+    updates = controller.check_local_jobs()
+
+    assert [update.job for update in updates] == [job]
+    assert updates[0].changed and updates[0].journal_changed
+    assert job.status == JobStatus.STOPPED
+    assert job.failure_reason == FailureReason.INTERRUPTED
+    assert job.error_message == NO_LOCAL_PROCESS_MESSAGE
+    assert job.last_status_source == "reconciliation"
+    assert job.last_checked_at is not None
+    assert run.status == JobStatus.STOPPED and run.completed_at is not None
+    assert job.id not in controller.active_run_by_job
+    assert [record.action for record in document.provenance][-1] == "job_stopped"
+
+
+def test_local_job_the_runner_holds_is_left_alone(tmp_path: Path) -> None:
+    service, document = _document(tmp_path)
+    runner = FakeLocalRunner()
+    controller = _controller(
+        document=document, service=service, local_runner=runner, output_dir=tmp_path
+    )
+    running, _ = _active_local_job(service, document, "running", JobStatus.RUNNING)
+    queued, _ = _active_local_job(service, document, "queued", JobStatus.QUEUED)
+    runner.active = frozenset({running.id})
+    runner.pending = frozenset({queued.id})
+
+    assert controller.check_local_jobs() == []
+    assert (running.status, queued.status) == (JobStatus.RUNNING, JobStatus.QUEUED)
+
+
+def test_local_job_with_no_process_and_complete_output_is_reported_finished(
+    tmp_path: Path,
+) -> None:
+    service, document = _document(tmp_path)
+    controller = _controller(document=document, service=service, output_dir=tmp_path)
+    job, _ = _active_local_job(service, document, "finished", JobStatus.RUNNING)
+    (tmp_path / "finished.castep").write_bytes(_COMPLETE_OUTPUT.read_bytes())
+
+    updates = controller.check_local_jobs()
+
+    assert len(updates) == 1
+    assert updates[0].finished is not None and updates[0].finished.parsed.completed
+    # The caller records the result and completes the job.
+    assert not updates[0].changed
+    assert job.status == JobStatus.RUNNING
+
+
+def test_local_check_leaves_cluster_and_inactive_jobs_alone(tmp_path: Path) -> None:
+    service, document = _document(tmp_path)
+    controller = _controller(document=document, service=service, output_dir=tmp_path)
+    cluster = _cluster_running_job(service, document, "on-cluster")
+    done = make_job("done", service=service, document=document, execution_target="local")
+    done.status = JobStatus.COMPLETED
+    failed = make_job("failed", service=service, document=document, execution_target="local")
+    failed.status = JobStatus.FAILED
+
+    assert controller.check_local_jobs() == []
+    assert (cluster.status, done.status, failed.status) == (
+        JobStatus.RUNNING,
+        JobStatus.COMPLETED,
+        JobStatus.FAILED,
+    )
+
+
+@pytest.mark.parametrize("target", ["", "  ", "LOCAL"])
+def test_local_check_treats_a_blank_or_any_case_local_target_as_local(
+    tmp_path: Path, target: str
+) -> None:
+    service, document = _document(tmp_path)
+    controller = _controller(document=document, service=service, output_dir=tmp_path)
+    job, _ = _active_local_job(service, document, "orphan", JobStatus.RUNNING)
+    job.execution_target = target
+
+    controller.check_local_jobs()
+
+    assert job.status == JobStatus.STOPPED
+
+
+def test_stopping_a_local_job_does_not_reopen_a_run_that_already_ended(tmp_path: Path) -> None:
+    service, document = _document(tmp_path)
+    controller = _controller(document=document, service=service, output_dir=tmp_path)
+    job, run = _active_local_job(service, document, "orphan", JobStatus.RUNNING)
+    run.status = JobStatus.COMPLETED
+
+    controller.check_local_jobs()
+
+    assert job.status == JobStatus.STOPPED
+    assert run.status == JobStatus.COMPLETED and run.completed_at is None
+
+
+def test_local_check_without_a_document_does_nothing(tmp_path: Path) -> None:
+    controller = _controller(document=None, service=ProjectService(), output_dir=tmp_path)
+
+    assert controller.check_local_jobs() == []

@@ -836,7 +836,7 @@ def test_failed_save_on_close_keeps_the_window_open_and_asks_again(
     assert len(answered_choices) == 1
     # The window stays usable: nothing it runs was left stopped by the close.
     assert window._shutting_down is False
-    assert window._job_watchdog_timer.isActive()
+    assert window._job_check_timer.isActive()
     assert window._dashboard_flush_pending is False
     assert window.statusBar().currentMessage() == "Job finished, but autosave failed"
 
@@ -942,23 +942,23 @@ def test_cancelled_close_survives_a_failed_autosave(
     assert window.close() is True
 
 
-def test_cancelled_close_restarts_the_job_watchdog(
+def test_cancelled_close_restarts_the_job_check(
     visible_project_window: MainWindow, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     window = visible_project_window
     monkeypatch.setattr(
         main_window_module.workflow_table_utils, "confirm_choice", lambda *_a, **_k: "cancel"
     )
-    assert window._job_watchdog_timer.isActive()
+    assert window._job_check_timer.isActive()
 
     assert window.close() is False
 
-    assert window._job_watchdog_timer.isActive()
+    assert window._job_check_timer.isActive()
     monkeypatch.setattr(
         main_window_module.workflow_table_utils, "confirm_choice", lambda *_a, **_k: "discard"
     )
     assert window.close() is True
-    assert not window._job_watchdog_timer.isActive()
+    assert not window._job_check_timer.isActive()
 
 
 @pytest.mark.parametrize(

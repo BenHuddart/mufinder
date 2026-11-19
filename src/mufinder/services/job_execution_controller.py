@@ -20,9 +20,12 @@ from mufinder.services.failure_diagnosis import (
     failure_reason_summary,
     find_failure_log_files,
 )
-from mufinder.services.job_artifacts import RetrievalFlags
+from mufinder.castep_io.output_parser import CastepResult
+from mufinder.services.job_artifacts import ParsedJobArtifacts, RetrievalFlags
+from mufinder.services.job_evidence import local_job_evidence
 from mufinder.services.job_findings import record_job_finding
 from mufinder.services.job_monitoring import is_cluster_job
+from mufinder.services.job_reconcile import Decision, JobEvidence, reconcile
 from mufinder.services.project_service import ProjectDocument, ProjectService
 
 LOGGER = logging.getLogger(__name__)
@@ -142,12 +145,28 @@ class PreparedClusterSubmission:
 
 
 @dataclass(frozen=True, slots=True)
+class FinishedOutput:
+    """Complete CASTEP output found for a job whose result is still to be recorded.
+
+    ``artifacts`` is ``None`` when the secondary outputs have not been parsed yet.
+    """
+
+    parsed: CastepResult
+    artifacts: ParsedJobArtifacts | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class LifecycleUpdate:
-    """Result of a runner lifecycle notification."""
+    """Result of a runner lifecycle notification or of applying evidence.
+
+    ``finished`` is set when the evidence shows complete output: the job has
+    not changed yet, and the caller records the result and completes it.
+    """
 
     job: Job | None = None
     changed: bool = False
     journal_changed: bool = False
+    finished: FinishedOutput | None = None
 
 
 class JobExecutionController:
@@ -878,40 +897,89 @@ class JobExecutionController:
         job.last_status_source = source
         job.last_status_message = message
 
-    def stop_stuck_job(self, job_id: UUID, message: str) -> LifecycleUpdate:
-        """Stop an active job the watchdog found untracked by any runner.
+    def check_local_jobs(self) -> list[LifecycleUpdate]:
+        """Reconcile every active local job with the local runner and its output folder.
 
-        Routes the transition through ``ProjectService.stop_job`` (the single
-        authority for the ``-> stopped`` edge), closes out the job's active run
-        the same way the walltime-stop and failure paths do, records a
-        ``job_stopped`` journal event, and stamps the watchdog bookkeeping fields
-        (``last_checked_at``/``last_status_source``/``last_status_message``).
+        A local job the runner holds no process for has nothing left to report
+        on it: complete output finishes it, and anything else stops it. Returns
+        the updates that changed a job or found finished output.
+        """
+
+        document = self._document_getter()
+        if document is None:
+            return []
+        active = [
+            job
+            for job in document.jobs.values()
+            if job.status in ACTIVE_JOB_STATUSES and not is_cluster_job(job)
+        ]
+        if not active:
+            return []
+        pending_ids = self._local_runner.pending_job_ids()
+        active_ids = self._local_runner.active_job_ids()
+        now = utc_now()
+        updates: list[LifecycleUpdate] = []
+        for job in active:
+            evidence = local_job_evidence(
+                job,
+                pending_ids=pending_ids,
+                active_ids=active_ids,
+                output_dir=self._job_output_directory(job),
+                seed_name=self._job_seed_name(job),
+                now=now,
+            )
+            update = self.apply_evidence(job.id, evidence)
+            if update.changed or update.finished is not None:
+                updates.append(update)
+        return updates
+
+    def apply_evidence(self, job_id: UUID, evidence: JobEvidence) -> LifecycleUpdate:
+        """Apply the state :func:`~mufinder.services.job_reconcile.reconcile` gives ``evidence``.
+
+        Every transition goes through the ``ProjectService`` primitives, with
+        the job's run, journal and monitor stamps kept in step. Complete output
+        is returned as ``finished`` instead of completing the job, because the
+        caller builds the result first.
         """
 
         job = self._job_for_id(job_id)
         if job is None:
             return LifecycleUpdate()
-        if job.status not in {
-            JobStatus.SUBMITTING,
-            JobStatus.QUEUED,
-            JobStatus.RUNNING,
-            JobStatus.RETRIEVING,
-        }:
+        decision = reconcile(job, evidence)
+        if decision is None or decision.status == job.status:
             return LifecycleUpdate(job=job)
+        if decision.status == JobStatus.COMPLETED:
+            if evidence.parsed is None:
+                return LifecycleUpdate(job=job)
+            return LifecycleUpdate(
+                job=job, finished=FinishedOutput(evidence.parsed, evidence.artifacts)
+            )
+        if decision.status == JobStatus.QUEUED:
+            return self.mark_local_status_changed(job_id, JobStatus.QUEUED.value)
+        if decision.status == JobStatus.RUNNING:
+            return self.mark_started(job_id)
+        if decision.status == JobStatus.STOPPED:
+            return self._stop_job(job, decision)
+        return LifecycleUpdate(job=job)
 
+    def _stop_job(self, job: Job, decision: Decision) -> LifecycleUpdate:
+        """Stop ``job`` as ``decision`` says, closing its run and recording the stop."""
+
+        message = decision.message or ""
         try:
-            self._project_service.stop_job(job, message, reason=FailureReason.INTERRUPTED)
+            self._project_service.stop_job(job, message, reason=decision.failure_reason)
         except ValueError:
             return LifecycleUpdate(job=job)
 
-        self._stamp_monitor_metadata(job, source="watchdog", message=message)
+        self._stamp_monitor_metadata(
+            job, source="reconciliation", message=decision.observation or message
+        )
+        run = self.run_for_job(job.id)
+        if run is not None and run.status not in ACTIVE_JOB_STATUSES:
+            # The job's latest run already ended; it is not this run to close.
+            run = None
         self._close_active_run(
-            job,
-            self.run_for_job(job_id),
-            JobStatus.STOPPED,
-            "job_stopped",
-            error_message=message,
-            mark_started=True,
+            job, run, JobStatus.STOPPED, "job_stopped", error_message=message, mark_started=True
         )
         return LifecycleUpdate(job=job, changed=True, journal_changed=True)
 

@@ -389,8 +389,9 @@ The ``Status`` column shows where each job is:
    A cluster calculation reached its walltime limit before producing a
    successful CASTEP completion marker: the scheduler reported ``TIMEOUT``, or
    the scheduler log downloaded with an incomplete output records a time-limit
-   kill. Local jobs that were still active when MuFinder closed, and jobs
-   MuFinder lost track of, also end up here. Stopped jobs remain in the
+   kill. A local job that was still active when MuFinder closed also ends up
+   here, unless its CASTEP output is complete: then it is completed when the
+   project is opened. So do jobs MuFinder lost track of. Stopped jobs remain in the
    dashboard and can be inspected, resubmitted, or reset.
 
 ``cancelled``

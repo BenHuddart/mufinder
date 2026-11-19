@@ -25,10 +25,8 @@ NOT_MONITORED_REASON = "MuFinder is not monitoring this job"
 def is_cluster_job(job: Job) -> bool:
     """Return True when the job targets a cluster rather than local execution.
 
-    Mirrors the local-job selection used by
-    ``ProjectService.reconcile_orphaned_local_jobs``: a blank/empty
-    ``execution_target`` or the literal ``"local"`` (case-insensitively) means
-    local execution; anything else names a cluster.
+    A blank/empty ``execution_target`` or the literal ``"local"``
+    (case-insensitively) means local execution; anything else names a cluster.
     """
 
     target = (job.execution_target or "").strip()

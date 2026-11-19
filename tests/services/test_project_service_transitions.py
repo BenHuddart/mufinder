@@ -23,7 +23,7 @@ ALLOWED: dict[JobStatus, set[JobStatus]] = {
     JobStatus.DEFINED: {JobStatus.SUBMITTING, JobStatus.CANCELLED},
     # Milestone 6.3: SUBMITTING/QUEUED -> STOPPED added so orphaned local jobs
     # left mid-submission when MuFinder closed can be reconciled to STOPPED on
-    # the next project open (reconcile_orphaned_local_jobs).
+    # the next project open (JobExecutionController.check_local_jobs).
     JobStatus.SUBMITTING: {
         JobStatus.QUEUED,
         JobStatus.RUNNING,
