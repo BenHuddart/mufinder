@@ -523,12 +523,12 @@ def test_schema_6_run_payloads_store_only_the_new_status(status, expected) -> No
     assert run == {"id": "run-1", "job_id": "job-1", "status": expected, "result_id": None}
 
 
-def test_schema_6_run_without_a_status_is_stored_as_defined() -> None:
+def test_schema_6_run_without_a_status_is_left_alone() -> None:
+    # It loads as defined at any schema.
     run = {"id": "run-1"}
 
-    _job_states_collapse_to_four({"runs": [run]}, {})
-
-    assert run == {"id": "run-1", "status": "defined"}
+    assert _job_states_collapse_to_four({"runs": [run]}, {}) == set()
+    assert run == {"id": "run-1"}
 
 
 def test_job_and_run_payloads_with_an_unknown_status_are_left_alone() -> None:

@@ -384,8 +384,8 @@ def _job_states_collapse_to_four(
     Schema 6 stored nine job statuses and a ``failure_reason``. Each job
     payload's ``status``, ``activity`` and ``end_reason`` are set by
     :func:`legacy_job_state` and ``failure_reason`` is removed. A run stores
-    no activity or reason, so only its ``status`` is rewritten. A payload whose
-    status schema 6 did not know is left as it is.
+    no activity or reason, so only its ``status`` is rewritten. A payload with
+    no status, or one schema 6 did not know, is left as it is.
     """
 
     changed: set[EntityKey] = set()
@@ -397,7 +397,7 @@ def _job_states_collapse_to_four(
         payload.update(state)
         changed.add(("jobs", str(payload.get("id"))))
     for payload in entities.get("runs", []):
-        state = legacy_job_state(payload.get("status", "defined"))
+        state = legacy_job_state(payload.get("status"))
         if state is None:
             continue
         payload["status"] = state["status"]
