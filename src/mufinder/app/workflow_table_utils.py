@@ -576,7 +576,8 @@ CONFIGURE_ACTION_TEXT = "Configure…"
 REMOVE_ACTION_TEXT = "Remove"
 EXPORT_RELAXED_STRUCTURE_ACTION_TEXT = "Export Relaxed Structure"
 
-_ACTIVE_ROW_STATUSES = frozenset({"submitting", "queued", "running", "retrieving"})
+#: The status words of an active job; ``active`` is one whose activity is not known.
+_ACTIVE_ROW_STATUSES = frozenset({"active", "submitting", "queued", "running", "retrieving"})
 _INSPECTABLE_ROW_STATUSES = frozenset({"failed", "stopped"})
 
 

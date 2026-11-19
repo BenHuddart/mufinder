@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
 )
 
 from mufinder.app.theme import style_hint_text, style_section_title
-from mufinder.domain.enums import EndReason, JobStatus
+from mufinder.domain.enums import EndReason
 from mufinder.services.cluster_runner import CheckpointProbeStatus
 from mufinder.services.failure_diagnosis import failure_reason_label
 
@@ -58,7 +58,6 @@ class ResubmitCandidate:
     """One relaxation offered the choice, with its probed checkpoint state."""
 
     label: str
-    status: JobStatus
     reason: EndReason | None
     checkpoint: CheckpointProbeStatus
 

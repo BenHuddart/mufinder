@@ -89,7 +89,7 @@ from mufinder.castep_io.gui_metadata import (
     validate_gui_values,
 )
 
-_ACTIVE_JOB_STATUSES = {"submitting", "queued", "running", "retrieving"}
+_ACTIVE_JOB_STATUSES = {"active", "submitting", "queued", "running", "retrieving"}
 _PROGRESSED_JOB_STATUSES = _ACTIVE_JOB_STATUSES | {"stopped", "completed", "failed", "cancelled"}
 _EMPTY_STATUS = "not generated"
 

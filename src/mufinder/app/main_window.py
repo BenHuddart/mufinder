@@ -3735,7 +3735,6 @@ class MainWindow(QMainWindow):
             [
                 ResubmitCandidate(
                     label=job.label,
-                    status=job.status,
                     reason=job.end_reason,
                     checkpoint=probes[job.id].status,
                 )

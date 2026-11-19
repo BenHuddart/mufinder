@@ -7,7 +7,7 @@ from dataclasses import dataclass
 import re
 import shlex
 
-from mufinder.services.job_reconcile import SchedulerState
+from mufinder.services.scheduler_state import SchedulerState
 from mufinder.services.cluster_queues import ProcessPlacement
 
 

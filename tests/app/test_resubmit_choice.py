@@ -33,9 +33,7 @@ def _candidate(
     *,
     checkpoint: CheckpointProbeStatus = FOUND,
 ) -> ResubmitCandidate:
-    return ResubmitCandidate(
-        label="job", status=JobStatus.ENDED, reason=reason, checkpoint=checkpoint
-    )
+    return ResubmitCandidate(label="job", reason=reason, checkpoint=checkpoint)
 
 
 @pytest.mark.parametrize(

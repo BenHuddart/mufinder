@@ -91,6 +91,17 @@ def test_a_job_state_this_build_does_not_know_refuses_to_load(status: object) ->
         project_codec.job_from_dict(payload)
 
 
+def test_a_run_state_this_build_does_not_know_refuses_to_load() -> None:
+    payload = {"id": str(uuid4()), "status": "paused"}
+
+    with pytest.raises(ValueError, match="Calculation run .* has state 'paused'.* newer version"):
+        project_codec.run_from_dict(payload)
+
+
+def test_a_run_saved_without_a_state_loads_as_defined() -> None:
+    assert project_codec.run_from_dict({"id": str(uuid4())}).status == JobStatus.DEFINED
+
+
 @pytest.mark.parametrize(
     ("raw", "expected"), [(4, 4), ("2", 2), (0, None), (-1, None), ("many", None), (None, None)]
 )

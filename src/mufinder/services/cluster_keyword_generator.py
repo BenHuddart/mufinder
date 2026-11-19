@@ -31,7 +31,7 @@ from mufinder.castep_io.keyword_catalog_file import (
     write_keyword_catalog_file,
 )
 from mufinder.domain.cluster import ClusterConfig
-from mufinder.services.job_reconcile import SchedulerState
+from mufinder.services.scheduler_state import SchedulerState
 from mufinder.services.cluster_keyword_scripts import (
     DUMP_COMPLETE_MARKER,
     HELP_END_MARKER,

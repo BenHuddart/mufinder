@@ -25,6 +25,7 @@ from mufinder.domain.models import Job
 from mufinder.services.failure_diagnosis import RETRIEVAL_FAILURE_PREFIX, failure_reason_summary
 from mufinder.services.job_artifacts import ParsedJobArtifacts
 from mufinder.services.job_monitoring import NO_JOB_ID_MARKER, is_cluster_job
+from mufinder.services.scheduler_state import SchedulerState
 
 #: Message of a local job that no process is running and whose output is not complete.
 NO_LOCAL_PROCESS_MESSAGE = (
@@ -59,23 +60,6 @@ class ProcessState(StrEnum):
     RUNNING = "running"
     #: The runner holds no process for the job and reported no outcome for it.
     NONE = "none"
-
-
-class SchedulerState(StrEnum):
-    """What the cluster's queue and accounting say about a job."""
-
-    #: The queue command failed, so the scheduler was not heard from.
-    UNAVAILABLE = "unavailable"
-    #: The job has no scheduler job ID to ask about.
-    NO_JOB_ID = "no_job_id"
-    PENDING = "pending"
-    RUNNING = "running"
-    COMPLETED = "completed"
-    CANCELLED = "cancelled"
-    TIMED_OUT = "timed_out"
-    FAILED = "failed"
-    #: Neither the queue nor accounting lists the job.
-    NOT_LISTED = "not_listed"
 
 
 class OutputState(StrEnum):

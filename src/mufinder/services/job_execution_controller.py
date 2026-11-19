@@ -620,8 +620,10 @@ class JobExecutionController:
         run = self.run_for_job(job_id)
         if run is not None:
             run.warnings = [message]
+        # A cause the logs show as a walltime kill reads "stopped", and is journalled so.
+        event = "job_stopped" if job.end_reason in STOPPED_END_REASONS else "job_failed"
         self._close_active_run(
-            job, run, JobStatus.ENDED, "job_failed", error_message=message, mark_started=True
+            job, run, JobStatus.ENDED, event, error_message=message, mark_started=True
         )
         return LifecycleUpdate(job=job, changed=True, journal_changed=True)
 

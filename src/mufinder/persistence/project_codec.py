@@ -56,16 +56,16 @@ def normalized_xc_functional(value: object) -> str | None:
     return value.strip().upper()
 
 
-def _job_status_from_payload(payload: dict[str, Any]) -> JobStatus:
-    """Parse a persisted job state; one this build does not know cannot be loaded."""
+def _job_status_from_payload(payload: dict[str, Any], *, kind: str = "Job") -> JobStatus:
+    """Parse a persisted job or run state; one this build does not know cannot be loaded."""
 
     value = payload.get("status")
     try:
         return JobStatus(value)
     except ValueError:
         raise ValueError(
-            f"Job {payload.get('label') or payload.get('id')} has state {value!r}, which this "
-            "version of MuFinder does not know. It was probably saved by a newer version."
+            f"{kind} {payload.get('label') or payload.get('id')} has state {value!r}, which "
+            "this version of MuFinder does not know. It was probably saved by a newer version."
         ) from None
 
 
@@ -271,7 +271,9 @@ def run_from_dict(payload: dict[str, Any]) -> CalculationRun:
         definition_id=parse_uuid(payload.get("definition_id")),
         job_id=parse_uuid(payload.get("job_id")),
         run_index=int(payload.get("run_index", 1)),
-        status=JobStatus(payload.get("status", JobStatus.DEFINED.value)),
+        status=_job_status_from_payload(
+            {"status": JobStatus.DEFINED.value, **payload}, kind="Calculation run"
+        ),
         started_at=parse_datetime(payload.get("started_at")),
         completed_at=parse_datetime(payload.get("completed_at")),
         result_id=parse_uuid(payload.get("result_id")),

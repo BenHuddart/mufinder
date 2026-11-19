@@ -846,6 +846,36 @@ def _cluster_running_job(service, document, label: str):
     return job
 
 
+def test_a_failure_the_logs_show_as_a_walltime_kill_is_journalled_as_stopped(
+    tmp_path: Path,
+) -> None:
+    # It reads "stopped" on the dashboard, so the journal says so too.
+    service, document = _document(tmp_path)
+    controller = _controller(document=document, service=service, output_dir=tmp_path)
+    job = _local_running_job(service, document, "timed-out")
+    (tmp_path / "slurm-1.out").write_text(
+        "slurmstepd: error: *** JOB 1 CANCELLED DUE TO TIME LIMIT ***\n", encoding="utf-8"
+    )
+    job.remote_job_id = "1"
+
+    controller.fail_job(job.id, "CASTEP did not report successful completion.")
+
+    assert job.end_reason == EndReason.WALLTIME
+    assert job_status_word(job) == "stopped"
+    assert document.provenance[-1].action == "job_stopped"
+
+
+def test_a_failure_with_no_cause_in_the_logs_is_journalled_as_failed(tmp_path: Path) -> None:
+    service, document = _document(tmp_path)
+    controller = _controller(document=document, service=service, output_dir=tmp_path)
+    job = _local_running_job(service, document, "plain")
+
+    controller.fail_job(job.id, "process exited with code 1")
+
+    assert job.end_reason == EndReason.UNKNOWN
+    assert document.provenance[-1].action == "job_failed"
+
+
 def _local_running_job(service, document, label: str):
     job = make_job(label, service=service, document=document)
     job.execution_target = "local"
