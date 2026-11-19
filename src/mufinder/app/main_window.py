@@ -1198,6 +1198,9 @@ class MainWindow(QMainWindow):
         )
         self._cluster_runner.queue_checked.connect(self._on_cluster_queue_checked)
         self._cluster_runner.poll_failed.connect(self._on_cluster_poll_failed)
+        self._cluster_runner.abandoned_job_cancel_failed.connect(
+            self._on_abandoned_cluster_job_cancel_failed
+        )
 
         self._build_layout()
         self._build_menu()
@@ -5310,8 +5313,9 @@ class MainWindow(QMainWindow):
             nonlocal timed_out
             timed_out = True
             # The unseen jobs are cancelled below, so the worker must not go on
-            # submitting them to the scheduler.
-            self._cluster_runner.cancel_batch()
+            # submitting them, and one it submits after all is cancelled on
+            # the scheduler.
+            self._cluster_runner.abandon_batch()
             loop.quit()
 
         watchdog.timeout.connect(on_watchdog_timeout)
@@ -6724,6 +6728,22 @@ class MainWindow(QMainWindow):
                 "Check VPN/network access, SSH trust, authentication, and scheduler command paths."
             ),
             informative_text="Open Details to inspect the full polling failure.",
+        )
+
+    def _on_abandoned_cluster_job_cancel_failed(
+        self, job_id: object, remote_job_id: str, error: str
+    ) -> None:
+        job = self._document.jobs.get(job_id) if self._document is not None else None
+        label = job.label if job is not None else "A cancelled job"
+        show_detailed_warning(
+            self,
+            "Cluster cancellation failed",
+            (
+                f"{label} was submitted after the cluster stopped responding, and "
+                f"cancelling scheduler job {remote_job_id} failed. Cancel it on the cluster.\n\n"
+                f"{error}"
+            ),
+            informative_text="Open Details to inspect the full cancellation error.",
         )
 
     def _connect_to_cluster_with_trust(

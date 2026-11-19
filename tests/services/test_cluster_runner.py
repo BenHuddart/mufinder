@@ -1528,6 +1528,25 @@ def test_cancel_without_a_scheduler_id_reports_nothing(qapp) -> None:
     assert cancelled == []
 
 
+def test_cancel_scheduler_job_reports_no_job(qapp) -> None:
+    cancelled_remote: list[str] = []
+
+    class _Recording(_FakeScheduler):
+        def cancel(self, _ssh, job_id: str) -> None:
+            cancelled_remote.append(job_id)
+
+    runner, _checked, _snapshots, _failures = _checking_runner(_Recording())
+    cancelled: list[object] = []
+    runner.job_cancelled.connect(cancelled.append)
+
+    runner.cancel_scheduler_job(" 100 ")
+
+    assert cancelled_remote == ["100"]
+    assert cancelled == []
+    with pytest.raises(ConnectionError):
+        ClusterJobRunner().cancel_scheduler_job("100")
+
+
 def test_cancel_requires_a_connection(qapp) -> None:
     with pytest.raises(ConnectionError):
         ClusterJobRunner().cancel(uuid4(), "100")

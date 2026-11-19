@@ -151,6 +151,9 @@ class ClusterController(QObject):
     submit_batch_progress = Signal(int, int, str)  # index, total, job label
     job_submit_finished = Signal(object, object, str)  # job_id, remote_job_id|None, error
     submit_batch_finished = Signal()
+    # job_id, remote_job_id, error: a job submitted after its batch was
+    # abandoned could not be cancelled on the scheduler.
+    abandoned_job_cancel_failed = Signal(object, str, str)
 
     # Internal: a check pass left the worker, however it ended.
     _check_finished = Signal()
@@ -197,6 +200,9 @@ class ClusterController(QObject):
         # Jobs handed to the worker for submission that it has not answered
         # for. Such a job has no scheduler job ID yet, by design.
         self._submitting_job_ids: set[UUID] = set()
+        # Jobs of an abandoned batch the worker has not answered for. One that
+        # answers with a scheduler job ID is cancelled on the scheduler.
+        self._abandoned_job_ids: set[UUID] = set()
 
         # Forward worker signals to the GUI thread. These cross-thread
         # connections are queued automatically.
@@ -243,12 +249,24 @@ class ClusterController(QObject):
         return job_id in self._submitting_job_ids
 
     @Slot(object, object, str)
-    def _on_job_submit_finished(self, job_id: Any, _remote_job_id: Any, _error: str) -> None:
+    def _on_job_submit_finished(self, job_id: Any, remote_job_id: Any, _error: str) -> None:
         self._submitting_job_ids.discard(job_id)
+        if job_id in self._abandoned_job_ids:
+            self._abandoned_job_ids.discard(job_id)
+            if remote_job_id:
+                remote = str(remote_job_id)
+                self._async_task.emit(lambda: self._run_cancel_abandoned(job_id, remote))
+
+    def _run_cancel_abandoned(self, job_id: Any, remote_job_id: str) -> None:
+        try:
+            self._runner.cancel_scheduler_job(remote_job_id)
+        except Exception as exc:  # noqa: BLE001 - reported to the GUI
+            self.abandoned_job_cancel_failed.emit(job_id, remote_job_id, str(exc))
 
     @Slot()
     def _on_submit_batch_finished(self) -> None:
         self._submitting_job_ids.clear()
+        self._abandoned_job_ids.clear()
 
     @Slot()
     def _on_check_finished(self) -> None:
@@ -477,9 +495,24 @@ class ClusterController(QObject):
         self._async_task.emit(lambda: self._run_submit_batch(items))
 
     def cancel_batch(self) -> None:
-        """Request cancellation; checked between jobs by the worker."""
+        """Request cancellation; checked between jobs by the worker.
+
+        The job the worker has in hand finishes submitting and its result is
+        reported as usual.
+        """
 
         self._batch_cancelled = True
+
+    def abandon_batch(self) -> None:
+        """Stop the batch for a caller that no longer waits for its results.
+
+        Cancels like :meth:`cancel_batch`, and a job of the batch whose result
+        has not arrived yet is cancelled on the scheduler if it is submitted
+        after all, since the caller has already recorded it as cancelled.
+        """
+
+        self.cancel_batch()
+        self._abandoned_job_ids.update(self._submitting_job_ids)
 
     def _run_submit_batch(self, items: list[dict[str, Any]]) -> None:
         total = len(items)
