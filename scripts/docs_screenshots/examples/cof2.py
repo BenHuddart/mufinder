@@ -1116,7 +1116,7 @@ def show_running_progress(window: MainWindow) -> QWidget:
     monitor._local_output_paths = lambda job_id: (castep,) if job_id == job.id else ()
     monitor._run_in_background = lambda task: task()
     window._refresh_jobs_table()
-    return window._show_geometry_progress(job)
+    return window._jobs.show_geometry_progress(job)
 
 
 def _open_uep_analysis(window: MainWindow) -> QWidget:

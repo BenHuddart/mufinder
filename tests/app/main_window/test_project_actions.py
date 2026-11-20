@@ -11,6 +11,7 @@ from ase import Atoms
 from ase.io import write as ase_write
 
 import mufinder.app.main_window as main_window_module
+import mufinder.app.jobs_controller as jobs_controller_module
 from mufinder.app import workflow_table_utils
 from mufinder.app.main_window import MainWindow
 from mufinder.castep_setup import CastepSetup
@@ -71,6 +72,7 @@ def test_main_window_recent_projects_tracks_latest_first(
             self._values[key] = value
 
     monkeypatch.setattr(main_window_module, "QSettings", FakeSettings)
+    monkeypatch.setattr(jobs_controller_module, "QSettings", FakeSettings)
 
     service = ProjectService()
     first = service.create_project(tmp_path / "first_recent.mufinder", "FirstRecent")
@@ -241,6 +243,7 @@ def test_open_recent_project_removes_missing_entry(
             self._values[key] = value
 
     monkeypatch.setattr(main_window_module, "QSettings", FakeSettings)
+    monkeypatch.setattr(jobs_controller_module, "QSettings", FakeSettings)
 
     window = MainWindow()
     missing_path = str(tmp_path / "missing_recent.mufinder")
@@ -274,6 +277,7 @@ def test_file_dialogs_use_scoped_last_selected_directory(
             self._values[key] = value
 
     monkeypatch.setattr(main_window_module, "QSettings", FakeSettings)
+    monkeypatch.setattr(jobs_controller_module, "QSettings", FakeSettings)
 
     project_root = tmp_path / "dialog_reuse.mufinder"
     ProjectService().create_project(project_root, "DialogReuse")
@@ -368,7 +372,7 @@ def test_journal_write_does_not_change_active_workflow_view_on_submission(
     window._refresh_ui_after_project_change()
 
     monkeypatch.setattr(
-        main_window_module,
+        jobs_controller_module,
         "load_castep_setup",
         lambda _settings: CastepSetup(executable_path="/usr/bin/castep", mpirun_path=""),
     )
@@ -385,13 +389,13 @@ def test_journal_write_does_not_change_active_workflow_view_on_submission(
         def config(self):
             return SimpleNamespace(num_cores=1, parallel=False, max_concurrent=1)
 
-    monkeypatch.setattr(main_window_module, "LocalSubmissionDialog", _FakeDialog)
+    monkeypatch.setattr(jobs_controller_module, "LocalSubmissionDialog", _FakeDialog)
     monkeypatch.setattr(window._local_runner, "submit", lambda **kwargs: None)
 
     select_route(window, "host_structure")
     assert window._main_stack.currentWidget() is window._host_structure_view
 
-    window._submit_jobs_locally([job])
+    window._jobs.submit_jobs_locally([job])
 
     assert window._main_stack.currentWidget() is window._host_structure_view
     assert window._active_route() == "host_structure"

@@ -70,12 +70,12 @@ def test_stopped_job_can_be_resubmitted_from_the_dashboard(
 
     calls: list[dict] = []
     monkeypatch.setattr(
-        window,
-        "_submit_jobs_on_cluster",
+        window._jobs,
+        "submit_jobs_on_cluster",
         lambda jobs, **kwargs: calls.append({"jobs": jobs, **kwargs}),
     )
 
-    window._on_resubmit_from_dashboard([job.id])
+    window._jobs._on_resubmit_from_dashboard([job.id])
 
     assert len(calls) == 1
     assert calls[0]["jobs"] == [job]
@@ -145,7 +145,7 @@ def test_inspect_leads_with_the_cause_and_its_evidence(
     (output_dir / "slurm-4242.out").write_text(f"noise\n{_SLURM_TIMEOUT}\n", encoding="utf-8")
     dialogs = capture_failed_job_dialogs(monkeypatch)
 
-    window._inspect_failed_jobs([job])
+    window._jobs.inspect_failed_jobs([job])
 
     (report,) = dialogs[0]._reports
     assert report.headline == "The scheduler stopped the job when it reached its walltime limit."
@@ -162,7 +162,7 @@ def test_inspect_headlines_the_recorded_message_when_no_cause_is_found(
     job.error_message = "CASTEP exited with status 1: SCF cycles did not converge"
     dialogs = capture_failed_job_dialogs(monkeypatch)
 
-    window._inspect_failed_jobs([job])
+    window._jobs.inspect_failed_jobs([job])
 
     (report,) = dialogs[0]._reports
     assert report.headline == "CASTEP exited with status 1: SCF cycles did not converge"
@@ -179,7 +179,7 @@ def test_inspect_keeps_a_recorded_cause_the_logs_cannot_show(
     job.end_reason = EndReason.INTERRUPTED
     dialogs = capture_failed_job_dialogs(monkeypatch)
 
-    window._inspect_failed_jobs([job])
+    window._jobs.inspect_failed_jobs([job])
 
     (report,) = dialogs[0]._reports
     assert report.headline == "MuFinder lost track of the job before it finished."

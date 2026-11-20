@@ -17,6 +17,7 @@ from types import SimpleNamespace
 import pytest
 
 import mufinder.app.main_window as main_window_module
+import mufinder.app.jobs_controller as jobs_controller_module
 from mufinder.app.main_window import MainWindow
 from mufinder.domain.enums import EndReason, JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationDefinition
@@ -97,8 +98,8 @@ def test_a_job_in_its_own_directory_is_cleaned(qapp, tmp_path: Path) -> None:
     job = _pristine_job(service, doc, "stopped")
     directory = _job_directory(doc)
 
-    assert window._fresh_start_refusals([job]) == {}
-    cleaned, errors = window._clear_outputs_for_fresh_start([job])
+    assert window._jobs._fresh_start_refusals([job]) == {}
+    cleaned, errors = window._jobs._clear_outputs_for_fresh_start([job])
 
     assert cleaned == [job] and errors == []
     assert sorted(path.name for path in directory.iterdir()) == [f"{SEED}.cell", f"{SEED}.param"]
@@ -111,7 +112,7 @@ def test_a_directory_shared_with_another_job_is_never_cleaned(qapp, tmp_path: Pa
     _replacement = _pristine_job(service, doc, JobStatus.COMPLETED)
     directory = _job_directory(doc)
 
-    cleaned, errors = window._clear_outputs_for_fresh_start([old])
+    cleaned, errors = window._jobs._clear_outputs_for_fresh_start([old])
 
     assert cleaned == []
     assert errors == [f"- {SEED}: another job uses the same output folder ({directory.resolve()})"]
@@ -129,7 +130,7 @@ def test_a_remote_directory_shared_with_another_job_is_refused(qapp, tmp_path: P
     )
     _on_cluster(other, remote_directory=f"/remote/work/{SEED}/nested")
 
-    assert window._fresh_start_refusals([job]) == {
+    assert window._jobs._fresh_start_refusals([job]) == {
         job.id: f"- {SEED}: another job uses the same cluster directory (/remote/work/{SEED})"
     }
     window.close()
@@ -146,7 +147,7 @@ def test_the_same_remote_path_on_another_cluster_is_not_shared(qapp, tmp_path: P
     _on_cluster(other)
     other.execution_target = "beta"
 
-    assert window._fresh_start_refusals([job]) == {}
+    assert window._jobs._fresh_start_refusals([job]) == {}
     window.close()
 
 
@@ -157,11 +158,11 @@ def test_directories_not_named_after_the_job_are_refused(qapp, tmp_path: Path) -
 
     window._job_seed_name = lambda _job: SEED
     _on_cluster(job, remote_directory="/remote/work")
-    remote_refusal = window._fresh_start_refusals([job])[job.id]
+    remote_refusal = window._jobs._fresh_start_refusals([job])[job.id]
 
     _on_cluster(job)
     window._job_seed_name = lambda _job: "another_seed"
-    local_refusal = window._fresh_start_refusals([job])[job.id]
+    local_refusal = window._jobs._fresh_start_refusals([job])[job.id]
 
     assert (
         remote_refusal
@@ -187,7 +188,7 @@ def test_directories_outside_the_job_folders_are_refused(
     window._job_output_directory = lambda _job: directory
     window._job_seed_name = lambda _job: directory.name
 
-    cleaned, errors = window._clear_outputs_for_fresh_start([job])
+    cleaned, errors = window._jobs._clear_outputs_for_fresh_start([job])
 
     assert cleaned == []
     assert "outside the project's job folders" in errors[0]
@@ -206,7 +207,7 @@ def test_dashboard_start_again_never_touches_a_running_replacements_directory(
     _on_cluster(replacement, remote_job_id="5000")
 
     monkeypatch.setattr(
-        window,
+        window._jobs,
         "_choose_relaxation_resubmit_mode",
         lambda _jobs: pytest.fail("a refused job is never offered the choice"),
     )
@@ -222,12 +223,17 @@ def test_dashboard_start_again_never_touches_a_running_replacements_directory(
         "show_detailed_warning",
         lambda _parent, title, text, **_kwargs: boxes.append((title, text)),
     )
+    monkeypatch.setattr(
+        jobs_controller_module,
+        "show_detailed_warning",
+        lambda _parent, title, text, **_kwargs: boxes.append((title, text)),
+    )
     submissions: list = []
     monkeypatch.setattr(
-        window, "_submit_jobs_on_cluster", lambda jobs, **kwargs: submissions.append(jobs)
+        window._jobs, "submit_jobs_on_cluster", lambda jobs, **kwargs: submissions.append(jobs)
     )
 
-    window._on_resubmit_from_dashboard([old.id])
+    window._jobs._on_resubmit_from_dashboard([old.id])
 
     # Neither started again nor continued in the replacement's directory: refused as a
     # submit refuses a job in a folder another job uses, before anything is cleared.
@@ -253,8 +259,11 @@ def test_two_fresh_starts_sharing_a_remote_directory_delete_nothing(
     patch_continuation_cluster_dialog(monkeypatch)
     recorded = patch_continuation_cluster_runner(monkeypatch, window, directory_exists=True)
     monkeypatch.setattr(main_window_module, "show_detailed_warning", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        jobs_controller_module, "show_detailed_warning", lambda *_args, **_kwargs: None
+    )
 
-    window._submit_jobs_on_cluster(
+    window._jobs.submit_jobs_on_cluster(
         [first, second],
         eligible_statuses={JobStatus.ENDED},
         reuse_existing_remote_files=True,
@@ -279,8 +288,8 @@ def test_a_fresh_start_into_a_protected_directory_is_dropped(
     continuing.execution_target = "alpha"
     continuing.remote_directory = fresh.remote_directory
     # Bypass the ownership checks, which would refuse these two first.
-    monkeypatch.setattr(window, "_fresh_start_refusals", lambda _jobs: {})
-    monkeypatch.setattr(window, "_without_jobs_in_another_jobs_folder", lambda jobs: jobs)
+    monkeypatch.setattr(window._jobs, "_fresh_start_refusals", lambda _jobs: {})
+    monkeypatch.setattr(window._jobs, "without_jobs_in_another_jobs_folder", lambda jobs: jobs)
 
     patch_continuation_cluster_dialog(monkeypatch)
     recorded = patch_continuation_cluster_runner(monkeypatch, window, directory_exists=True)
@@ -290,8 +299,13 @@ def test_a_fresh_start_into_a_protected_directory_is_dropped(
         "show_detailed_warning",
         lambda _parent, _title, text, **_kw: failures.append(text),
     )
+    monkeypatch.setattr(
+        jobs_controller_module,
+        "show_detailed_warning",
+        lambda _parent, _title, text, **_kw: failures.append(text),
+    )
 
-    window._submit_jobs_on_cluster(
+    window._jobs.submit_jobs_on_cluster(
         [fresh, continuing],
         eligible_statuses={JobStatus.ENDED, JobStatus.DEFINED},
         reuse_existing_remote_files=True,
@@ -318,10 +332,10 @@ def test_cancelling_the_cluster_dialog_deletes_nothing(
     _on_cluster(job)
 
     patch_continuation_cluster_dialog(monkeypatch)
-    monkeypatch.setattr(main_window_module.ClusterSubmissionDialog, "exec", lambda _self: 0)
+    monkeypatch.setattr(jobs_controller_module.ClusterSubmissionDialog, "exec", lambda _self: 0)
     recorded = patch_continuation_cluster_runner(monkeypatch, window, directory_exists=True)
 
-    window._submit_jobs_on_cluster(
+    window._jobs.submit_jobs_on_cluster(
         [job],
         eligible_statuses={JobStatus.ENDED},
         reuse_existing_remote_files=True,
@@ -349,8 +363,11 @@ def test_a_failed_cluster_connection_deletes_nothing(
 
     monkeypatch.setattr(window, "_connect_to_cluster_with_trust", _refuse)
     monkeypatch.setattr(main_window_module, "show_detailed_warning", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        jobs_controller_module, "show_detailed_warning", lambda *_args, **_kwargs: None
+    )
 
-    window._submit_jobs_on_cluster(
+    window._jobs.submit_jobs_on_cluster(
         [job],
         eligible_statuses={JobStatus.ENDED},
         reuse_existing_remote_files=True,
@@ -371,7 +388,7 @@ def test_cancelling_the_local_dialog_deletes_nothing(
     directory = _job_directory(doc)
 
     monkeypatch.setattr(
-        main_window_module,
+        jobs_controller_module,
         "load_castep_setup",
         lambda _settings: SimpleNamespace(executable_path="/usr/bin/castep", mpirun_path=""),
     )
@@ -385,9 +402,9 @@ def test_cancelling_the_local_dialog_deletes_nothing(
         def exec(self) -> int:
             return 0
 
-    monkeypatch.setattr(main_window_module, "LocalSubmissionDialog", _CancelledDialog)
+    monkeypatch.setattr(jobs_controller_module, "LocalSubmissionDialog", _CancelledDialog)
 
-    window._submit_jobs_locally(
+    window._jobs.submit_jobs_locally(
         [job], eligible_statuses={JobStatus.ENDED}, fresh_start_job_ids={job.id}
     )
 

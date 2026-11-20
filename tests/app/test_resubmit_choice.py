@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 import mufinder.app.main_window as main_window_module
+import mufinder.app.jobs_controller as jobs_controller_module
 import mufinder.app.workflow_table_utils as workflow_table_utils
 from mufinder.services.job_monitoring import job_status_word
 from mufinder.app.job_dashboard import JobDashboard
@@ -160,8 +161,8 @@ def _window_with_jobs(tmp_path: Path, specs: list[tuple[str, WorkflowStage]]):
 def _record_cluster_submissions(monkeypatch: pytest.MonkeyPatch, window: MainWindow) -> list[dict]:
     calls: list[dict] = []
     monkeypatch.setattr(
-        window,
-        "_submit_jobs_on_cluster",
+        window._jobs,
+        "submit_jobs_on_cluster",
         lambda jobs, **kwargs: calls.append({"jobs": jobs, **kwargs}),
     )
     return calls
@@ -182,7 +183,7 @@ def _fake_choice_dialog(
         def mode(self) -> ResubmitMode:
             return mode
 
-    monkeypatch.setattr(main_window_module, "ResubmitChoiceDialog", _FakeDialog)
+    monkeypatch.setattr(jobs_controller_module, "ResubmitChoiceDialog", _FakeDialog)
     return shown
 
 
@@ -193,7 +194,7 @@ def test_resubmitting_only_other_jobs_asks_nothing(
     shown = _fake_choice_dialog(monkeypatch, accepted=True, mode=ResubmitMode.START_AGAIN)
     calls = _record_cluster_submissions(monkeypatch, window)
 
-    window._on_resubmit_from_dashboard([job.id for job in jobs])
+    window._jobs._on_resubmit_from_dashboard([job.id for job in jobs])
 
     assert shown == []
     assert calls[0]["fresh_start_job_ids"] == set()
@@ -214,7 +215,7 @@ def test_start_again_marks_only_the_relaxations(
     shown = _fake_choice_dialog(monkeypatch, accepted=True, mode=ResubmitMode.START_AGAIN)
     calls = _record_cluster_submissions(monkeypatch, window)
 
-    window._on_resubmit_from_dashboard([job.id for job in jobs])
+    window._jobs._on_resubmit_from_dashboard([job.id for job in jobs])
 
     candidates, other_job_count = shown[0]
     assert [candidate.label for candidate in candidates] == ["relax_a", "host_relax"]
@@ -230,7 +231,7 @@ def test_continue_resubmits_in_place(qapp, tmp_path: Path, monkeypatch: pytest.M
     _fake_choice_dialog(monkeypatch, accepted=True, mode=ResubmitMode.CONTINUE)
     calls = _record_cluster_submissions(monkeypatch, window)
 
-    window._on_resubmit_from_dashboard([jobs[0].id])
+    window._jobs._on_resubmit_from_dashboard([jobs[0].id])
 
     assert calls[0]["fresh_start_job_ids"] == set()
     assert calls[0]["reuse_existing_remote_files"] is True
@@ -244,7 +245,7 @@ def test_cancelling_the_choice_resubmits_nothing(
     _fake_choice_dialog(monkeypatch, accepted=False, mode=ResubmitMode.START_AGAIN)
     calls = _record_cluster_submissions(monkeypatch, window)
 
-    window._on_resubmit_from_dashboard([jobs[0].id])
+    window._jobs._on_resubmit_from_dashboard([jobs[0].id])
 
     assert calls == []
     assert job_status_word(jobs[0]) == "stopped"
@@ -253,7 +254,7 @@ def test_cancelling_the_choice_resubmits_nothing(
 
 def _without_castep_executable(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        main_window_module,
+        jobs_controller_module,
         "load_castep_setup",
         lambda _settings: CastepSetup(executable_path="", mpirun_path=""),
     )
@@ -267,9 +268,9 @@ def test_a_missing_executable_is_reported_before_the_resubmit_question(
     _without_castep_executable(monkeypatch)
     shown = _fake_choice_dialog(monkeypatch, accepted=True, mode=ResubmitMode.CONTINUE)
     submitted: list[object] = []
-    monkeypatch.setattr(window, "_submit_jobs_locally", lambda *a, **k: submitted.append(a))
+    monkeypatch.setattr(window._jobs, "submit_jobs_locally", lambda *a, **k: submitted.append(a))
 
-    window._on_resubmit_from_dashboard([jobs[0].id])
+    window._jobs._on_resubmit_from_dashboard([jobs[0].id])
 
     (prompt,) = answered_choices
     assert prompt["title"] == "CASTEP executable missing"
@@ -286,7 +287,7 @@ def test_configuring_the_executable_from_the_prompt_goes_on_to_the_question(
     jobs[0].execution_target = "local"
     setup = {"executable_path": ""}
     monkeypatch.setattr(
-        main_window_module,
+        jobs_controller_module,
         "load_castep_setup",
         lambda _settings: CastepSetup(executable_path=setup["executable_path"], mpirun_path=""),
     )
@@ -297,10 +298,10 @@ def test_configuring_the_executable_from_the_prompt_goes_on_to_the_question(
     shown = _fake_choice_dialog(monkeypatch, accepted=True, mode=ResubmitMode.CONTINUE)
     submitted: list[list] = []
     monkeypatch.setattr(
-        window, "_submit_jobs_locally", lambda jobs, **_k: submitted.append(list(jobs))
+        window._jobs, "submit_jobs_locally", lambda jobs, **_k: submitted.append(list(jobs))
     )
 
-    window._on_resubmit_from_dashboard([jobs[0].id])
+    window._jobs._on_resubmit_from_dashboard([jobs[0].id])
 
     assert len(shown) == 1
     assert submitted == [[jobs[0]]]
@@ -322,7 +323,7 @@ def test_a_missing_executable_still_resubmits_the_cluster_jobs(
     shown = _fake_choice_dialog(monkeypatch, accepted=True, mode=ResubmitMode.CONTINUE)
     calls = _record_cluster_submissions(monkeypatch, window)
 
-    window._on_resubmit_from_dashboard([job.id for job in jobs])
+    window._jobs._on_resubmit_from_dashboard([job.id for job in jobs])
 
     (candidates, _others) = shown[0]
     assert [candidate.label for candidate in candidates] == ["relax_remote"]
@@ -338,7 +339,7 @@ def test_the_keyword_catalog_guard_runs_before_the_resubmit_question(
     calls = _record_cluster_submissions(monkeypatch, window)
     monkeypatch.setattr(window._keyword_catalog_guard, "confirm_submission", lambda: False)
 
-    window._on_resubmit_from_dashboard([jobs[0].id])
+    window._jobs._on_resubmit_from_dashboard([jobs[0].id])
 
     assert shown == []
     assert calls == []
@@ -350,9 +351,10 @@ def test_no_configured_cluster_offers_hpc_cluster_setup(
 ) -> None:
     window, jobs = _window_with_jobs(tmp_path, [("relax_a", WorkflowStage.MUON_RELAXATION)])
     monkeypatch.setattr(main_window_module, "load_cluster_configs", lambda _settings: [])
+    monkeypatch.setattr(jobs_controller_module, "load_cluster_configs", lambda _settings: [])
     shown = _fake_choice_dialog(monkeypatch, accepted=True, mode=ResubmitMode.CONTINUE)
 
-    window._on_resubmit_from_dashboard([jobs[0].id])
+    window._jobs._on_resubmit_from_dashboard([jobs[0].id])
 
     (prompt,) = answered_choices
     assert prompt["title"] == "No configured clusters"
@@ -384,7 +386,7 @@ def test_local_checkpoint_probe(qapp, tmp_path: Path) -> None:
     directories = {jobs[0].id: found_dir, jobs[1].id: absent_dir}
     window._job_output_directory = lambda job: directories[job.id]
 
-    probes = window._checkpoint_probes(jobs)
+    probes = window._jobs._checkpoint_probes(jobs)
 
     assert probes[jobs[0].id].status == FOUND
     assert probes[jobs[1].id].status == ABSENT

@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
 )
 
 import mufinder.app.main_window as main_window_module
+import mufinder.app.jobs_controller as jobs_controller_module
 import mufinder.app.workflow_table_utils as workflow_table_utils
 from mufinder.app import selection_snapshot as selection_snapshot_module
 from mufinder.app.selection_snapshot import SelectionScope
@@ -418,6 +419,7 @@ def test_status_bar_connection_colour_follows_the_state(
     palette = main_window_module.current_palette()
     label = window._cluster_connection_label
     monkeypatch.setattr(main_window_module, "show_detailed_warning", lambda *_a, **_k: None)
+    monkeypatch.setattr(jobs_controller_module, "show_detailed_warning", lambda *_a, **_k: None)
     _project_with_job(window, tmp_path)
 
     # Idle: reopened project, nothing has dropped.
@@ -452,6 +454,7 @@ def test_status_bar_opening_a_project_forgets_the_previous_drop_and_check(
 ) -> None:
     window = main_window
     monkeypatch.setattr(main_window_module, "show_detailed_warning", lambda *_a, **_k: None)
+    monkeypatch.setattr(jobs_controller_module, "show_detailed_warning", lambda *_a, **_k: None)
     _project_with_job(window, tmp_path)
     _connect_status_bar(window, monkeypatch, "SCARF")
     window._on_cluster_queue_checked("12:34:56")
@@ -561,6 +564,7 @@ def test_status_bar_refresh_reconnects_when_connected_to_another_cluster(
         template_script_path="builtin:scarf-slurm",
     )
     monkeypatch.setattr(main_window_module, "load_cluster_configs", lambda _settings: [scarf])
+    monkeypatch.setattr(jobs_controller_module, "load_cluster_configs", lambda _settings: [scarf])
     connected: list[str] = []
     monkeypatch.setattr(
         window._cluster_runner._runner,
@@ -608,6 +612,7 @@ def test_status_bar_names_clusters_a_refresh_could_not_reach_before_the_warning(
         template_script_path="builtin:scarf-slurm",
     )
     monkeypatch.setattr(main_window_module, "load_cluster_configs", lambda _settings: [scarf])
+    monkeypatch.setattr(jobs_controller_module, "load_cluster_configs", lambda _settings: [scarf])
 
     def _refuse(config, password=None):
         raise ConnectionError(f"{config.name} refused the connection")
@@ -617,6 +622,11 @@ def test_status_bar_names_clusters_a_refresh_could_not_reach_before_the_warning(
     shown_during_warning: list[str] = []
     monkeypatch.setattr(
         main_window_module,
+        "show_detailed_warning",
+        lambda *_a, **_k: shown_during_warning.append(window.statusBar().currentMessage()),
+    )
+    monkeypatch.setattr(
+        jobs_controller_module,
         "show_detailed_warning",
         lambda *_a, **_k: shown_during_warning.append(window.statusBar().currentMessage()),
     )
@@ -632,6 +642,7 @@ def test_status_bar_reports_a_failed_queue_refresh(
 ) -> None:
     window = main_window
     monkeypatch.setattr(main_window_module, "show_detailed_warning", lambda *_a, **_k: None)
+    monkeypatch.setattr(jobs_controller_module, "show_detailed_warning", lambda *_a, **_k: None)
     _project_with_job(window, tmp_path)
     _connect_status_bar(window, monkeypatch, "SCARF")
     monkeypatch.setattr(window._cluster_runner, "check_jobs", lambda _targets, **_kwargs: None)
@@ -784,6 +795,9 @@ def test_main_window_disconnected_refresh_attempts_active_cluster_targets(
     monkeypatch.setattr(
         main_window_module, "load_cluster_configs", lambda _settings: [redwood, scarf]
     )
+    monkeypatch.setattr(
+        jobs_controller_module, "load_cluster_configs", lambda _settings: [redwood, scarf]
+    )
 
     connect_calls: list[str] = []
     refresh_calls: list[str] = []
@@ -851,6 +865,7 @@ def test_main_window_disconnected_refresh_prompts_password_for_password_cluster(
         template_script_path="",
     )
     monkeypatch.setattr(main_window_module, "load_cluster_configs", lambda _settings: [redwood])
+    monkeypatch.setattr(jobs_controller_module, "load_cluster_configs", lambda _settings: [redwood])
 
     connect_calls: list[tuple[str, str | None]] = []
 
@@ -924,6 +939,7 @@ def test_main_window_disconnected_refresh_prompts_passphrase_for_key_cluster(
         template_script_path="",
     )
     monkeypatch.setattr(main_window_module, "load_cluster_configs", lambda _settings: [redwood])
+    monkeypatch.setattr(jobs_controller_module, "load_cluster_configs", lambda _settings: [redwood])
 
     connect_calls: list[tuple[str, str | None]] = []
 
@@ -973,6 +989,11 @@ def test_main_window_cluster_poll_failed_shows_detailed_warning(
         "show_detailed_warning",
         lambda _parent, title, _message, **_kwargs: warnings.append(title),
     )
+    monkeypatch.setattr(
+        jobs_controller_module,
+        "show_detailed_warning",
+        lambda _parent, title, _message, **_kwargs: warnings.append(title),
+    )
 
     window._on_cluster_poll_failed("Queue polling failed for alpha: timeout")
 
@@ -1006,7 +1027,7 @@ def test_main_window_cancel_jobs_only_active_states(
     cancelled_ids: list[object] = []
     monkeypatch.setattr(window._local_runner, "cancel", lambda job_id: cancelled_ids.append(job_id))
 
-    window._cancel_jobs([active_job, inactive_job])
+    window._jobs.cancel_jobs([active_job, inactive_job])
 
     assert cancelled_ids == [active_job.id]
     window.close()
@@ -1064,7 +1085,7 @@ def test_main_window_dashboard_cancel_applies_to_snapshot_rows(
     window._document = doc
     cancelled: list[list[object]] = []
     monkeypatch.setattr(
-        window, "_on_cancel_from_dashboard", lambda ids: cancelled.append(list(ids))
+        window._jobs, "_on_cancel_from_dashboard", lambda ids: cancelled.append(list(ids))
     )
     monkeypatch.setattr(
         selection_snapshot_module,
@@ -1102,7 +1123,7 @@ def test_main_window_dashboard_cancel_single_row_no_prompt(
     window._document = doc
     cancelled: list[list[object]] = []
     monkeypatch.setattr(
-        window, "_on_cancel_from_dashboard", lambda ids: cancelled.append(list(ids))
+        window._jobs, "_on_cancel_from_dashboard", lambda ids: cancelled.append(list(ids))
     )
     prompted: list[bool] = []
     monkeypatch.setattr(
@@ -1149,7 +1170,7 @@ def test_main_window_dashboard_cancel_unselected_row_no_prompt(
     window._document = doc
     cancelled: list[list[object]] = []
     monkeypatch.setattr(
-        window, "_on_cancel_from_dashboard", lambda ids: cancelled.append(list(ids))
+        window._jobs, "_on_cancel_from_dashboard", lambda ids: cancelled.append(list(ids))
     )
     prompted: list[bool] = []
     monkeypatch.setattr(
@@ -1173,11 +1194,11 @@ def test_main_window_dashboard_cancel_unselected_row_no_prompt(
 def test_main_window_dashboard_handlers_no_document_are_noops(main_window) -> None:
     window = main_window
 
-    window._on_submit_local_from_dashboard([uuid4()])
-    window._on_resubmit_from_dashboard([uuid4()])
-    window._on_cancel_from_dashboard([uuid4()])
-    window._on_inspect_failed_from_dashboard([uuid4()])
-    window._on_reset_failed_from_dashboard([uuid4()])
+    window._jobs._on_submit_local_from_dashboard([uuid4()])
+    window._jobs._on_resubmit_from_dashboard([uuid4()])
+    window._jobs._on_cancel_from_dashboard([uuid4()])
+    window._jobs._on_inspect_failed_from_dashboard([uuid4()])
+    window._jobs._on_reset_failed_from_dashboard([uuid4()])
 
     window.close()
 
@@ -1201,15 +1222,15 @@ def test_main_window_dashboard_handlers_forward_selected_jobs(
     cancelled: list[list[object]] = []
     inspected: list[list[object]] = []
     reset: list[list[object]] = []
-    monkeypatch.setattr(window, "_submit_jobs_locally", lambda jobs: submitted.append(jobs))
-    monkeypatch.setattr(window, "_cancel_jobs", lambda jobs: cancelled.append(jobs))
-    monkeypatch.setattr(window, "_inspect_failed_jobs", lambda jobs: inspected.append(jobs))
-    monkeypatch.setattr(window, "_reset_failed_jobs", lambda jobs: reset.append(jobs))
+    monkeypatch.setattr(window._jobs, "submit_jobs_locally", lambda jobs: submitted.append(jobs))
+    monkeypatch.setattr(window._jobs, "cancel_jobs", lambda jobs: cancelled.append(jobs))
+    monkeypatch.setattr(window._jobs, "inspect_failed_jobs", lambda jobs: inspected.append(jobs))
+    monkeypatch.setattr(window._jobs, "reset_failed_jobs", lambda jobs: reset.append(jobs))
 
-    window._on_submit_local_from_dashboard([job.id])
-    window._on_cancel_from_dashboard([job.id])
-    window._on_inspect_failed_from_dashboard([job.id])
-    window._on_reset_failed_from_dashboard([job.id])
+    window._jobs._on_submit_local_from_dashboard([job.id])
+    window._jobs._on_cancel_from_dashboard([job.id])
+    window._jobs._on_inspect_failed_from_dashboard([job.id])
+    window._jobs._on_reset_failed_from_dashboard([job.id])
 
     assert submitted == [[job]]
     assert cancelled == [[job]]
@@ -1219,17 +1240,17 @@ def test_main_window_dashboard_handlers_forward_selected_jobs(
     job.status = JobStatus.ENDED
     job.end_reason = EndReason.CANCELLED
     monkeypatch.setattr(
-        window,
-        "_submit_jobs_locally",
+        window._jobs,
+        "submit_jobs_locally",
         lambda jobs, **kwargs: resubmitted.append((jobs, kwargs)),
     )
     # Resubmit checks for a CASTEP executable before it asks anything.
     monkeypatch.setattr(
-        main_window_module,
+        jobs_controller_module,
         "load_castep_setup",
         lambda _settings: CastepSetup(executable_path="/opt/castep", mpirun_path=""),
     )
-    window._on_resubmit_from_dashboard([job.id])
+    window._jobs._on_resubmit_from_dashboard([job.id])
 
     assert resubmitted
     assert resubmitted[0][0] == [job]
@@ -1437,7 +1458,7 @@ def test_dismiss_flush_preserves_typing_and_saves_the_typed_value(
     QTest.keyClicks(edit, "00.1")
     cursor = edit.cursorPosition()
     monkeypatch.setattr(workflow_table_utils, "confirm_destructive", lambda *a, **kw: True)
-    window._on_dismiss_from_dashboard([job.id])
+    window._jobs._on_dismiss_from_dashboard([job.id])
     window._flush_dashboard()
     assert job.dismissed_at is not None
     assert edit.text() == "00.1"
@@ -1571,7 +1592,7 @@ def test_cancelling_a_cluster_job_with_no_scheduler_id_cancels_it_in_the_project
     window._document = doc
     window._refresh_jobs_table()
 
-    window._cancel_jobs([job])
+    window._jobs.cancel_jobs([job])
 
     assert job_status_word(job) == "cancelled"
     assert window.statusBar().currentMessage() == (
@@ -1597,7 +1618,7 @@ def test_cancelling_a_job_that_is_still_being_submitted_goes_to_the_cluster(
     requested: list[tuple] = []
     monkeypatch.setattr(window._cluster_runner, "cancel", lambda *args: requested.append(args))
 
-    window._cancel_jobs([job])
+    window._jobs.cancel_jobs([job])
 
     assert requested == [(job.id, "")]
     assert job_status_word(job) == "submitting"
@@ -1627,7 +1648,7 @@ def test_cancel_reports_jobs_the_cluster_was_and_was_not_asked_about_separately(
     requested: list[tuple] = []
     monkeypatch.setattr(window._cluster_runner, "cancel", lambda *args: requested.append(args))
 
-    window._cancel_jobs(jobs)
+    window._jobs.cancel_jobs(jobs)
 
     assert window.statusBar().currentMessage() == (
         "Cancellation requested for 2 jobs; cancelled 1 job in the project (SCARF was not "

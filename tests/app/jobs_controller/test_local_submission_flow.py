@@ -1,4 +1,4 @@
-"""Submitting jobs locally from the main window and handling local-runner events."""
+"""Submitting jobs locally through the jobs controller and handling local-runner events."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 import mufinder.app.main_window as main_window_module
+import mufinder.app.jobs_controller as jobs_controller_module
 from mufinder.castep_io.output_parser import CastepResult
 from mufinder.castep_setup import CastepSetup
 from mufinder.domain.enums import EndReason, JobActivity, JobStatus
@@ -57,7 +58,7 @@ def test_main_window_submit_jobs_locally_creates_run_and_calls_runner(
     window._document = doc
 
     monkeypatch.setattr(
-        main_window_module,
+        jobs_controller_module,
         "load_castep_setup",
         lambda _settings: CastepSetup(executable_path="/usr/bin/castep", mpirun_path=""),
     )
@@ -74,7 +75,7 @@ def test_main_window_submit_jobs_locally_creates_run_and_calls_runner(
         def config(self):
             return SimpleNamespace(num_cores=1, parallel=False, max_concurrent=1)
 
-    monkeypatch.setattr(main_window_module, "LocalSubmissionDialog", _FakeDialog)
+    monkeypatch.setattr(jobs_controller_module, "LocalSubmissionDialog", _FakeDialog)
 
     submit_calls: list[dict[str, object]] = []
     monkeypatch.setattr(
@@ -83,7 +84,7 @@ def test_main_window_submit_jobs_locally_creates_run_and_calls_runner(
         lambda **kwargs: submit_calls.append(kwargs),
     )
 
-    window._submit_jobs_locally([job])
+    window._jobs.submit_jobs_locally([job])
 
     assert job_status_word(job) == "submitting"
     assert len(submit_calls) == 1
@@ -139,7 +140,7 @@ def test_main_window_submit_jobs_locally_uses_definition_output_for_non_converge
     window._document = doc
 
     monkeypatch.setattr(
-        main_window_module,
+        jobs_controller_module,
         "load_castep_setup",
         lambda _settings: CastepSetup(executable_path="/usr/bin/castep", mpirun_path=""),
     )
@@ -156,14 +157,14 @@ def test_main_window_submit_jobs_locally_uses_definition_output_for_non_converge
         def config(self):
             return SimpleNamespace(num_cores=1, parallel=False, max_concurrent=1)
 
-    monkeypatch.setattr(main_window_module, "LocalSubmissionDialog", _FakeDialog)
+    monkeypatch.setattr(jobs_controller_module, "LocalSubmissionDialog", _FakeDialog)
 
     submit_calls: list[dict[str, object]] = []
     monkeypatch.setattr(
         window._local_runner, "submit", lambda **kwargs: submit_calls.append(kwargs)
     )
 
-    window._submit_jobs_locally([job])
+    window._jobs.submit_jobs_locally([job])
 
     assert len(submit_calls) == 1
     assert submit_calls[0]["job_dir"] == output_root / job.label
@@ -196,7 +197,7 @@ def test_main_window_submit_jobs_locally_resets_execution_target_after_cluster_r
     window._document = doc
 
     monkeypatch.setattr(
-        main_window_module,
+        jobs_controller_module,
         "load_castep_setup",
         lambda _settings: CastepSetup(executable_path="/usr/bin/castep", mpirun_path=""),
     )
@@ -213,10 +214,10 @@ def test_main_window_submit_jobs_locally_resets_execution_target_after_cluster_r
         def config(self):
             return SimpleNamespace(parallel=False, max_concurrent=1, num_cores=1)
 
-    monkeypatch.setattr(main_window_module, "LocalSubmissionDialog", _FakeDialog)
+    monkeypatch.setattr(jobs_controller_module, "LocalSubmissionDialog", _FakeDialog)
     monkeypatch.setattr(window._local_runner, "submit", lambda **kwargs: None)
 
-    window._submit_jobs_locally([job])
+    window._jobs.submit_jobs_locally([job])
 
     assert job.execution_target == "local"
     assert doc.provenance[-1].parameters["execution_target"] == "local"
@@ -238,18 +239,18 @@ def test_main_window_submit_jobs_locally_warns_if_castep_unconfigured(
     window._document = doc
 
     monkeypatch.setattr(
-        main_window_module,
+        jobs_controller_module,
         "load_castep_setup",
         lambda _settings: CastepSetup(executable_path="", mpirun_path=""),
     )
 
     monkeypatch.setattr(
-        main_window_module,
+        jobs_controller_module,
         "LocalSubmissionDialog",
         lambda **_kwargs: pytest.fail("No submission dialog without an executable"),
     )
 
-    window._submit_jobs_locally([job])
+    window._jobs.submit_jobs_locally([job])
 
     (prompt,) = answered_choices
     assert prompt["title"] == "CASTEP executable missing"
@@ -283,14 +284,14 @@ def test_main_window_submit_from_dashboard_dispatches_local_and_cluster(
 
     local_calls: list[list[Job]] = []
     cluster_calls: list[tuple[list[Job], str | None]] = []
-    monkeypatch.setattr(window, "_submit_jobs_locally", lambda jobs: local_calls.append(jobs))
+    monkeypatch.setattr(window._jobs, "submit_jobs_locally", lambda jobs: local_calls.append(jobs))
     monkeypatch.setattr(
-        window,
-        "_submit_jobs_on_cluster",
+        window._jobs,
+        "submit_jobs_on_cluster",
         lambda jobs, default_cluster_name=None: cluster_calls.append((jobs, default_cluster_name)),
     )
 
-    window._on_submit_from_dashboard([local_job.id, cluster_job.id])
+    window._jobs._on_submit_from_dashboard([local_job.id, cluster_job.id])
 
     assert local_calls == [[local_job]]
     assert cluster_calls == [([cluster_job], "alpha")]
@@ -312,7 +313,7 @@ def test_main_window_submit_jobs_locally_warns_missing_output_paths(
     window._document = doc
 
     monkeypatch.setattr(
-        main_window_module,
+        jobs_controller_module,
         "load_castep_setup",
         lambda _settings: CastepSetup(executable_path="/usr/bin/castep", mpirun_path=""),
     )
@@ -329,7 +330,7 @@ def test_main_window_submit_jobs_locally_warns_missing_output_paths(
         def config(self):
             return SimpleNamespace(num_cores=1, parallel=False, max_concurrent=1)
 
-    monkeypatch.setattr(main_window_module, "LocalSubmissionDialog", _FakeDialog)
+    monkeypatch.setattr(jobs_controller_module, "LocalSubmissionDialog", _FakeDialog)
 
     warnings: list[str] = []
     monkeypatch.setattr(
@@ -338,7 +339,7 @@ def test_main_window_submit_jobs_locally_warns_missing_output_paths(
         lambda _parent, title, _message: warnings.append(title),
     )
 
-    window._submit_jobs_locally([job])
+    window._jobs.submit_jobs_locally([job])
 
     assert "Missing job directories" in warnings
     window.close()
@@ -484,7 +485,7 @@ def test_main_window_submit_jobs_locally_handles_no_eligible_defined_jobs(
         lambda _parent, title, _message: infos.append(title),
     )
 
-    window._submit_jobs_locally([job])
+    window._jobs.submit_jobs_locally([job])
 
     assert infos == ["No eligible jobs"]
     window.close()
@@ -508,7 +509,7 @@ def test_main_window_submit_jobs_locally_dialog_rejected(
     window._document = doc
 
     monkeypatch.setattr(
-        main_window_module,
+        jobs_controller_module,
         "load_castep_setup",
         lambda _settings: CastepSetup(executable_path="/usr/bin/castep", mpirun_path=""),
     )
@@ -522,14 +523,14 @@ def test_main_window_submit_jobs_locally_dialog_rejected(
         def exec(self) -> int:
             return 0
 
-    monkeypatch.setattr(main_window_module, "LocalSubmissionDialog", _FakeDialog)
+    monkeypatch.setattr(jobs_controller_module, "LocalSubmissionDialog", _FakeDialog)
 
     submit_calls: list[dict[str, object]] = []
     monkeypatch.setattr(
         window._local_runner, "submit", lambda **kwargs: submit_calls.append(kwargs)
     )
 
-    window._submit_jobs_locally([job])
+    window._jobs.submit_jobs_locally([job])
 
     assert submit_calls == []
     assert job.status == JobStatus.DEFINED
@@ -578,7 +579,7 @@ def test_main_window_local_submission_remembers_cores_per_project(
     )
     window._document = doc
     monkeypatch.setattr(
-        main_window_module,
+        jobs_controller_module,
         "load_castep_setup",
         lambda _settings: CastepSetup(executable_path="/usr/bin/castep", mpirun_path="/bin/mpirun"),
     )
@@ -597,13 +598,13 @@ def test_main_window_local_submission_remembers_cores_per_project(
         def config(self):
             return SimpleNamespace(num_cores=6, parallel=False, max_concurrent=1)
 
-    monkeypatch.setattr(main_window_module, "LocalSubmissionDialog", _FakeDialog)
+    monkeypatch.setattr(jobs_controller_module, "LocalSubmissionDialog", _FakeDialog)
     submit_calls: list[dict[str, object]] = []
     monkeypatch.setattr(
         window._local_runner, "submit", lambda **kwargs: submit_calls.append(kwargs)
     )
 
-    window._submit_jobs_locally([jobs[0]])
+    window._jobs.submit_jobs_locally([jobs[0]])
 
     assert dialog_kwargs[0]["stage_title"] == "Cutoff Energy"
     assert dialog_kwargs[0]["initial_cores"] is None
@@ -612,7 +613,7 @@ def test_main_window_local_submission_remembers_cores_per_project(
     # The count is saved with the project, so it survives reopening it.
     reloaded = ProjectService().load_project(doc.project_root)
     window._document = reloaded
-    window._submit_jobs_locally([reloaded.jobs[jobs[1].id]])
+    window._jobs.submit_jobs_locally([reloaded.jobs[jobs[1].id]])
 
     assert dialog_kwargs[1]["initial_cores"] == 6
     window.close()

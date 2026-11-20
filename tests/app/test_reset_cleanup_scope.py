@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 import mufinder.app.main_window as main_window_module
+import mufinder.app.jobs_controller as jobs_controller_module
 from mufinder.domain.constants import IMPORTED_JOB_TAG
 from mufinder.app.main_window import MainWindow
 from mufinder.domain.enums import JobStatus, WorkflowStage
@@ -79,6 +80,13 @@ def _capture_warnings(monkeypatch: pytest.MonkeyPatch) -> list[str]:
             f"{text}\n{kwargs.get('details', '')}"
         ),
     )
+    monkeypatch.setattr(
+        jobs_controller_module,
+        "show_detailed_warning",
+        lambda _parent, _title, text, **kwargs: warnings.append(
+            f"{text}\n{kwargs.get('details', '')}"
+        ),
+    )
     return warnings
 
 
@@ -90,7 +98,7 @@ def test_resetting_a_legacy_phonon_with_cleanup_empties_the_shared_directory(
     )
     warnings = _capture_warnings(monkeypatch)
 
-    window._reset_failed_jobs([phonon], cleanup_choice=True)
+    window._jobs.reset_failed_jobs([phonon], cleanup_choice=True)
 
     # The legacy checkpoint is gone, so the rerun is a fresh phonon job.
     assert warnings == []
@@ -109,7 +117,7 @@ def test_resetting_both_legacy_jobs_together_cleans_their_directory(
     )
     warnings = _capture_warnings(monkeypatch)
 
-    window._reset_failed_jobs([singlepoint, phonon], cleanup_choice=True)
+    window._jobs.reset_failed_jobs([singlepoint, phonon], cleanup_choice=True)
 
     assert warnings == []
     assert sorted(path.name for path in directory.iterdir()) == QUANTUM_INPUTS
@@ -124,7 +132,7 @@ def test_resetting_a_legacy_phonon_without_cleanup_keeps_its_checkpoint(
     )
     warnings = _capture_warnings(monkeypatch)
 
-    window._reset_failed_jobs([phonon], cleanup_choice=False)
+    window._jobs.reset_failed_jobs([phonon], cleanup_choice=False)
 
     # The rerun continues from the checkpoint in the kept directory.
     assert warnings == []
@@ -151,7 +159,7 @@ def test_resetting_a_phonon_keeps_a_folder_an_unrelated_job_uses(
     )
     warnings = _capture_warnings(monkeypatch)
 
-    window._reset_failed_jobs([phonon], cleanup_choice=True)
+    window._jobs.reset_failed_jobs([phonon], cleanup_choice=True)
 
     assert phonon.status == JobStatus.DEFINED
     assert sorted(path.name for path in directory.iterdir()) == QUANTUM_FILES
@@ -171,7 +179,7 @@ def test_resetting_a_relaxation_keeps_a_folder_its_replacement_uses(
     directory = _job_directory(doc)
     warnings = _capture_warnings(monkeypatch)
 
-    window._reset_failed_jobs([old], cleanup_choice=True)
+    window._jobs.reset_failed_jobs([old], cleanup_choice=True)
 
     assert old.status == JobStatus.DEFINED
     assert sorted(path.name for path in directory.iterdir()) == ALL_FILES
@@ -191,7 +199,7 @@ def test_a_folder_shared_with_an_imported_job_is_never_cleaned(qapp, tmp_path: P
     imported.tags.append(IMPORTED_JOB_TAG)
     directory = _job_directory(doc)
 
-    reset_count, cleanup_errors, _folders = window._apply_failed_job_reset(
+    reset_count, cleanup_errors, _folders = window._jobs._apply_failed_job_reset(
         [native, imported], cleanup_choice=True, detach_convergence=False
     )
 

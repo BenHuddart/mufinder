@@ -323,12 +323,12 @@ def synthetic_runs(window: MainWindow, outputs: Outputs) -> Iterator[None]:
             window._on_local_job_finished(job_id, parse_castep_output(castep))
 
     window._local_runner.submit = submit
-    window._submit_jobs_locally = submit_jobs_locally
+    window._jobs.submit_jobs_locally = submit_jobs_locally
     try:
         yield
     finally:
         del window._local_runner.submit
-        del window._submit_jobs_locally
+        del window._jobs.submit_jobs_locally
         window._flush_dashboard()
 
 

@@ -218,7 +218,7 @@ def test_inspect_opens_one_progress_dialog_per_running_relaxation(
         assert dialogs[0].progress == parse_geometry_progress(BFGS)
 
         progress = parse_geometry_progress(LBFGS_CONTINUED)
-        window._on_job_progress_changed(job.id, progress)
+        window._jobs._on_job_progress_changed(job.id, progress)
         assert dialogs[0].progress == progress
 
         # Closing the project closes its progress dialogs.
@@ -258,9 +258,9 @@ def test_inspect_on_a_mixed_selection_routes_failed_jobs_to_diagnostics(
     failed.status = JobStatus.ENDED
     failed.end_reason = EndReason.UNKNOWN
     diagnosed: list[list] = []
-    monkeypatch.setattr(window, "_on_inspect_failed_from_dashboard", diagnosed.append)
+    monkeypatch.setattr(window._jobs, "_on_inspect_failed_from_dashboard", diagnosed.append)
     try:
-        window._on_inspect_from_dashboard([running.id, failed.id])
+        window._jobs._on_inspect_from_dashboard([running.id, failed.id])
 
         assert diagnosed == [[failed.id]]
         assert len(window.findChildren(GeometryProgressDialog)) == 1

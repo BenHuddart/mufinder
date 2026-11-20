@@ -58,12 +58,12 @@ class _Submission(_Project):
             def exec(self) -> int:
                 return 0
 
-        monkeypatch.setattr("mufinder.app.main_window.LocalSubmissionDialog", _CancelledDialog)
+        monkeypatch.setattr("mufinder.app.jobs_controller.LocalSubmissionDialog", _CancelledDialog)
         monkeypatch.setattr(
             "mufinder.app.main_window.QMessageBox.information",
             lambda *args, **kwargs: self.infos.append(args[2]),
         )
-        monkeypatch.setattr(window, "_castep_executable_ready", lambda: True)
+        monkeypatch.setattr(window._jobs, "_castep_executable_ready", lambda: True)
         monkeypatch.setattr(window._keyword_catalog_guard, "confirm_submission", lambda: True)
 
     def add_row(self, label: str = "Site_native") -> None:
@@ -393,7 +393,7 @@ class TestAProjectAlreadyHoldingBothInOneFolder:
             lambda *args, **kwargs: pytest.fail("continued a refused job"),
         )
 
-        project.window._continue_relaxation_row(
+        project.window._jobs._continue_relaxation_row(
             controller=project.controller,
             view=project.window._muon_relaxation_view,
             key=ROW_KEY,
@@ -412,7 +412,7 @@ class TestAProjectAlreadyHoldingBothInOneFolder:
         before = _hashes(project.files)
         asked: list[object] = []
         monkeypatch.setattr(
-            project.window,
+            project.window._jobs,
             "_choose_cluster_submission",
             lambda *args, **kwargs: asked.append(args),
         )
@@ -428,7 +428,7 @@ class TestAProjectAlreadyHoldingBothInOneFolder:
         job.execution_target = "local"
         before = _hashes(project.files)
 
-        project.window._on_resubmit_from_dashboard([job.id])
+        project.window._jobs._on_resubmit_from_dashboard([job.id])
 
         assert _hashes(project.files) == before
         assert project.started == []
@@ -443,7 +443,7 @@ class TestAProjectAlreadyHoldingBothInOneFolder:
         _item, job = self._shared(project)
         before = _hashes(project.files)
 
-        project.window._on_submit_local_from_dashboard([job.id])
+        project.window._jobs._on_submit_local_from_dashboard([job.id])
 
         assert _hashes(project.files) == before
         assert project.started == []

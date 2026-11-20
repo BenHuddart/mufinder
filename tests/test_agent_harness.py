@@ -61,16 +61,11 @@ FORBIDDEN_LAYER_IMPORTS = {
 #
 # Every workflow's submit -> materialize -> result -> refresh cycle lives on a
 # ``mufinder.app.workflow_controllers`` controller (docs/architecture.rst,
-# Workflow controllers). The only ``_on_submit_*`` / ``_materialize_*`` names
-# that may remain here are the two cross-workflow dashboard entry points,
-# which fan out to every controller. This set is a ratchet: it may only
-# shrink, and a new per-workflow handler on ``MainWindow`` fails the test.
-PINNED_MAIN_WINDOW_SUBMIT_HANDLERS = frozenset(
-    {
-        "_on_submit_from_dashboard",
-        "_on_submit_local_from_dashboard",
-    }
-)
+# Workflow controllers), and the Job Dashboard's submit entry points on
+# ``mufinder.app.jobs_controller``. No ``_on_submit_*`` / ``_materialize_*``
+# name may remain on ``MainWindow``. This set is a ratchet: it may only shrink,
+# and a new handler on ``MainWindow`` fails the test.
+PINNED_MAIN_WINDOW_SUBMIT_HANDLERS: frozenset[str] = frozenset()
 
 
 # App modules that still build their matplotlib canvas directly instead of

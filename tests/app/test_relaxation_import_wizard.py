@@ -1621,6 +1621,7 @@ class TestNativeRemovalRefusals:
         host_structure: Structure,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
+        from mufinder.app import jobs_controller as jobs_controller_module
         from mufinder.app import main_window as main_window_module
 
         victim = tmp_path / "elsewhere" / "positivemuon" / "native"
@@ -1636,7 +1637,16 @@ class TestNativeRemovalRefusals:
             ),
         )
         monkeypatch.setattr(
-            window, "_prompt_job_file_disposition", lambda **_kwargs: pytest.fail("not offered")
+            jobs_controller_module,
+            "show_detailed_warning",
+            lambda _parent, _title, message, **kwargs: boxes.append(
+                f"{message}\n{kwargs.get('details', '')}"
+            ),
+        )
+        monkeypatch.setattr(
+            window._jobs,
+            "prompt_job_file_disposition",
+            lambda **_kwargs: pytest.fail("not offered"),
         )
 
         assert window._cleanup_relaxation_rows([job]) is True
@@ -1746,6 +1756,12 @@ class TestABatchSharingItsFolder:
         boxes: list[str] = []
         monkeypatch.setattr(
             "mufinder.app.main_window.show_detailed_warning",
+            lambda _parent, _title, message, **kwargs: boxes.append(
+                f"{message}\n{kwargs.get('details', '')}"
+            ),
+        )
+        monkeypatch.setattr(
+            "mufinder.app.jobs_controller.show_detailed_warning",
             lambda _parent, _title, message, **kwargs: boxes.append(
                 f"{message}\n{kwargs.get('details', '')}"
             ),

@@ -123,6 +123,7 @@ CONTINUATION_CLUSTER = ClusterConfig(
 def patch_continuation_cluster_dialog(monkeypatch: pytest.MonkeyPatch) -> None:
     """Accept the cluster submission dialog with a fixed /remote/work config."""
 
+    import mufinder.app.jobs_controller as jobs_controller_module
     import mufinder.app.main_window as main_window_module
 
     class _FakeDialog:
@@ -146,12 +147,18 @@ def patch_continuation_cluster_dialog(monkeypatch: pytest.MonkeyPatch) -> None:
         def password(self) -> str:
             return ""
 
-    monkeypatch.setattr(main_window_module, "ClusterSubmissionDialog", _FakeDialog)
+    monkeypatch.setattr(jobs_controller_module, "ClusterSubmissionDialog", _FakeDialog)
     monkeypatch.setattr(
         main_window_module, "load_cluster_configs", lambda _settings: [CONTINUATION_CLUSTER]
     )
     monkeypatch.setattr(
+        jobs_controller_module, "load_cluster_configs", lambda _settings: [CONTINUATION_CLUSTER]
+    )
+    monkeypatch.setattr(
         main_window_module, "load_cluster_config", lambda _settings, _name: CONTINUATION_CLUSTER
+    )
+    monkeypatch.setattr(
+        jobs_controller_module, "load_cluster_config", lambda _settings, _name: CONTINUATION_CLUSTER
     )
     monkeypatch.setattr(main_window_module.QApplication, "processEvents", lambda: None)
     monkeypatch.setattr(
@@ -295,7 +302,7 @@ def capture_failed_job_dialogs(
     ``None`` for Close).
     """
 
-    import mufinder.app.main_window as main_window_module
+    import mufinder.app.jobs_controller as jobs_controller_module
     from mufinder.app.failed_job_dialog import FailedJobDialog
 
     dialogs: list[object] = []
@@ -306,5 +313,5 @@ def capture_failed_job_dialogs(
             self._action = action
             return 1 if action is not None else 0
 
-    monkeypatch.setattr(main_window_module, "FailedJobDialog", _RecordingDialog)
+    monkeypatch.setattr(jobs_controller_module, "FailedJobDialog", _RecordingDialog)
     return dialogs

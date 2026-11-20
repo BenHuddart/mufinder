@@ -1,4 +1,4 @@
-"""Recovering jobs from the main window: retry retrieval, dismiss, reset, inspect failure and continue relaxation."""
+"""Recovering jobs through the jobs controller: retry retrieval, dismiss, reset, inspect failure and continue relaxation."""
 
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ import pytest
 from PySide6.QtCore import QCoreApplication, QEvent, Qt
 
 import mufinder.app.main_window as main_window_module
+import mufinder.app.jobs_controller as jobs_controller_module
 import mufinder.app.workflow_table_utils as workflow_table_utils
 from mufinder.app.failed_job_dialog import FailedJobAction
 from mufinder.app import selection_snapshot as selection_snapshot_module
@@ -66,9 +67,9 @@ def test_main_window_reset_failed_jobs_can_clean_output_directory(
     (output_dir / f"{job.label}.param").write_text("param", encoding="utf-8")
     (output_dir / "stale.err").write_text("old failure", encoding="utf-8")
 
-    monkeypatch.setattr(window, "_prompt_failed_job_cleanup", lambda _jobs: True)
+    monkeypatch.setattr(window._jobs, "_prompt_failed_job_cleanup", lambda _jobs: True)
 
-    window._reset_failed_jobs([job])
+    window._jobs.reset_failed_jobs([job])
 
     assert job.status == JobStatus.DEFINED
     assert sorted(path.name for path in output_dir.iterdir()) == [
@@ -100,7 +101,7 @@ def test_main_window_reset_failed_jobs_no_failed_shows_info(
         lambda _parent, title, _message: infos.append(title),
     )
 
-    window._reset_failed_jobs([job])
+    window._jobs.reset_failed_jobs([job])
 
     assert infos == ["No resettable jobs"]
     window.close()
@@ -123,9 +124,9 @@ def test_main_window_reset_failed_jobs_accepts_cancelled_jobs(
     job.error_message = "stopped"
     window._document = doc
 
-    monkeypatch.setattr(window, "_prompt_failed_job_cleanup", lambda _jobs: False)
+    monkeypatch.setattr(window._jobs, "_prompt_failed_job_cleanup", lambda _jobs: False)
 
-    window._reset_failed_jobs([job])
+    window._jobs.reset_failed_jobs([job])
 
     assert job.status == JobStatus.DEFINED
     assert job.error_message is None
@@ -149,9 +150,9 @@ def test_main_window_reset_failed_jobs_cancelled_by_user(
     job.error_message = "boom"
     window._document = doc
 
-    monkeypatch.setattr(window, "_prompt_failed_job_cleanup", lambda _jobs: None)
+    monkeypatch.setattr(window._jobs, "_prompt_failed_job_cleanup", lambda _jobs: None)
 
-    window._reset_failed_jobs([job])
+    window._jobs.reset_failed_jobs([job])
 
     assert job_status_word(job) == "failed"
     assert job.error_message == "boom"
@@ -178,7 +179,7 @@ def test_main_window_reset_failed_jobs_warns_when_cleanup_fails(
     output_dir.mkdir(parents=True, exist_ok=True)
     (output_dir / "stale.log").write_text("stale", encoding="utf-8")
 
-    monkeypatch.setattr(window, "_prompt_failed_job_cleanup", lambda _jobs: True)
+    monkeypatch.setattr(window._jobs, "_prompt_failed_job_cleanup", lambda _jobs: True)
     monkeypatch.setattr(
         window._job_file_cleanup,
         "clear_directory_contents",
@@ -191,8 +192,13 @@ def test_main_window_reset_failed_jobs_warns_when_cleanup_fails(
         "show_detailed_warning",
         lambda _parent, title, _message, **_kwargs: warnings.append(title),
     )
+    monkeypatch.setattr(
+        jobs_controller_module,
+        "show_detailed_warning",
+        lambda _parent, title, _message, **_kwargs: warnings.append(title),
+    )
 
-    window._reset_failed_jobs([job])
+    window._jobs.reset_failed_jobs([job])
 
     assert job.status == JobStatus.DEFINED
     assert warnings == ["Directory cleanup issues"]
@@ -220,7 +226,7 @@ def test_main_window_inspect_failed_jobs_no_failed_shows_info(
         lambda _parent, title, _message: infos.append(title),
     )
 
-    window._inspect_failed_jobs([job])
+    window._jobs.inspect_failed_jobs([job])
 
     assert infos == ["No failed jobs"]
     window.close()
@@ -254,7 +260,7 @@ def test_inspect_shows_the_failed_job_dialog_with_the_log_excerpt(
     (output_dir / f"{job.label}.err").write_text("line 1\nfatal error\nline 3\n", encoding="utf-8")
     dialogs = capture_failed_job_dialogs(monkeypatch)
 
-    window._inspect_failed_jobs([job])
+    window._jobs.inspect_failed_jobs([job])
 
     (dialog,) = dialogs
     (report,) = dialog._reports
@@ -279,10 +285,10 @@ def test_inspect_resubmit_runs_the_dashboard_resubmit_path(
     capture_failed_job_dialogs(monkeypatch, action=FailedJobAction.RESUBMIT)
     resubmitted: list[list[object]] = []
     monkeypatch.setattr(
-        window, "_on_resubmit_from_dashboard", lambda job_ids: resubmitted.append(job_ids)
+        window._jobs, "_on_resubmit_from_dashboard", lambda job_ids: resubmitted.append(job_ids)
     )
 
-    window._inspect_failed_jobs(jobs)
+    window._jobs.inspect_failed_jobs(jobs)
 
     assert resubmitted == [[job.id for job in jobs]]
     window.close()
@@ -298,12 +304,12 @@ def test_inspect_close_does_nothing_further(
     window._document = doc
     capture_failed_job_dialogs(monkeypatch, action=None)
     monkeypatch.setattr(
-        window,
+        window._jobs,
         "_on_resubmit_from_dashboard",
         lambda _ids: pytest.fail("Close must not resubmit"),
     )
 
-    window._inspect_failed_jobs([job])
+    window._jobs.inspect_failed_jobs([job])
 
     assert job_status_word(job) == "failed"
     window.close()
@@ -316,7 +322,7 @@ def test_main_window_prompt_failed_job_cleanup_choices(
 
     jobs = [make_job("a", status="failed"), make_job("b", status="failed")]
     # The stub answers with the default: reset and keep the files.
-    assert window._prompt_failed_job_cleanup(jobs) is False
+    assert window._jobs._prompt_failed_job_cleanup(jobs) is False
     (prompt,) = answered_choices
     assert prompt["choices"] == [
         ("clean", "Clean and reset"),
@@ -328,10 +334,10 @@ def test_main_window_prompt_failed_job_cleanup_choices(
     assert "Check now" not in prompt["detail"]
 
     monkeypatch.setattr(workflow_table_utils, "confirm_choice", lambda *_a, **_k: "clean")
-    assert window._prompt_failed_job_cleanup(jobs) is True
+    assert window._jobs._prompt_failed_job_cleanup(jobs) is True
 
     monkeypatch.setattr(workflow_table_utils, "confirm_choice", lambda *_a, **_k: "cancel")
-    assert window._prompt_failed_job_cleanup(jobs) is None
+    assert window._jobs._prompt_failed_job_cleanup(jobs) is None
 
 
 def test_reset_prompt_warns_when_output_may_still_be_on_the_cluster(
@@ -348,7 +354,7 @@ def test_reset_prompt_warns_when_output_may_still_be_on_the_cluster(
         remote_directory="/work/lost",
     )
 
-    window._prompt_failed_job_cleanup([lost])
+    window._jobs._prompt_failed_job_cleanup([lost])
 
     (prompt,) = answered_choices
     assert prompt["detail"].startswith(
@@ -484,7 +490,7 @@ def test_dashboard_check_now_completes_a_local_job_whose_output_is_complete(
     monkeypatch.setattr(window, "_job_output_directory", lambda _job: tmp_path)
     monkeypatch.setattr(window, "_job_seed_name", lambda job: job.label)
 
-    window._on_check_now_from_dashboard([job.id])
+    window._jobs._on_check_now_from_dashboard([job.id])
 
     assert job.status == JobStatus.COMPLETED
     assert len(doc.results) == 1
@@ -496,7 +502,7 @@ def test_dashboard_check_now_completes_a_local_job_whose_output_is_complete(
         "information",
         lambda _parent, title, _text: shown.append(title),
     )
-    window._on_check_now_from_dashboard([job.id])
+    window._jobs._on_check_now_from_dashboard([job.id])
     assert shown == ["No jobs to check"]
     window.close()
 
@@ -597,7 +603,7 @@ def test_dashboard_dismiss_multi_select(
 def _fail_and_dismiss(window: MainWindow, service: ProjectService, job: Job) -> None:
     service.submit_job(job)
     service.end_job(job, EndReason.UNKNOWN, "castep exploded")
-    window._on_dismiss_from_dashboard([job.id])
+    window._jobs._on_dismiss_from_dashboard([job.id])
     assert job.dismissed_at is not None
     assert job_status_word(job) == "failed"
 
@@ -648,16 +654,16 @@ def test_dismissed_pristine_relaxation_job_row_is_resubmittable(
     assert window._pristine_relaxation_view._table.item(0, status_column).text() == "failed"
 
     # Dismissing only hides the dashboard row: the workflow row still says what happened.
-    window._on_dismiss_from_dashboard([job.id])
+    window._jobs._on_dismiss_from_dashboard([job.id])
     window._refresh_ui_after_project_change()
 
     assert window._pristine_relaxation_view._table.item(0, status_column).text() == "failed"
 
     submitted: list[list[Job]] = []
     monkeypatch.setattr(
-        window, "_submit_jobs_locally", lambda jobs, **_kwargs: submitted.append(list(jobs))
+        window._jobs, "submit_jobs_locally", lambda jobs, **_kwargs: submitted.append(list(jobs))
     )
-    monkeypatch.setattr(window, "_prompt_failed_job_cleanup", lambda _jobs: False)
+    monkeypatch.setattr(window._jobs, "_prompt_failed_job_cleanup", lambda _jobs: False)
 
     window._pristine_relaxation_controller.submit(["row_1"], target="local")
 
@@ -713,7 +719,7 @@ def test_dismissed_convergence_cutoff_job_row_is_resubmittable(
     status_column = window._convergence_view._STATUS_COLUMN
     assert window._convergence_view._table.item(0, status_column).text() == "failed"
 
-    window._on_dismiss_from_dashboard([job.id])
+    window._jobs._on_dismiss_from_dashboard([job.id])
     window._refresh_ui_after_project_change()
 
     assert window._convergence_view._table.item(0, status_column).text() == "failed"
@@ -724,9 +730,9 @@ def test_dismissed_convergence_cutoff_job_row_is_resubmittable(
 
     submitted: list[list[Job]] = []
     monkeypatch.setattr(
-        window, "_submit_jobs_locally", lambda jobs, **_kwargs: submitted.append(list(jobs))
+        window._jobs, "submit_jobs_locally", lambda jobs, **_kwargs: submitted.append(list(jobs))
     )
-    monkeypatch.setattr(window, "_prompt_failed_job_cleanup", lambda _jobs: False)
+    monkeypatch.setattr(window._jobs, "_prompt_failed_job_cleanup", lambda _jobs: False)
 
     window._convergence_controller.submit([300.0], target="local")
 
@@ -782,9 +788,9 @@ def test_dismissed_row_submit_aborts_when_cleanup_prompt_cancelled(
 
     submitted: list[list[Job]] = []
     monkeypatch.setattr(
-        window, "_submit_jobs_locally", lambda jobs, **_kwargs: submitted.append(list(jobs))
+        window._jobs, "submit_jobs_locally", lambda jobs, **_kwargs: submitted.append(list(jobs))
     )
-    monkeypatch.setattr(window, "_prompt_failed_job_cleanup", lambda _jobs: None)
+    monkeypatch.setattr(window._jobs, "_prompt_failed_job_cleanup", lambda _jobs: None)
 
     window._convergence_controller.submit([300.0], target="local")
 
@@ -845,11 +851,13 @@ def test_non_dismissed_failed_row_is_resubmitted_from_its_workflow_row(
 
     prompted: list[list[Job]] = []
     monkeypatch.setattr(
-        window, "_prompt_failed_job_cleanup", lambda jobs: prompted.append(list(jobs)) or False
+        window._jobs,
+        "_prompt_failed_job_cleanup",
+        lambda jobs: prompted.append(list(jobs)) or False,
     )
     submitted: list[list[Job]] = []
     monkeypatch.setattr(
-        window, "_submit_jobs_locally", lambda jobs, **_kwargs: submitted.append(list(jobs))
+        window._jobs, "submit_jobs_locally", lambda jobs, **_kwargs: submitted.append(list(jobs))
     )
 
     window._convergence_controller.submit([300.0], target="local")
@@ -904,9 +912,9 @@ def test_dismissed_row_submit_regenerates_job_inputs(
 
     submitted: list[list[Job]] = []
     monkeypatch.setattr(
-        window, "_submit_jobs_locally", lambda jobs, **_kwargs: submitted.append(list(jobs))
+        window._jobs, "submit_jobs_locally", lambda jobs, **_kwargs: submitted.append(list(jobs))
     )
-    monkeypatch.setattr(window, "_prompt_failed_job_cleanup", lambda _jobs: False)
+    monkeypatch.setattr(window._jobs, "_prompt_failed_job_cleanup", lambda _jobs: False)
 
     window._pristine_relaxation_controller.submit(["row_1"], target="local")
 
@@ -931,9 +939,9 @@ _ROW_ACTION_VIEWS = [
 
 
 _ROW_ACTION_SIGNALS = [
-    ("cancel_requested", "_cancel_jobs"),
-    ("inspect_failed_requested", "_inspect_failed_jobs"),
-    ("reset_failed_requested", "_reset_failed_jobs"),
+    ("cancel_requested", "cancel_jobs"),
+    ("inspect_failed_requested", "inspect_failed_jobs"),
+    ("reset_failed_requested", "reset_failed_jobs"),
 ]
 
 
@@ -972,7 +980,7 @@ def test_main_window_routes_workflow_row_actions_through_the_controller(
         "jobs_for_keys",
         lambda values: (requested_keys.append(list(values)), [job])[1],
     )
-    monkeypatch.setattr(window, handler_name, lambda jobs: handled.append(jobs))
+    monkeypatch.setattr(window._jobs, handler_name, lambda jobs: handled.append(jobs))
 
     getattr(getattr(window, view_attr), signal_name).emit(keys)
 
@@ -1007,9 +1015,9 @@ def test_main_window_reset_refreshes_the_lazily_created_workflow_views(
     monkeypatch.setattr(
         window, "_refresh_quantum_corrections_view", lambda: refreshed.append("quantum")
     )
-    monkeypatch.setattr(window, "_prompt_failed_job_cleanup", lambda _jobs: False)
+    monkeypatch.setattr(window._jobs, "_prompt_failed_job_cleanup", lambda _jobs: False)
 
-    window._reset_failed_jobs([job])
+    window._jobs.reset_failed_jobs([job])
 
     assert refreshed == ["energy_barriers", "quantum"]
     assert job.status == JobStatus.DEFINED
@@ -1074,7 +1082,7 @@ def test_main_window_row_reset_clears_the_displayed_status_for_a_bound_job(
     assert view._row_status(0) in workflow_table_utils.RESETTABLE_ROW_STATUSES
 
     # Decline the output cleanup so this asserts the state change alone.
-    monkeypatch.setattr(window, "_prompt_failed_job_cleanup", lambda _jobs: False)
+    monkeypatch.setattr(window._jobs, "_prompt_failed_job_cleanup", lambda _jobs: False)
 
     window._pristine_relaxation_view.reset_failed_requested.emit(["row_1"])
 
@@ -1122,7 +1130,7 @@ def fake_continue_dialog(monkeypatch: pytest.MonkeyPatch):
     _FakeContinueRelaxationDialog.accept = True
     _FakeContinueRelaxationDialog.result_to_return = ({}, ())
     monkeypatch.setattr(
-        main_window_module, "ContinueRelaxationDialog", _FakeContinueRelaxationDialog
+        jobs_controller_module, "ContinueRelaxationDialog", _FakeContinueRelaxationDialog
     )
     return _FakeContinueRelaxationDialog
 
@@ -1169,10 +1177,14 @@ def _wire_fake_cluster_submission(
         template_script_path="/templates/slurm.sh",
     )
     monkeypatch.setattr(
-        main_window_module, "ClusterSubmissionDialog", _FakeClusterSubmissionDialogForContinue
+        jobs_controller_module, "ClusterSubmissionDialog", _FakeClusterSubmissionDialogForContinue
     )
     monkeypatch.setattr(main_window_module, "load_cluster_configs", lambda _settings: [cluster])
+    monkeypatch.setattr(jobs_controller_module, "load_cluster_configs", lambda _settings: [cluster])
     monkeypatch.setattr(main_window_module, "load_cluster_config", lambda _settings, _name: cluster)
+    monkeypatch.setattr(
+        jobs_controller_module, "load_cluster_config", lambda _settings, _name: cluster
+    )
     monkeypatch.setattr(main_window_module.QApplication, "processEvents", lambda: None)
     monkeypatch.setattr(
         window._cluster_runner._runner, "connect_to_cluster", lambda _config, password=None: None
@@ -1321,7 +1333,7 @@ def test_continue_relaxation_pristine_cluster_dismissed_failed_row_end_to_end(
     submit_calls = _wire_fake_cluster_submission(window, monkeypatch, cluster_name="alpha")
     cleanup_prompted: list[int] = []
     monkeypatch.setattr(
-        window,
+        window._jobs,
         "_prompt_failed_job_cleanup",
         lambda count: (
             cleanup_prompted.append(count)
@@ -1329,7 +1341,7 @@ def test_continue_relaxation_pristine_cluster_dismissed_failed_row_end_to_end(
         ),
     )
 
-    window._on_continue_relaxation_requested_from_pristine_relaxation("row_1")
+    window._jobs.on_continue_relaxation_requested_from_pristine_relaxation("row_1")
 
     # Row params mutated in place.
     config = deserialize_pristine_relaxation_config(definition.parameters["configuration"])
@@ -1376,7 +1388,7 @@ def test_continue_relaxation_muon_cluster_completed_row_end_to_end(
     fake_continue_dialog.result_to_return = ({"geom_max_iter": 777}, ())
     submit_calls = _wire_fake_cluster_submission(window, monkeypatch, cluster_name="alpha")
 
-    window._on_continue_relaxation_requested_from_muon_relaxation("positivemuon:Site 1")
+    window._jobs.on_continue_relaxation_requested_from_muon_relaxation("positivemuon:Site 1")
 
     config = deserialize_muon_relaxation_config(definition.parameters["configuration"])
     assert {row.charge_state: row.parameter_values for row in config.rows} == {
@@ -1413,18 +1425,20 @@ def test_continue_relaxation_local_job_round_trip(
     fake_continue_dialog.result_to_return = ({"geom_max_iter": 42}, ())
     local_submitted: list[list[Job]] = []
     monkeypatch.setattr(
-        window, "_submit_jobs_locally", lambda jobs, **_kwargs: local_submitted.append(list(jobs))
+        window._jobs,
+        "submit_jobs_locally",
+        lambda jobs, **_kwargs: local_submitted.append(list(jobs)),
     )
     monkeypatch.setattr(
-        window,
-        "_submit_jobs_on_cluster",
+        window._jobs,
+        "submit_jobs_on_cluster",
         lambda *_a, **_k: pytest.fail("A local job must submit through the local path"),
     )
 
-    window._on_continue_relaxation_requested_from_pristine_relaxation("row_1")
+    window._jobs.on_continue_relaxation_requested_from_pristine_relaxation("row_1")
 
     probe = fake_continue_dialog.captured_kwargs[-1]["checkpoint_probe"]
-    assert probe.status == main_window_module.CheckpointProbeResult.found().status
+    assert probe.status == jobs_controller_module.CheckpointProbeResult.found().status
     assert [[j.id for j in jobs] for jobs in local_submitted] == [[job.id]]
     rendered = param_path.read_text(encoding="utf-8")
     assert "GEOM_MAX_ITER : 42" in rendered
@@ -1444,10 +1458,12 @@ def test_continue_relaxation_from_the_failed_job_dialog_continues_the_row(
     fake_continue_dialog.result_to_return = ({"geom_max_iter": 300}, ())
     local_submitted: list[list[Job]] = []
     monkeypatch.setattr(
-        window, "_submit_jobs_locally", lambda jobs, **_kwargs: local_submitted.append(list(jobs))
+        window._jobs,
+        "submit_jobs_locally",
+        lambda jobs, **_kwargs: local_submitted.append(list(jobs)),
     )
 
-    window._inspect_failed_jobs([job])
+    window._jobs.inspect_failed_jobs([job])
 
     (dialog,) = dialogs
     assert dialog.continue_button is not None
@@ -1469,11 +1485,11 @@ def test_failed_job_dialog_continues_a_muon_relaxation_by_its_charge_qualified_r
     window._refresh_ui_after_project_change()
     continued: list[object] = []
     monkeypatch.setattr(
-        window, "_on_continue_relaxation_requested_from_muon_relaxation", continued.append
+        window._jobs, "on_continue_relaxation_requested_from_muon_relaxation", continued.append
     )
     dialogs = capture_failed_job_dialogs(monkeypatch, action=FailedJobAction.CONTINUE_RELAXATION)
 
-    window._inspect_failed_jobs([job])
+    window._jobs.inspect_failed_jobs([job])
 
     assert dialogs[0].continue_button is not None
     assert continued == ["positivemuon:Site 1"]
@@ -1517,7 +1533,7 @@ def test_dashboard_more_menu_continues_a_relaxation_through_its_row(
     window._refresh_ui_after_project_change()
     continued: list[object] = []
     monkeypatch.setattr(
-        window, "_on_continue_relaxation_requested_from_pristine_relaxation", continued.append
+        window._jobs, "on_continue_relaxation_requested_from_pristine_relaxation", continued.append
     )
 
     open_more_menu(window, monkeypatch).action("Continue relaxation…").triggered.emit()
@@ -1539,7 +1555,7 @@ def test_failed_job_dialog_offers_no_continue_when_the_row_cannot_be_continued(
     )
     dialogs = capture_failed_job_dialogs(monkeypatch)
 
-    window._inspect_failed_jobs([job])
+    window._jobs.inspect_failed_jobs([job])
 
     assert dialogs[0].continue_button is None
     window.close()
@@ -1566,11 +1582,11 @@ def test_continue_relaxation_cluster_not_connected_dialog_still_opens_with_unava
     )
     fake_continue_dialog.accept = False  # cancel: no submission wiring needed
 
-    window._on_continue_relaxation_requested_from_pristine_relaxation("row_1")
+    window._jobs.on_continue_relaxation_requested_from_pristine_relaxation("row_1")
 
     assert len(fake_continue_dialog.captured_kwargs) == 1
     probe = fake_continue_dialog.captured_kwargs[0]["checkpoint_probe"]
-    assert probe.status == main_window_module.CheckpointProbeResult.unavailable("x").status
+    assert probe.status == jobs_controller_module.CheckpointProbeResult.unavailable("x").status
     assert "alpha" in probe.reason
     window.close()
 
@@ -1588,13 +1604,15 @@ def test_continue_relaxation_cancel_leaves_everything_unchanged(
 
     fake_continue_dialog.accept = False
     monkeypatch.setattr(
-        window, "_submit_jobs_locally", lambda *_a, **_k: pytest.fail("Cancel must not submit")
+        window._jobs, "submit_jobs_locally", lambda *_a, **_k: pytest.fail("Cancel must not submit")
     )
     monkeypatch.setattr(
-        window, "_submit_jobs_on_cluster", lambda *_a, **_k: pytest.fail("Cancel must not submit")
+        window._jobs,
+        "submit_jobs_on_cluster",
+        lambda *_a, **_k: pytest.fail("Cancel must not submit"),
     )
 
-    window._on_continue_relaxation_requested_from_pristine_relaxation("row_1")
+    window._jobs.on_continue_relaxation_requested_from_pristine_relaxation("row_1")
 
     assert definition.parameters["configuration"] == before_config
     assert job_status_word(job) == "failed"
@@ -1621,19 +1639,19 @@ def test_continue_relaxation_deletes_its_dialogs_after_closing(
         opened.append(dialog)
         return code.Accepted if accept else code.Rejected
 
-    monkeypatch.setattr(main_window_module.ContinueRelaxationDialog, "exec", fake_exec)
-    monkeypatch.setattr(window, "_submit_jobs_locally", lambda *_a, **_k: None)
-    monkeypatch.setattr(window, "_submit_jobs_on_cluster", lambda *_a, **_k: None)
+    monkeypatch.setattr(jobs_controller_module.ContinueRelaxationDialog, "exec", fake_exec)
+    monkeypatch.setattr(window._jobs, "submit_jobs_locally", lambda *_a, **_k: None)
+    monkeypatch.setattr(window._jobs, "submit_jobs_on_cluster", lambda *_a, **_k: None)
 
     for _ in range(3):
         if accept:
             job.status = JobStatus.ENDED
             job.end_reason = EndReason.UNKNOWN
-        window._on_continue_relaxation_requested_from_pristine_relaxation("row_1")
+        window._jobs.on_continue_relaxation_requested_from_pristine_relaxation("row_1")
     assert len(opened) == 3
     QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
-    assert window.findChildren(main_window_module.ParameterDialog) == []
+    assert window.findChildren(jobs_controller_module.ParameterDialog) == []
     window.close()
 
 
@@ -1688,14 +1706,14 @@ def test_continue_relaxation_unedited_real_dialog_shows_no_parameter_changes(
             "row_1", values, advanced
         )
 
-    resolved_values, resolved_advanced = window._resolve_continue_relaxation_seed_values(seed)
+    resolved_values, resolved_advanced = window._jobs._resolve_continue_relaxation_seed_values(seed)
     old_param_text = render_param_text(resolved_values, resolved_advanced)
 
-    dialog = main_window_module.ContinueRelaxationDialog(
+    dialog = jobs_controller_module.ContinueRelaxationDialog(
         **seed,
         old_param_text=old_param_text,
         render_param_text=render_param_text,
-        checkpoint_probe=main_window_module.CheckpointProbeResult.absent(),
+        checkpoint_probe=jobs_controller_module.CheckpointProbeResult.absent(),
         execution_target=job.execution_target,
         reused_directory=str(param_path.parent),
         parent=window,
@@ -1729,14 +1747,14 @@ def test_continue_relaxation_muon_unedited_real_dialog_shows_no_parameter_change
             "positivemuon:Site 1", values, advanced
         )
 
-    resolved_values, resolved_advanced = window._resolve_continue_relaxation_seed_values(seed)
+    resolved_values, resolved_advanced = window._jobs._resolve_continue_relaxation_seed_values(seed)
     old_param_text = render_param_text(resolved_values, resolved_advanced)
 
-    dialog = main_window_module.ContinueRelaxationDialog(
+    dialog = jobs_controller_module.ContinueRelaxationDialog(
         **seed,
         old_param_text=old_param_text,
         render_param_text=render_param_text,
-        checkpoint_probe=main_window_module.CheckpointProbeResult.absent(),
+        checkpoint_probe=jobs_controller_module.CheckpointProbeResult.absent(),
         execution_target=job.execution_target,
         reused_directory=str(param_path.parent),
         parent=window,
@@ -1773,10 +1791,10 @@ def test_continue_relaxation_warns_and_does_not_submit_when_materialize_fails(
     window._pristine_relaxation_controller.materialize = lambda keys: []
 
     monkeypatch.setattr(
-        window, "_submit_jobs_locally", lambda *_a, **_k: pytest.fail("must not submit")
+        window._jobs, "submit_jobs_locally", lambda *_a, **_k: pytest.fail("must not submit")
     )
     monkeypatch.setattr(
-        window, "_submit_jobs_on_cluster", lambda *_a, **_k: pytest.fail("must not submit")
+        window._jobs, "submit_jobs_on_cluster", lambda *_a, **_k: pytest.fail("must not submit")
     )
     warnings: list[tuple[str, str]] = []
     monkeypatch.setattr(
@@ -1785,7 +1803,7 @@ def test_continue_relaxation_warns_and_does_not_submit_when_materialize_fails(
         lambda _parent, title, text: warnings.append((title, text)),
     )
 
-    window._on_continue_relaxation_requested_from_pristine_relaxation("row_1")
+    window._jobs.on_continue_relaxation_requested_from_pristine_relaxation("row_1")
 
     assert len(warnings) == 1
     # The job was still transitioned (prepare_job_continuation ran before the
@@ -1829,7 +1847,7 @@ def test_continue_relaxation_cross_cluster_misroute_guard(
 ) -> None:
     """Audit finding 2: the submission dialog preselects the job's original
     cluster, but the user can still pick a different one. The continuation
-    branch in ``_submit_jobs_on_cluster`` must not fire in that case -- a
+    branch in ``JobsController.submit_jobs_on_cluster`` must not fire in that case -- a
     continued job's ``remote_directory`` string means nothing on a different
     cluster's filesystem. This asserts the NORMAL path is taken instead: the
     remote-directory existence check runs (it is skipped entirely for a
@@ -1869,11 +1887,21 @@ def test_continue_relaxation_cross_cluster_misroute_guard(
         template_script_path="/templates/slurm.sh",
     )
     monkeypatch.setattr(
-        main_window_module, "ClusterSubmissionDialog", _FakeClusterSubmissionDialogSelectsCluster
+        jobs_controller_module,
+        "ClusterSubmissionDialog",
+        _FakeClusterSubmissionDialogSelectsCluster,
     )
     monkeypatch.setattr(main_window_module, "load_cluster_configs", lambda _settings: [alpha, beta])
     monkeypatch.setattr(
+        jobs_controller_module, "load_cluster_configs", lambda _settings: [alpha, beta]
+    )
+    monkeypatch.setattr(
         main_window_module,
+        "load_cluster_config",
+        lambda _settings, name: beta if name == "beta" else alpha,
+    )
+    monkeypatch.setattr(
+        jobs_controller_module,
         "load_cluster_config",
         lambda _settings, name: beta if name == "beta" else alpha,
     )
@@ -1900,7 +1928,7 @@ def test_continue_relaxation_cross_cluster_misroute_guard(
     )
     monkeypatch.setattr(main_window_module.QMessageBox, "information", lambda *_a, **_k: None)
 
-    window._on_continue_relaxation_requested_from_pristine_relaxation("row_1")
+    window._jobs.on_continue_relaxation_requested_from_pristine_relaxation("row_1")
 
     # The continuation branch was NOT taken: the existence check ran, and the
     # job was submitted with allow_existing_remote_directory=False /
@@ -1990,7 +2018,7 @@ def test_await_remote_file_check_reports_found(
         lambda path: path == "/remote/x/seed.check",
     )
 
-    result = window._await_remote_file_check([(job_id, "/remote/x/seed.check")])
+    result = window._jobs._await_remote_file_check([(job_id, "/remote/x/seed.check")])
 
     assert result == {"existing": ["/remote/x/seed.check"], "errors": {}}
     window.close()
@@ -2003,7 +2031,7 @@ def test_await_remote_file_check_reports_absent(
     job_id = uuid4()
     monkeypatch.setattr(window._cluster_runner._runner, "remote_file_exists", lambda _path: False)
 
-    result = window._await_remote_file_check([(job_id, "/remote/x/seed.check")])
+    result = window._jobs._await_remote_file_check([(job_id, "/remote/x/seed.check")])
 
     assert result == {"existing": [], "errors": {}}
     window.close()
@@ -2020,7 +2048,7 @@ def test_await_remote_file_check_reports_worker_exception_as_unavailable(
 
     monkeypatch.setattr(window._cluster_runner._runner, "remote_file_exists", _boom)
 
-    result = window._await_remote_file_check([(job_id, "/remote/x/seed.check")])
+    result = window._jobs._await_remote_file_check([(job_id, "/remote/x/seed.check")])
 
     assert result["existing"] == []
     assert result["errors"] == {job_id: "stat failed"}
@@ -2036,11 +2064,11 @@ def test_await_remote_file_check_reports_worker_exception_as_unavailable(
     )
     job.status = JobStatus.ENDED
     job.end_reason = EndReason.UNKNOWN
-    monkeypatch.setattr(window, "_is_cluster_connected_for_job", lambda _job: True)
+    monkeypatch.setattr(window._jobs, "_is_cluster_connected_for_job", lambda _job: True)
     monkeypatch.setattr(window, "_job_seed_name", lambda _job: "seed")
     monkeypatch.setattr(window._cluster_runner._runner, "remote_file_exists", _boom)
 
-    probe = window._continue_relaxation_checkpoint_probe(job)
+    probe = window._jobs._continue_relaxation_checkpoint_probe(job)
 
     from mufinder.services.cluster_runner import CheckpointProbeStatus
 
@@ -2065,17 +2093,19 @@ def test_main_window_reset_failed_jobs_uses_supplied_cleanup_choice_without_aski
     job.end_reason = EndReason.UNKNOWN
     window._document = doc
     asked: list[int] = []
-    monkeypatch.setattr(window, "_prompt_failed_job_cleanup", lambda count: asked.append(count))
+    monkeypatch.setattr(
+        window._jobs, "_prompt_failed_job_cleanup", lambda count: asked.append(count)
+    )
     applied: list[tuple[list[Job], bool]] = []
     monkeypatch.setattr(
-        window,
+        window._jobs,
         "_apply_failed_job_reset",
         lambda jobs, *, cleanup_choice, detach_convergence: (
             applied.append((list(jobs), cleanup_choice)) or (0, [], ([], []))
         ),
     )
 
-    window._reset_failed_jobs([job], cleanup_choice=False)
+    window._jobs.reset_failed_jobs([job], cleanup_choice=False)
 
     assert asked == []
     assert applied == [([job], False)]
@@ -2131,12 +2161,15 @@ def test_main_window_start_again_on_cluster_deletes_its_own_directory_without_pr
     monkeypatch.setattr(runner._ssh, "exec_command", remote_command, raising=False)
     monkeypatch.setattr(main_window_module, "show_detailed_warning", lambda *args, **kwargs: None)
     monkeypatch.setattr(
-        window,
+        jobs_controller_module, "show_detailed_warning", lambda *args, **kwargs: None
+    )
+    monkeypatch.setattr(
+        window._jobs,
         "_prompt_remote_directory_overwrite",
         lambda *_args: pytest.fail("starting again was already confirmed"),
     )
 
-    window._submit_jobs_on_cluster(
+    window._jobs.submit_jobs_on_cluster(
         [job],
         eligible_statuses={JobStatus.ENDED},
         reuse_existing_remote_files=True,
@@ -2179,7 +2212,7 @@ def test_main_window_continue_on_cluster_keeps_the_previous_run(
     patch_continuation_cluster_dialog(monkeypatch)
     recorded = patch_continuation_cluster_runner(monkeypatch, window, directory_exists=True)
 
-    window._submit_jobs_on_cluster(
+    window._jobs.submit_jobs_on_cluster(
         [job],
         eligible_statuses={JobStatus.ENDED},
         reuse_existing_remote_files=True,
@@ -2207,7 +2240,7 @@ def test_main_window_start_again_locally_clears_the_previous_output(
     _write_previous_run_output(job_dir, "relax_c")
 
     monkeypatch.setattr(
-        main_window_module,
+        jobs_controller_module,
         "load_castep_setup",
         lambda _settings: CastepSetup(executable_path="/usr/bin/castep", mpirun_path=""),
     )
@@ -2224,13 +2257,13 @@ def test_main_window_start_again_locally_clears_the_previous_output(
         def config(self):
             return SimpleNamespace(num_cores=1, parallel=False, max_concurrent=1)
 
-    monkeypatch.setattr(main_window_module, "LocalSubmissionDialog", _FakeDialog)
+    monkeypatch.setattr(jobs_controller_module, "LocalSubmissionDialog", _FakeDialog)
     submit_calls: list[dict[str, object]] = []
     monkeypatch.setattr(
         window._local_runner, "submit", lambda **kwargs: submit_calls.append(kwargs)
     )
 
-    window._submit_jobs_locally(
+    window._jobs.submit_jobs_locally(
         [job],
         eligible_statuses={JobStatus.ENDED},
         fresh_start_job_ids={job.id},
@@ -2263,13 +2296,18 @@ def test_main_window_start_again_skips_a_job_whose_output_cannot_be_cleared(
         "show_detailed_warning",
         lambda _parent, _title, text, **_kw: warnings.append(text),
     )
+    monkeypatch.setattr(
+        jobs_controller_module,
+        "show_detailed_warning",
+        lambda _parent, _title, text, **_kw: warnings.append(text),
+    )
 
     def _locked(_directory: Path) -> None:
         raise PermissionError("file in use")
 
     monkeypatch.setattr(JobFileCleanup, "clear_directory_contents", staticmethod(_locked))
 
-    window._submit_jobs_on_cluster(
+    window._jobs.submit_jobs_on_cluster(
         [job],
         eligible_statuses={JobStatus.ENDED},
         reuse_existing_remote_files=True,
@@ -2287,8 +2325,8 @@ def test_main_window_start_again_skips_a_job_whose_output_cannot_be_cleared(
 def test_reset_prompt_names_jobs_that_did_not_finish(main_window, answered_choices) -> None:
     window = main_window
 
-    window._prompt_failed_job_cleanup([make_job("c", status="cancelled")])
-    window._prompt_failed_job_cleanup(
+    window._jobs._prompt_failed_job_cleanup([make_job("c", status="cancelled")])
+    window._jobs._prompt_failed_job_cleanup(
         [make_job("a", status="failed"), make_job("b", status="stopped")]
     )
 
