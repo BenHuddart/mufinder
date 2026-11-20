@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QLabel,
     QMenu,
+    QPushButton,
     QSizePolicy,
     QTableWidgetItem,
     QVBoxLayout,
@@ -1175,3 +1176,21 @@ class JobDashboard(QWidget):
             selected.append(job)
             seen.add(job.id)
         return selected
+
+
+class ClusterQueueStatus:
+    """The status bar's cluster widgets: the connection, the last queue check and Refresh Queue.
+
+    The window adds each widget to its status bar; the jobs controller keeps
+    them current. They show only while the project has cluster jobs to follow.
+    """
+
+    def __init__(self, parent: QWidget) -> None:
+        self.connection_label = QLabel(parent)
+        self.queue_checked_label = QLabel("Queue last checked: never", parent)
+        self.refresh_button = QPushButton("Refresh Queue", parent)
+
+    def widgets(self) -> tuple[QWidget, ...]:
+        """Return the widgets in the order they sit in the status bar."""
+
+        return (self.connection_label, self.queue_checked_label, self.refresh_button)

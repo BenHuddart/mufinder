@@ -119,7 +119,7 @@ def test_connecting_asks_about_the_clusters_jobs(checking) -> None:
     service, document, window, checks = checking
     _add_cluster_job(document, service, label="running", status="running")
 
-    window._on_cluster_connection_status_changed(True)
+    window._jobs._on_cluster_connection_status_changed(True)
 
     assert checks == [(["running"], True)]
 
@@ -129,8 +129,8 @@ def test_disconnecting_asks_nothing(checking) -> None:
     _add_cluster_job(document, service, label="running", status="running")
     window._cluster_runner._connected = False
 
-    window._on_cluster_connection_status_changed(False)
-    window._on_job_check_tick()
+    window._jobs._on_cluster_connection_status_changed(False)
+    window._jobs.check_jobs()
 
     assert checks == []
 
@@ -139,7 +139,7 @@ def test_the_minute_tick_skips_a_check_while_one_is_running(checking) -> None:
     service, document, window, checks = checking
     _add_cluster_job(document, service, label="running", status="running")
 
-    window._on_job_check_tick()
+    window._jobs.check_jobs()
 
     assert checks == [(["running"], True)]
 
@@ -148,13 +148,13 @@ def test_the_queue_button_asks_and_reports_the_pass(checking) -> None:
     service, document, window, checks = checking
     job = _add_cluster_job(document, service, label="running", status="running")
     window._refresh_jobs_table()
-    window._sync_cluster_status_widgets()
+    window._jobs.sync_cluster_status_widgets()
 
-    window._on_refresh_cluster_queue()
+    window._jobs._on_refresh_cluster_queue()
 
     # A pass already on the worker answers the request, so it is not queued twice.
     assert checks == [(["running"], True)]
-    window._on_cluster_queue_checked(
+    window._jobs._on_cluster_queue_checked(
         QueueCheckSnapshot(checked_at=utc_now(), elapsed_by_job_id={}, job_ids=(job.id,))
     )
     assert window.statusBar().currentMessage().startswith("Refreshed queue: checked 1 job at ")
@@ -164,30 +164,30 @@ def test_a_pass_over_another_projects_jobs_is_ignored(checking) -> None:
     service, document, window, _checks = checking
     job = _add_cluster_job(document, service, label="running", status="running")
     other = Job(label="other")
-    before = window._cluster_queue_checked_label.text()
+    before = window._jobs._cluster_queue_checked_label.text()
 
-    window._on_cluster_queue_checked(
+    window._jobs._on_cluster_queue_checked(
         QueueCheckSnapshot(checked_at=utc_now(), elapsed_by_job_id={}, job_ids=(other.id,))
     )
-    assert window._cluster_queue_checked_label.text() == before
+    assert window._jobs._cluster_queue_checked_label.text() == before
 
-    window._on_cluster_queue_checked(
+    window._jobs._on_cluster_queue_checked(
         QueueCheckSnapshot(checked_at=utc_now(), elapsed_by_job_id={}, job_ids=(job.id,))
     )
-    assert window._cluster_queue_checked_label.text() != before
+    assert window._jobs._cluster_queue_checked_label.text() != before
 
 
 def test_evidence_moves_the_job_and_says_so(checking) -> None:
     service, document, window, _checks = checking
     job = _add_cluster_job(document, service, label="queued", status="queued")
 
-    window._on_cluster_job_checked(job.id, _evidence(job, SchedulerState.RUNNING))
+    window._jobs._on_cluster_job_checked(job.id, _evidence(job, SchedulerState.RUNNING))
 
     assert job_status_word(job) == "running"
     assert window._dashboard_flush_pending
     # The status bar speaks once, when the check ends.
     assert window.statusBar().currentMessage() != "Cluster job started running: queued"
-    window._on_cluster_queue_checked(
+    window._jobs._on_cluster_queue_checked(
         QueueCheckSnapshot(checked_at=utc_now(), elapsed_by_job_id={}, job_ids=(job.id,))
     )
     assert window.statusBar().currentMessage() == "Cluster job started running: queued"
@@ -203,7 +203,7 @@ def test_evidence_of_complete_output_records_the_result(checking) -> None:
         parsed=CastepResult(completed=True, total_energy=-12.5),
     )
 
-    window._on_cluster_job_checked(job.id, evidence)
+    window._jobs._on_cluster_job_checked(job.id, evidence)
 
     assert job.status == JobStatus.COMPLETED
     run = next(run for run in document.runs.values() if run.job_id == job.id)
@@ -215,7 +215,7 @@ def test_a_job_the_scheduler_lost_stays_active_with_a_lost_track_marker(checking
     service, document, window, _checks = checking
     job = _add_cluster_job(document, service, label="lost", status="running")
 
-    window._on_cluster_job_checked(
+    window._jobs._on_cluster_job_checked(
         job.id, _evidence(job, SchedulerState.NOT_LISTED, OutputState.ABSENT)
     )
 
@@ -229,7 +229,7 @@ def test_a_scheduler_failure_fails_the_job(checking) -> None:
     service, document, window, _checks = checking
     job = _add_cluster_job(document, service, label="oom", status="running")
 
-    window._on_cluster_job_checked(
+    window._jobs._on_cluster_job_checked(
         job.id,
         _evidence(
             job, SchedulerState.FAILED, OutputState.INCOMPLETE, scheduler_detail="OUT_OF_MEMORY"
@@ -238,7 +238,7 @@ def test_a_scheduler_failure_fails_the_job(checking) -> None:
 
     assert job_status_word(job) == "failed"
     assert job.end_reason == EndReason.OUT_OF_MEMORY
-    window._on_cluster_queue_checked(
+    window._jobs._on_cluster_queue_checked(
         QueueCheckSnapshot(checked_at=utc_now(), elapsed_by_job_id={}, job_ids=(job.id,))
     )
     assert window.statusBar().currentMessage() == "Cluster job failed (memory): oom"
@@ -252,7 +252,7 @@ def test_evidence_with_no_open_project_is_ignored(main_window: MainWindow) -> No
         activity=JobActivity.RUNNING,
     )
 
-    main_window._on_cluster_job_checked(job.id, _evidence(job, SchedulerState.RUNNING))
+    main_window._jobs._on_cluster_job_checked(job.id, _evidence(job, SchedulerState.RUNNING))
 
 
 def test_a_check_that_changes_several_jobs_ends_with_one_summary(checking) -> None:
@@ -261,10 +261,10 @@ def test_a_check_that_changes_several_jobs_ends_with_one_summary(checking) -> No
     timed_out = _add_cluster_job(document, service, label="late", status="queued")
     same = _add_cluster_job(document, service, label="same", status="running")
     window._refresh_jobs_table()
-    window._sync_cluster_status_widgets()
-    window._on_refresh_cluster_queue()
+    window._jobs.sync_cluster_status_widgets()
+    window._jobs._on_refresh_cluster_queue()
 
-    window._on_cluster_job_checked(
+    window._jobs._on_cluster_job_checked(
         done.id,
         _evidence(
             done,
@@ -273,11 +273,11 @@ def test_a_check_that_changes_several_jobs_ends_with_one_summary(checking) -> No
             parsed=CastepResult(completed=True, total_energy=-1.0),
         ),
     )
-    window._on_cluster_job_checked(
+    window._jobs._on_cluster_job_checked(
         timed_out.id, _evidence(timed_out, SchedulerState.TIMED_OUT, OutputState.ABSENT)
     )
-    window._on_cluster_job_checked(same.id, _evidence(same, SchedulerState.RUNNING))
-    window._on_cluster_queue_checked(
+    window._jobs._on_cluster_job_checked(same.id, _evidence(same, SchedulerState.RUNNING))
+    window._jobs._on_cluster_queue_checked(
         QueueCheckSnapshot(
             checked_at=utc_now(),
             elapsed_by_job_id={},
@@ -299,8 +299,8 @@ def test_a_failed_check_discards_what_it_had_changed(checking, monkeypatch) -> N
     monkeypatch.setattr(
         "mufinder.app.jobs_controller.show_detailed_warning", lambda *args, **kwargs: None
     )
-    window._on_cluster_job_checked(job.id, _evidence(job, SchedulerState.RUNNING))
+    window._jobs._on_cluster_job_checked(job.id, _evidence(job, SchedulerState.RUNNING))
 
-    window._on_cluster_poll_failed("Queue polling failed for SCARF: boom")
+    window._jobs._on_cluster_poll_failed("Queue polling failed for SCARF: boom")
 
     assert window._job_execution.take_check_summary(1) == ""

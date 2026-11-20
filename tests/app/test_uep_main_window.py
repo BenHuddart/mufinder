@@ -100,7 +100,7 @@ def test_main_window_local_finish_uep_source_marks_density_available(
         wall_time=14.0,
         warnings=(),
     )
-    window._on_local_job_finished(job.id, parsed)
+    window._jobs._on_local_job_finished(job.id, parsed)
 
     assert run.result_id is not None
     result = doc.results[run.result_id]

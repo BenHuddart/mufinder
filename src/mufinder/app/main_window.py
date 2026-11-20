@@ -66,7 +66,7 @@ from mufinder.branding import (
     app_icon,
     logo_path,
 )
-from mufinder.cluster_setup import load_cluster_config, load_cluster_configs
+from mufinder.cluster_setup import load_cluster_configs
 from mufinder.domain.cluster import ClusterConfig
 from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.domain.models import (
@@ -83,9 +83,6 @@ from mufinder.app.comparison_job_dialog import run_comparison_job_dialog
 from mufinder.app.comparison_table_widget import ComparisonTablesPage
 from mufinder.app.blocking_call import run_blocking_call
 from mufinder.app.cluster_ui_utils import (
-    format_cluster_connection_error,
-    prompt_for_cluster_credentials,
-    prompt_to_trust_host_key,
     show_detailed_warning,
 )
 from mufinder.app.castep_setup_dialog import CastepSetupDialog
@@ -162,7 +159,7 @@ from mufinder.app.uep_wizard import UepAnalysisDialog
 from mufinder.app.uep_widget import UEPWidget
 from mufinder.app.host_structure_widget import HostStructureWidget
 from mufinder.app.icons import icon, workflow_stage_icon
-from mufinder.app.job_dashboard import JobDashboard, JobDashboardDeps
+from mufinder.app.job_dashboard import ClusterQueueStatus, JobDashboard, JobDashboardDeps
 from mufinder.app.jobs_controller import JobsController, JobsControllerDeps
 from mufinder.app.journal_widget import JournalWidget
 from mufinder.app.magnetic_field_widget import MagneticFieldWidget
@@ -193,7 +190,6 @@ from mufinder.app.theme import (
     THEME_LIGHT,
     THEME_SYSTEM,
     apply_theme,
-    current_palette,
     load_theme_mode,
     save_theme_mode,
     track_item_view_corners,
@@ -205,11 +201,9 @@ from mufinder.app.workflow_config_codecs import (
     deserialize_uep_config,
     normalized_parameter_values,
     normalized_supercell_matrix,
-    num_farms_from_extras,
     serialize_muon_relaxation_config,
     serialize_pristine_relaxation_config,
     serialize_uep_config,
-    workflow_row_configuration,
 )
 from mufinder.app.workflow_dialogs import (
     HyperfineCouplingConfigDialog,
@@ -246,17 +240,9 @@ from mufinder.app.workflow_controllers import (
     WorkflowControllerContext,
     WorkflowJobController,
     dedupe_jobs,
-    merge_controller_result,
-    validate_controller_artifacts,
 )
-from mufinder.castep_io.output_parser import CastepResult
 from mufinder.persistence.codec import to_jsonable, uuid_or_none
 from mufinder.app.cluster_controller import ClusterController
-from mufinder.services.cluster_status import (
-    ClusterConnectionTone,
-    cluster_status,
-    monitored_cluster_names,
-)
 from mufinder.services.job_execution_controller import (
     JobExecutionController,
 )
@@ -272,11 +258,6 @@ from mufinder.services.definition_mappings import (
     relaxation_mapping_job_priority,
     sweep_definition_context_matches,
 )
-from mufinder.services.job_artifacts import (
-    ParsedJobArtifacts,
-    RetrievalFlags,
-    collect_job_artifacts,
-)
 from mufinder.services.job_file_cleanup import (
     KEPT_AS_NOT_ITS_OWN,
     JobCleanupItem,
@@ -287,7 +268,6 @@ from mufinder.services.job_paths import (
     job_directory_label,
     definition_output_directory,
     job_output_directory,
-    job_output_files,
     job_seed_name,
 )
 from mufinder.services.job_results import (
@@ -295,7 +275,6 @@ from mufinder.services.job_results import (
     max_stress_for_job,
     total_energy_for_job,
 )
-from mufinder.services.job_reconcile import JobEvidence
 from mufinder.services.job_progress import JobProgressMonitor
 from mufinder.services.local_runner import LocalJobRunner
 from mufinder.app import workflow_table_utils
@@ -357,12 +336,6 @@ from mufinder.services.source_candidates import (
     relaxation_sources_for_labels,
 )
 from mufinder.services.structure_export import relaxed_structure_export_for_job_id
-from mufinder.services.ssh_client import (
-    SSHAuthenticationError,
-    SSHCredentials,
-    SSHUnknownHostKeyError,
-    save_trusted_host_key,
-)
 from mufinder.science.hyperfine import HyperfineError
 from mufinder.science.site_generation import SiteGenerationError
 from mufinder.science.uep import (
@@ -373,12 +346,6 @@ from mufinder.science.uep import (
 )
 from mufinder.science.structure_io import StructureLoadError
 from mufinder.workflow import StructureBridgeError
-from mufinder.workflow.energy_barriers import (
-    NUDGED_ELASTIC_BAND_CALC_TYPE,
-)
-from mufinder.workflow.quantum import (
-    QUANTUM_PHONON_CALC_TYPE,
-)
 
 
 _LOG = logging.getLogger(__name__)
@@ -498,8 +465,8 @@ class MainWindow(QMainWindow):
             job_output_directory=self._job_output_directory,
             job_seed_name=self._job_seed_name,
             active_run_by_job=self._active_run_by_job,
-            retrieval_for_job=self._retrieval_flags_for_job,
-            remote_directory_for_job=self._infer_remote_job_directory,
+            retrieval_for_job=lambda job: self._jobs.retrieval_flags_for_job(job),
+            remote_directory_for_job=lambda job: self._jobs.infer_remote_job_directory(job),
         )
         self._job_file_cleanup = JobFileCleanup(
             document_getter=lambda: self._document,
@@ -511,6 +478,7 @@ class MainWindow(QMainWindow):
             ),
         )
         self._workflow_submission = WorkflowSubmissionCoordinator(dedupe_jobs=self._dedupe_jobs)
+        self._cluster_queue_status = ClusterQueueStatus(self)
         self._jobs = JobsController(
             self._build_jobs_controller_deps(),
             project_service=self._project_service,
@@ -521,6 +489,7 @@ class MainWindow(QMainWindow):
             job_file_cleanup=self._job_file_cleanup,
             job_progress=self._job_progress,
             active_run_by_job=self._active_run_by_job,
+            cluster_status=self._cluster_queue_status,
             parent=self,
         )
         # Job-lifecycle handlers (completion/status/cancel) coalesce their heavy
@@ -541,13 +510,6 @@ class MainWindow(QMainWindow):
         self._dashboard_flush_timer.setSingleShot(True)
         self._dashboard_flush_timer.setInterval(self._DASHBOARD_FLUSH_DEBOUNCE_MS)
         self._dashboard_flush_timer.timeout.connect(self._flush_dashboard)
-        # Every minute, check each active job: a local one against the local
-        # runner and its output folder, a cluster one against the scheduler
-        # and its remote folder. The handler is cheap when no job is active.
-        self._job_check_timer = QTimer(self)
-        self._job_check_timer.setInterval(60_000)
-        self._job_check_timer.timeout.connect(self._on_job_check_tick)
-        self._job_check_timer.start()
         self._shutting_down = False
         self._recent_projects_menu: QMenu | None = None
         self._home_recent_projects_layout: QVBoxLayout | None = None
@@ -556,10 +518,6 @@ class MainWindow(QMainWindow):
         self._project_home_page: QWidget | None = None
         self._project_home: ProjectHomeWidget | None = None
         self._project_home_button: QToolButton | None = None
-        self._cluster_last_connected_name: str | None = None
-        self._cluster_lost_names: set[str] = set()
-        self._cluster_status_tone = ClusterConnectionTone.NEUTRAL
-        self._queue_refreshes_pending = 0
         self._magnetic_field_workspace_widgets: dict[str, MagneticFieldWidget] = {}
         self._uep_analysis_dialogs: dict[UUID, UepAnalysisDialog] = {}
         self._muon_generation_thread: _MuonGenerationThread | None = None
@@ -1043,40 +1001,20 @@ class MainWindow(QMainWindow):
             lambda _shown: self._refresh_jobs_table()
         )
 
-        self._local_runner.job_started.connect(self._on_local_job_started)
-        self._local_runner.job_finished.connect(self._on_local_job_finished)
-        self._local_runner.job_failed.connect(self._on_local_job_failed)
-        self._local_runner.job_cancelled.connect(self._on_local_job_cancelled)
-        self._local_runner.status_changed.connect(self._on_local_job_status_changed)
-
-        self._cluster_runner.job_cancelled.connect(self._on_cluster_job_cancelled)
-        self._cluster_runner.job_checked.connect(self._on_cluster_job_checked)
-        self._cluster_runner.connection_status_changed.connect(
-            self._on_cluster_connection_status_changed
-        )
-        self._cluster_runner.queue_checked.connect(self._on_cluster_queue_checked)
-        self._cluster_runner.poll_failed.connect(self._on_cluster_poll_failed)
-        self._cluster_runner.abandoned_job_cancel_failed.connect(
-            self._on_abandoned_cluster_job_cancel_failed
-        )
+        self._jobs.connect_runners()
 
         self._build_layout()
         self._build_menu()
         self.setStatusBar(QStatusBar(self))
-        self._cluster_connection_label = QLabel(self)
-        self._cluster_queue_checked_label = QLabel("Queue last checked: never", self)
-        self._cluster_refresh_button = QPushButton("Refresh Queue", self)
-        self._cluster_refresh_button.clicked.connect(self._on_refresh_cluster_queue)
         self._keyword_catalog_guard = KeywordCatalogGuard(
             parent=self,
             settings=self._settings,
             open_setup=self._open_castep_setup_dialog,
         )
         self.statusBar().addPermanentWidget(self._keyword_catalog_guard.status_button)
-        self.statusBar().addPermanentWidget(self._cluster_connection_label)
-        self.statusBar().addPermanentWidget(self._cluster_queue_checked_label)
-        self.statusBar().addPermanentWidget(self._cluster_refresh_button)
-        self._sync_cluster_status_widgets()
+        for widget in self._cluster_queue_status.widgets():
+            self.statusBar().addPermanentWidget(widget)
+        self._jobs.sync_cluster_status_widgets()
         self.statusBar().showMessage("Ready")
         # Measured with the panels still shown: the welcome page keeps a project's
         # minimum size, so opening a project never resizes the window.
@@ -1274,7 +1212,7 @@ class MainWindow(QMainWindow):
         dashboard_flush_timer = getattr(self, "_dashboard_flush_timer", None)
         if dashboard_flush_timer is not None:
             dashboard_flush_timer.stop()
-        job_check_timer = getattr(self, "_job_check_timer", None)
+        job_check_timer = getattr(getattr(self, "_jobs", None), "check_timer", None)
         if job_check_timer is not None:
             job_check_timer.stop()
         if self._document is not None and self.isVisible():
@@ -1369,7 +1307,7 @@ class MainWindow(QMainWindow):
         # orphaned until the next job.
         self._flush_dashboard()
         self._job_dashboard.sync_runtime_timer()
-        job_check_timer = getattr(self, "_job_check_timer", None)
+        job_check_timer = getattr(getattr(self, "_jobs", None), "check_timer", None)
         if job_check_timer is not None:
             job_check_timer.start()
 
@@ -1724,7 +1662,7 @@ class MainWindow(QMainWindow):
         # The dashboard's content-sized columns are fixed widths; refit them
         # to the new theme's metrics.
         self._job_dashboard.fit_columns()
-        self._refresh_cluster_connection_label_colour()
+        self._jobs.refresh_cluster_connection_label_colour()
         self._sync_project_home()
 
     def _new_project(self) -> None:
@@ -2065,7 +2003,7 @@ class MainWindow(QMainWindow):
         self._deferring_relaxation_analysis_refresh = True
         try:
             with trace.stage("cluster and local job tracking"):
-                self._reset_job_tracking_for_project_change()
+                self._jobs.reset_tracking_for_project_change()
             with trace.stage("project titles"):
                 self._apply_project_change_titles()
             with trace.stage("comparison and magnetic workspace views"):
@@ -2128,18 +2066,6 @@ class MainWindow(QMainWindow):
         # Filling the pages tidied some saved forms; only what the user does next counts.
         self._project_service.settle_ui_state(self._document)
         self._close_save_failed = False
-
-    def _reset_job_tracking_for_project_change(self) -> None:
-        assert self._document is not None
-        self._cluster_runner.forget_progress()
-        self._cluster_lost_names.clear()
-        self._queue_refreshes_pending = 0
-        self._cluster_queue_checked_label.setText("Queue last checked: never")
-
-        # Local jobs that were in progress when MuFinder closed have no process
-        # now. This runs before the jobs table is rebuilt, so no such job is
-        # ever shown as running. Cluster jobs are asked about on the worker.
-        self._on_job_check_tick()
 
     def _apply_project_change_titles(self) -> None:
         assert self._document is not None
@@ -2535,10 +2461,10 @@ class MainWindow(QMainWindow):
             self._muon_relaxation_view.set_runtime_states({})
             self._uep_view.set_runtime_states({})
             self._refresh_relaxation_analysis_context()
-            self._sync_cluster_status_widgets()
+            self._jobs.sync_cluster_status_widgets()
             return
 
-        self._sync_cluster_status_widgets()
+        self._jobs.sync_cluster_status_widgets()
 
         self._convergence_controller.refresh_view()
         self._kpoint_convergence_controller.refresh_view()
@@ -3159,29 +3085,6 @@ class MainWindow(QMainWindow):
             include_apply_all=include_apply_all,
         )
 
-    def _task_farming_for_job(self, job: Job) -> tuple[bool, int | None]:
-        """Return ``(farming_enabled, num_farms)`` for any farm-aware calc type.
-
-        Both runners use this to decide which output files a finished job wrote:
-        task farming renames every output to ``<seed>_farmNNN.<ext>``, so a job
-        whose farm count is misreported here is read from the wrong files. The
-        quantum-phonon and NEB workflows each store their farm count in the
-        owning definition's per-row configuration extras; every other calc type
-        is unfarmed.
-        """
-
-        if job.calc_type == QUANTUM_PHONON_CALC_TYPE:
-            definition, key = self._quantum_corrections_controller.definition_and_key_for_job(job)
-        elif job.calc_type == NUDGED_ELASTIC_BAND_CALC_TYPE:
-            definition, key = self._energy_barriers_controller.definition_and_key_for_job(job)
-        else:
-            return False, None
-        if definition is None or key is None:
-            return False, None
-        _params, _advanced, extras = workflow_row_configuration(definition, key)
-        num_farms = num_farms_from_extras(extras)
-        return num_farms > 1, (num_farms if num_farms > 1 else None)
-
     def _refresh_views_after_job_reset(self) -> None:
         """Repaint every workflow table that can show a just-reset job.
 
@@ -3217,8 +3120,6 @@ class MainWindow(QMainWindow):
             status_bar=lambda: self.statusBar(),
             job_output_directory=lambda job: self._job_output_directory(job),
             job_seed_name=lambda job: self._job_seed_name(job),
-            retrieval_flags_for_job=lambda job: self._retrieval_flags_for_job(job),
-            task_farming_for_job=lambda job: self._task_farming_for_job(job),
             workflow_controllers=lambda: self._workflow_controllers,
             convergence_controller=lambda: self._convergence_controller,
             kpoint_convergence_controller=lambda: self._kpoint_convergence_controller,
@@ -3243,14 +3144,11 @@ class MainWindow(QMainWindow):
             edit_cluster_during_submission=lambda *args, **kwargs: (
                 self._edit_cluster_during_submission(*args, **kwargs)
             ),
-            connect_to_cluster_with_trust=lambda *args, **kwargs: (
-                self._connect_to_cluster_with_trust(*args, **kwargs)
-            ),
-            on_local_job_finished=lambda *args, **kwargs: self._on_local_job_finished(
-                *args, **kwargs
-            ),
-            on_cluster_job_cancelled=lambda job_id: self._on_cluster_job_cancelled(job_id),
             keyword_catalog_guard=lambda: self._keyword_catalog_guard,
+            quantum_corrections_controller=lambda: self._quantum_corrections_controller,
+            energy_barriers_controller=lambda: self._energy_barriers_controller,
+            job_dashboard=lambda: self._job_dashboard,
+            dashboard_flush_pending=lambda: self._dashboard_flush_pending,
         )
 
     def _build_workflow_controller_context(self) -> WorkflowControllerContext:
@@ -3552,545 +3450,6 @@ class MainWindow(QMainWindow):
 
     def _job_seed_name(self, job: Job) -> str:
         return job_seed_name(job, self._job_output_directory)
-
-    def _on_local_job_status_changed(self, job_id: UUID, status_value: str) -> None:
-        if self._document is None:
-            return
-        update = self._job_execution.mark_local_status_changed(job_id, status_value)
-        if update.changed:
-            self._refresh_jobs_table()
-            self._convergence_controller.refresh_view()
-            self._kpoint_convergence_controller.refresh_view()
-            self._refresh_hyperfine_coupling_view()
-            self._refresh_quantum_corrections_view()
-            self._refresh_energy_barriers_view()
-            self._persist_document_ui_state(
-                failure_message="Local job status changed, but autosave failed.",
-            )
-
-    def _on_local_job_started(self, job_id: UUID) -> None:
-        if self._document is None:
-            return
-        update = self._job_execution.mark_started(job_id)
-        if update.changed:
-            self._refresh_jobs_table()
-            self._persist_document_ui_state(
-                failure_message="Local job start was recorded, but autosave failed.",
-            )
-
-    def _on_local_job_finished(
-        self,
-        job_id: UUID,
-        parsed: CastepResult,
-        artifacts: ParsedJobArtifacts | None = None,
-    ) -> None:
-        if self._document is None:
-            return
-        job = self._document.jobs.get(job_id)
-        if job is None:
-            return
-        results_before = frozenset(self._document.results)
-        try:
-            self._record_finished_job(job, parsed, artifacts)
-        except Exception as error:  # noqa: BLE001 - a job must not stay active on any error
-            _LOG.exception("Could not record the result of finished job %s", job.label)
-            update = self._job_execution.fail_unrecorded_finish(
-                job_id, error, results_before=results_before
-            )
-            if update.changed:
-                self._request_dashboard_flush(
-                    failure_message="Failed job state was recorded, but autosave failed.",
-                )
-                self.statusBar().showMessage(f"Could not record the result of {job.label}")
-
-    def _record_finished_job(
-        self,
-        job: Job,
-        parsed: CastepResult,
-        artifacts: ParsedJobArtifacts | None,
-    ) -> None:
-        """Build and store ``job``'s result from its parsed output, and complete it."""
-
-        assert self._document is not None
-        job_id = job.id
-
-        # The runner worker thread parses the secondary outputs (relaxed cell /
-        # phonon / transition state) exactly once and delivers them here as
-        # ``artifacts``. Non-runner callers (reconciliation/retry paths, tests
-        # that invoke this directly) pass no carrier: fall back to synchronous
-        # collection through the *same* collector so parse-once still holds — the
-        # file is read once, just on the GUI thread for those paths.
-        if artifacts is None:
-            flags = self._cluster_retrieve_flags(job)
-            # The farm count must be resolved here too: a task-farmed job writes
-            # <seed>_farm001.ts and no <seed>.ts, so collecting at the default of
-            # one farm would report a successful farmed job's output as missing.
-            _farming_enabled, farm_count = self._task_farming_for_job(job)
-            artifacts = collect_job_artifacts(
-                self._job_output_directory(job),
-                self._job_seed_name(job),
-                want_out_cell=bool(flags.get("retrieve_out_cell", False)),
-                want_phonon=bool(flags.get("retrieve_phonon", False)),
-                want_ts=bool(flags.get("retrieve_ts", False)),
-                want_magres=bool(flags.get("retrieve_magres", False)),
-                num_farms=farm_count or 1,
-            )
-
-        run = self._job_execution.ensure_run_for_job(job, started=True)
-        if run is None:
-            return
-
-        # The owning controller rejects a completion whose outputs cannot carry
-        # a result (unconverged geometry, a missing, unparseable or stale
-        # secondary output). It reads the carrier, never disk, and runs before
-        # any result is built.
-        failure = validate_controller_artifacts(
-            self._workflow_controllers, job, parsed, run, artifacts
-        )
-        if failure is not None:
-            self._on_local_job_failed(job_id, failure)
-            return
-
-        result_payload = {
-            "completed": parsed.completed,
-            "total_energy": parsed.total_energy,
-            "enthalpy": parsed.enthalpy,
-            "forces": [list(force) for force in parsed.forces],
-            "stress": [list(row) for row in parsed.stress],
-            "max_force": parsed.max_force,
-            "max_stress": parsed.max_stress,
-            "num_scf_cycles": parsed.num_scf_cycles,
-            "wall_time": parsed.wall_time,
-            "warnings": list(parsed.warnings),
-            "geom_converged": parsed.geom_converged,
-        }
-
-        # The owning workflow controller (if any) contributes payload, file and
-        # structure additions before the Result is built: a strict no-op for a
-        # calc type no controller owns and for an empty ControllerResult (cutoff
-        # convergence). It consumes the pre-parsed ``artifacts``.
-        result_payload, output_files, derived_structure_ids, merged_warnings = (
-            merge_controller_result(
-                self._workflow_controllers,
-                job,
-                parsed,
-                run,
-                artifacts,
-                payload=result_payload,
-                output_files=job_output_files(
-                    self._document.project_root,
-                    self._job_output_directory(job),
-                    self._job_seed_name(job),
-                ),
-                derived_structure_ids=[],
-                warnings=list(parsed.warnings),
-            )
-        )
-
-        result = Result(
-            calculation_run_id=run.id,
-            result_type=job.calc_type,
-            data=result_payload,
-            output_files=output_files,
-            derived_structure_ids=derived_structure_ids,
-        )
-        self._document.results[result.id] = result
-
-        self._job_execution.complete_job_with_result(
-            job,
-            result=result,
-            warnings=merged_warnings,
-            convergence_achieved=parsed.geom_converged,
-        )
-        self._request_dashboard_flush(
-            failure_message="Completed job result was recorded, but autosave failed.",
-        )
-        self.statusBar().showMessage(f"Completed local job {job.label}")
-
-    def _on_local_job_failed(self, job_id: UUID, message: str) -> None:
-        if self._document is None:
-            return
-        update = self._job_execution.fail_job(job_id, message)
-        if update.job is None:
-            return
-        self._request_dashboard_flush(
-            failure_message="Failed job state was recorded, but autosave failed.",
-        )
-        self.statusBar().showMessage(f"Local job failed: {update.job.label}")
-
-    def _on_local_job_cancelled(self, job_id: UUID) -> None:
-        if self._document is None:
-            return
-        update = self._job_execution.cancel_job(job_id)
-        if update.job is None:
-            return
-        self._request_dashboard_flush(
-            failure_message="Cancelled job state was recorded, but autosave failed.",
-        )
-        self.statusBar().showMessage(f"Cancelled local job {update.job.label}")
-
-    def _on_cluster_job_checked(self, job_id: UUID, evidence: JobEvidence) -> None:
-        """Apply what a check saw of one cluster job."""
-
-        if self._document is None:
-            return
-        update = self._job_execution.apply_evidence(job_id, evidence)
-        job = update.job
-        if job is None:
-            return
-        if update.finished is not None:
-            self._on_local_job_finished(job_id, update.finished.parsed, update.finished.artifacts)
-            # Recording the result can fail the job instead; that path reports itself.
-            if job.status == JobStatus.COMPLETED:
-                self.statusBar().showMessage(f"Completed cluster job {job.label}")
-        if update.changed or update.stamped:
-            self._request_dashboard_flush(
-                failure_message="Cluster job state was recorded, but autosave failed.",
-            )
-
-    def _on_cluster_job_cancelled(self, job_id: UUID) -> None:
-        self._on_local_job_cancelled(job_id)
-        if self._document is None:
-            return
-        job = self._document.jobs.get(job_id)
-        if job is not None:
-            self.statusBar().showMessage(f"Cancelled cluster job {job.label}")
-
-    def _on_cluster_connection_status_changed(self, connected: bool) -> None:
-        if connected:
-            name = self._cluster_runner.connected_cluster_name
-            self._cluster_last_connected_name = name
-            self._cluster_lost_names.discard((name or "").strip().casefold())
-        else:
-            # Polls are serial, so any poll requested before this has already reported.
-            self._queue_refreshes_pending = 0
-            self._job_dashboard.clear_cluster_elapsed()
-        self._sync_cluster_status_widgets()
-        # Each row's action and stale marker depend on the connection, so the
-        # table follows it at once instead of waiting for the next queue poll.
-        if self._document is not None:
-            self._refresh_jobs_table()
-            if connected:
-                self._job_execution.check_cluster_jobs(skip_if_busy=True)
-
-    def _sync_cluster_status_widgets(self) -> None:
-        """Show the cluster widgets only while the project has cluster jobs to follow."""
-
-        status = cluster_status(
-            self._document.jobs.values() if self._document is not None else (),
-            connected_cluster=self._cluster_runner.connected_cluster_name,
-            lost_clusters=self._cluster_lost_names,
-        )
-        self._cluster_connection_label.setText(status.connection_text)
-        self._cluster_status_tone = status.tone
-        self._refresh_cluster_connection_label_colour()
-        self._cluster_refresh_button.setEnabled(status.can_poll)
-        self._cluster_refresh_button.setToolTip(status.refresh_tooltip)
-        for widget in (
-            self._cluster_connection_label,
-            self._cluster_queue_checked_label,
-            self._cluster_refresh_button,
-        ):
-            widget.setVisible(status.visible)
-
-    def _refresh_cluster_connection_label_colour(self) -> None:
-        palette = current_palette()
-        colour = {
-            ClusterConnectionTone.NEUTRAL: palette.text_muted,
-            ClusterConnectionTone.CONNECTED: palette.success,
-            ClusterConnectionTone.LOST: palette.danger,
-        }[self._cluster_status_tone]
-        # This runs on every dashboard flush; only an actual change re-styles.
-        style = f"color: {colour};"
-        if self._cluster_connection_label.styleSheet() != style:
-            self._cluster_connection_label.setStyleSheet(style)
-
-    def _on_cluster_queue_checked(self, checked_at) -> None:
-        # A check in flight when another project opened reports the jobs of the
-        # project it started in; it says nothing about the one now open.
-        observed = getattr(checked_at, "job_ids", None)
-        if (
-            self._document is not None
-            and observed
-            and self._document.jobs.keys().isdisjoint(observed)
-        ):
-            return
-        # Each job's evidence was applied before this arrives, and asked for
-        # its own flush; this drains whatever is still pending.
-        if self._dashboard_flush_pending:
-            self._request_dashboard_flush(
-                failure_message="Queue check was recorded, but autosave failed.",
-            )
-        stamp_source = getattr(checked_at, "checked_at", checked_at)
-        self._job_dashboard.set_cluster_elapsed(
-            getattr(checked_at, "elapsed_by_job_id", None), stamp_source
-        )
-        if hasattr(stamp_source, "strftime"):
-            localized = stamp_source
-            if getattr(stamp_source, "tzinfo", None) is not None and hasattr(
-                stamp_source, "astimezone"
-            ):
-                try:
-                    localized = stamp_source.astimezone()
-                except Exception:
-                    localized = stamp_source
-            stamp = localized.strftime("%H:%M:%S")
-        elif isinstance(stamp_source, str):
-            stamp = stamp_source.strip() or "unknown"
-        else:
-            stamp = "unknown"
-        self._cluster_queue_checked_label.setText(f"Queue last checked: {stamp}")
-        if self._queue_refreshes_pending:
-            self._queue_refreshes_pending -= 1
-            checked = len(getattr(checked_at, "job_ids", ()))
-            self.statusBar().showMessage(
-                f"Refreshed queue: checked {plural(checked, 'job')} at {stamp}"
-            )
-        # One line for everything this pass changed; it outranks the plain
-        # "refreshed" line, which says less.
-        summary = self._job_execution.take_check_summary(len(getattr(checked_at, "job_ids", ())))
-        if summary:
-            self.statusBar().showMessage(summary)
-        self._job_dashboard.sync_runtime_timer()
-        self._job_dashboard.refresh_runtime_cells()
-
-    def _on_cluster_poll_failed(self, message: str) -> None:
-        # A failed poll is what closes a connection without being asked to, so
-        # this is the drop the connection label reports (the runner signals the
-        # disconnect first, which also happens on every deliberate reconnect).
-        name = self._cluster_last_connected_name
-        if name:
-            self._cluster_lost_names.add(name.strip().casefold())
-        self._queue_refreshes_pending = 0
-        # The pass did not finish, so what it changed goes unsummarised.
-        self._job_execution.take_check_summary(0)
-        self._sync_cluster_status_widgets()
-        self.statusBar().showMessage(f"Failed to check queue on {name or 'the cluster'}")
-        show_detailed_warning(
-            self,
-            "Queue polling failed",
-            (
-                f"{message}\n\n"
-                "Check VPN/network access, SSH trust, authentication, and scheduler command paths."
-            ),
-            informative_text="Open Details to inspect the full polling failure.",
-        )
-
-    def _on_abandoned_cluster_job_cancel_failed(
-        self, job_id: object, remote_job_id: str, error: str
-    ) -> None:
-        job = self._document.jobs.get(job_id) if self._document is not None else None
-        label = job.label if job is not None else "A cancelled job"
-        show_detailed_warning(
-            self,
-            "Cluster cancellation failed",
-            (
-                f"{label} was submitted after the cluster stopped responding, and "
-                f"cancelling scheduler job {remote_job_id} failed. Cancel it on the cluster.\n\n"
-                f"{error}"
-            ),
-            informative_text="Open Details to inspect the full cancellation error.",
-        )
-
-    def _connect_to_cluster_with_trust(
-        self, config: ClusterConfig, *, credentials: SSHCredentials
-    ) -> None:
-        trusted_endpoints: set[str] = set()
-        while True:
-            error = self._jobs.await_cluster_connect(config, credentials=credentials)
-            if error is None:
-                return
-            if isinstance(error, SSHUnknownHostKeyError):
-                if error.endpoint in trusted_endpoints:
-                    raise error
-                if not prompt_to_trust_host_key(self, config, error):
-                    raise ConnectionError(
-                        "Connection cancelled because the SSH host key was not trusted."
-                    ) from error
-                save_trusted_host_key(
-                    self._settings,
-                    config,
-                    algorithm=error.algorithm,
-                    key_base64=error.key_base64,
-                    endpoint=error.endpoint,
-                )
-                trusted_endpoints.add(error.endpoint)
-                continue
-            raise error
-
-    def _on_refresh_cluster_queue(self) -> None:
-        try:
-            if not self._connected_to_a_monitored_cluster():
-                self._refresh_queue_for_active_dashboard_clusters()
-                return
-            self._request_queue_poll()
-        except Exception as exc:  # noqa: BLE001
-            self._queue_refreshes_pending = 0
-            self.statusBar().showMessage("Failed to refresh queue")
-            show_detailed_warning(
-                self,
-                "Queue refresh failed",
-                str(exc),
-                informative_text="Open Details to inspect the full queue refresh error.",
-            )
-
-    def _connected_to_a_monitored_cluster(self) -> bool:
-        # A connection left over from another project would poll none of this
-        # project's jobs, so it counts as not connected.
-        if not self._cluster_runner.is_connected:
-            return False
-        connected = (self._cluster_runner.connected_cluster_name or "").strip().casefold()
-        return connected in {name.casefold() for name in self._active_dashboard_cluster_targets()}
-
-    def _request_queue_poll(self) -> None:
-        # The poll runs on the cluster worker; its result reaches the status bar
-        # through the queue_checked or poll_failed signal.
-        # A pass already on the worker answers this request too.
-        self._queue_refreshes_pending += 1
-        self._job_execution.check_cluster_jobs(skip_if_busy=True)
-
-    def _refresh_queue_for_active_dashboard_clusters(self) -> None:
-        target_clusters = self._active_dashboard_cluster_targets()
-        if not target_clusters:
-            return
-
-        configured = load_cluster_configs(self._settings)
-        by_name = {config.name.strip().casefold(): config for config in configured}
-
-        refreshed: list[str] = []
-        failures: list[str] = []
-        failed_names: list[str] = []
-        for target in target_clusters:
-            config = by_name.get(target.casefold())
-            if config is None:
-                failed_names.append(target)
-                failures.append(
-                    f"- {target}: cluster is not configured. Set it in Setup > HPC Clusters."
-                )
-                continue
-            try:
-                self._connect_to_cluster_with_trust(config, credentials=SSHCredentials())
-                self._request_queue_poll()
-                refreshed.append(config.name)
-            except Exception as exc:  # noqa: BLE001
-                auth_method = config.auth_method.strip().lower()
-                needs_credentials = auth_method == "password" or isinstance(
-                    exc, SSHAuthenticationError
-                )
-                if needs_credentials:
-                    credentials = prompt_for_cluster_credentials(self, config)
-                    if credentials is None:
-                        failed_names.append(config.name)
-                        failures.append(
-                            f"- {config.name}: credentials required for reconnect. Enter them when prompted."
-                        )
-                        continue
-                    try:
-                        self._connect_to_cluster_with_trust(config, credentials=credentials)
-                        self._request_queue_poll()
-                        refreshed.append(config.name)
-                        continue
-                    except Exception as retry_exc:  # noqa: BLE001
-                        failed_names.append(config.name)
-                        failures.append(
-                            f"- {config.name}: {format_cluster_connection_error(config, retry_exc)}"
-                        )
-                        continue
-                failed_names.append(config.name)
-                failures.append(f"- {config.name}: {format_cluster_connection_error(config, exc)}")
-
-        if refreshed:
-            self.statusBar().showMessage("Reconnected to " + ", ".join(sorted(set(refreshed))))
-
-        if failures:
-            self.statusBar().showMessage("Failed to check queue on " + ", ".join(failed_names))
-            show_detailed_warning(
-                self,
-                "Queue refresh failed",
-                "Some clusters could not be refreshed:\n" + "\n".join(failures),
-                informative_text="Open Details to inspect the full queue refresh failures.",
-            )
-
-    def _active_dashboard_cluster_targets(self) -> list[str]:
-        if self._document is None:
-            return []
-        return monitored_cluster_names(self._document.jobs.values())
-
-    def _on_job_check_tick(self) -> None:
-        """Check every active job against what can be seen of it.
-
-        Runs on project open and off a 60 s timer. A local job the runner holds
-        no process for is completed from complete output, and stopped
-        otherwise. Cluster jobs are asked about on the worker, unless an
-        earlier check is still running there; their evidence arrives later.
-        """
-
-        if self._document is None:
-            return
-        self._job_execution.check_cluster_jobs(skip_if_busy=True)
-        stopped = 0
-        for update in self._job_execution.check_local_jobs():
-            if update.job is None:
-                continue
-            if update.finished is not None:
-                self._on_local_job_finished(
-                    update.job.id, update.finished.parsed, update.finished.artifacts
-                )
-            elif update.job.status == JobStatus.ENDED:
-                stopped += 1
-        if stopped == 0:
-            return
-        self._request_dashboard_flush(
-            failure_message="Local jobs with no process were stopped, but autosave failed."
-        )
-        self.statusBar().showMessage(
-            f"{plural(stopped, 'local job was', 'local jobs were')} stopped: MuFinder has no "
-            f"process for {'it' if stopped == 1 else 'them'}"
-        )
-
-    def _retrieval_flags_for_job(self, job: Job) -> RetrievalFlags:
-        """Return the retrieval flags and farm count both runners need for ``job``.
-
-        Shared by local and cluster submission and by every cluster check,
-        so every path collects the same
-        optional outputs (``.den_fmt`` / ``-out.cell`` / ``.phonon`` / ``.ts``)
-        under the same farmed names.
-        """
-
-        task_farming_enabled, num_farms = self._task_farming_for_job(job)
-        return RetrievalFlags.for_calc_type(
-            job.calc_type, task_farming_enabled=task_farming_enabled, num_farms=num_farms
-        )
-
-    @staticmethod
-    def _cluster_retrieve_flags(job: Job) -> dict[str, bool]:
-        """Return the per-calc-type ``retrieve_*`` flags for ``job`` as a mapping."""
-
-        flags = RetrievalFlags.for_calc_type(job.calc_type)
-        return {
-            "retrieve_den_fmt": flags.retrieve_den_fmt,
-            "retrieve_out_cell": flags.retrieve_out_cell,
-            "retrieve_phonon": flags.retrieve_phonon,
-            "retrieve_ts": flags.retrieve_ts,
-            "retrieve_magres": flags.retrieve_magres,
-        }
-
-    def _infer_remote_job_directory(self, job: Job) -> str:
-        config = load_cluster_config(self._settings, job.execution_target.strip())
-        if config is None:
-            return ""
-
-        working_directory = config.working_directory_for()
-        if not working_directory:
-            return ""
-
-        try:
-            return self._cluster_runner.remote_job_directory(
-                working_directory=working_directory,
-                seed_name=self._job_seed_name(job),
-            )
-        except Exception:
-            return ""
 
     def _on_load_structure_requested(self) -> None:
         if self._document is None:

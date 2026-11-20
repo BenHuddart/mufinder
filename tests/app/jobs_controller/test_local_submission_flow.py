@@ -362,16 +362,16 @@ def test_main_window_local_status_handlers_update_job_and_run(main_window, tmp_p
     job.status = JobStatus.ACTIVE
     job.activity = JobActivity.SUBMITTING
 
-    window._on_local_job_status_changed(job.id, "queued")
+    window._jobs._on_local_job_status_changed(job.id, "queued")
     assert job_status_word(job) == "queued"
     assert run.status == JobStatus.ACTIVE
 
-    window._on_local_job_started(job.id)
+    window._jobs._on_local_job_started(job.id)
     assert job_status_word(job) == "running"
     assert run.status == JobStatus.ACTIVE
     assert run.started_at is not None
 
-    window._on_local_job_failed(job.id, "boom")
+    window._jobs._on_local_job_failed(job.id, "boom")
     assert job_status_word(job) == "failed"
     assert run.status == JobStatus.ENDED
     assert doc.provenance[-1].action == "job_failed"
@@ -379,7 +379,7 @@ def test_main_window_local_status_handlers_update_job_and_run(main_window, tmp_p
     job.status = JobStatus.ACTIVE
     job.activity = JobActivity.RUNNING
     run.status = JobStatus.ACTIVE
-    window._on_local_job_cancelled(job.id)
+    window._jobs._on_local_job_cancelled(job.id)
     assert job_status_word(job) == "cancelled"
     assert run.status == JobStatus.ENDED
     assert doc.provenance[-1].action == "job_cancelled"
@@ -417,7 +417,7 @@ def test_main_window_local_finish_creates_result_and_completes_job(
         warnings=("warning",),
         geom_converged=True,
     )
-    window._on_local_job_finished(job.id, parsed)
+    window._jobs._on_local_job_finished(job.id, parsed)
 
     assert job.status == JobStatus.COMPLETED
     assert run.status == JobStatus.COMPLETED

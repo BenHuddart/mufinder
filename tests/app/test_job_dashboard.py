@@ -118,7 +118,7 @@ def test_main_window_cluster_runtime_uses_queue_elapsed_and_ticks_between_polls(
 
     snapshot_time = datetime(2026, 4, 20, 16, 0, 0, tzinfo=UTC)
     monkeypatch.setattr(job_dashboard_module, "utc_now", lambda: snapshot_time)
-    window._on_cluster_queue_checked(
+    window._jobs._on_cluster_queue_checked(
         SimpleNamespace(
             checked_at=snapshot_time,
             elapsed_by_job_id={job.id: "00:12:34"},
@@ -142,7 +142,7 @@ def test_main_window_cluster_runtime_uses_queue_elapsed_and_ticks_between_polls(
     )
 
     # A poll that no longer reports the job clears its scheduler runtime.
-    window._on_cluster_queue_checked(
+    window._jobs._on_cluster_queue_checked(
         SimpleNamespace(checked_at=snapshot_time, elapsed_by_job_id={})
     )
     assert window._job_dashboard.table.item(0, window._job_dashboard.RUNTIME_COLUMN).text() == ""

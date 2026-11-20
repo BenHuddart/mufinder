@@ -155,9 +155,6 @@ def patch_continuation_cluster_dialog(monkeypatch: pytest.MonkeyPatch) -> None:
         jobs_controller_module, "load_cluster_configs", lambda _settings: [CONTINUATION_CLUSTER]
     )
     monkeypatch.setattr(
-        main_window_module, "load_cluster_config", lambda _settings, _name: CONTINUATION_CLUSTER
-    )
-    monkeypatch.setattr(
         jobs_controller_module, "load_cluster_config", lambda _settings, _name: CONTINUATION_CLUSTER
     )
     monkeypatch.setattr(main_window_module.QApplication, "processEvents", lambda: None)

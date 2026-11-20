@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 import mufinder.app.magnetic_field_widget as magnetic_field_widget_module
 import mufinder.services.magnetic_field_calculation as magnetic_field_calculation_module
 import mufinder.app.main_window as main_window_module
+import mufinder.app.jobs_controller as jobs_controller_module
 import mufinder.app.workflow_controllers.quantum_corrections as quantum_controller_module
 import mufinder.app.workflow_controllers.energy_barriers as energy_barriers_controller_module
 import mufinder.services.job_artifacts as job_artifacts_module
@@ -837,7 +838,7 @@ def test_failed_save_on_close_keeps_the_window_open_and_asks_again(
     assert len(answered_choices) == 1
     # The window stays usable: nothing it runs was left stopped by the close.
     assert window._shutting_down is False
-    assert window._job_check_timer.isActive()
+    assert window._jobs.check_timer.isActive()
     assert window._dashboard_flush_pending is False
     assert window.statusBar().currentMessage() == "Job finished, but autosave failed"
 
@@ -950,16 +951,16 @@ def test_cancelled_close_restarts_the_job_check(
     monkeypatch.setattr(
         main_window_module.workflow_table_utils, "confirm_choice", lambda *_a, **_k: "cancel"
     )
-    assert window._job_check_timer.isActive()
+    assert window._jobs.check_timer.isActive()
 
     assert window.close() is False
 
-    assert window._job_check_timer.isActive()
+    assert window._jobs.check_timer.isActive()
     monkeypatch.setattr(
         main_window_module.workflow_table_utils, "confirm_choice", lambda *_a, **_k: "discard"
     )
     assert window.close() is True
-    assert not window._job_check_timer.isActive()
+    assert not window._jobs.check_timer.isActive()
 
 
 @pytest.mark.parametrize(
@@ -2631,8 +2632,8 @@ def test_main_window_records_energy_barrier_result_from_ts_file(
     # validate_artifacts and build_result, so patch the collector's parse helper.
     monkeypatch.setattr(job_artifacts_module, "parse_transition_state_file", _fake_parse)
 
-    window._on_local_job_finished(
-        job.id, main_window_module.CastepResult(completed=True, total_energy=-1.0)
+    window._jobs._on_local_job_finished(
+        job.id, jobs_controller_module.CastepResult(completed=True, total_energy=-1.0)
     )
 
     stored = next(iter(doc.results.values()))
@@ -3014,8 +3015,8 @@ def test_main_window_records_neb_result_and_loads_preview(
         energy_barriers_controller_module, "parse_transition_state_file", _fake_parse
     )
 
-    window._on_local_job_finished(
-        job.id, main_window_module.CastepResult(completed=True, total_energy=-1.0)
+    window._jobs._on_local_job_finished(
+        job.id, jobs_controller_module.CastepResult(completed=True, total_energy=-1.0)
     )
 
     stored = next(iter(doc.results.values()))
@@ -3511,7 +3512,7 @@ def test_main_window_task_farming_dispatch_covers_neb_jobs(qapp, tmp_path: Path)
     )
     assert definition is not None
 
-    assert window._task_farming_for_job(job) == (True, 3)
+    assert window._jobs._task_farming_for_job(job) == (True, 3)
     assert window._jobs._farm_counts_for_jobs([job]) == {"barrier_siteA_to_siteB_neb": 3}
     window.close()
 
@@ -3546,7 +3547,7 @@ def test_main_window_task_farming_reports_off_for_unfarmed_neb_jobs(qapp, tmp_pa
         job_ids_by_label={"source-key": str(job.id)},
     )
 
-    assert window._task_farming_for_job(job) == (False, None)
+    assert window._jobs._task_farming_for_job(job) == (False, None)
     assert window._jobs._farm_counts_for_jobs([job]) == {}
     window.close()
 
@@ -3615,8 +3616,8 @@ def test_main_window_neb_submit_passes_farm_settings_to_local_runner(
         castep_executable="/bin/castep",
         mpirun_path="/bin/mpirun",
         eligible_statuses={JobStatus.DEFINED},
-        task_farming_for_job=window._task_farming_for_job,
-        retrieve_flags_for_job=window._cluster_retrieve_flags,
+        task_farming_for_job=window._jobs._task_farming_for_job,
+        retrieve_flags_for_job=window._jobs._cluster_retrieve_flags,
     )
 
     assert len(submit_calls) == 1
@@ -3730,8 +3731,8 @@ def test_main_window_fallback_collection_reads_farmed_ts(
 
     monkeypatch.setattr(job_artifacts_module, "parse_transition_state_file", _fake_parse)
 
-    window._on_local_job_finished(
-        job.id, main_window_module.CastepResult(completed=True, total_energy=-1.0)
+    window._jobs._on_local_job_finished(
+        job.id, jobs_controller_module.CastepResult(completed=True, total_energy=-1.0)
     )
 
     assert job_status_word(job) != "failed"
@@ -3795,13 +3796,13 @@ def test_main_window_missing_farmed_ts_names_the_farmed_file(
 
     failures: list[str] = []
     monkeypatch.setattr(
-        window,
+        window._jobs,
         "_on_local_job_failed",
         lambda _job_id, message: failures.append(message),
     )
 
-    window._on_local_job_finished(
-        job.id, main_window_module.CastepResult(completed=True, total_energy=-1.0)
+    window._jobs._on_local_job_finished(
+        job.id, jobs_controller_module.CastepResult(completed=True, total_energy=-1.0)
     )
 
     assert len(failures) == 1

@@ -276,7 +276,7 @@ output.
 
 - A job the runner holds stays active.
 - A job with no process and complete output is returned as ``finished``: the
-  main window records its result through the same completion path as a job the
+  jobs controller records its result through the same completion path as a job the
   runner reported, and that completes it.
 - Any other job with no process ends with ``interrupted`` and the message
   *"MuFinder has no local process for this job: it was closed while the job
@@ -355,7 +355,7 @@ No job changes state; active cluster rows go stale and the status bar reads
   ``interrupted``, ``job_cancelled`` for ``cancelled`` and ``job_failed``
   otherwise;
 - returns complete output as ``finished`` rather than completing the job: the
-  main window records the result through the same completion path as a local
+  jobs controller records the result through the same completion path as a local
   job;
 - makes an ended job that ``Check now`` finds listed again, or with complete
   output, active through ``mark_job_active`` under a *fresh*
@@ -662,10 +662,19 @@ already completed keeps its result.
 The dashboard and workflow rows
 -------------------------------
 
-Main-window integration
-~~~~~~~~~~~~~~~~~~~~~~~
+Jobs controller
+~~~~~~~~~~~~~~~
 
-The main window wires runner signals into ``JobExecutionController``: local
+``mufinder.app.jobs_controller.JobsController`` is where the application acts
+on jobs. It carries out what the Job Dashboard, the workflow rows and the
+workflow controllers ask for: submission, resubmission, Continue relaxation,
+reset, cancel, inspect, ``Check now`` and dismiss. It asks and reports through
+dialogs and the status bar, and every change of state goes through
+``JobExecutionController`` or ``ProjectService``. It also runs the check of
+every active job on project open and every 60 s, and keeps the status bar's
+cluster connection, ``Queue last checked`` and ``Refresh Queue`` current.
+
+The jobs controller wires runner signals into ``JobExecutionController``: local
 ``job_finished`` goes to the completion path that builds the workflow result
 and calls ``complete_job_with_result``; local ``job_failed`` to ``fail_job``,
 ``status_changed`` to ``mark_local_status_changed`` and ``job_started`` to
@@ -679,9 +688,8 @@ check that changed nothing leaves the status bar alone.
 
 Each change to a job is applied at once, but the heavy work after it —
 refreshing the journal, the jobs table and the workflow views, and the
-autosave — is coalesced: a quiet-period debounce
-(``_DASHBOARD_FLUSH_DEBOUNCE_MS``, 300 ms) flushes an isolated event soon, and a
-minimum interval (``_DASHBOARD_MIN_FLUSH_INTERVAL_MS``, 2 s) bounds a burst to
+autosave — is coalesced by the main window: a 300 ms quiet-period debounce
+flushes an isolated event soon, and a 2 s minimum interval bounds a burst to
 about one flush every two seconds. The deadline only ever moves earlier, so a
 steady stream cannot postpone the flush forever. A pending flush also runs
 before save, close and a project switch. The journal touches only the cards a

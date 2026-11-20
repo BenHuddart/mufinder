@@ -313,14 +313,14 @@ def synthetic_runs(window: MainWindow, outputs: Outputs) -> Iterator[None]:
             max_concurrent=1,
             castep_executable="castep.mpi",
             mpirun_path="mpirun",
-            retrieval_for_job=window._retrieval_flags_for_job,
+            retrieval_for_job=window._jobs.retrieval_flags_for_job,
         )
         if errors:
             raise errors[0]
         while finished:
             job_id, castep = finished.pop(0)
-            window._on_local_job_started(job_id)
-            window._on_local_job_finished(job_id, parse_castep_output(castep))
+            window._jobs._on_local_job_started(job_id)
+            window._jobs._on_local_job_finished(job_id, parse_castep_output(castep))
 
     window._local_runner.submit = submit
     window._jobs.submit_jobs_locally = submit_jobs_locally

@@ -361,7 +361,7 @@ def test_a_failed_cluster_connection_deletes_nothing(
     def _refuse(*_args, **_kwargs):
         raise ConnectionError("host unreachable")
 
-    monkeypatch.setattr(window, "_connect_to_cluster_with_trust", _refuse)
+    monkeypatch.setattr(window._jobs, "_connect_to_cluster_with_trust", _refuse)
     monkeypatch.setattr(main_window_module, "show_detailed_warning", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
         jobs_controller_module, "show_detailed_warning", lambda *_args, **_kwargs: None
