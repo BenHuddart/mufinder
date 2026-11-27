@@ -30,7 +30,7 @@ from tests.support.main_window import (
     patch_continuation_cluster_dialog,
     patch_continuation_cluster_runner,
 )
-from tests.support.qt import pump_until
+from tests.support.qt import pump_until, shown_text
 
 
 def test_main_window_submit_jobs_on_cluster_creates_run_and_calls_runner(
@@ -2564,7 +2564,9 @@ def test_main_window_missing_username_opens_the_cluster_profile(
 
     # The Setup menu opens the dialog with no cluster chosen.
     setup_action = next(
-        action for action in window.findChildren(QAction) if action.text() == "HPC Clusters…"
+        action
+        for action in window.findChildren(QAction)
+        if shown_text(action.text()) == "HPC Clusters…"
     )
     setup_action.trigger()
     assert opened == ["SCARF", None]

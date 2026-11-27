@@ -8,20 +8,23 @@ from PySide6.QtWidgets import QMenu, QMessageBox
 import mufinder.app.main_window as main_window_module
 from mufinder._version import current_version
 from mufinder.branding import DOCUMENTATION_URL, REPOSITORY_URL
+from tests.support.qt import shown_text
 
 
 def _help_actions(window) -> list[QAction]:
-    menus = [menu for menu in window.menuBar().findChildren(QMenu) if menu.title() == "Help"]
+    menus = [
+        menu for menu in window.menuBar().findChildren(QMenu) if shown_text(menu.title()) == "Help"
+    ]
     assert len(menus) == 1
     return menus[0].actions()
 
 
 def test_help_menu_follows_view_and_lists_user_guide_then_about(main_window) -> None:
-    titles = [action.text() for action in main_window.menuBar().actions()]
+    titles = [shown_text(action.text()) for action in main_window.menuBar().actions()]
 
     assert titles[-1] == "Help"
     assert titles[titles.index("Help") - 1] == "View"
-    assert [action.text() for action in _help_actions(main_window)] == [
+    assert [shown_text(action.text()) for action in _help_actions(main_window)] == [
         "User Guide",
         "About MuFinder",
     ]

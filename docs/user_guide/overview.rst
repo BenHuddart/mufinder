@@ -67,6 +67,8 @@ Application shell
 - The ``Help`` menu opens the documentation site (``User Guide``) and shows the
   installed version with links to the documentation and source code
   (``About MuFinder``).
+- Alt and a menu's underlined letter opens it (Alt+F opens ``File``), and the
+  underlined letter of an entry then chooses it. macOS has no such letters.
 - The project navigator, under the project's name, starts with ``Project
   Home`` and ``Journal``, then lists the workflow stages under three phase
   headings: ``Prepare`` (``Host Structure``, ``Convergence Testing`` with

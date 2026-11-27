@@ -11,6 +11,7 @@ from PySide6.QtGui import QColor, QIcon, QImage, QPixmap
 import mufinder.app.icons as icons_module
 from mufinder.app import theme as theme_module
 from mufinder.app.icons import GLYPH_NAMES, icon, workflow_stage_icon
+from tests.support.qt import shown_text
 
 STAGE_STATES = ("completed", "complete", "in_progress", "incomplete", "not_started", "unknown")
 
@@ -186,8 +187,8 @@ def test_home_icon_and_file_menu_follow_appearance_switch(main_window, light_the
     dark = theme_module.dark_palette()
 
     def submenu_actions(actions, title: str) -> dict:
-        menu = next(action.menu() for action in actions if action.text() == title)
-        return {action.text(): action for action in menu.actions()}
+        menu = next(action.menu() for action in actions if shown_text(action.text()) == title)
+        return {shown_text(action.text()): action for action in menu.actions()}
 
     menu_bar_actions = main_window.menuBar().actions()
     new_project = submenu_actions(menu_bar_actions, "File")["New Project…"]

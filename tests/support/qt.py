@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+import re
 import time
 from typing import TypeVar
 
@@ -17,6 +18,12 @@ from PySide6.QtWidgets import (
 )
 
 W = TypeVar("W", bound=QWidget)
+
+
+def shown_text(text: str) -> str:
+    """Return menu or action text as Qt shows it: ``&`` mnemonic markers dropped, ``&&`` as ``&``."""
+
+    return re.sub(r"&(.)", r"\1", text)
 
 
 def release_keyboard_modifiers() -> None:

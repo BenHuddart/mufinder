@@ -517,6 +517,8 @@ class JobDashboardTray(QObject):
         dock.setAllowedAreas(Qt.DockWidgetArea.BottomDockWidgetArea)
         dock.setTitleBarWidget(self.header)
         dock.setWidget(dashboard)
+        # View > Job Dashboard; its text follows the dock's title, which has no mnemonic.
+        dock.toggleViewAction().setText("&Job Dashboard")
         dashboard.bind_delete_keys(dock)
         window.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, dock)
         self.dock = dock

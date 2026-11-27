@@ -1170,13 +1170,13 @@ class MainWindow(QMainWindow):
                 continue
 
     def _build_menu(self) -> None:
-        file_menu = self.menuBar().addMenu("File")
+        file_menu = self.menuBar().addMenu("&File")
 
-        new_action = file_menu.addAction(icon("new_project"), "New Project…")
+        new_action = file_menu.addAction(icon("new_project"), "&New Project…")
         new_action.setShortcuts(QKeySequence.StandardKey.New)
         new_action.triggered.connect(self._new_project)
 
-        open_action = file_menu.addAction(icon("open_project"), "Open Project…")
+        open_action = file_menu.addAction(icon("open_project"), "&Open Project…")
         open_action.setShortcuts(QKeySequence.StandardKey.Open)
         open_action.triggered.connect(self._open_project)
 
@@ -1184,18 +1184,18 @@ class MainWindow(QMainWindow):
         self._recent_projects_menu.open_requested.connect(self._open_recent_project)
         file_menu.addMenu(self._recent_projects_menu)
 
-        self._save_project_action = file_menu.addAction(icon("save_project"), "Save Project")
+        self._save_project_action = file_menu.addAction(icon("save_project"), "&Save Project")
         self._save_project_action.setShortcuts(QKeySequence.StandardKey.Save)
         self._save_project_action.triggered.connect(self._save_project)
 
         file_menu.addSeparator()
 
-        self._import_relaxations_action = file_menu.addAction("Import CASTEP Relaxations…")
+        self._import_relaxations_action = file_menu.addAction("&Import CASTEP Relaxations…")
         self._import_relaxations_action.triggered.connect(
             self._imported_relaxations_controller.import_relaxations
         )
 
-        self._remove_imported_action = file_menu.addAction("Remove Imported Relaxations…")
+        self._remove_imported_action = file_menu.addAction("Re&move Imported Relaxations…")
         self._remove_imported_action.triggered.connect(
             self._imported_relaxations_controller.remove_imported_relaxations
         )
@@ -1203,38 +1203,38 @@ class MainWindow(QMainWindow):
         file_menu.addSeparator()
 
         # macOS moves a QuitRole action to the application menu and names it itself.
-        quit_action = file_menu.addAction("Exit" if sys.platform == "win32" else "Quit")
+        quit_action = file_menu.addAction("E&xit" if sys.platform == "win32" else "&Quit")
         quit_action.setShortcuts(self._quit_key_bindings())
         quit_action.setMenuRole(QAction.MenuRole.QuitRole)
         quit_action.triggered.connect(self.close)
 
-        setup_menu = self.menuBar().addMenu("Setup")
-        castep_action = setup_menu.addAction(icon("settings"), "CASTEP…")
+        setup_menu = self.menuBar().addMenu("&Setup")
+        castep_action = setup_menu.addAction(icon("settings"), "&CASTEP…")
         castep_action.triggered.connect(self._open_castep_setup_dialog)
-        cluster_action = setup_menu.addAction(icon("cluster"), "HPC Clusters…")
+        cluster_action = setup_menu.addAction(icon("cluster"), "&HPC Clusters…")
         cluster_action.triggered.connect(lambda: self._open_cluster_setup_dialog())
 
-        view_menu = self.menuBar().addMenu("View")
+        view_menu = self.menuBar().addMenu("&View")
         view_menu.addAction(self._navigator_panel.toggle_action)
         view_menu.addAction(self._jobs_dock.toggleViewAction())
         self._jobs_dock.toggleViewAction().toggled.connect(self._on_jobs_dock_toggled)
-        appearance_menu = view_menu.addMenu("Appearance")
+        appearance_menu = view_menu.addMenu("&Appearance")
         appearance_group = QActionGroup(self)
         appearance_group.setExclusive(True)
 
-        light_action = appearance_menu.addAction(icon("appearance_light"), "Light")
+        light_action = appearance_menu.addAction(icon("appearance_light"), "&Light")
         light_action.setCheckable(True)
         light_action.triggered.connect(
             lambda _checked=False: self._set_appearance_mode(THEME_LIGHT)
         )
         appearance_group.addAction(light_action)
 
-        dark_action = appearance_menu.addAction(icon("appearance_dark"), "Dark")
+        dark_action = appearance_menu.addAction(icon("appearance_dark"), "&Dark")
         dark_action.setCheckable(True)
         dark_action.triggered.connect(lambda _checked=False: self._set_appearance_mode(THEME_DARK))
         appearance_group.addAction(dark_action)
 
-        system_action = appearance_menu.addAction(icon("appearance_system"), "System")
+        system_action = appearance_menu.addAction(icon("appearance_system"), "&System")
         system_action.setCheckable(True)
         system_action.triggered.connect(
             lambda _checked=False: self._set_appearance_mode(THEME_SYSTEM)
@@ -1248,10 +1248,10 @@ class MainWindow(QMainWindow):
         else:
             system_action.setChecked(True)
 
-        help_menu = self.menuBar().addMenu("Help")
-        user_guide_action = help_menu.addAction("User Guide")
+        help_menu = self.menuBar().addMenu("&Help")
+        user_guide_action = help_menu.addAction("&User Guide")
         user_guide_action.triggered.connect(self._open_user_guide)
-        about_action = help_menu.addAction(f"About {PRODUCT_NAME}")
+        about_action = help_menu.addAction(f"&About {PRODUCT_NAME}")
         about_action.triggered.connect(self._show_about_dialog)
 
     @staticmethod

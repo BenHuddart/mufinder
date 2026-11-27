@@ -10,7 +10,7 @@ from PySide6.QtWidgets import QMainWindow, QMenu
 from mufinder.app import workflow_table_utils
 from mufinder.app.recent_projects import RecentProjects, RecentProjectsMenu
 from mufinder.app.workflow_table_utils import confirm_destructive as _real_confirm_destructive
-from tests.support.qt import answer_next_message_box
+from tests.support.qt import answer_next_message_box, shown_text
 
 
 def _settings() -> QSettings:
@@ -76,7 +76,7 @@ def test_the_menu_lists_each_project_then_clear(qapp) -> None:
 
     menu = RecentProjectsMenu(recent)
 
-    assert menu.title() == "Open Recent"
+    assert shown_text(menu.title()) == "Open Recent"
     assert _menu_texts(menu) == ["/p/a", "/p/b", "Clear Recent Projects"]
 
 
@@ -84,7 +84,7 @@ def test_the_menu_says_when_there_are_none(qapp) -> None:
     menu = RecentProjectsMenu(RecentProjects(_settings()))
 
     actions = menu.actions()
-    assert [action.text() for action in actions] == ["(No recent projects)"]
+    assert [shown_text(action.text()) for action in actions] == ["(No recent projects)"]
     assert not actions[0].isEnabled()
 
 
@@ -101,7 +101,9 @@ def test_the_menu_follows_the_list_and_asks_to_open_an_entry(qapp) -> None:
 
 
 def _clear_action(menu: RecentProjectsMenu):
-    return next(action for action in menu.actions() if action.text() == "Clear Recent Projects")
+    return next(
+        action for action in menu.actions() if shown_text(action.text()) == "Clear Recent Projects"
+    )
 
 
 def test_clear_recent_projects_asks_first_then_empties_the_list(
@@ -173,5 +175,5 @@ def test_clear_is_not_offered_when_the_list_is_empty(
 ) -> None:
     menu = RecentProjectsMenu(RecentProjects(_settings()))
 
-    assert "Clear Recent Projects" not in [action.text() for action in menu.actions()]
+    assert "Clear Recent Projects" not in [shown_text(action.text()) for action in menu.actions()]
     assert confirmed_destructive_actions == []

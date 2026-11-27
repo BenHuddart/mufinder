@@ -15,14 +15,14 @@ from mufinder.app.main_window import MainWindow
 from mufinder.app.navigator_panel import SHOWN_SETTINGS_KEY, WIDTH_SETTINGS_KEY
 from mufinder.app.project_navigator import ProjectNavigator
 from tests.support.main_window import empty_project
-from tests.support.qt import press_key
+from tests.support.qt import press_key, shown_text
 
 
 def _view_action(window: MainWindow) -> QAction:
     for menu in window.menuBar().findChildren(QMenu):
-        if menu.title() == "View":
+        if shown_text(menu.title()) == "View":
             for action in menu.actions():
-                if action.text() == "Project Navigator":
+                if shown_text(action.text()) == "Project Navigator":
                     return action
     raise AssertionError("No View > Project Navigator")
 
@@ -71,7 +71,9 @@ def open_window(window: MainWindow, tmp_path: Path) -> MainWindow:
 
 def test_the_action_is_first_in_view_checkable_with_ctrl_b(main_window: MainWindow) -> None:
     action = _view_action(main_window)
-    view_menu = next(m for m in main_window.menuBar().findChildren(QMenu) if m.title() == "View")
+    view_menu = next(
+        m for m in main_window.menuBar().findChildren(QMenu) if shown_text(m.title()) == "View"
+    )
 
     assert view_menu.actions()[0] is action
     assert action.isCheckable()
@@ -84,7 +86,7 @@ def test_the_action_is_first_in_view_checkable_with_ctrl_b(main_window: MainWind
 def test_ctrl_b_is_bound_to_no_other_action(main_window: MainWindow) -> None:
     ctrl_b = QKeySequence("Ctrl+B")
     bound = [
-        action.text()
+        shown_text(action.text())
         for action in main_window.findChildren(QAction)
         if ctrl_b in action.shortcuts()
     ]

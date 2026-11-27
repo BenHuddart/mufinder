@@ -19,6 +19,7 @@ from mufinder.castep_setup import CastepSetup
 from mufinder.domain.models import Structure
 from mufinder.services.project_service import ProjectService
 from tests.support.main_window import answer_new_project, select_route
+from tests.support.qt import shown_text
 
 
 def test_new_project_success(main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -87,7 +88,9 @@ def test_main_window_recent_projects_tracks_latest_first(
     assert recents[:2] == [str(second.project_root), str(first.project_root)]
 
     menu_actions = [
-        action.text() for action in window._recent_projects_menu.actions() if action.text()
+        shown_text(action.text())
+        for action in window._recent_projects_menu.actions()
+        if action.text()
     ]
     assert str(second.project_root) in menu_actions
     assert str(first.project_root) in menu_actions
