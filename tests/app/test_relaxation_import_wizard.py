@@ -38,7 +38,7 @@ from mufinder.services.relaxation_import_removal import import_batches
 from mufinder.services.project_service import ProjectDocument
 
 from tests.services.test_relaxation_import_scan import HOST_LATTICE, _run_param, build_folder
-from tests.support.qt import pump_until, assert_tab_leaves_table
+from tests.support.qt import assert_tab_leaves_table, pump_until, shown_text
 
 
 @pytest.fixture()
@@ -282,7 +282,7 @@ class TestWording:
         assert dialog._table.item(0, dialog._RUN_COLUMN).text() == "results/Host_1"
 
     def test_the_file_menu_offers_the_import(self, window: MainWindow) -> None:
-        assert window._import_relaxations_action.text() == "Import CASTEP Relaxations…"
+        assert shown_text(window._import_relaxations_action.text()) == "Import CASTEP Relaxations…"
 
     def test_a_folder_with_no_castep_output_says_so(
         self,

@@ -64,7 +64,7 @@ class NavigatorPanel(QObject):
         self._dragged_width: int | None = None
         self.splitter.splitterMoved.connect(self._on_splitter_moved)
 
-        self.toggle_action = QAction("Project Navigator", parent)
+        self.toggle_action = QAction("&Project Navigator", parent)
         self.toggle_action.setCheckable(True)
         self.toggle_action.setChecked(
             read_bool_setting(self._settings, SHOWN_SETTINGS_KEY, default=True)

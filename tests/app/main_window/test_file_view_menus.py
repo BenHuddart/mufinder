@@ -17,18 +17,19 @@ from mufinder.app.main_window import MainWindow
 from mufinder.domain.enums import WorkflowStage
 from mufinder.services.project_service import ProjectService
 from tests.support.main_window import answer_new_project, empty_project
+from tests.support.qt import shown_text
 
 
 def _menu(window: MainWindow, title: str) -> QMenu:
     for menu in window.menuBar().findChildren(QMenu):
-        if menu.title() == title:
+        if shown_text(menu.title()) == title:
             return menu
     raise AssertionError(f"No menu {title}")
 
 
 def _action(window: MainWindow, menu: str, text: str) -> QAction:
     for action in _menu(window, menu).actions():
-        if action.text() == text:
+        if shown_text(action.text()) == text:
             return action
     raise AssertionError(f"No action {text} in {menu}")
 

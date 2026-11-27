@@ -82,7 +82,7 @@ class RecentProjectsMenu(QMenu):
     open_requested = Signal(str)
 
     def __init__(self, recent_projects: RecentProjects, parent: QWidget | None = None) -> None:
-        super().__init__("Open Recent", parent)
+        super().__init__("Open &Recent", parent)
         self._recent_projects = recent_projects
         recent_projects.changed.connect(self.refresh)
         self.refresh()
@@ -99,7 +99,8 @@ class RecentProjectsMenu(QMenu):
             return
 
         for project_path in recent:
-            action = self.addAction(project_path)
+            # A path is shown as it is: ``&&`` is a literal ampersand, not a mnemonic.
+            action = self.addAction(project_path.replace("&", "&&"))
             action.triggered.connect(
                 lambda _checked=False, project_path=project_path: self.open_requested.emit(
                     project_path
@@ -107,7 +108,7 @@ class RecentProjectsMenu(QMenu):
             )
 
         self.addSeparator()
-        clear_action = self.addAction("Clear Recent Projects")
+        clear_action = self.addAction("&Clear Recent Projects")
         clear_action.triggered.connect(self._confirm_clear)
 
     def _confirm_clear(self) -> None:

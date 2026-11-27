@@ -28,7 +28,7 @@ from mufinder.app.recent_project_button import RecentProjectButton
 from mufinder.app.workflow_table_utils import confirm_destructive as _real_confirm_destructive
 from mufinder.services.project_service import ProjectService
 from tests.support.main_window import answer_new_project
-from tests.support.qt import answer_next_message_box
+from tests.support.qt import answer_next_message_box, shown_text
 
 _WINDOW_SIZE = (1280, 840)
 
@@ -545,12 +545,18 @@ def test_welcome_window_minimum_is_the_page_minimum_alone(window: MainWindow) ->
 
 def _trigger_clear_recent_projects(window: MainWindow) -> None:
     menu = window._recent_projects_menu
-    next(action for action in menu.actions() if action.text() == "Clear Recent Projects").trigger()
+    next(
+        action for action in menu.actions() if shown_text(action.text()) == "Clear Recent Projects"
+    ).trigger()
     QApplication.processEvents()
 
 
 def _open_recent_texts(window: MainWindow) -> list[str]:
-    return [action.text() for action in window._recent_projects_menu.actions() if action.text()]
+    return [
+        shown_text(action.text())
+        for action in window._recent_projects_menu.actions()
+        if action.text()
+    ]
 
 
 def _welcome_recent_rows(window: MainWindow) -> list[str]:

@@ -61,6 +61,21 @@ Actions and confirmations
   supercell``, ``Delete workspace``). The button and its confirmation use the
   same word.
 
+Menus
+-----
+
+- Every menu-bar title and every entry or submenu in its menus has a mnemonic,
+  the letter after ``&`` (``&File``, ``Re&move Imported Relaxations…``). The
+  letter is unique among the menu-bar titles and within each menu; take the
+  first letter unless another entry has it. ``E&xit`` on Windows keeps that
+  platform's usual letter.
+- Text the user chose, such as a recent project's path, has no mnemonic: write
+  each ``&`` in it as ``&&`` so it shows as typed.
+- Buttons that MuFinder labels itself, on pages and in dialogs, have no
+  mnemonics. Standard dialog buttons (``OK``, ``Cancel``, ``Close``) keep
+  whatever the platform gives them.
+- ``tests/app/main_window/test_menu_bar_mnemonics.py`` checks the menu bar.
+
 Units and terms
 ---------------
 
