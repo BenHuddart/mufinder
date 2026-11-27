@@ -1865,3 +1865,23 @@ def test_removing_a_parameter_with_the_keyboard_returns_focus_to_the_task(
     assert dialog.isVisible()
     assert dialog.result() != QDialog.DialogCode.Accepted
     dialog.close()
+
+
+def test_a_rebuild_while_the_dialog_is_inactive_returns_its_focus_to_the_task(qapp) -> None:
+    added = ("basis_precision", "cut_off_energy")
+    dialog = ParameterDialog(
+        specs=_dialog_specs(), workflow_stage="convergence_kpoint", advanced_names=added
+    )
+    task_choice = dialog._task_editor.findChild(QComboBox)
+    open_and_take_focus(dialog)
+    dialog._rows["cut_off_energy"].cells[4].setFocus()
+    other = QWidget()
+    open_and_take_focus(other)
+
+    dialog.set_advanced_names(added[:1])
+    other.close()
+    focused = open_and_take_focus(dialog)
+
+    assert "cut_off_energy" not in dialog._rows
+    assert focused is task_choice
+    dialog.close()
