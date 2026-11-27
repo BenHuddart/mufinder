@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from types import SimpleNamespace
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAccessible, QAction, QKeySequence
@@ -67,11 +67,12 @@ def _assert_unique_mnemonics(actions: list[QAction]) -> None:
 
 
 @pytest.fixture
-def window(qapp: QApplication) -> Iterator[MainWindow]:
-    window = MainWindow()
-    window._recent_projects.set_paths(RECENT_PATHS)
-    yield window
-    window.close()
+def window(main_window: MainWindow, monkeypatch: pytest.MonkeyPatch) -> MainWindow:
+    """A window whose Open Recent lists ``RECENT_PATHS``, with no settings written."""
+
+    monkeypatch.setattr(main_window._recent_projects, "paths", lambda: list(RECENT_PATHS))
+    main_window._recent_projects_menu.refresh()
+    return main_window
 
 
 def test_every_menu_bar_title_has_its_own_mnemonic(window: MainWindow) -> None:
@@ -95,13 +96,13 @@ def test_every_menu_entry_has_a_mnemonic_unique_in_its_menu(window: MainWindow) 
 def test_exit_on_windows_keeps_the_file_menu_letters_unique(
     qapp: QApplication, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(main_window_module.sys, "platform", "win32")
+    # Only the menu code sees Windows; the theme and fonts keep this platform's.
+    monkeypatch.setattr(main_window_module, "sys", SimpleNamespace(platform="win32"))
     window = MainWindow()
 
     entries = _entries(_menus(window)["File"])
     _assert_unique_mnemonics(entries)
     assert entries[-1].text() == "E&xit"
-    window.close()
 
 
 def test_a_recent_project_path_has_no_mnemonic_and_shows_its_ampersand(
