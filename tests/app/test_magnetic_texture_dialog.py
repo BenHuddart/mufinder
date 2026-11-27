@@ -4,13 +4,15 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-from PySide6.QtCore import QEvent, QPointF, Qt
+from PySide6.QtCore import QEvent, QPoint, QPointF, QRect, QRectF, Qt
 from PySide6.QtGui import QColor, QKeyEvent
-from PySide6.QtWidgets import QDialog, QMessageBox, QScrollArea
+from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QApplication, QDialog, QMessageBox, QScrollArea, QWidget
 
 import mufinder.app.magnetic_texture_dialog as magnetic_texture_dialog_module
 from mufinder.app import theme as theme_module
 from mufinder.app.magnetic_texture_dialog import MagneticTextureDialog, MagneticTexturePreview
+from mufinder.domain.models import Structure
 from mufinder.science.magnetic_structure import (
     AtomSelector,
     ComplexVector,
@@ -452,4 +454,130 @@ def test_controls_scroll_area_is_not_a_tab_stop(qapp) -> None:
 
     assert not dialog._controls_scroll.focusPolicy() & Qt.FocusPolicy.TabFocus
 
+    dialog.deleteLater()
+
+
+def _host_with_a_long_site_label() -> Structure:
+    """A 3 x 3 x 3 cubic iron cell: one site whose label names all 27 equivalent atoms."""
+
+    steps = [index / 3 for index in range(3)]
+    return Structure(
+        label="Fe 3x3x3",
+        lattice_vectors=[[8.6, 0.0, 0.0], [0.0, 8.6, 0.0], [0.0, 0.0, 8.6]],
+        species=["Fe"] * 27,
+        fractional_positions=[[x, y, z] for x in steps for y in steps for z in steps],
+    )
+
+
+def _revealed_rect(control: QWidget) -> QRect:
+    """The part of ``control`` a scroll area brings into view when it takes focus.
+
+    That is its text cursor or current cell when it reports one, as
+    ``QScrollArea.ensureWidgetVisible`` uses it, and otherwise the whole control.
+    """
+
+    query = Qt.InputMethodQuery.ImCursorRectangle
+    cursor = QRectF(control.inputMethodQuery(query)).toRect()
+    if cursor != QRectF(QWidget.inputMethodQuery(control, query)).toRect():
+        return cursor
+    return control.rect()
+
+
+@pytest.mark.parametrize("mode", ["hexagonal_skyrmion", "square_skyrmion", "custom"])
+def test_every_control_shows_whole_while_it_has_focus_at_the_minimum_size(
+    designed_text_scale, fresh_focus_tracker, mode: str
+) -> None:
+    dialog = MagneticTextureDialog(coo_structure())
+    dialog._mode_buttons[mode].setChecked(True)
+    dialog.resize(dialog.minimumSize())
+    dialog.show()
+    dialog.activateWindow()
+    assert QTest.qWaitForWindowActive(dialog)
+    QApplication.processEvents()
+    area = dialog._controls_scroll
+
+    assert dialog.size() == dialog.minimumSize()
+    assert area.horizontalScrollBar().maximum() == 0
+    dialog._label_edit.setFocus(Qt.FocusReason.TabFocusReason)
+    QApplication.processEvents()
+    focused = QApplication.focusWidget()
+    cut: list[str] = []
+    stops_in_area = 0
+    for _ in range(80):
+        if area.isAncestorOf(focused):
+            stops_in_area += 1
+            visible = focused.visibleRegion().boundingRect()
+            revealed = _revealed_rect(focused)
+            # Whole from side to side, and in view up and down as far as the scroll
+            # area brings it: its text cursor or current cell, or else all of it.
+            if (visible.left(), visible.width()) != (0, focused.width()) or not (
+                visible.top() <= revealed.top() and revealed.bottom() <= visible.bottom()
+            ):
+                cut.append(f"{focused!r}: {visible.width()} of {focused.width()} px wide visible")
+        QTest.keyClick(dialog.windowHandle(), Qt.Key.Key_Tab)
+        QApplication.processEvents()
+        focused = QApplication.focusWidget()
+        if focused is dialog._label_edit:
+            break
+
+    assert focused is dialog._label_edit
+    assert stops_in_area >= 20
+    assert not cut
+    dialog.close()
+    dialog.deleteLater()
+
+
+def test_the_minimum_width_does_not_grow_with_a_long_site_label(designed_text_scale) -> None:
+    short = MagneticTextureDialog(coo_structure())
+    long = MagneticTextureDialog(_host_with_a_long_site_label())
+
+    assert len(long._equivalent_combo.currentText()) > 2 * len(
+        short._equivalent_combo.currentText()
+    )
+    assert long.minimumWidth() == short.minimumWidth()
+    assert long.minimumHeight() == short.minimumHeight() == 560
+    short.deleteLater()
+    long.deleteLater()
+
+
+def test_the_splitter_cannot_squeeze_the_controls_column_below_its_controls(
+    designed_text_scale,
+) -> None:
+    dialog = MagneticTextureDialog(coo_structure())
+    dialog.show()
+    dialog.activateWindow()
+    assert QTest.qWaitForWindowActive(dialog)
+    QApplication.processEvents()
+    handle = dialog._controls_scroll.parentWidget().handle(1)
+    grip = handle.rect().center()
+
+    # Drag the handle all the way towards the controls.
+    QTest.mousePress(handle, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, grip)
+    for step in range(1, 11):
+        QTest.mouseMove(handle, grip - QPoint(80 * step, 0))
+    QTest.mouseRelease(
+        handle, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, grip - QPoint(800, 0)
+    )
+    QApplication.processEvents()
+
+    assert dialog._controls_scroll.width() >= dialog._controls_scroll.minimumWidth() > 0
+    assert dialog._controls_scroll.horizontalScrollBar().maximum() == 0
+    dialog.close()
+    dialog.deleteLater()
+
+
+def test_a_long_equivalent_site_elides_at_the_minimum_size_and_shows_whole_in_its_tooltip(
+    designed_text_scale,
+) -> None:
+    dialog = MagneticTextureDialog(_host_with_a_long_site_label())
+    dialog.resize(dialog.minimumSize())
+    dialog.show()
+    QApplication.processEvents()
+    combo = dialog._equivalent_combo
+    full_text = combo.currentText()
+
+    assert combo.displayed_text() != full_text
+    assert combo.displayed_text().endswith("…")
+    assert combo.toolTip() == full_text
+    dialog.close()
     dialog.deleteLater()

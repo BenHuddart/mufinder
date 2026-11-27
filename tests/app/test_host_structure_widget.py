@@ -42,22 +42,6 @@ def _assert_atom_table_fits(widget: HostStructureWidget) -> None:
     assert table.columnWidth(last) >= table.sizeHintForColumn(last)
 
 
-@pytest.fixture
-def designed_text_scale(qapp, monkeypatch):
-    """The light theme at the designed text size, for tests of exact page widths.
-
-    Another test may leave the session's application at a larger desktop text
-    scale; the page's 620 px minimum holds at the designed size.
-    """
-    from mufinder.app import theme as theme_module
-
-    monkeypatch.setattr(theme_module, "text_scale", lambda: 1.0)
-    theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)
-    yield qapp
-    monkeypatch.undo()
-    theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)
-
-
 def _opening_width(widget: HostStructureWidget) -> int:
     """The pane's opening width: the table's or the one-line propagation row's, the wider."""
     return max(table_natural_width(widget._atom_table), widget._propagation_row_width())

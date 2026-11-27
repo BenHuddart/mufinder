@@ -268,6 +268,23 @@ def fresh_focus_tracker(qapp: QApplication) -> None:
 
 
 @pytest.fixture
+def designed_text_scale(qapp: QApplication) -> Iterator[QApplication]:
+    """The light theme at the designed text size, for tests of exact page widths.
+
+    Another test may leave the session's application at a larger desktop text
+    scale; a page's or dialog's minimum width holds at the designed size. Only its
+    own patch is undone afterwards, not the test's other ``monkeypatch`` patches.
+    """
+    from mufinder.app import theme as theme_module
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(theme_module, "text_scale", lambda: 1.0)
+        theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)
+        yield qapp
+    theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)
+
+
+@pytest.fixture
 def without_session_garbage_collector(qapp: QApplication) -> Iterator[None]:
     """Stop the session's garbage collector for one test, which turns automatic collection back on."""
 

@@ -39,6 +39,7 @@ from PySide6.QtWidgets import (
 )
 
 from mufinder.app.decimal_input import DecimalLineEdit
+from mufinder.app.eliding_label import ElidingComboBox
 from mufinder.app.icons import icon
 from mufinder.app.magnetic_component_dialogs import (
     AtomTargetCardsMixin,
@@ -58,6 +59,7 @@ from mufinder.app.theme import (
     controls_scroll_area,
     current_palette,
     feature_dialog_stylesheet,
+    scaled_to_text,
     set_option_card_state,
     style_help_button,
     style_hint_text,
@@ -483,7 +485,6 @@ class MagneticTextureDialog(AtomTargetCardsMixin, QDialog):
             "Edit Magnetic Texture" if component is not None else "Add Magnetic Texture"
         )
         self.resize(1040, 680)
-        self.setMinimumSize(860, 560)
         self._structure = structure
         if component is not None and component.selector.kind == "indices":
             selected_indices = (
@@ -584,7 +585,12 @@ class MagneticTextureDialog(AtomTargetCardsMixin, QDialog):
         self._species_combo = QComboBox()
         for species in sorted(set(str(symbol) for symbol in structure.species)):
             self._species_combo.addItem(species)
-        self._equivalent_combo = QComboBox()
+        # A site's label names every equivalent atom, so it can be any length. The combo
+        # keeps its natural width when there is room; at the dialog's minimum width a
+        # long site ends in an ellipsis, whole in the tooltip and the list.
+        self._equivalent_combo = ElidingComboBox()
+        self._equivalent_combo.setMinimumWidth(scaled_to_text(160))
+        self._equivalent_combo.currentTextChanged.connect(self._equivalent_combo.setToolTip)
         for selector in viable_atom_selectors(structure):
             if selector.kind == "symmetry_equivalent" and selector.values:
                 self._equivalent_combo.addItem(selector_label(selector, structure), selector)
@@ -621,6 +627,7 @@ class MagneticTextureDialog(AtomTargetCardsMixin, QDialog):
         self._connect_preview_updates()
         self._refresh_target_options()
         self._mode_buttons["hexagonal_skyrmion"].setChecked(True)
+        self._fit_minimum_width_to_controls()
         self._add_custom_term_row(values=(1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0))
         if component is not None:
             self._load_component(component)
@@ -778,6 +785,7 @@ class MagneticTextureDialog(AtomTargetCardsMixin, QDialog):
         preview_layout.addWidget(self._diagnostics)
         splitter.addWidget(self._controls_scroll)
         splitter.addWidget(preview_panel)
+        splitter.setCollapsible(0, False)
         splitter.setStretchFactor(0, 4)
         splitter.setStretchFactor(1, 2)
         layout.addWidget(splitter, 1)
@@ -788,6 +796,22 @@ class MagneticTextureDialog(AtomTargetCardsMixin, QDialog):
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
+
+    def _fit_minimum_width_to_controls(self) -> None:
+        """Make the controls column, and so the dialog, at least as wide as its controls.
+
+        The column then never scrolls sideways, at any window size or splitter position.
+        It is measured with a skyrmion texture type, whose controls are the widest.
+        """
+
+        self.ensurePolished()
+        area = self._controls_scroll
+        area.setMinimumWidth(
+            self._controls_panel.minimumSizeHint().width()
+            + area.verticalScrollBar().sizeHint().width()
+            + 2 * area.frameWidth()
+        )
+        self.setMinimumSize(self.layout().minimumSize().width(), 560)
 
     @staticmethod
     def _mode_hint(key: str) -> str:

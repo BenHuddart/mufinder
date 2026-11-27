@@ -477,7 +477,9 @@ texture before applying it to selected atoms:
    ``Add Fourier Term`` adds a row.
 3. Optionally normalise and prune the texture (see `Normalise a texture`_).
 4. Choose what the texture applies to in ``Apply Texture To`` (``All atoms``,
-   ``Element``, ``Equivalent site`` or ``Current selection``).
+   ``Element``, ``Equivalent site`` or ``Current selection``). An equivalent
+   site's label names every atom in it; when it is too long for the box it ends
+   in an ellipsis, and its tooltip and the list show it whole.
 5. Check the ``Spin Texture Preview`` and accept the dialog.
 
 The dialog's 2D preview shows the abstract texture in reduced phase
