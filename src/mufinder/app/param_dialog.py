@@ -417,6 +417,7 @@ class ParameterDialog(QDialog):
 
         task_row = QHBoxLayout()
         task_row.addWidget(QLabel("Task"))
+        task_control: QWidget
         if self._task_spec is not None and not self._task_locked():
             self._task_editor = create_param_editor(
                 self._task_spec,
@@ -428,10 +429,12 @@ class ParameterDialog(QDialog):
             if self._read_only or not self._is_name_editable("task"):
                 self._task_editor.setEnabled(False)
             task_row.addWidget(self._task_editor, 1)
+            task_control = self._task_editor
         else:
             self._task_display = QLineEdit(self._task)
             self._task_display.setReadOnly(True)
             task_row.addWidget(self._task_display, 1)
+            task_control = self._task_display
         root.addLayout(task_row)
 
         search_row = QHBoxLayout()
@@ -486,6 +489,14 @@ class ParameterDialog(QDialog):
             self.set_mixed_names(mixed_names)
         self._rows_deferred = False
         self._rebuild_rows(preserve_current=False)
+        # The dialog opens on the task, or on the search box when the task cannot
+        # be changed: the first control it creates. The Tab order can put a
+        # subclass's controls above the task, which would otherwise move it.
+        opening = next(
+            (control for control in _tab_stops_in(task_control) if control.isEnabled()),
+            self._search_input,
+        )
+        opening.setFocus(Qt.FocusReason.OtherFocusReason)
 
     def _build_workflow_rows(self) -> tuple[WorkflowTableRow, ...]:
         """Return this dialog's rows that hold no keyword, parented to the table widget.

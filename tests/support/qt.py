@@ -174,6 +174,16 @@ def press_key(
     return QApplication.focusWidget()
 
 
+def open_and_take_focus(window: QWidget) -> QWidget | None:
+    """Show ``window``, wait until it is active, and return the control it opened on."""
+
+    window.show()
+    window.activateWindow()
+    assert QTest.qWaitForWindowActive(window)
+    QApplication.processEvents()
+    return QApplication.focusWidget()
+
+
 def buttons_left_to_right(box: QDialogButtonBox) -> list[QAbstractButton]:
     """The shown buttons of ``box`` in the order the style lays them out on screen."""
 

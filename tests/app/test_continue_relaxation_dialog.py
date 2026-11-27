@@ -14,7 +14,12 @@ from mufinder.app.workflow_parameters import kpoint_exclusive_hint, reorder_work
 from mufinder.castep_io.input_diff import JobInputTexts
 from mufinder.castep_io.schema import KeywordSpec
 from mufinder.services.cluster_runner import CheckpointProbeResult
-from tests.support.qt import assert_tab_leaves_table, buttons_left_to_right, press_key
+from tests.support.qt import (
+    assert_tab_leaves_table,
+    buttons_left_to_right,
+    open_and_take_focus,
+    press_key,
+)
 
 
 def _continue_specs() -> list[KeywordSpec]:
@@ -511,6 +516,13 @@ def test_tab_reaches_the_changes_table_between_add_parameter_and_continue(qapp) 
 
     assert forward == expected
     assert backward == [*reversed(expected[:-1]), dialog._add_advanced_button]
+    dialog.close()
+
+
+def test_dialog_opens_on_its_locked_task(qapp) -> None:
+    dialog = _make_dialog()
+
+    assert open_and_take_focus(dialog) is dialog._task_display
     dialog.close()
 
 

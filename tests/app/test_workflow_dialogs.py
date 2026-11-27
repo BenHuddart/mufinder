@@ -30,7 +30,7 @@ from mufinder.app.workflow_parameters import (
     workflow_basic_parameter_names,
 )
 from mufinder.castep_io.schema import KeywordSpec
-from tests.support.qt import buttons_left_to_right, press_key
+from tests.support.qt import buttons_left_to_right, open_and_take_focus, press_key
 from tests.support.structures import host_structure
 
 
@@ -121,6 +121,28 @@ def test_quantum_corrections_tab_order_takes_the_farm_count_in_its_place_on_scre
     assert forward == expected
     assert dialog._rows["metals_method"].editor.isAncestorOf(into_rows)
     assert backward == list(reversed(expected))
+    dialog.close()
+
+
+@pytest.mark.parametrize(
+    "options",
+    [{}, {"intro_text": "Phonons of the selected sites."}, {"read_only": True}],
+)
+def test_quantum_corrections_dialog_opens_on_its_locked_task(
+    qapp, options: dict[str, object]
+) -> None:
+    dialog = QuantumCorrectionsConfigDialog(specs=_quantum_specs(), num_farms=2, **options)
+
+    assert open_and_take_focus(dialog) is dialog._task_display
+    dialog.close()
+
+
+def test_hyperfine_dialog_opens_on_its_locked_task(qapp) -> None:
+    dialog = HyperfineCouplingConfigDialog(
+        specs=_quantum_specs(), intro_text="One magres job per site."
+    )
+
+    assert open_and_take_focus(dialog) is dialog._task_display
     dialog.close()
 
 

@@ -10,6 +10,7 @@ from PySide6.QtCore import QPoint, Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import (
     QApplication,
+    QComboBox,
     QDialog,
     QDialogButtonBox,
     QLabel,
@@ -24,7 +25,7 @@ from mufinder.app.param_dialog import ParameterDialog
 from mufinder.castep_io.schema import KeywordSpec
 from mufinder.castep_io.types import BlockSection, ValueWithUnit
 from tests.support.keyword_catalogs import catalog_entry, refresh_from_catalog
-from tests.support.qt import buttons_left_to_right, press_key
+from tests.support.qt import buttons_left_to_right, open_and_take_focus, press_key
 
 
 def _dialog_specs() -> list[KeywordSpec]:
@@ -1811,4 +1812,31 @@ def test_tab_from_a_newly_chosen_exclusive_option_reaches_its_value_after_a_rest
     focused = press_key(Qt.Key.Key_Tab)
 
     assert dialog._rows["cut_off_energy"].editor.isAncestorOf(focused)
+    dialog.close()
+
+
+@pytest.mark.parametrize(
+    ("options", "opening"),
+    [
+        ({}, "task"),
+        ({"intro_text": "Cutoff convergence rows."}, "task"),
+        ({"read_only": True}, "search"),
+    ],
+)
+def test_parameter_dialog_opens_on_the_task_or_the_search_box(
+    qapp, options: dict[str, object], opening: str
+) -> None:
+    dialog = ParameterDialog(specs=_dialog_specs(), workflow_stage="convergence_kpoint", **options)
+    task_choice = dialog._task_editor.findChild(QComboBox)
+
+    focused = open_and_take_focus(dialog)
+
+    assert focused is (task_choice if opening == "task" else dialog._search_input)
+    dialog.close()
+
+
+def test_neb_dialog_opens_on_its_locked_task(qapp) -> None:
+    dialog = _neb_dialog()
+
+    assert open_and_take_focus(dialog) is dialog._task_display
     dialog.close()
