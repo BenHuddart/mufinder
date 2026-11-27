@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 
+import pytest
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QDialog, QDialogButtonBox
+from PySide6.QtWidgets import QApplication, QComboBox, QDialog, QDialogButtonBox
 
 from mufinder.app.continue_relaxation_dialog import ContinueRelaxationDialog, RenderJobInputs
 from mufinder.app.param_dialog import ParameterDialog
@@ -530,23 +531,42 @@ def test_dialog_opens_on_its_locked_task_with_nothing_selected(qapp) -> None:
     dialog.close()
 
 
-def test_removing_a_parameter_with_the_keyboard_does_not_leave_focus_on_continue(qapp) -> None:
+@pytest.mark.parametrize("how", ["keyboard", "mouse"])
+def test_removing_a_parameter_moves_focus_to_the_new_last_row_not_to_continue(
+    qapp, how: str
+) -> None:
     dialog = _make_dialog(
         parameter_values={"num_dump_cycles": 10}, added_advanced=["num_dump_cycles"]
     )
     buttons = dialog.findChild(QDialogButtonBox)
     open_and_take_focus(dialog)
     assert not dialog._add_advanced_button.isEnabled()
-    dialog._rows["num_dump_cycles"].cells[4].setFocus()
+    assert dialog._displayed_names()[-1] == "num_dump_cycles"
+    new_last = dialog._displayed_names()[-2]
+    remove_button = dialog._rows["num_dump_cycles"].cells[4]
 
-    focused = press_key(Qt.Key.Key_Space)
+    if how == "keyboard":
+        remove_button.setFocus()
+        focused = press_key(Qt.Key.Key_Space)
+    else:
+        dialog._scroll_area.ensureWidgetVisible(remove_button)
+        QApplication.processEvents()
+        QTest.mouseClick(
+            dialog.windowHandle(),
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+            remove_button.mapTo(dialog, remove_button.rect().center()),
+        )
+        QApplication.processEvents()
+        focused = QApplication.focusWidget()
 
     assert "num_dump_cycles" not in dialog._rows
-    assert focused is dialog._task_display
-    # Focus passes on as Tab passes it, so the task's text is selected.
-    assert selected_text(focused) == dialog._task_display.text()
+    assert dialog._rows[new_last].editor.isAncestorOf(focused)
     assert not buttons.isAncestorOf(focused)
     press_key(Qt.Key.Key_Space)
+    if isinstance(focused, QComboBox):
+        focused.hidePopup()
+        QApplication.processEvents()
     assert dialog.isVisible()
     assert dialog.result() != QDialog.DialogCode.Accepted
     dialog.close()

@@ -413,6 +413,9 @@ class ParameterDialog(QDialog):
         # marker labels are kept so they can be hidden as soon as one is edited.
         self._mixed_names: set[str] = set()
         self._mixed_markers: dict[str, QLabel] = {}
+        # The table's rows just before a row is removed, and the removed row's
+        # place among them, so the rebuild can pass focus to the row in its place.
+        self._removed_row_place: tuple[list[object], int] | None = None
 
         root = QVBoxLayout(self)
 
@@ -1053,7 +1056,10 @@ class ParameterDialog(QDialog):
         self._table_layout.setRowStretch(row_count, 1)
         self._apply_search_filter()
         self._refresh_add_button_state()
-        if focused_here and QApplication.focusWidget() is not focused:
+        removed_row_place, self._removed_row_place = self._removed_row_place, None
+        if removed_row_place is not None:
+            self._focus_in_place_of_removed_row(*removed_row_place)
+        elif focused_here and QApplication.focusWidget() is not focused:
             # The rebuild removed the focused control, and Qt passed focus on along
             # the Tab order, which can reach the dialog's buttons. It goes back to
             # the dialog's first control instead, passed on as Tab passes it.
@@ -1134,18 +1140,60 @@ class ParameterDialog(QDialog):
     def _table_tab_stops(self) -> list[QWidget]:
         """The controls of the table's rows, top to bottom, each row's left to right."""
 
+        return [control for _key, controls in self._table_rows() for control in controls]
+
+    def _table_rows(self) -> list[tuple[object, list[QWidget]]]:
+        """The table's rows top to bottom, each with its controls left to right.
+
+        A parameter's row is keyed by the parameter's name and a workflow row by
+        the row itself, so a row keeps its key through a rebuild. A workflow row
+        without a control is left out.
+        """
+
         def grid_row(widget: QWidget) -> int:
             return self._table_layout.getItemPosition(self._table_layout.indexOf(widget))[0]
 
-        controls_by_row: dict[int, list[QWidget]] = {}
-        for row in self._rows.values():
-            controls_by_row[grid_row(row.cells[0])] = [
-                control for cell in row.cells for control in _tab_stops_in(cell)
-            ]
+        rows: dict[int, tuple[object, list[QWidget]]] = {}
+        for name, row in self._rows.items():
+            rows[grid_row(row.cells[0])] = (
+                name,
+                [control for cell in row.cells for control in _tab_stops_in(cell)],
+            )
         for workflow_row in self._workflow_rows:
             if workflow_row.focus is not None:
-                controls_by_row[grid_row(workflow_row.label)] = [workflow_row.focus]
-        return [control for index in sorted(controls_by_row) for control in controls_by_row[index]]
+                rows[grid_row(workflow_row.label)] = (workflow_row, [workflow_row.focus])
+        return [rows[index] for index in sorted(rows)]
+
+    def _first_tab_stop(self, controls: list[QWidget]) -> QWidget | None:
+        """The first of a row's ``controls`` that Tab stops on now, if any does."""
+
+        return next(
+            (
+                control
+                for control in controls
+                if control.focusPolicy() & Qt.FocusPolicy.TabFocus
+                and control.isEnabled()
+                and control.isVisibleTo(self)
+            ),
+            None,
+        )
+
+    def _focus_in_place_of_removed_row(self, keys: list[object], place: int) -> None:
+        """Give focus to the row now in the removed row's place, as Tab would reach it.
+
+        That is the next row down Tab can stop in, or, when no row below can take
+        it, the nearest row above; rows the search hides are passed over. With no
+        row left, focus goes to ``+ Add Parameter``, or, when nothing is left to
+        add, to the dialog's first control. It never goes to the dialog's buttons.
+        """
+
+        stops = {key: self._first_tab_stop(controls) for key, controls in self._table_rows()}
+        candidates = [*keys[place + 1 :], *reversed(keys[:place])]
+        target = next((stops[key] for key in candidates if stops.get(key) is not None), None)
+        if target is None:
+            add_button = self._add_advanced_button
+            target = add_button if self._first_tab_stop([add_button]) else self._first_control()
+        target.setFocus(Qt.FocusReason.TabFocusReason)
 
     def _show_help(self, spec: KeywordSpec) -> None:
         dialog = ParameterHelpDialog(spec, self)
@@ -1378,6 +1426,9 @@ class ParameterDialog(QDialog):
             return
         # Removing the row removes the parameter from every row being edited.
         self._mark_edited(name)
+        keys = [key for key, _controls in self._table_rows()]
+        if name in keys:
+            self._removed_row_place = (keys, keys.index(name))
         self._added_advanced.discard(name)
         self._rebuild_rows()
 

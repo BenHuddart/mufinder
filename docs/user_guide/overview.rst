@@ -111,7 +111,10 @@ Application shell
   button, value, ``Reset``, ``Info`` and remove button), then
   ``+ Add Parameter``, anything below it, and the dialog's buttons. Rows the
   search hides are skipped, and the order is kept as parameters are added and
-  removed. Of an either-or pair, such as ``Basis Precision`` and
+  removed. After you remove a parameter, by keyboard or mouse, focus goes to
+  the first stop of the shown row that takes its place, or of the new last
+  row; with no row left, it goes to ``+ Add Parameter``, or to the top of the
+  dialog when nothing is left to add. Of an either-or pair, such as ``Basis Precision`` and
   ``Cutoff Energy``, only the chosen option's choice button is a stop, or,
   while the search hides the chosen option or it cannot be changed, the first
   option shown that can; the arrow keys move the choice. In a read-only dialog

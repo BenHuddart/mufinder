@@ -2060,28 +2060,301 @@ def test_neb_dialog_opens_on_its_locked_task_with_nothing_selected(qapp) -> None
     dialog.close()
 
 
-@pytest.mark.parametrize("added", [("basis_precision",), ("basis_precision", "cut_off_energy")])
-def test_removing_a_parameter_with_the_keyboard_returns_focus_to_the_task(
-    qapp, added: tuple[str, ...]
-) -> None:
-    dialog = ParameterDialog(
-        specs=_dialog_specs(), workflow_stage="convergence_kpoint", advanced_names=added
+def _added_spec(name: str, *, description: str = "", **changes: object) -> KeywordSpec:
+    """A plain parameter the convergence dialog offers under ``+ Add Parameter``."""
+
+    return KeywordSpec(
+        name=name,
+        file="param",
+        kind="scalar",
+        value_type="enum",
+        allowed_values=("LOW", "HIGH"),
+        widget_hint="dropdown",
+        category="electronic",
+        advanced_workflows=("convergence_kpoint",),
+        description=description,
+        default_value="LOW",
+        **changes,
     )
-    task_choice = dialog._task_editor.findChild(QComboBox)
-    buttons = dialog.findChild(QDialogButtonBox)
+
+
+# Three parameters that can be added, below the either-or pair in the table.
+_ADDED_SPECS = (
+    _added_spec("mix_alpha", description="Charge mixing, first stage."),
+    _added_spec("mix_beta", description="Spin smearing."),
+    _added_spec("mix_gamma", description="Charge mixing, second stage."),
+)
+_ADDED = tuple(spec.name for spec in _ADDED_SPECS)
+
+
+def _removal_dialog(
+    added: tuple[str, ...] = _ADDED,
+    *,
+    specs: list[KeywordSpec] | None = None,
+    **options: object,
+) -> ParameterDialog:
+    """A convergence dialog holding the ``added`` rows, shown and active."""
+
+    dialog = ParameterDialog(
+        specs=[*_dialog_specs(), *_ADDED_SPECS] if specs is None else specs,
+        workflow_stage="convergence_kpoint",
+        advanced_names=added,
+        **options,
+    )
     open_and_take_focus(dialog)
-    assert dialog._add_advanced_button.isEnabled() is (len(added) == 1)
-    dialog._rows[added[-1]].cells[4].setFocus()
+    return dialog
 
-    focused = press_key(Qt.Key.Key_Space)
 
-    assert added[-1] not in dialog._rows
+def _in_row(dialog: ParameterDialog, name: str, control: QWidget | None) -> bool:
+    return control is not None and any(
+        cell is control or cell.isAncestorOf(control) for cell in dialog._rows[name].cells
+    )
+
+
+def _first_stop_tab_reaches(dialog: ParameterDialog, name: str) -> QWidget:
+    """The control of row ``name`` that Tab from the search box reaches first.
+
+    Moves focus, so it is read after what a test asserts about focus.
+    """
+
+    dialog._search_input.setFocus()
+    for _ in range(100):
+        focused = press_key(Qt.Key.Key_Tab)
+        if _in_row(dialog, name, focused):
+            return focused
+    raise AssertionError(f"Tab never reached the {name} row")
+
+
+def _remove(dialog: ParameterDialog, name: str, how: str) -> QWidget | None:
+    """Remove row ``name`` with its ``x``, by Space or by a click; return the new focus."""
+
+    remove_button = dialog._rows[name].cells[4]
+    if how == "keyboard":
+        remove_button.setFocus()
+        return press_key(Qt.Key.Key_Space)
+    dialog._scroll_area.ensureWidgetVisible(remove_button)
+    QApplication.processEvents()
+    window = dialog.windowHandle()
+    centre = remove_button.mapTo(dialog, remove_button.rect().center())
+    QTest.mouseClick(window, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, centre)
+    QApplication.processEvents()
+    return QApplication.focusWidget()
+
+
+def _assert_focus_lands_on_the_first_stop_of(
+    dialog: ParameterDialog, focused: QWidget | None, name: str
+) -> None:
+    assert _in_row(dialog, name, focused), (name, focused)
+    assert not dialog.findChild(QDialogButtonBox).isAncestorOf(focused)
+    assert focused is _first_stop_tab_reaches(dialog, name)
+
+
+_HOW = pytest.mark.parametrize("how", ["keyboard", "mouse"])
+
+
+@_HOW
+def test_removing_a_middle_row_moves_focus_to_the_row_that_takes_its_place(qapp, how: str) -> None:
+    dialog = _removal_dialog()
+
+    focused = _remove(dialog, "mix_beta", how)
+
+    assert "mix_beta" not in dialog._rows
+    _assert_focus_lands_on_the_first_stop_of(dialog, focused, "mix_gamma")
+    dialog.close()
+
+
+@_HOW
+def test_removing_the_last_row_moves_focus_to_the_new_last_row(qapp, how: str) -> None:
+    dialog = _removal_dialog()
+
+    focused = _remove(dialog, "mix_gamma", how)
+
+    assert dialog._displayed_names()[-1] == "mix_beta"
+    _assert_focus_lands_on_the_first_stop_of(dialog, focused, "mix_beta")
+    dialog.close()
+
+
+@_HOW
+def test_removing_the_only_added_row_moves_focus_to_the_row_above_it(qapp, how: str) -> None:
+    # The row above is one the dialog always shows; it is the new last row.
+    dialog = _removal_dialog(("mix_alpha",))
+
+    focused = _remove(dialog, "mix_alpha", how)
+
+    assert dialog._displayed_names() == ["xc_functional"]
+    _assert_focus_lands_on_the_first_stop_of(dialog, focused, "xc_functional")
+    dialog.close()
+
+
+def _only_added_specs(*, offered: bool) -> list[KeywordSpec]:
+    """The task and the three added parameters, offered under ``+ Add Parameter`` or not."""
+
+    task = next(spec for spec in _dialog_specs() if spec.name == "task")
+    return [task, *(replace(spec, user_visible=offered) for spec in _ADDED_SPECS)]
+
+
+@_HOW
+def test_removing_every_row_leaves_focus_on_add_parameter(qapp, how: str) -> None:
+    dialog = _removal_dialog(specs=_only_added_specs(offered=True))
+    assert not dialog._add_advanced_button.isEnabled()
+
+    focused = _remove(dialog, "mix_beta", how)
+    assert focused is dialog._rows["mix_gamma"].editor.findChild(QComboBox)
+    focused = _remove(dialog, "mix_gamma", how)
+    assert focused is dialog._rows["mix_alpha"].editor.findChild(QComboBox)
+    focused = _remove(dialog, "mix_alpha", how)
+
+    assert dialog._rows == {}
+    assert focused is dialog._add_advanced_button
+    dialog.close()
+
+
+@_HOW
+def test_removing_the_last_row_with_add_parameter_disabled_goes_to_the_task(qapp, how: str) -> None:
+    # Parameters kept out of + Add Parameter can still arrive with a project's values.
+    dialog = _removal_dialog(("mix_alpha",), specs=_only_added_specs(offered=False))
+    task_choice = dialog._task_editor.findChild(QComboBox)
+
+    focused = _remove(dialog, "mix_alpha", how)
+
+    assert dialog._rows == {}
+    assert not dialog._add_advanced_button.isEnabled()
     assert focused is task_choice
-    assert not buttons.isAncestorOf(focused)
+    dialog.close()
+
+
+@_HOW
+def test_removing_a_row_skips_the_rows_the_search_hides(qapp, how: str) -> None:
+    dialog = _removal_dialog()
+    dialog._search_input.setText("charge mixing")
+    assert dialog._displayed_names() == ["mix_alpha", "mix_gamma"]
+
+    focused = _remove(dialog, "mix_alpha", how)
+
+    assert dialog._displayed_names() == ["mix_gamma"]
+    _assert_focus_lands_on_the_first_stop_of(dialog, focused, "mix_gamma")
+    dialog.close()
+
+
+@_HOW
+def test_removing_the_only_row_the_search_shows_leaves_focus_on_add_parameter(
+    qapp, how: str
+) -> None:
+    dialog = _removal_dialog()
+    dialog._search_input.setText("spin smearing")
+    assert dialog._displayed_names() == ["mix_beta"]
+
+    focused = _remove(dialog, "mix_beta", how)
+
+    assert dialog._displayed_names() == []
+    assert focused is dialog._add_advanced_button
+    dialog.close()
+
+
+@_HOW
+@pytest.mark.parametrize("chosen", ["basis_precision", "cut_off_energy"])
+def test_removing_the_row_below_an_either_or_pair_goes_to_what_tab_reaches_in_the_pair(
+    qapp, how: str, chosen: str
+) -> None:
+    dialog = _removal_dialog(
+        ("basis_precision", "cut_off_energy", "mix_alpha"),
+        values={name: _EITHER_OR_VALUES[name] for name in ("basis_precision", "cut_off_energy")},
+        preferred_exclusive=chosen,
+    )
+
+    focused = _remove(dialog, "mix_alpha", how)
+
+    neighbour = dialog._rows["cut_off_energy"]
+    if chosen == "cut_off_energy":
+        assert focused is neighbour.radio
+    else:
+        # The option not chosen is no stop, and neither is its value, which waits
+        # for the option to be chosen, so Tab reaches the row's Reset first.
+        assert not neighbour.editor.isEnabled()
+        assert focused is neighbour.cells[2]
+    _assert_focus_lands_on_the_first_stop_of(dialog, focused, "cut_off_energy")
+    dialog.close()
+
+
+# Rows whose removal of mix_alpha leaves focus on a value's drop-down, a chosen
+# option, and the Reset of an option not chosen.
+_AFTER_A_REMOVAL = {
+    "value": {"added": ("mix_alpha", "mix_beta")},
+    "chosen_option": {
+        "added": ("basis_precision", "cut_off_energy", "mix_alpha"),
+        "values": dict(_EITHER_OR_VALUES),
+        "preferred_exclusive": "cut_off_energy",
+    },
+    "reset": {
+        "added": ("basis_precision", "cut_off_energy", "mix_alpha"),
+        "values": dict(_EITHER_OR_VALUES),
+        "preferred_exclusive": "basis_precision",
+    },
+}
+
+
+def _count_ok_clicks(dialog: ParameterDialog) -> list[bool]:
+    clicks: list[bool] = []
+    ok = dialog.findChild(QDialogButtonBox).button(QDialogButtonBox.StandardButton.Ok)
+    ok.clicked.connect(lambda: clicks.append(True))
+    return clicks
+
+
+@pytest.mark.parametrize("lands_on", list(_AFTER_A_REMOVAL))
+@_HOW
+def test_a_second_space_after_a_removal_neither_accepts_nor_removes_another_row(
+    qapp, how: str, lands_on: str
+) -> None:
+    options = dict(_AFTER_A_REMOVAL[lands_on])
+    added = options.pop("added")
+    dialog = _removal_dialog(added, **options)
+    ok_clicks = _count_ok_clicks(dialog)
+
+    focused = _remove(dialog, "mix_alpha", how)
     press_key(Qt.Key.Key_Space)
-    task_choice.hidePopup()
+    if isinstance(focused, QComboBox):
+        focused.hidePopup()
+        QApplication.processEvents()
+
+    assert "mix_alpha" not in dialog._rows
+    assert len(dialog._rows) == len(added)
+    assert ok_clicks == []
     assert dialog.isVisible()
-    assert dialog.result() != QDialog.DialogCode.Accepted
+    dialog.close()
+
+
+@pytest.mark.parametrize("key", [Qt.Key.Key_Return, Qt.Key.Key_Enter])
+@_HOW
+def test_enter_after_a_removal_acts_on_the_row_in_its_place_not_on_ok(
+    qapp, how: str, key: Qt.Key
+) -> None:
+    # Before, a click left focus on the table's scroll area, where Enter pressed OK.
+    options = dict(_AFTER_A_REMOVAL["reset"])
+    dialog = _removal_dialog(options.pop("added"), **options)
+    ok_clicks = _count_ok_clicks(dialog)
+
+    focused = _remove(dialog, "mix_alpha", how)
+    assert focused is not dialog._scroll_area
+    assert focused is dialog._rows["cut_off_energy"].cells[2]
+    press_key(key)
+
+    assert ok_clicks == []
+    assert dialog.isVisible()
+    dialog.close()
+
+
+def test_repeated_space_after_a_removal_does_not_remove_the_next_row(qapp) -> None:
+    dialog = _removal_dialog()
+
+    _remove(dialog, "mix_alpha", "keyboard")
+    for _ in range(3):
+        focused = press_key(Qt.Key.Key_Space)
+        if isinstance(focused, QComboBox):
+            focused.hidePopup()
+            QApplication.processEvents()
+
+    assert list(dialog._rows) == ["xc_functional", "mix_beta", "mix_gamma"]
+    assert dialog.isVisible()
     dialog.close()
 
 
