@@ -30,7 +30,7 @@ from mufinder.app.workflow_parameters import (
     workflow_basic_parameter_names,
 )
 from mufinder.castep_io.schema import KeywordSpec
-from tests.support.qt import press_key
+from tests.support.qt import buttons_left_to_right, press_key
 from tests.support.structures import host_structure
 
 
@@ -97,7 +97,7 @@ def test_quantum_corrections_config_dialog_locks_everything_or_nothing(
 
 @pytest.mark.parametrize("intro_text", [None, "Phonons of the selected sites."])
 def test_quantum_corrections_tab_order_takes_the_farm_count_in_its_place_on_screen(
-    fresh_focus_tracker, intro_text: str | None
+    qapp, intro_text: str | None
 ) -> None:
     dialog = QuantumCorrectionsConfigDialog(
         specs=_quantum_specs(), num_farms=2, intro_text=intro_text
@@ -111,8 +111,8 @@ def test_quantum_corrections_tab_order_takes_the_farm_count_in_its_place_on_scre
         key=lambda control: control.mapTo(dialog, QPoint(0, 0)).y(),
     )
     assert expected[-1] is dialog._search_input
-    cancel = dialog.findChild(QDialogButtonBox).button(QDialogButtonBox.StandardButton.Cancel)
-    cancel.setFocus()
+    # Tab wraps round to the top from the last button on screen.
+    buttons_left_to_right(dialog.findChild(QDialogButtonBox))[-1].setFocus()
 
     forward = [press_key(Qt.Key.Key_Tab) for _ in expected]
     into_rows = press_key(Qt.Key.Key_Tab)

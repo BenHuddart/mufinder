@@ -290,7 +290,6 @@ class ContinueRelaxationDialog(ParameterDialog):
         root.insertWidget(insert_index, self._checkpoint_label)
         root.insertWidget(insert_index + 1, self._summary_label)
         root.insertWidget(insert_index + 2, self._diff_group)
-        self._order_tab_stops()
 
         self._refresh_diff()
 

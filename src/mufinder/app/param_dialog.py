@@ -8,7 +8,7 @@ import itertools
 from typing import Any, Iterable
 
 from PySide6.QtCore import QModelIndex, QRect, QSize, Qt, QTimer
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QFont, QShowEvent
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QButtonGroup,
@@ -1042,8 +1042,9 @@ class ParameterDialog(QDialog):
         controls below it, as the dialog's layout places them. Rows are built
         after the buttons, and workflow rows outlive a rebuild, so Qt's creation
         order would put them out of their place on screen. The dialog's buttons
-        keep their own order after the last control. A subclass that adds
-        controls to the layout calls this once it has added them.
+        keep their own order after the last control. It runs again when the
+        dialog is shown, so controls a subclass adds to the layout after the
+        rows are built take their place too.
         """
 
         chain: list[QWidget] = []
@@ -1061,6 +1062,10 @@ class ParameterDialog(QDialog):
                 chain.extend(_tab_stops_in_layout_item(item))
         for first, second in itertools.pairwise(chain):
             QWidget.setTabOrder(first, second)
+
+    def showEvent(self, event: QShowEvent) -> None:  # noqa: N802 - Qt API naming.
+        self._order_tab_stops()
+        super().showEvent(event)
 
     def _table_tab_stops(self) -> list[QWidget]:
         """The controls of the table's rows, top to bottom, each row's left to right."""

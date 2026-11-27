@@ -12,6 +12,7 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import (
     QAbstractButton,
     QApplication,
+    QDialogButtonBox,
     QLabel,
     QTableView,
     QWidget,
@@ -171,6 +172,13 @@ def press_key(
     release_keyboard_modifiers()
     QApplication.processEvents()
     return QApplication.focusWidget()
+
+
+def buttons_left_to_right(box: QDialogButtonBox) -> list[QAbstractButton]:
+    """The shown buttons of ``box`` in the order the style lays them out on screen."""
+
+    shown = [button for button in box.buttons() if button.isVisible()]
+    return sorted(shown, key=lambda button: button.mapTo(box, QPoint(0, 0)).x())
 
 
 def assert_tab_leaves_table(table, *, presses: int = 12) -> list[QWidget]:

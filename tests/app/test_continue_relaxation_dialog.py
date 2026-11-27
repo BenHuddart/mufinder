@@ -14,7 +14,7 @@ from mufinder.app.workflow_parameters import kpoint_exclusive_hint, reorder_work
 from mufinder.castep_io.input_diff import JobInputTexts
 from mufinder.castep_io.schema import KeywordSpec
 from mufinder.services.cluster_runner import CheckpointProbeResult
-from tests.support.qt import assert_tab_leaves_table, press_key
+from tests.support.qt import assert_tab_leaves_table, buttons_left_to_right, press_key
 
 
 def _continue_specs() -> list[KeywordSpec]:
@@ -493,19 +493,15 @@ def test_tab_leaves_the_changes_table(qapp) -> None:
         dialog.close()
 
 
-def test_tab_reaches_the_changes_table_between_add_parameter_and_continue(
-    fresh_focus_tracker,
-) -> None:
+def test_tab_reaches_the_changes_table_between_add_parameter_and_continue(qapp) -> None:
     dialog = _make_dialog(parameter_values={"basis_precision": "FINE"})
     dialog._rows["basis_precision"].editor.set_value("PRECISE")
     dialog.show()
     dialog.activateWindow()
     assert QTest.qWaitForWindowActive(dialog)
-    buttons = dialog.findChild(QDialogButtonBox)
     expected = [
         dialog._diff_table,
-        buttons.button(QDialogButtonBox.StandardButton.Ok),
-        buttons.button(QDialogButtonBox.StandardButton.Cancel),
+        *buttons_left_to_right(dialog.findChild(QDialogButtonBox)),
     ]
     assert dialog._add_advanced_button.isEnabled()
     dialog._add_advanced_button.setFocus()
