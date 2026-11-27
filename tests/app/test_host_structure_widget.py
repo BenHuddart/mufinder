@@ -11,7 +11,8 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from PySide6.QtCore import QItemSelectionModel, Qt
+from PySide6.QtCore import QEvent, QItemSelectionModel, Qt
+from PySide6.QtGui import QKeyEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QGroupBox, QLabel, QSplitter
 
@@ -20,7 +21,8 @@ from mufinder.app.workflow_table_utils import table_natural_width
 from mufinder.services.host_structure_facts import structure_facts
 from mufinder.services.project_service import ProjectService, PromotableHost
 from tests.support.main_window import select_route
-from tests.support.pyvista_fakes import install_fake_picker
+from tests.support.pyvista_fakes import count_created_interactors, install_fake_picker
+from tests.support.qt import press_key, release_keyboard_modifiers
 from tests.support.symmetry_hosts import cof2_host
 from tests.support.structures import (
     hexagonal_magnesium_oxide_host,
@@ -1207,3 +1209,133 @@ def test_a_new_source_name_updates_the_facts_without_rebuilding_the_viewer(
 
     assert len(calls) == 1
     assert _facts(widget)["Source"] == "Pristine relaxation pbe_relax_relax_1"
+
+
+def _shown_host_page_with_render_windows(qapp, monkeypatch) -> HostStructureWidget:
+    """Host Structure with a structure, shown and active, its viewer on production canvases.
+
+    The canvases are the viewer's own, each holding a ``FakePlotter`` with the focus
+    policy of the real ``QtInteractor``, so the Tab path is the one the app has.
+    """
+    interactors = count_created_interactors(monkeypatch)
+    widget = HostStructureWidget()
+    widget.set_structure(magnetic_silicon_oxide_host())
+    widget.resize(1100, 760)
+    widget.show()
+    widget.activateWindow()
+    assert QTest.qWaitForWindowActive(widget)
+    qapp.processEvents()
+    viewer = widget._viewer
+    assert {viewer._canvas.plotter, viewer._triad_canvas.plotter} == set(interactors)
+    return widget
+
+
+def _in_render_area(viewer, focus) -> bool:
+    """Whether ``focus`` is the viewer's scene or triad canvas, or inside either."""
+    return any(
+        focus is canvas or (focus is not None and canvas.isAncestorOf(focus))
+        for canvas in (viewer._canvas, viewer._triad_canvas)
+    )
+
+
+@pytest.mark.parametrize(
+    "modifiers", [Qt.KeyboardModifier.NoModifier, Qt.KeyboardModifier.ShiftModifier]
+)
+def test_tab_goes_round_host_structure_without_stopping_in_the_viewer(
+    qapp, monkeypatch, modifiers
+) -> None:
+    widget = _shown_host_page_with_render_windows(qapp, monkeypatch)
+    viewer = widget._viewer
+    try:
+        start = viewer._show_cell
+        start.setFocus(Qt.FocusReason.TabFocusReason)
+        qapp.processEvents()
+        assert QApplication.focusWidget() is start
+
+        stops = []
+        for _ in range(200):
+            stops.append(press_key(Qt.Key.Key_Tab, modifiers))
+            if stops[-1] is start:
+                break
+        assert stops[-1] is start, "Tab did not come back round to the Cell box"
+
+        assert not [stop for stop in stops if _in_render_area(viewer, stop)]
+        # The viewer's own controls are still stops, in their on-screen order.
+        toolbar = [
+            viewer._show_cell,
+            viewer._show_bonds,
+            viewer._show_spins,
+            viewer._view_x_button,
+            viewer._view_y_button,
+            viewer._view_z_button,
+            viewer._reset_view_button,
+        ]
+        round_trip = [start, *stops[:-1]]
+        if modifiers == Qt.KeyboardModifier.ShiftModifier:
+            round_trip = [start, *reversed(round_trip[1:])]
+        assert [stop for stop in round_trip if stop in toolbar] == toolbar
+    finally:
+        widget.close()
+
+
+def test_a_click_in_the_viewer_gives_it_focus_and_shift_click_still_adds(qapp, monkeypatch) -> None:
+    widget = _shown_host_page_with_render_windows(qapp, monkeypatch)
+    viewer = widget._viewer
+    plotter = viewer._canvas.plotter
+
+    class _AtomPicker:
+        """A VTK picker that hits the drawn sphere of atom ``target``."""
+
+        target = 0
+
+        def Pick(self, *_args) -> int:  # noqa: N802 - VTK API naming.
+            return 1
+
+        def GetPickPosition(self):  # noqa: N802 - VTK API naming.
+            rows = np.flatnonzero(viewer._pyvista_atom_lookup_indices == self.target)
+            return tuple(viewer._pyvista_atom_positions[rows[0]])
+
+    picker = _AtomPicker()
+    plotter.iren.picker = picker
+
+    def click_atom(index: int, modifiers=Qt.KeyboardModifier.NoModifier) -> None:
+        # A real click on the render widget, which the fake interactor hands to the
+        # viewer's VTK observers; the picker puts atom ``index`` under it.
+        picker.target = index
+        QTest.mouseClick(plotter, Qt.MouseButton.LeftButton, modifiers, plotter.rect().center())
+        qapp.processEvents()
+
+    def shift_key(event_type: QEvent.Type, modifiers_before: Qt.KeyboardModifier) -> None:
+        # A key goes to whatever has focus. One event, as a real Shift key sends
+        # (``QTest`` would add a modifier press of its own), carrying the modifiers
+        # held before it as the platform reports them: Qt flips Shift in
+        # ``modifiers()`` for the Shift key itself.
+        key = QKeyEvent(event_type, Qt.Key.Key_Shift, modifiers_before)
+        QApplication.sendEvent(QApplication.focusWidget(), key)
+
+    try:
+        widget._atom_table.setFocus(Qt.FocusReason.OtherFocusReason)
+        qapp.processEvents()
+
+        click_atom(0)
+        assert QApplication.focusWidget() is plotter
+        assert viewer.selected_atom_indices() == (0,)
+
+        # Shift pressed: the viewer, which has focus, sees the key, and a Shift-click
+        # adds the atom.
+        shift_key(QEvent.Type.KeyPress, Qt.KeyboardModifier.NoModifier)
+        assert viewer._native_selection_modifier
+        click_atom(1, Qt.KeyboardModifier.ShiftModifier)
+        assert viewer.selected_atom_indices() == (0, 1)
+
+        # Shift let go: the viewer sees that too, and a click selects the atom alone.
+        shift_key(QEvent.Type.KeyRelease, Qt.KeyboardModifier.ShiftModifier)
+        assert not viewer._native_selection_modifier
+        # A sent event leaves the application's modifier record as it came in, where
+        # the platform would clear it for a real release.
+        release_keyboard_modifiers()
+        click_atom(1)
+        assert viewer.selected_atom_indices() == (1,)
+    finally:
+        release_keyboard_modifiers()
+        widget.close()

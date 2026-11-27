@@ -14,6 +14,7 @@ from types import SimpleNamespace
 import numpy as np
 
 import pytest
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QWidget
 
 from mufinder.app import atomic_structure_viewer as _viewer_module
@@ -78,9 +79,18 @@ class FakeInteractor:
         self.picker = None
         self.interactor = SimpleNamespace(GetShiftKey=lambda: 0)
         self._event_position = (0, 0)
+        self._observers: dict[str, list] = {}
 
-    def add_observer(self, _event_name: str, _callback) -> None:
-        return
+    def add_observer(self, event_name: str, callback) -> None:
+        self._observers.setdefault(event_name, []).append(callback)
+
+    def fire(self, event_name: str, position: tuple[int, int], *, shift: bool) -> None:
+        """Call the observers of ``event_name``, as VTK does for a mouse event at ``position``."""
+
+        self._event_position = position
+        self.interactor = SimpleNamespace(GetShiftKey=lambda: int(shift))
+        for callback in self._observers.get(event_name, ()):
+            callback(self, event_name)
 
     def get_event_position(self) -> tuple[int, int]:
         return self._event_position
@@ -94,6 +104,8 @@ class FakePlotter(QWidget):
 
     def __init__(self, parent: QWidget | None = None, **_kwargs: object) -> None:
         super().__init__(parent)
+        # The focus policy ``QtInteractor`` gives itself, so Tab-path tests mean something.
+        self.setFocusPolicy(Qt.FocusPolicy.WheelFocus)
         self.renderer = FakeRenderer()
         self.camera = SimpleNamespace(
             position=(8.0, 8.0, 8.0),
@@ -104,6 +116,22 @@ class FakePlotter(QWidget):
         self.iren = FakeInteractor()
         self.render_timer = FakeRenderTimer()
         self._actors: list[object] = []
+
+    # ``QtInteractor`` takes the mouse rather than passing it on to its canvas, and
+    # hands a left press or release to the VTK observers.
+    def mousePressEvent(self, event) -> None:  # noqa: N802 - Qt API naming.
+        event.accept()
+        self._fire_left_button(event, "LeftButtonPressEvent")
+
+    def mouseReleaseEvent(self, event) -> None:  # noqa: N802 - Qt API naming.
+        event.accept()
+        self._fire_left_button(event, "LeftButtonReleaseEvent")
+
+    def _fire_left_button(self, event, event_name: str) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            position = event.position().toPoint()
+            shift = bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier)
+            self.iren.fire(event_name, (position.x(), position.y()), shift=shift)
 
     def setPalette(self, _palette) -> None:
         return

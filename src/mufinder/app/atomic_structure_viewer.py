@@ -2075,7 +2075,9 @@ class AtomicStructureViewer(QWidget):
         self._backend_name = _require_pyvista_backend()
         # The canvases create their VTK interactors in _ensure_backend, on first show.
         self._canvas = _PyVistaCanvas(self)
-        self._canvas.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        # Focus on a click, for the Shift key that Shift-click selection reads, but not
+        # on Tab: the scene is used with the mouse.
+        self._canvas.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
         self._canvas.installEventFilter(self)
         self._triad_canvas = _PyVistaTriadCanvas(self)
         self._triad_canvas.set_light_direction(self._pyvista_light_direction)
@@ -2179,11 +2181,14 @@ class AtomicStructureViewer(QWidget):
             return
         # The triad first: the viewer counts as ready once the main plotter exists,
         # so a failure here leaves it unready and the next show tries again.
-        self._triad_canvas.ensure_plotter()
+        triad_plotter = self._triad_canvas.ensure_plotter()
+        if triad_plotter is not None:
+            # An interactor takes wheel focus, Tab included; the triad never needs focus.
+            triad_plotter.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         plotter = self._canvas.ensure_plotter()
         if plotter is None:
             return
-        plotter.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        plotter.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
         plotter.installEventFilter(self)
         self._configure_pyvista_interaction()
         # Give the new interactors their size now: this showEvent draws the scene
