@@ -4,12 +4,15 @@ from __future__ import annotations
 
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
+import itertools
 from typing import Any, Iterable
 
 from PySide6.QtCore import QModelIndex, QRect, QSize, Qt, QTimer
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QFont, QShowEvent
 from PySide6.QtWidgets import (
+    QAbstractButton,
     QAbstractItemView,
+    QApplication,
     QButtonGroup,
     QDialog,
     QDialogButtonBox,
@@ -17,6 +20,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QLayoutItem,
     QLineEdit,
     QMessageBox,
     QPushButton,
@@ -260,6 +264,45 @@ class _WrappedRowDelegate(QStyledItemDelegate):
 _ROW_PADDING = 6
 
 
+def _tab_stops_in(widget: QWidget) -> list[QWidget]:
+    """The controls in ``widget`` that take Tab focus, in the order they were created.
+
+    A control is taken whole, without its inner widgets. Hidden and disabled
+    controls are kept, since Tab skips them until the search shows them again.
+    So is a button whatever its Tab focus is now: Qt takes Tab focus from the
+    unchosen option of an exclusive pair and gives it back once it is chosen.
+    It walks ``children()``, as ``table_keyboard`` does, not ``findChildren``.
+    """
+
+    policy = widget.focusPolicy()
+    if policy & Qt.FocusPolicy.TabFocus or (
+        isinstance(widget, QAbstractButton) and policy != Qt.FocusPolicy.NoFocus
+    ):
+        return [widget]
+    return [
+        control
+        for child in widget.children()
+        if isinstance(child, QWidget) and not child.isWindow()
+        for control in _tab_stops_in(child)
+    ]
+
+
+def _tab_stops_in_layout_item(item: QLayoutItem) -> list[QWidget]:
+    """The controls of a layout item, in the order the layout places them."""
+
+    widget = item.widget()
+    if widget is not None:
+        return _tab_stops_in(widget)
+    layout = item.layout()
+    if layout is None:
+        return []
+    return [
+        control
+        for index in range(layout.count())
+        for control in _tab_stops_in_layout_item(layout.itemAt(index))
+    ]
+
+
 def _spec_display_key(spec: KeywordSpec) -> tuple[str, str]:
     return ((spec.label or spec.name).casefold(), spec.name)
 
@@ -375,6 +418,7 @@ class ParameterDialog(QDialog):
 
         task_row = QHBoxLayout()
         task_row.addWidget(QLabel("Task"))
+        task_control: QWidget
         if self._task_spec is not None and not self._task_locked():
             self._task_editor = create_param_editor(
                 self._task_spec,
@@ -386,10 +430,12 @@ class ParameterDialog(QDialog):
             if self._read_only or not self._is_name_editable("task"):
                 self._task_editor.setEnabled(False)
             task_row.addWidget(self._task_editor, 1)
+            task_control = self._task_editor
         else:
             self._task_display = QLineEdit(self._task)
             self._task_display.setReadOnly(True)
             task_row.addWidget(self._task_display, 1)
+            task_control = self._task_display
         root.addLayout(task_row)
 
         search_row = QHBoxLayout()
@@ -442,6 +488,7 @@ class ParameterDialog(QDialog):
             self.set_advanced_names(advanced_names)
         if mixed_names is not None:
             self.set_mixed_names(mixed_names)
+        self._task_control = task_control
         self._rows_deferred = False
         self._rebuild_rows(preserve_current=False)
 
@@ -784,11 +831,21 @@ class ParameterDialog(QDialog):
             nested_item = nested_layout.takeAt(0)
             self._detach_layout_item(nested_item)
 
+    def _first_control(self) -> QWidget:
+        """The task control, or the search box when the task cannot be changed."""
+
+        return next(
+            (control for control in _tab_stops_in(self._task_control) if control.isEnabled()),
+            self._search_input,
+        )
+
     def _rebuild_rows(self, *, preserve_current: bool = True) -> None:
         if self._rows_deferred:
             return
         if preserve_current:
             self._capture_editor_values()
+        focused = QApplication.focusWidget()
+        focused_here = focused is not None and self.isAncestorOf(focused)
 
         previous_row_count = self._table_layout.rowCount()
         while self._table_layout.count():
@@ -964,9 +1021,15 @@ class ParameterDialog(QDialog):
             )
 
         self._place_workflow_rows(workflow_row_indexes)
+        self._order_tab_stops()
         self._table_layout.setRowStretch(row_count, 1)
         self._apply_search_filter()
         self._refresh_add_button_state()
+        if focused_here and QApplication.focusWidget() is not focused:
+            # The rebuild removed the focused control, and Qt passed focus on along
+            # the Tab order, which can reach the dialog's buttons. It goes back to
+            # the dialog's first control instead, passed on as Tab passes it.
+            self._first_control().setFocus(Qt.FocusReason.TabFocusReason)
 
     def _table_row_indexes(self, visible_names: list[str]) -> tuple[dict[str, int], list[int], int]:
         """Return the grid rows of the keywords and workflow rows, and the first free row."""
@@ -997,11 +1060,64 @@ class ParameterDialog(QDialog):
         for workflow_row, row_index in zip(self._workflow_rows, row_indexes, strict=True):
             self._table_layout.addWidget(workflow_row.label, row_index, 0)
             self._table_layout.addWidget(workflow_row.value, row_index, 1, 1, 4)
-            # The widgets outlive the rebuilt rows, so they would otherwise keep
-            # their place at the start of the tab order.
-            row = self._rows.get(workflow_row.after) or next(reversed(self._rows.values()), None)
-            if row is not None and workflow_row.focus is not None:
-                QWidget.setTabOrder(row.cells[-1], workflow_row.focus)
+
+    def _order_tab_stops(self) -> None:
+        """Chain Tab through the dialog in reading order, top to bottom.
+
+        The controls above the table come first, then the table's rows, then the
+        controls below it, as the dialog's layout places them. Rows are built
+        after the buttons, and workflow rows outlive a rebuild, so Qt's creation
+        order would put them out of their place on screen. The dialog's buttons
+        keep their own order after the last control. It runs again when the
+        dialog is shown, so controls a subclass adds to the layout after the
+        rows are built take their place too.
+
+        The chain starts at the first control the dialog creates, the task, which
+        it never moves: Qt opens the dialog on the first control after it, so the
+        dialog opens on the task, or on the search box when the task cannot be
+        changed. A subclass's control laid out above the task is created after
+        the buttons and stays after them, so Tab from the last button reaches it
+        before the task.
+        """
+
+        chain: list[QWidget] = []
+        root = self.layout()
+        for index in range(root.count()):
+            item = root.itemAt(index)
+            if isinstance(item.widget(), QDialogButtonBox):
+                break
+            if item.widget() is self._scroll_area:
+                # A reading scroll area becomes a Tab stop once its content
+                # overflows, so it keeps its place whatever its policy is now.
+                chain.append(self._scroll_area)
+                chain.extend(self._table_tab_stops())
+            else:
+                chain.extend(_tab_stops_in_layout_item(item))
+        first_created = next(iter(_tab_stops_in(self._task_control)), self._search_input)
+        if first_created in chain:
+            chain = chain[chain.index(first_created) :]
+        for first, second in itertools.pairwise(chain):
+            QWidget.setTabOrder(first, second)
+
+    def showEvent(self, event: QShowEvent) -> None:  # noqa: N802 - Qt API naming.
+        self._order_tab_stops()
+        super().showEvent(event)
+
+    def _table_tab_stops(self) -> list[QWidget]:
+        """The controls of the table's rows, top to bottom, each row's left to right."""
+
+        def grid_row(widget: QWidget) -> int:
+            return self._table_layout.getItemPosition(self._table_layout.indexOf(widget))[0]
+
+        controls_by_row: dict[int, list[QWidget]] = {}
+        for row in self._rows.values():
+            controls_by_row[grid_row(row.cells[0])] = [
+                control for cell in row.cells for control in _tab_stops_in(cell)
+            ]
+        for workflow_row in self._workflow_rows:
+            if workflow_row.focus is not None:
+                controls_by_row[grid_row(workflow_row.label)] = [workflow_row.focus]
+        return [control for index in sorted(controls_by_row) for control in controls_by_row[index]]
 
     def _show_help(self, spec: KeywordSpec) -> None:
         dialog = ParameterHelpDialog(spec, self)

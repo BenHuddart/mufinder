@@ -10,11 +10,13 @@ from PySide6.QtCore import QPoint, Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import (
     QApplication,
+    QComboBox,
     QDialog,
     QDialogButtonBox,
     QLabel,
     QPushButton,
     QStyle,
+    QWidget,
 )
 
 import mufinder.app.param_dialog as param_dialog_module
@@ -23,6 +25,12 @@ from mufinder.app.param_dialog import ParameterDialog
 from mufinder.castep_io.schema import KeywordSpec
 from mufinder.castep_io.types import BlockSection, ValueWithUnit
 from tests.support.keyword_catalogs import catalog_entry, refresh_from_catalog
+from tests.support.qt import (
+    buttons_left_to_right,
+    open_and_take_focus,
+    press_key,
+    selected_text,
+)
 
 
 def _dialog_specs() -> list[KeywordSpec]:
@@ -1676,4 +1684,213 @@ def test_read_only_dialog_keeps_the_stop_its_disabled_rows_need_and_covers_no_la
     assert area.viewport().grab().toImage() == pixels_before
     QTest.keyClick(area, Qt.Key.Key_PageDown)
     assert area.verticalScrollBar().value() > 0
+    dialog.close()
+
+
+def _controls_in(widget: QWidget) -> list[QWidget]:
+    """The shown, enabled controls in ``widget`` that Tab can stop on, in no set order."""
+
+    if widget.focusPolicy() & Qt.FocusPolicy.TabFocus:
+        return [widget] if widget.isVisible() and widget.isEnabled() else []
+    return [
+        control
+        for child in widget.children()
+        if isinstance(child, QWidget)
+        for control in _controls_in(child)
+    ]
+
+
+def _reading_order(dialog: ParameterDialog) -> list[QWidget]:
+    """What Tab should reach after the search box, by where each control is on screen.
+
+    The table's controls go row by row, left to right in each row, then come
+    ``+ Add Parameter`` and the dialog's buttons as the style lays them out.
+    """
+
+    table = dialog._table_layout
+
+    def place(control: QWidget) -> tuple[int, int]:
+        cell = control
+        while cell.parentWidget() is not dialog._table_widget:
+            cell = cell.parentWidget()
+        row = table.getItemPosition(table.indexOf(cell))[0]
+        return row, control.mapTo(dialog._table_widget, QPoint(0, 0)).x()
+
+    assert dialog._add_advanced_button.isEnabled()
+    return [
+        *sorted(_controls_in(dialog._table_widget), key=place),
+        dialog._add_advanced_button,
+        *buttons_left_to_right(dialog.findChild(QDialogButtonBox)),
+    ]
+
+
+def _assert_tab_follows_the_screen(dialog: ParameterDialog) -> None:
+    expected = _reading_order(dialog)
+    dialog._search_input.setFocus()
+
+    forward = [press_key(Qt.Key.Key_Tab) for _ in expected]
+    backward = [press_key(Qt.Key.Key_Tab, Qt.KeyboardModifier.ShiftModifier) for _ in expected]
+
+    assert forward == expected
+    assert backward == [*reversed(expected[:-1]), dialog._search_input]
+
+
+def test_tab_goes_from_the_search_box_to_the_first_row(qapp) -> None:
+    dialog = _tall_parameter_dialog(read_only=False)
+    first_row = dialog._rows[dialog._displayed_names()[0]]
+    dialog._search_input.setFocus()
+
+    focused = press_key(Qt.Key.Key_Tab)
+
+    assert first_row.editor is not None
+    assert first_row.editor.isAncestorOf(focused)
+    dialog.close()
+
+
+def test_tab_follows_the_rows_then_add_parameter_ok_and_cancel(qapp) -> None:
+    dialog = _tall_parameter_dialog(read_only=False)
+    last_row = dialog._rows[dialog._displayed_names()[-1]]
+
+    expected = _reading_order(dialog)
+
+    assert expected[-4] is last_row.cells[3]
+    _assert_tab_follows_the_screen(dialog)
+    dialog.close()
+
+
+def test_tab_follows_the_screen_after_a_parameter_is_added(qapp) -> None:
+    dialog = _tall_parameter_dialog(read_only=False)
+
+    dialog.set_advanced_names({"basis_precision"})
+
+    assert "basis_precision" in dialog._displayed_names()
+    _assert_tab_follows_the_screen(dialog)
+    dialog.close()
+
+
+def test_tab_follows_the_screen_after_a_parameter_is_removed(qapp) -> None:
+    dialog = _tall_parameter_dialog(read_only=False)
+    dialog.set_advanced_names({"basis_precision"})
+
+    dialog.set_advanced_names(())
+
+    assert "basis_precision" not in dialog._rows
+    _assert_tab_follows_the_screen(dialog)
+    dialog.close()
+
+
+def test_tab_follows_the_screen_after_the_search_filters_the_rows(qapp) -> None:
+    dialog = _tall_parameter_dialog(read_only=False)
+    dialog._search_input.setFocus()
+
+    QTest.keyClicks(dialog._search_input, "copy_1")
+    QApplication.processEvents()
+
+    shown = dialog._displayed_names()
+    assert 1 < len(shown) < len(dialog._rows)
+    _assert_tab_follows_the_screen(dialog)
+    dialog.close()
+
+
+def test_tab_from_a_newly_chosen_exclusive_option_reaches_its_value_after_a_restore(qapp) -> None:
+    dialog = ParameterDialog(
+        specs=_dialog_specs(),
+        workflow_stage="convergence_kpoint",
+        advanced_names=["basis_precision", "cut_off_energy"],
+    )
+    dialog.show()
+    dialog.activateWindow()
+    assert QTest.qWaitForWindowActive(dialog)
+    chosen = dialog._rows["basis_precision"].radio
+    other = dialog._rows["cut_off_energy"].radio
+    chosen.setFocus()
+    # Qt takes Tab focus from the option that is not chosen while its partner has focus.
+    assert not other.focusPolicy() & Qt.FocusPolicy.TabFocus
+    dialog.showMinimized()
+    QApplication.processEvents()
+    dialog.showNormal()
+    dialog.activateWindow()
+    assert QTest.qWaitForWindowActive(dialog)
+    chosen.setFocus()
+
+    assert press_key(Qt.Key.Key_Down) is other
+    focused = press_key(Qt.Key.Key_Tab)
+
+    assert dialog._rows["cut_off_energy"].editor.isAncestorOf(focused)
+    dialog.close()
+
+
+@pytest.mark.parametrize(
+    ("options", "opening"),
+    [
+        ({}, "task"),
+        ({"intro_text": "Cutoff convergence rows."}, "task"),
+        ({"read_only": True}, "search"),
+    ],
+)
+def test_parameter_dialog_opens_on_the_task_or_the_search_box_with_nothing_selected(
+    qapp, options: dict[str, object], opening: str
+) -> None:
+    dialog = ParameterDialog(specs=_dialog_specs(), workflow_stage="convergence_kpoint", **options)
+    task_choice = dialog._task_editor.findChild(QComboBox)
+
+    focused = open_and_take_focus(dialog)
+
+    assert focused is (task_choice if opening == "task" else dialog._search_input)
+    assert selected_text(focused) == ""
+    dialog.close()
+
+
+def test_neb_dialog_opens_on_its_locked_task_with_nothing_selected(qapp) -> None:
+    dialog = _neb_dialog()
+
+    focused = open_and_take_focus(dialog)
+
+    assert focused is dialog._task_display
+    assert selected_text(focused) == ""
+    dialog.close()
+
+
+@pytest.mark.parametrize("added", [("basis_precision",), ("basis_precision", "cut_off_energy")])
+def test_removing_a_parameter_with_the_keyboard_returns_focus_to_the_task(
+    qapp, added: tuple[str, ...]
+) -> None:
+    dialog = ParameterDialog(
+        specs=_dialog_specs(), workflow_stage="convergence_kpoint", advanced_names=added
+    )
+    task_choice = dialog._task_editor.findChild(QComboBox)
+    buttons = dialog.findChild(QDialogButtonBox)
+    open_and_take_focus(dialog)
+    assert dialog._add_advanced_button.isEnabled() is (len(added) == 1)
+    dialog._rows[added[-1]].cells[4].setFocus()
+
+    focused = press_key(Qt.Key.Key_Space)
+
+    assert added[-1] not in dialog._rows
+    assert focused is task_choice
+    assert not buttons.isAncestorOf(focused)
+    press_key(Qt.Key.Key_Space)
+    task_choice.hidePopup()
+    assert dialog.isVisible()
+    assert dialog.result() != QDialog.DialogCode.Accepted
+    dialog.close()
+
+
+def test_a_rebuild_while_the_dialog_is_inactive_returns_its_focus_to_the_task(qapp) -> None:
+    added = ("basis_precision", "cut_off_energy")
+    dialog = ParameterDialog(
+        specs=_dialog_specs(), workflow_stage="convergence_kpoint", advanced_names=added
+    )
+    task_choice = dialog._task_editor.findChild(QComboBox)
+    open_and_take_focus(dialog)
+    dialog._rows["cut_off_energy"].cells[4].setFocus()
+    other = QWidget()
+    open_and_take_focus(other)
+
+    dialog.set_advanced_names(added[:1])
+    other.close()
+    focused = open_and_take_focus(dialog)
+
+    assert "cut_off_energy" not in dialog._rows
+    assert focused is task_choice
     dialog.close()

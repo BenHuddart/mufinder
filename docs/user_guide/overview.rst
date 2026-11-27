@@ -105,6 +105,14 @@ Application shell
   and leaves that cell as it was.
 - The 3D structure viewer is used with the mouse and is not a Tab stop; Tab
   reaches the boxes and buttons above it.
+- Tab moves through a CASTEP parameter dialog in reading order: the controls
+  above the parameter table, including the search box, then each shown
+  parameter row from top to bottom, left to right along the row (its choice
+  button, value, ``Reset``, ``Info`` and remove button), then
+  ``+ Add Parameter``, anything below it, and the dialog's buttons. Rows the
+  search hides are skipped, and the order is kept as parameters are added and
+  removed. In a read-only dialog with more rows than fit, the table itself is
+  a stop, so the arrow and page keys can scroll it.
 - The project home reminds you what the project has found and where you left
   off: the host and its convergence defaults, the stage of the latest activity,
   the pinned muon sites beside a survey of the host cell, the later workflows'

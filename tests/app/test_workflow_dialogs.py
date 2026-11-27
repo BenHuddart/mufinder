@@ -6,8 +6,8 @@ from functools import partial
 import numpy as np
 import pytest
 from PySide6.QtTest import QTest
-from PySide6.QtCore import QCoreApplication, QEvent
-from PySide6.QtWidgets import QDialog, QWidget
+from PySide6.QtCore import QCoreApplication, QEvent, QPoint, Qt
+from PySide6.QtWidgets import QDialog, QDialogButtonBox, QWidget
 
 from mufinder.app import param_dialog as param_dialog_module
 from mufinder.app.atomic_structure_viewer import AtomicStructureViewer
@@ -30,6 +30,12 @@ from mufinder.app.workflow_parameters import (
     workflow_basic_parameter_names,
 )
 from mufinder.castep_io.schema import KeywordSpec
+from tests.support.qt import (
+    buttons_left_to_right,
+    open_and_take_focus,
+    press_key,
+    selected_text,
+)
 from tests.support.structures import host_structure
 
 
@@ -92,6 +98,63 @@ def test_quantum_corrections_config_dialog_locks_everything_or_nothing(
     assert dialog._rows["metals_method"].editor is not None
     assert dialog._rows["metals_method"].editor.isEnabled() is not read_only
     assert dialog._num_farms_spin.isEnabled() is not read_only
+
+
+@pytest.mark.parametrize("intro_text", [None, "Phonons of the selected sites."])
+def test_quantum_corrections_tab_order_takes_the_farm_count_in_its_place_on_screen(
+    qapp, intro_text: str | None
+) -> None:
+    dialog = QuantumCorrectionsConfigDialog(
+        specs=_quantum_specs(), num_farms=2, intro_text=intro_text
+    )
+    dialog.show()
+    dialog.activateWindow()
+    assert QTest.qWaitForWindowActive(dialog)
+    # The farm count sits above or below the task, as the notices above them allow.
+    expected = sorted(
+        (dialog._task_display, dialog._num_farms_spin, dialog._search_input),
+        key=lambda control: control.mapTo(dialog, QPoint(0, 0)).y(),
+    )
+    assert expected[-1] is dialog._search_input
+    # Tab wraps round to the top from the last button on screen.
+    buttons_left_to_right(dialog.findChild(QDialogButtonBox))[-1].setFocus()
+
+    forward = [press_key(Qt.Key.Key_Tab) for _ in expected]
+    into_rows = press_key(Qt.Key.Key_Tab)
+    backward = [press_key(Qt.Key.Key_Tab, Qt.KeyboardModifier.ShiftModifier) for _ in expected]
+
+    assert forward == expected
+    assert dialog._rows["metals_method"].editor.isAncestorOf(into_rows)
+    assert backward == list(reversed(expected))
+    dialog.close()
+
+
+@pytest.mark.parametrize(
+    "options",
+    [{}, {"intro_text": "Phonons of the selected sites."}, {"read_only": True}],
+)
+def test_quantum_corrections_dialog_opens_on_its_locked_task_with_nothing_selected(
+    qapp, options: dict[str, object]
+) -> None:
+    dialog = QuantumCorrectionsConfigDialog(specs=_quantum_specs(), num_farms=2, **options)
+
+    focused = open_and_take_focus(dialog)
+
+    assert focused is dialog._task_display
+    assert selected_text(focused) == ""
+    dialog.close()
+
+
+def test_hyperfine_dialog_opens_on_its_locked_task_with_nothing_selected(qapp) -> None:
+    dialog = HyperfineCouplingConfigDialog(
+        specs=_quantum_specs(), intro_text="One magres job per site."
+    )
+
+    focused = open_and_take_focus(dialog)
+
+    assert focused is dialog._task_display
+    assert selected_text(focused) == ""
+    dialog.close()
 
 
 def test_atomic_structure_viewer_line_overlays_extend_scene(qapp) -> None:
