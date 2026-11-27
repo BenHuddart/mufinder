@@ -16,6 +16,7 @@ from mufinder.app.cluster_submission_dialog import ClusterSubmissionDialog
 from mufinder.app.text_editing import install_text_editing_shortcuts
 from mufinder.domain.cluster import ClusterSubmissionConfig, ClusterConfig, ClusterNodeGroup
 from mufinder.services.ssh_client import SSHCredentials
+from tests.support.qt import press_key
 
 
 def _configs() -> list[ClusterConfig]:
@@ -811,11 +812,15 @@ def test_entering_a_listed_queue_name_applies_its_defaults(qapp) -> None:
     dialog.close()
 
 
-def _shown_psi_dialog(qapp) -> ClusterSubmissionDialog:  # noqa: ANN001
+def _psi_dialog_typing_in_the_queue_box(qapp, text: str) -> ClusterSubmissionDialog:  # noqa: ANN001
     dialog = ClusterSubmissionDialog(job_labels=["job_a"], cluster_configs=[_psi_config()])
     dialog.show()
     dialog.activateWindow()
+    dialog._queue_combo.setFocus()
     qapp.processEvents()
+    assert qapp.focusWidget() is dialog._queue_combo
+    dialog._queue_combo.lineEdit().selectAll()
+    QTest.keyClicks(qapp.focusWidget(), text)
     return dialog
 
 
@@ -832,36 +837,30 @@ def test_enter_in_the_queue_box_commits_the_name_and_keeps_the_dialog_open(
     key: Qt.Key,
     modifier: Qt.KeyboardModifier,
 ) -> None:
-    dialog = _shown_psi_dialog(qapp)
-    line_edit = dialog._queue_combo.lineEdit()
-    line_edit.setFocus()
-    line_edit.selectAll()
+    dialog = _psi_dialog_typing_in_the_queue_box(qapp, "debug")
+    dialog._num_processes_spin.setValue(12)
+    dialog._walltime_edit.setText("03:00:00")
 
-    QTest.keyClicks(line_edit, "debug")
-    QTest.keyClick(line_edit, key, modifier)
-    qapp.processEvents()
+    press_key(key, modifier)
 
     assert dialog.isVisible() is True
     assert dialog.result() != dialog_module.QDialog.DialogCode.Accepted
     assert dialog.selected_queue_name() == "debug"
+    # A typed name the profile does not list keeps the resources set by hand.
+    config = dialog.config()
+    assert (config.num_processes, config.walltime) == (12, "03:00:00")
     dialog.close()
 
 
-def test_enter_on_a_listed_queue_name_refreshes_the_hint_and_keeps_the_dialog_open(
-    qapp,
-) -> None:
-    dialog = _shown_psi_dialog(qapp)
-    assert dialog._queue_hint.text() == "Maximum walltime on this queue: 1-00:00:00."
-    line_edit = dialog._queue_combo.lineEdit()
-    line_edit.setFocus()
-    line_edit.selectAll()
+def test_enter_on_a_listed_queue_name_applies_it_and_keeps_the_dialog_open(qapp) -> None:
+    dialog = _psi_dialog_typing_in_the_queue_box(qapp, "hourly")
 
-    QTest.keyClicks(line_edit, "hourly")
-    QTest.keyClick(line_edit, Qt.Key.Key_Return)
-    qapp.processEvents()
+    press_key(Qt.Key.Key_Return)
 
     assert dialog.isVisible() is True
-    assert dialog.selected_queue_name() == "hourly"
+    config = dialog.config()
+    assert config.queue_name == "hourly"
+    assert (config.num_processes, config.walltime) == (44, "00:59:00")
     assert dialog._queue_hint.text() == "Maximum walltime on this queue: 01:00:00."
     dialog.close()
 
@@ -872,25 +871,25 @@ def test_enter_on_the_ok_button_still_accepts_the_dialog(
     key: Qt.Key,
     modifier: Qt.KeyboardModifier,
 ) -> None:
-    dialog = _shown_psi_dialog(qapp)
+    dialog = _psi_dialog_typing_in_the_queue_box(qapp, "hourly")
     ok_button = dialog._button_box.button(dialog_module.QDialogButtonBox.StandardButton.Ok)
     ok_button.setFocus()
-
-    QTest.keyClick(ok_button, key, modifier)
     qapp.processEvents()
+
+    press_key(key, modifier)
 
     assert dialog.result() == dialog_module.QDialog.DialogCode.Accepted
     assert dialog.isVisible() is False
+    assert dialog.config().queue_name == "hourly"
     dialog.close()
 
 
-def test_enter_in_another_field_behaves_as_before(qapp) -> None:
-    dialog = _shown_psi_dialog(qapp)
-    walltime_edit = dialog._walltime_edit
-    walltime_edit.setFocus()
-
-    QTest.keyClick(walltime_edit, Qt.Key.Key_Return)
+def test_enter_in_another_field_still_submits(qapp) -> None:
+    dialog = _psi_dialog_typing_in_the_queue_box(qapp, "daily")
+    dialog._walltime_edit.setFocus()
     qapp.processEvents()
+
+    press_key(Qt.Key.Key_Return)
 
     # The default button takes Enter from a plain line edit, as Qt dialogs do.
     assert dialog.result() == dialog_module.QDialog.DialogCode.Accepted
