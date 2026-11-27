@@ -1,0 +1,21 @@
+{
+  "calculation_run_id": "3f4e5d6c-7b8a-4912-a3b4-c5d6e7f80912",
+  "created_at": "2026-10-14T20:17:07.787729+00:00",
+  "data": {
+    "muon_final_fractional_position_host": [
+      0.15,
+      0.25,
+      0.35
+    ],
+    "muon_final_fractional_position_supercell": [
+      0.15,
+      0.25,
+      0.35
+    ],
+    "total_energy": -12.0
+  },
+  "derived_structure_ids": [],
+  "id": "9a8b7c6d-5e4f-4a3b-2c1d-0e9f8a7b6c5d",
+  "output_files": [],
+  "result_type": "castep_positive_muon_relaxation"
+}

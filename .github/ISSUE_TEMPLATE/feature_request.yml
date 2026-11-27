@@ -1,0 +1,44 @@
+name: Feature request
+description: Suggest a new feature or an improvement to an existing workflow.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for the suggestion. Please search the existing issues first.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem are you trying to solve?
+      description: The scientific or practical task, and what makes it hard today.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would you like MuFinder to do?
+      description: The feature or change you have in mind.
+    validations:
+      required: true
+  - type: dropdown
+    id: workflow
+    attributes:
+      label: Which part of MuFinder does this affect?
+      options:
+        - Host structure and supercells
+        - Convergence testing
+        - Pristine relaxation
+        - UEP screening
+        - Site generation
+        - Muon relaxation and analysis
+        - Magnetic fields
+        - Quantum corrections
+        - Energy barriers
+        - Job execution (local or cluster)
+        - CASTEP parameters and cell editing
+        - Something else
+  - type: textarea
+    id: context
+    attributes:
+      label: Anything else?
+      description: References, example calculations, or how you do this today.

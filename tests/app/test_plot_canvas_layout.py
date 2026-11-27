@@ -1,0 +1,537 @@
+"""Plots must keep every tick, axis label and legend inside their canvas at small sizes.
+
+Each case opens a plot dialog at its minimum size and at the window sizes small
+laptops actually give it, draws every visible matplotlib canvas, and checks
+that no axes decoration extends past the figure edge, where Qt would clip it.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+from pathlib import Path
+import tempfile
+from uuid import uuid4
+
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
+from matplotlib.layout_engine import ConstrainedLayoutEngine
+from matplotlib.patches import PathPatch
+from matplotlib.transforms import Bbox
+import numpy as np
+from PySide6.QtCore import QSize, Qt
+from PySide6.QtWidgets import QDialog, QSizePolicy, QVBoxLayout
+import pytest
+
+from mufinder.app.convergence_examiner import ConvergenceExaminerDialog
+from mufinder.app.convergence_types import SweepPointRunState
+from mufinder.app.energy_barriers_widget import (
+    EnergyBarrierPreviewImageRow,
+    EnergyBarriersWidget,
+)
+from mufinder.app.geometry_progress_dialog import GeometryProgressDialog
+from mufinder.app.magnetic_field_distribution_dialog import MagneticFieldDistributionDialog
+from mufinder.app.magnetic_texture_dialog import MagneticTextureDialog
+from mufinder.app.plot_canvas import DEFAULT_MINIMUM_CANVAS_SIZE, create_plot_canvas
+from mufinder.app.polarisation_widget import PolarisationWidget
+from mufinder.app.relaxation_analysis_widget import (
+    GRAPH_NODE_GID,
+    GRAPH_NODE_MAX_RADIUS_PT,
+    DisplacementAnalysisDialog,
+    RelaxationClusteringDialog,
+)
+from mufinder.castep_io.geometry_progress import parse_geometry_progress
+from mufinder.castep_io.ts_parser import parse_transition_state_file
+from mufinder.domain.models import Structure
+from mufinder.science.energy_barriers import band_distances_ang
+from mufinder.science.relaxation_analysis import RelaxedMuonSite
+from mufinder.app.uep_wizard import UepAnalysisDialog
+from mufinder.science.uep import (
+    StationaryPointClassification,
+    UepOptimizationResult,
+    potential_grid,
+)
+
+# Window sizes the dialogs get on small screens, beyond each dialog's own minimum:
+# a 1080p Windows laptop at 150 % scaling (1280x720 logical, minus the taskbar)
+# and a 13" MacBook (about 1440x820 usable, through ``clamped_size``'s 90 %).
+SMALL_SCREEN_SIZES = (QSize(1150, 620), QSize(1240, 740))
+
+# Rounding of text extents can put a label a fraction of a pixel past the edge.
+_OVERFLOW_TOLERANCE_PX = 1.0
+
+
+def _cubic_host(*, length: float = 5.0) -> Structure:
+    return Structure(
+        id=uuid4(),
+        label="Host",
+        lattice_vectors=[[length, 0.0, 0.0], [0.0, length, 0.0], [0.0, 0.0, length]],
+        species=["Si", "Si"],
+        fractional_positions=[[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]],
+    )
+
+
+def _relaxed_site(
+    host: Structure, fractional: tuple[float, float, float], energy: float
+) -> RelaxedMuonSite:
+    length = host.lattice_vectors[0][0]
+    return RelaxedMuonSite(
+        job_id=uuid4(),
+        job_label="Site A",
+        charge_state="positive_muon",
+        structure_id=uuid4(),
+        site_id=None,
+        folded_fractional_position=fractional,
+        cartesian_position_ang=tuple(value * length for value in fractional),
+        total_energy_ev=energy,
+    )
+
+
+_SPREAD_SITE_FRACTIONS = (
+    (0.10, 0.10, 0.10),
+    (0.12, 0.10, 0.10),
+    (0.30, 0.30, 0.30),
+    (0.32, 0.30, 0.31),
+    (0.60, 0.20, 0.40),
+    (0.61, 0.21, 0.40),
+    (0.80, 0.80, 0.10),
+    (0.25, 0.75, 0.50),
+)
+# Twelve sites 0.2 A apart form one long connected component at the default
+# 0.25 A tolerance, plus two isolated sites: a dense graph for the node checks.
+_CHAIN_SITE_FRACTIONS = (
+    *((0.10 + 0.04 * step, 0.50, 0.50) for step in range(12)),
+    (0.80, 0.10, 0.10),
+    (0.20, 0.90, 0.90),
+)
+
+
+def _relaxation_clustering(
+    method_index: int,
+    fractions: tuple[tuple[float, float, float], ...] = _SPREAD_SITE_FRACTIONS,
+) -> QDialog:
+    host = _cubic_host()
+    sites = [
+        _relaxed_site(host, fraction, -10.0 + 0.05 * index)
+        for index, fraction in enumerate(fractions)
+    ]
+    dialog = RelaxationClusteringDialog(
+        workspace={"name": "Workspace"}, host_structure=host, sites=sites
+    )
+    dialog._method_combo.setCurrentIndex(method_index)
+    if method_index == 0:
+        dialog._scan_tolerances()
+    return dialog
+
+
+def _displacements() -> QDialog:
+    comparison_id = uuid4()
+    relaxed_id = uuid4()
+    lattice = [[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]]
+    positions = np.random.default_rng(0).random((30, 3)).tolist()
+    species = ["Fe", "O", "O"] * 10
+    comparison = Structure(
+        id=comparison_id,
+        label="Host",
+        lattice_vectors=lattice,
+        species=species,
+        fractional_positions=positions,
+    )
+    relaxed = Structure(
+        id=relaxed_id,
+        label="Relaxed",
+        lattice_vectors=lattice,
+        species=[*species, "H:mu"],
+        fractional_positions=[[x + 0.01, y, z] for x, y, z in positions] + [[0.5, 0.5, 0.5]],
+    )
+    site = RelaxedMuonSite(
+        job_id=uuid4(),
+        job_label="Site A",
+        charge_state="positive_muon",
+        structure_id=relaxed_id,
+        site_id=None,
+        folded_fractional_position=(0.5, 0.5, 0.5),
+        cartesian_position_ang=(5.0, 5.0, 5.0),
+        total_energy_ev=-10.0,
+    )
+    return DisplacementAnalysisDialog(
+        workspace_name="Workspace",
+        sites=[site],
+        structures_by_id={comparison_id: comparison, relaxed_id: relaxed},
+        comparison_options=[(comparison_id, "Host", False)],
+    )
+
+
+def _uep_optimization(
+    fractional: tuple[float, float, float], energy: float
+) -> UepOptimizationResult:
+    position = tuple(value * 5.0 for value in fractional)
+    return UepOptimizationResult(
+        start_position_ang=position,
+        optimized_position_ang=position,
+        optimized_fractional_position=fractional,
+        classical_energy_ev=energy,
+        zero_point_energy_ev=0.05,
+        total_energy_ev=energy,
+        success=True,
+        message="ok",
+        iterations=4,
+        classification=StationaryPointClassification(
+            label="minimum",
+            eigenvalues=(1.0, 1.1, 1.2),
+            positive_count=3,
+            negative_count=0,
+            near_zero_count=0,
+        ),
+    )
+
+
+def _field_distribution() -> QDialog:
+    class _Distribution:
+        site_label = "site 1"
+        histogram_centres_T = np.linspace(0.0, 0.2, 40)
+        histogram_counts = 100.0 * np.exp(-(((np.linspace(0.0, 0.2, 40) - 0.1) / 0.03) ** 2))
+
+    dialog = MagneticFieldDistributionDialog(_Distribution())
+    # Guard the fixture itself: a stub the dialog cannot read renders only the
+    # "No distribution samples" placeholder, which has no axes to clip.
+    assert dialog._figure.axes[0].lines, "field-distribution fixture drew no histogram"
+    return dialog
+
+
+def _texture_magnitude_map() -> QDialog:
+    dialog = MagneticTextureDialog(_cubic_host())
+    # A sub-unit amplitude gives the colour bar its widest tick labels (0.35, 0.30, ...).
+    dialog._amplitude.setText("0.385")
+    dialog._magnitude_map_check.setChecked(True)
+    assert dialog._magnitude_mesh is not None, "texture fixture drew no |m| map"
+    return dialog
+
+
+def _convergence_examiner() -> QDialog:
+    states = {
+        cutoff: SweepPointRunState(status="completed", total_energy=energy, max_force=force)
+        for cutoff, energy, force in (
+            (300.0, -10.0, 0.30),
+            (400.0, -10.01, 0.20),
+            (500.0, -10.0105, 0.19),
+            (600.0, -10.0106, 0.185),
+        )
+    }
+    return ConvergenceExaminerDialog(states, num_atoms=2)
+
+
+def _geometry_progress() -> QDialog:
+    fixture = Path(__file__).resolve().parents[1] / "fixtures" / "geometry" / "Si2_bfgs.castep"
+    return GeometryProgressDialog("Si2", parse_geometry_progress(fixture))
+
+
+def _polarisation_page() -> QDialog:
+    """The Polarisation page, in a dialog, showing a dynamic simulation of three sites."""
+
+    from mufinder.services.magnetic_field_results import (
+        MAGNETIC_FIELD_PAGE_OWNER,
+        store_magnetic_field_results,
+    )
+    from mufinder.services.project_service import ProjectService
+    from tests.support.field_results import field_result
+
+    directory = tempfile.TemporaryDirectory()
+    service = ProjectService()
+    document = service.create_project(Path(directory.name) / "plot.mufinder", "Plot")
+    host = _cubic_host()
+    service.add_structure(document, host)
+    document.project.host_structure_id = host.id
+    fields = [field_result((0.0, 0.0, 0.1 * n), label=f"site {n}") for n in (1, 2, 3)]
+    store_magnetic_field_results(
+        document,
+        MAGNETIC_FIELD_PAGE_OWNER,
+        {
+            "magnetic_field_results": {
+                "kind": "commensurate",
+                "results": [f.to_json() for f in fields],
+            }
+        },
+    )
+    dialog = QDialog()
+    # The project lives as long as the dialog.
+    dialog.project_directory = directory
+    page = PolarisationWidget(dialog)
+    QVBoxLayout(dialog).addWidget(page)
+    page.set_document(document)
+    page._sample.setCurrentIndex(page._sample.findData(True))
+    page._collision_rate.setValue(0.5)
+    page._add_button.click()
+    assert page._figure.axes[0].lines, "polarisation fixture drew no trace"
+    return dialog
+
+
+def _uep_potential() -> QDialog:
+    fixtures = Path("tests/fixtures/uep")
+    dialog = UepAnalysisDialog(
+        source_job_label="uep_source",
+        source_structure_id="11111111-1111-1111-1111-111111111111",
+        den_fmt_path=fixtures / "Si2.den_fmt",
+        castep_path=fixtures / "Si2.castep",
+        cell_path=fixtures / "Si2.cell",
+    )
+    dialog._apply_potential_grid_cache(potential_grid(dialog._field))
+    dialog._tabs.setCurrentWidget(dialog._potential_tab)
+    return dialog
+
+
+def _energy_barriers_page(
+    distances: list[float], energies_ev: list[float], structure: Structure | None = None
+) -> QDialog:
+    """The Energy Barriers page, in a dialog, showing a band in its inspector."""
+
+    rows = [
+        EnergyBarrierPreviewImageRow(
+            f"Image {number}", f"{distance:.3f} Å", "", distance, energy_ev
+        )
+        for number, (distance, energy_ev) in enumerate(zip(distances, energies_ev), start=1)
+    ]
+    dialog = QDialog()
+    page = EnergyBarriersWidget(dialog)
+    QVBoxLayout(dialog).addWidget(page)
+    page.set_neb_preview(
+        title="Site 1 → site 2",
+        image_rows=rows,
+        structures=[structure or _cubic_host()] * len(rows),
+    )
+    return dialog
+
+
+def _energy_barriers_real_band() -> QDialog:
+    fixture = Path(__file__).resolve().parents[1] / "fixtures" / "gdru2si2" / "GdRu2Si2_12_neb.ts"
+    images = parse_transition_state_file(fixture).images
+    return _energy_barriers_page(band_distances_ang(images), [image.energy for image in images])
+
+
+def _energy_barriers_wide_ticks() -> QDialog:
+    """A short band with a small barrier, whose sub-unit values make the widest tick labels."""
+
+    return _energy_barriers_page(
+        [0.0, 0.00125, 0.0025, 0.00375], [-1000.0, -1000.0000125, -999.9999875, -1000.00000625]
+    )
+
+
+PLOT_DIALOGS: dict[str, Callable[[], QDialog]] = {
+    "energy-barriers-real-band": _energy_barriers_real_band,
+    "energy-barriers-wide-ticks": _energy_barriers_wide_ticks,
+    "relaxation-clustering-connected": lambda: _relaxation_clustering(0),
+    "relaxation-clustering-hierarchical": lambda: _relaxation_clustering(1),
+    "relaxation-clustering-kmeans": lambda: _relaxation_clustering(2),
+    "relaxation-displacements": _displacements,
+    "magnetic-field-distribution": _field_distribution,
+    "magnetic-texture-magnitude-map": _texture_magnitude_map,
+    "convergence-examiner": _convergence_examiner,
+    "geometry-progress": _geometry_progress,
+    "polarisation-page": _polarisation_page,
+    "uep-potential": _uep_potential,
+}
+
+
+def _decoration_boxes(axes, renderer) -> list[Bbox]:
+    """Return the full extents of one axes' tick labels, axis labels, titles and legend.
+
+    ``Axes.get_tightbbox`` is not enough: like the layout engines, it ignores
+    how far an axis label runs *along* its axis, so a y-label taller than the
+    plot would pass unnoticed. Each ``Axis.get_tightbbox`` call here measures
+    the whole label.
+    """
+
+    boxes = [
+        axis.get_tightbbox(renderer) for axis in (axes.xaxis, axes.yaxis) if axis.get_visible()
+    ]
+    boxes.extend(
+        title.get_window_extent(renderer)
+        for title in (axes.title, axes._left_title, axes._right_title)
+        if title.get_visible() and title.get_text()
+    )
+    legend = axes.get_legend()
+    if legend is not None and legend.get_visible():
+        boxes.append(legend.get_window_extent(renderer))
+    return [box for box in boxes if box is not None and box.width > 0 and box.height > 0]
+
+
+def _decoration_overflow_px(canvas: FigureCanvasQTAgg) -> dict[str, float]:
+    """Return how far any axes' ticks, labels or legend reach past each figure edge."""
+
+    canvas.draw()
+    renderer = canvas.get_renderer()
+    figure_box = canvas.figure.bbox
+    overflow = {"left": 0.0, "right": 0.0, "bottom": 0.0, "top": 0.0}
+    for axes in canvas.figure.axes:
+        if not axes.get_visible() or not axes.axison:
+            continue
+        for box in _decoration_boxes(axes, renderer):
+            overflow["left"] = max(overflow["left"], figure_box.x0 - box.x0)
+            overflow["right"] = max(overflow["right"], box.x1 - figure_box.x1)
+            overflow["bottom"] = max(overflow["bottom"], figure_box.y0 - box.y0)
+            overflow["top"] = max(overflow["top"], box.y1 - figure_box.y1)
+    return {
+        side: round(value, 1) for side, value in overflow.items() if value > _OVERFLOW_TOLERANCE_PX
+    }
+
+
+@pytest.mark.parametrize("name", sorted(PLOT_DIALOGS))
+def test_plot_dialog_keeps_axis_decorations_inside_canvas_on_small_screens(qapp, name: str) -> None:
+    dialog = PLOT_DIALOGS[name]()
+    try:
+        dialog.show()
+        qapp.processEvents()
+        for size in (dialog.minimumSize(), *SMALL_SCREEN_SIZES):
+            dialog.resize(size)
+            for _ in range(4):
+                qapp.processEvents()
+            canvases = [
+                canvas
+                for canvas in dialog.findChildren(FigureCanvasQTAgg)
+                if canvas.isVisibleTo(dialog) and canvas.figure.axes
+            ]
+            assert canvases, f"{name} shows no plot"
+            for canvas in canvases:
+                where = f"{name} at {dialog.width()}x{dialog.height()}, canvas {canvas.width()}x{canvas.height()}"
+                assert canvas.width() >= canvas.minimumWidth(), (
+                    f"{where}: squeezed below its minimum width"
+                )
+                assert canvas.height() >= canvas.minimumHeight(), (
+                    f"{where}: squeezed below its minimum height"
+                )
+                overflow = _decoration_overflow_px(canvas)
+                assert not overflow, f"{where}: labels clipped by {overflow} px"
+    finally:
+        dialog.close()
+
+
+@pytest.mark.parametrize(
+    "fractions",
+    [_SPREAD_SITE_FRACTIONS, _CHAIN_SITE_FRACTIONS],
+    ids=["spread-components", "long-chain"],
+)
+def test_connected_graph_nodes_stay_inside_the_axes_and_apart(qapp, fractions) -> None:
+    """Graph nodes scale with the canvas instead of spilling past it or overlapping.
+
+    Fixed-size markers (980 pt^2 with an 18 pt label) used to be cut off at the
+    axes edge and to run into each other once the dialog was small.
+    """
+
+    dialog = _relaxation_clustering(0, fractions)
+    try:
+        dialog.show()
+        qapp.processEvents()
+        for size in (dialog.minimumSize(), *SMALL_SCREEN_SIZES, QSize(1600, 1000)):
+            dialog.resize(size)
+            for _ in range(4):
+                qapp.processEvents()
+            at_minimum = size == dialog.minimumSize()
+            canvas = dialog._graph_canvas
+            canvas.draw()
+            renderer = canvas.get_renderer()
+            axes = canvas.figure.axes[0]
+            circles = [patch for patch in axes.patches if patch.get_gid() == GRAPH_NODE_GID]
+            labels = [patch for patch in axes.patches if isinstance(patch, PathPatch)]
+            where = f"{len(fractions)} sites at {dialog.width()}x{dialog.height()}"
+            assert len(circles) == len(labels) == len(fractions), where
+            # Node borders are filled discs, not strokes, so nothing reaches past the radius.
+            assert all(circle.get_linewidth() == 0.0 for circle in circles), where
+
+            inner = axes.bbox.padded(_OVERFLOW_TOLERANCE_PX)
+            extents = [circle.get_window_extent(renderer) for circle in circles]
+            for extent in extents:
+                assert inner.x0 <= extent.x0 and extent.x1 <= inner.x1, (
+                    f"{where}: node cut off horizontally"
+                )
+                assert inner.y0 <= extent.y0 and extent.y1 <= inner.y1, (
+                    f"{where}: node cut off vertically"
+                )
+            for label, extent in zip(labels, extents, strict=True):
+                label_extent = label.get_window_extent(renderer)
+                assert extent.x0 < label_extent.x0 and label_extent.x1 < extent.x1, (
+                    f"{where}: label wider than node"
+                )
+                assert extent.y0 < label_extent.y0 and label_extent.y1 < extent.y1, (
+                    f"{where}: label taller than node"
+                )
+            centres = np.array([[(e.x0 + e.x1) / 2.0, (e.y0 + e.y1) / 2.0] for e in extents])
+            radius_px = extents[0].width / 2.0
+            gaps = np.linalg.norm(centres[:, np.newaxis, :] - centres[np.newaxis, :, :], axis=2)
+            np.fill_diagonal(gaps, np.inf)
+            assert gaps.min() > 2.0 * radius_px + 2.0, f"{where}: nodes overlap"
+            # Nodes stay large enough to read their numbers on real laptop windows. At the
+            # dialog's absolute minimum a twelve-node chain may get smaller, but must not collapse.
+            minimum_radius_px = 5.0 if at_minimum else 8.0
+            assert radius_px >= minimum_radius_px, f"{where}: nodes shrank to {radius_px:.1f} px"
+            # ...and a small graph on a big canvas stops growing at the cap.
+            max_radius_px = GRAPH_NODE_MAX_RADIUS_PT * canvas.figure.dpi / 72.0
+            assert radius_px <= max_radius_px + _OVERFLOW_TOLERANCE_PX, (
+                f"{where}: nodes grew to {radius_px:.1f} px"
+            )
+            # The graph uses the canvas: unless the node-size cap holds it back, it fills
+            # most of one dimension and at least half of the other.
+            if radius_px < max_radius_px - _OVERFLOW_TOLERANCE_PX:
+                fill = sorted(
+                    (
+                        (max(e.x1 for e in extents) - min(e.x0 for e in extents)) / axes.bbox.width,
+                        (max(e.y1 for e in extents) - min(e.y0 for e in extents))
+                        / axes.bbox.height,
+                    )
+                )
+                assert fill[1] >= 0.85, f"{where}: graph fills only {fill[1]:.2f} of the canvas"
+                if fractions is _SPREAD_SITE_FRACTIONS:
+                    assert fill[0] >= 0.5, f"{where}: graph fills only {fill[0]:.2f} across"
+    finally:
+        dialog.close()
+
+
+def test_connected_graph_repacks_its_components_when_the_canvas_changes_shape(qapp) -> None:
+    dialog = _relaxation_clustering(0)
+    try:
+        dialog.show()
+        row_counts = {}
+        for size in (QSize(1150, 620), QSize(1100, 1000)):
+            dialog.resize(size)
+            for _ in range(4):
+                qapp.processEvents()
+            canvas = dialog._graph_canvas
+            canvas.draw()
+            nodes = [
+                patch
+                for patch in canvas.figure.axes[0].patches
+                if patch.get_gid() == GRAPH_NODE_GID
+            ]
+            aspect = canvas.figure.bbox.width / canvas.figure.bbox.height
+            row_counts[round(aspect, 1)] = len({round(node.center[1], 6) for node in nodes})
+        (wide_aspect, wide_rows), (tall_aspect, tall_rows) = sorted(
+            row_counts.items(), reverse=True
+        )
+        assert wide_aspect > tall_aspect
+        # A wide canvas gets fewer, longer rows of components than a squarer one.
+        assert wide_rows < tall_rows
+    finally:
+        dialog.close()
+
+
+def test_create_plot_canvas_uses_constrained_layout_and_a_minimum_size(qapp) -> None:
+    figure, canvas = create_plot_canvas(figsize=(5.0, 3.0), facecolor="#ffffff")
+
+    assert isinstance(figure.get_layout_engine(), ConstrainedLayoutEngine)
+    assert canvas.figure is figure
+    assert (canvas.minimumWidth(), canvas.minimumHeight()) == DEFAULT_MINIMUM_CANVAS_SIZE
+    assert canvas.sizePolicy().horizontalPolicy() == QSizePolicy.Policy.Expanding
+    assert canvas.sizePolicy().verticalPolicy() == QSizePolicy.Policy.Expanding
+    assert not canvas.testAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+
+    # Refresh paths call ``figure.clear()`` before redrawing; the layout must survive it.
+    figure.add_subplot(111)
+    figure.clear()
+    assert isinstance(figure.get_layout_engine(), ConstrainedLayoutEngine)
+
+
+def test_create_plot_canvas_transparent_background_and_custom_minimum(qapp) -> None:
+    figure, canvas = create_plot_canvas(
+        figsize=(5.0, 3.0), transparent=True, minimum_size=(300, 240)
+    )
+
+    assert figure.patch.get_alpha() == 0.0
+    assert canvas.testAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+    assert (canvas.minimumWidth(), canvas.minimumHeight()) == (300, 240)

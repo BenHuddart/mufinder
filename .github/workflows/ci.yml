@@ -1,0 +1,285 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+# The quality gates only read the checkout; the repository's default token
+# permission is read-only as well, so this block is the explicit contract.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Install Python dependencies
+        run: |
+          uv sync --locked --extra dev
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+
+      - name: Run ruff
+        run: make lint
+
+  # The suite is split into four groups that run on separate runners. Each
+  # shard uploads its coverage data; the `tests` job below combines them and
+  # enforces the coverage gate. Keep `--splits` (SHARDS) and the matrix in step.
+  test-shard:
+    name: tests (shard ${{ matrix.shard }}/4)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Prepare runtime directories
+        run: |
+          mkdir -p "$RUNNER_TEMP/matplotlib" "$RUNNER_TEMP/xdg-cache"
+          {
+            echo "QT_QPA_PLATFORM=offscreen"
+            echo "PYVISTA_OFF_SCREEN=true"
+            echo "VTK_DEFAULT_RENDER_WINDOW_OFFSCREEN=1"
+            echo "LIBGL_ALWAYS_SOFTWARE=1"
+            echo "MPLCONFIGDIR=$RUNNER_TEMP/matplotlib"
+            echo "XDG_CACHE_HOME=$RUNNER_TEMP/xdg-cache"
+          } >> "$GITHUB_ENV"
+
+      - name: Install system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libegl1 libgl1 libopengl0 libxcb-cursor0 libxkbcommon-x11-0
+
+      - name: Install Python dependencies
+        run: |
+          uv sync --locked --extra dev --extra scientific-backends
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+
+      - name: Run test shard
+        run: make test-shard SHARD=${{ matrix.shard }} SHARDS=4 PYTEST_WORKERS=auto PYTEST_ARGS=--durations=25
+
+      - name: Upload coverage data
+        uses: actions/upload-artifact@v6
+        with:
+          name: coverage-shard-${{ matrix.shard }}
+          path: .coverage.shard-${{ matrix.shard }}
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 1
+
+  # Branch protection requires the `tests` check, so this job keeps that name.
+  # It runs even when a shard fails (a skipped required check would count as
+  # passing) and fails unless every shard passed.
+  tests:
+    runs-on: ubuntu-latest
+    needs: test-shard
+    if: always()
+    # Deleting this run's artifacts once they are consumed needs `actions: write`.
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: Require every shard to pass
+        if: needs.test-shard.result != 'success'
+        run: |
+          echo "A test shard finished with '${{ needs.test-shard.result }}'."
+          exit 1
+
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Install Python dependencies
+        run: |
+          uv sync --locked --extra dev
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+
+      - name: Download coverage data
+        uses: actions/download-artifact@v7
+        with:
+          pattern: coverage-shard-*
+          merge-multiple: true
+
+      - name: Combine coverage and enforce the gate
+        run: make coverage
+
+      # Kept on failure so "Re-run failed jobs" can download them again. Pull
+      # requests from forks and from Dependabot get a read-only token and leave
+      # them to expire.
+      - name: Delete the coverage artifacts
+        if: success() && (github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login != 'dependabot[bot]'))
+        uses: ./.github/actions/delete-run-artifacts
+        with:
+          name-pattern: ^coverage-shard-
+
+  # The documentation screenshots are rendered in four shares of about equal
+  # measured duration (scripts/docs_screenshots/durations.json) on separate
+  # runners, since one runner's CPUs are the limit. Each share is cached under
+  # a hash of everything a screenshot depends on, so a pull request that
+  # changes only pages reuses the images. Keep `--shard` (SHARDS), this matrix
+  # in step; tests/docs/test_docs_screenshots.py reads the shard count from here.
+  # A share renders in about two minutes. The renderer fails a scene that runs
+  # past --scene-timeout and dumps every thread's stack; the job's own limit
+  # catches anything that hangs outside a scene.
+  docs-screenshots:
+    name: docs screenshots (shard ${{ matrix.shard }}/4)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Restore this share of the screenshots
+        id: screenshots-cache
+        uses: actions/cache@v4
+        with:
+          path: docs/_generated/screenshots
+          key: docs-screenshots-${{ runner.os }}-shard-${{ matrix.shard }}-of-4-${{ hashFiles('scripts/docs_screenshots/**', 'scripts/render_docs_screenshots.py', 'src/mufinder/**', 'tests/fixtures/**', 'uv.lock') }}
+
+      - name: Set up uv
+        if: steps.screenshots-cache.outputs.cache-hit != 'true'
+        uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Prepare runtime directories
+        if: steps.screenshots-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p "$RUNNER_TEMP/matplotlib" "$RUNNER_TEMP/xdg-cache"
+          {
+            echo "QT_QPA_PLATFORM=offscreen"
+            echo "PYVISTA_OFF_SCREEN=true"
+            echo "VTK_DEFAULT_RENDER_WINDOW_OFFSCREEN=1"
+            echo "LIBGL_ALWAYS_SOFTWARE=1"
+            echo "MPLCONFIGDIR=$RUNNER_TEMP/matplotlib"
+            echo "XDG_CACHE_HOME=$RUNNER_TEMP/xdg-cache"
+          } >> "$GITHUB_ENV"
+
+      - name: Install system libraries
+        if: steps.screenshots-cache.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libegl1 libgl1 libopengl0 libxcb-cursor0 libxkbcommon-x11-0
+
+      # The screenshots run real field calculations, so they need the
+      # scientific backends as well.
+      - name: Install Python dependencies
+        if: steps.screenshots-cache.outputs.cache-hit != 'true'
+        run: |
+          uv sync --locked --extra dev --extra scientific-backends
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+
+      - name: Render this share of the screenshots
+        if: steps.screenshots-cache.outputs.cache-hit != 'true'
+        run: make screenshots-shard SHARD=${{ matrix.shard }} SHARDS=4
+
+      - name: Upload this share of the screenshots
+        uses: actions/upload-artifact@v6
+        with:
+          name: docs-screenshots-${{ matrix.shard }}
+          path: docs/_generated/screenshots
+          if-no-files-found: error
+          retention-days: 1
+
+  # Branch protection requires the `docs` check, so this job keeps that name.
+  # Like `tests`, it runs even when a screenshot share fails, and then fails.
+  docs:
+    runs-on: ubuntu-latest
+    needs: docs-screenshots
+    if: always()
+    # Deleting this run's artifacts once they are consumed needs `actions: write`.
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: Require every screenshot share to render
+        if: needs.docs-screenshots.result != 'success'
+        run: |
+          echo "A screenshot share finished with '${{ needs.docs-screenshots.result }}'."
+          exit 1
+
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Prepare runtime directories
+        run: |
+          mkdir -p "$RUNNER_TEMP/matplotlib" "$RUNNER_TEMP/xdg-cache"
+          {
+            echo "QT_QPA_PLATFORM=offscreen"
+            echo "MPLCONFIGDIR=$RUNNER_TEMP/matplotlib"
+            echo "XDG_CACHE_HOME=$RUNNER_TEMP/xdg-cache"
+          } >> "$GITHUB_ENV"
+
+      # autodoc imports the application, Qt widgets included.
+      - name: Install system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libegl1 libgl1 libopengl0 libxcb-cursor0 libxkbcommon-x11-0
+
+      # Sphinx renders nothing, so the scientific backends are not needed.
+      - name: Install Python dependencies
+        run: |
+          uv sync --locked --extra dev
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+
+      - name: Download the screenshots
+        uses: actions/download-artifact@v7
+        with:
+          pattern: docs-screenshots-*
+          path: docs/_generated/screenshots
+          merge-multiple: true
+
+      # The downloaded images are complete, but older than this checkout's
+      # sources; touching the stamp tells make to skip the render.
+      - name: Mark the screenshots current
+        run: touch docs/_generated/screenshots/.stamp
+
+      - name: Build Sphinx documentation
+        run: make docs
+
+      # Kept on failure for the same reason as the coverage artifacts.
+      - name: Delete the screenshot artifacts
+        if: success() && (github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login != 'dependabot[bot]'))
+        uses: ./.github/actions/delete-run-artifacts
+        with:
+          name-pattern: ^docs-screenshots-

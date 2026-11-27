@@ -1,0 +1,12 @@
+{
+  "active_convergence_cutoff_definition_id": "2a16e0b8-9427-4964-8009-503aa12bd7c1",
+  "active_convergence_kpoint_definition_id": "382dc08c-6750-40f1-9967-8758b292d57e",
+  "convergence_form": {
+    "cutoff_energies": [
+      300.0,
+      400.0,
+      500.0
+    ],
+    "name_prefix": "cutoff"
+  }
+}

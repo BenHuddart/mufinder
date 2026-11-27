@@ -1,0 +1,874 @@
+"""Tests for polarisation simulations of stored magnetic-field results."""
+
+from __future__ import annotations
+
+from dataclasses import replace
+from pathlib import Path
+from types import SimpleNamespace
+
+import numpy as np
+import pytest
+
+from mufinder.science.magnetic_fields import MagneticFieldDistributionResult
+from mufinder.science.nuclear_relaxation import calculate_nuclear_width_tensors
+from mufinder.science.polarisation import PolarisationError, calculate_polarisation
+from mufinder.science.polarisation_simulation import PolarisationSettings, simulate_polarisation
+from mufinder.services.magnetic_field_results import (
+    CALCULATION_METHOD_VERSION,
+    HOST_MOMENT_METHOD_VERSION,
+    HOST_MOMENT_METHOD_VERSION_KEY,
+    MAGNETIC_FIELD_RESULT_TYPE,
+    PLATE_METHOD_NOT_USED,
+    PLATE_METHOD_VERSION,
+    TRANSLATION_METHOD_NOT_USED,
+    TRANSLATION_METHOD_VERSION,
+    TRANSLATION_METHOD_VERSION_KEY,
+    magnetic_field_result,
+    PLATE_METHOD_VERSION_KEY,
+    CALCULATION_VERSION_KEY,
+    MAGNETIC_FIELD_PAGE_OWNER,
+    UEP_SITE_SOURCE,
+    polarisation_result,
+    remove_magnetic_field_results,
+    store_magnetic_field_results,
+)
+from mufinder.services.polarisation_simulations import (
+    SimulationSource,
+    field_results_for_source,
+    field_sources,
+    older_method_sources,
+    polarisation_simulation,
+    polarisation_simulation_summaries,
+    polarisation_simulations,
+    prepare_polarisation_simulation,
+    remove_polarisation_simulation,
+    removed_sources,
+    run_polarisation_simulation,
+    run_prepared_polarisation_simulation,
+    simulation_owner,
+    stale_sources,
+    store_polarisation_simulation,
+)
+from mufinder.services.project_service import ProjectService
+from mufinder.services.project_summary import MAGNETIC_FIELD_WORKSPACES_KEY
+from tests.support.controllers import muon_host_document
+from tests.support.field_results import field_result
+from tests.support.magnetic_fields import (
+    collinear_waves_model,
+    host_with_spin_record,
+    spin_host_project,
+)
+
+ZERO = (0.0, 0.0, 0.0)
+SETTINGS = PolarisationSettings(end_time_us=4.0, time_points=401)
+
+
+def _field(total, *, label: str = "site 1", applied=ZERO, position=(0.25, 0.25, 0.25)):
+    return field_result(total, applied, label, position)
+
+
+def _commensurate(*results, site_source: str | None = None) -> dict[str, object]:
+    value: dict[str, object] = {
+        "kind": "commensurate",
+        "results": [result.to_json() for result in results],
+    }
+    if site_source:
+        value["site_source"] = site_source
+    return value
+
+
+def _store_fields(document, owner: str, value: dict[str, object]) -> None:
+    store_magnetic_field_results(document, owner, {"magnetic_field_results": value})
+
+
+def _add_workspace(document, workspace_id: str, title: str) -> None:
+    document.ui_state.setdefault(MAGNETIC_FIELD_WORKSPACES_KEY, []).append(
+        {"id": workspace_id, "title": title}
+    )
+
+
+@pytest.fixture
+def document(tmp_path: Path):
+    document, _host = muon_host_document(ProjectService(), tmp_path)
+    _store_fields(document, MAGNETIC_FIELD_PAGE_OWNER, _commensurate(_field((0.0, 0.0, 0.01))))
+    _add_workspace(document, "ws-1", "Site B")
+    _store_fields(
+        document,
+        "ws-1",
+        _commensurate(
+            _field((0.02, 0.0, 0.0), label="B1"),
+            _field((0.0, 0.02, 0.0), label="B2"),
+            site_source=UEP_SITE_SOURCE,
+        ),
+    )
+    return document
+
+
+def _simulate_page(document):
+    record = run_polarisation_simulation(
+        document,
+        title="ZF",
+        settings=SETTINGS,
+        sources=[SimulationSource(MAGNETIC_FIELD_PAGE_OWNER, "", "")],
+    )
+    store_polarisation_simulation(document, record)
+    return record
+
+
+def _current_fields() -> dict[str, object]:
+    return {
+        **_commensurate(_field((0.0, 0.0, 0.01))),
+        CALCULATION_VERSION_KEY: CALCULATION_METHOD_VERSION,
+    }
+
+
+def test_a_simulation_records_the_method_of_the_fields_it_ran_from(document) -> None:
+    older = _simulate_page(document)
+    assert older.sources[0].calculation_version is None
+    assert older_method_sources(older, document) == list(older.sources)
+
+    # Recalculating the fields leaves the stored traces old: stale, and still older.
+    _store_fields(document, MAGNETIC_FIELD_PAGE_OWNER, _current_fields())
+    stored = polarisation_simulation(document, older.simulation_id)
+    assert stale_sources(document, stored) == list(stored.sources)
+    assert older_method_sources(stored, document) == list(stored.sources)
+
+    current = _simulate_page(document)
+    assert current.sources[0].calculation_version == CALCULATION_METHOD_VERSION
+    assert older_method_sources(current, document) == []
+
+
+def test_a_simulation_of_a_plate_is_marked_and_one_without_is_not(document) -> None:
+    document.ui_state["magnetic_field_form"] = {"demag_shape": "sphere"}
+    _store_fields(document, MAGNETIC_FIELD_PAGE_OWNER, _current_fields())
+    no_plate = _simulate_page(document)
+    assert no_plate.sources[0].plate_method_version == PLATE_METHOD_NOT_USED
+    assert older_method_sources(no_plate, document) == []
+    # Choosing a plate afterwards does not change what this simulation ran from.
+    document.ui_state["magnetic_field_form"] = {"demag_shape": "image_plate"}
+    assert older_method_sources(no_plate, document) == []
+    assert SimulationSource.from_json(no_plate.sources[0].to_json()) == no_plate.sources[0]
+
+    # Fields from before the plate method was recorded, under a plate from a photo.
+    document.ui_state["magnetic_field_form"] = {"demag_shape": "image_plate"}
+    old_plate = _simulate_page(document)
+    assert old_plate.sources[0].plate_method_version == 1
+    assert older_method_sources(old_plate, document) == list(old_plate.sources)
+
+    # Once it has run, the mark follows the simulation and not the form.
+    document.ui_state["magnetic_field_form"] = {"demag_shape": "sphere"}
+    stored = polarisation_simulation(document, old_plate.simulation_id)
+    assert older_method_sources(stored, document) == list(stored.sources)
+
+    _store_fields(
+        document,
+        MAGNETIC_FIELD_PAGE_OWNER,
+        {**_current_fields(), PLATE_METHOD_VERSION_KEY: PLATE_METHOD_VERSION},
+    )
+    document.ui_state["magnetic_field_form"] = {"demag_shape": "image_plate"}
+    fresh = _simulate_page(document)
+    assert fresh.sources[0].plate_method_version == PLATE_METHOD_VERSION
+    assert older_method_sources(fresh, document) == []
+
+
+def test_a_simulation_saved_before_the_plate_method_decides_from_the_saved_form(document) -> None:
+    record = SimpleNamespace(
+        sources=[
+            SimulationSource(
+                MAGNETIC_FIELD_PAGE_OWNER,
+                "id",
+                "Page",
+                calculation_version=CALCULATION_METHOD_VERSION,
+            )
+        ]
+    )
+    document.ui_state["magnetic_field_form"] = {"demag_shape": "sphere"}
+
+    assert older_method_sources(record, document) == []
+    document.ui_state["magnetic_field_form"] = {"demag_shape": "image_plate"}
+    assert older_method_sources(record, document) == list(record.sources)
+
+
+def _modulated_fields(*translations: int, **extra) -> dict[str, object]:
+    return {
+        **_current_fields(),
+        "results": [
+            {
+                **_field((0.0, 0.0, 0.01), position=(0.25 + n, 0.25, 0.25)).to_json(),
+                "calculation_parameters": {"modulated": True},
+            }
+            for n in translations
+        ],
+        **extra,
+    }
+
+
+def test_a_simulation_of_one_translation_is_marked_and_one_of_all_of_them_is_not(document) -> None:
+    _store_fields(document, MAGNETIC_FIELD_PAGE_OWNER, _current_fields())
+    uniform = _simulate_page(document)
+    assert uniform.sources[0].translation_method_version == TRANSLATION_METHOD_NOT_USED
+    assert older_method_sources(uniform, document) == []
+
+    _store_fields(document, MAGNETIC_FIELD_PAGE_OWNER, _modulated_fields(0))
+    one_row = _simulate_page(document)
+    assert one_row.sources[0].translation_method_version == 1
+    assert older_method_sources(one_row, document) == list(one_row.sources)
+
+    # Recalculating the fields leaves the stored traces old, and still older.
+    listed = _modulated_fields(0, 1, **{TRANSLATION_METHOD_VERSION_KEY: TRANSLATION_METHOD_VERSION})
+    _store_fields(document, MAGNETIC_FIELD_PAGE_OWNER, listed)
+    stored = polarisation_simulation(document, one_row.simulation_id)
+    assert older_method_sources(stored, document) == list(stored.sources)
+
+    fresh = _simulate_page(document)
+    assert fresh.sources[0].translation_method_version == TRANSLATION_METHOD_VERSION
+    assert older_method_sources(fresh, document) == []
+
+
+def test_a_simulation_saved_before_the_translation_method_reads_the_record_it_ran_from(
+    document,
+) -> None:
+    _store_fields(document, MAGNETIC_FIELD_PAGE_OWNER, _modulated_fields(0))
+    record_id = magnetic_field_result(
+        document, MAGNETIC_FIELD_PAGE_OWNER, MAGNETIC_FIELD_RESULT_TYPE
+    ).id
+    record = SimpleNamespace(
+        sources=[
+            SimulationSource(
+                MAGNETIC_FIELD_PAGE_OWNER,
+                record_id,
+                "Page",
+                calculation_version=CALCULATION_METHOD_VERSION,
+            )
+        ]
+    )
+
+    assert older_method_sources(record, document) == list(record.sources)
+    # Once that record is replaced nothing says what it held, and the simulation is stale instead.
+    _store_fields(document, MAGNETIC_FIELD_PAGE_OWNER, _current_fields())
+    assert older_method_sources(record, document) == []
+    assert stale_sources(document, record) == list(record.sources)
+
+
+def test_a_distribution_from_before_the_translation_method_reads_its_owners_model(
+    document,
+) -> None:
+    distribution = MagneticFieldDistributionResult(
+        site_label="helix",
+        muon_position=(0.5, 0.5, 0.5),
+        fields_T=np.array([[0.0, 0.0, 0.01], [0.0, 0.01, 0.0]]),
+        histogram_centres_T=np.array([0.01]),
+        histogram_counts=np.array([2.0]),
+        applied_T=ZERO,
+    )
+    entry = {
+        **distribution.to_json(),
+        "calculation_parameters": {"commensurate_max_period": 12},
+    }
+    keyless = {"kind": "distribution", "results": [entry]}
+    _store_fields(document, MAGNETIC_FIELD_PAGE_OWNER, {**_current_fields(), **keyless})
+
+    # A helix alone sampled every phase before the key existed.
+    document.project.magnetic_structure = collinear_waves_model((0.22, 0.0, 0.0)).to_json()
+    helix = _simulate_page(document)
+    assert helix.sources[0].translation_method_version == TRANSLATION_METHOD_NOT_USED
+    assert older_method_sources(helix, document) == []
+
+    # Beside a period 4 wave, that wave stayed at T = 0.
+    document.project.magnetic_structure = collinear_waves_model(
+        (0.22, 0.0, 0.0), (0.25, 0.0, 0.0)
+    ).to_json()
+    frozen = _simulate_page(document)
+    assert frozen.sources[0].translation_method_version == 1
+    assert older_method_sources(frozen, document) == list(frozen.sources)
+
+
+@pytest.mark.parametrize("aliased", [False, True])
+@pytest.mark.parametrize("version", [None, 2, TRANSLATION_METHOD_VERSION])
+def test_simulation_sources_keep_the_reciprocal_phase_method_status(
+    document, aliased, version
+) -> None:
+    distribution = MagneticFieldDistributionResult(
+        site_label="helix",
+        muon_position=(0.5, 0.5, 0.5),
+        fields_T=np.array([[0.0, 0.0, 0.01], [0.0, 0.01, 0.0]]),
+        histogram_centres_T=np.array([0.01]),
+        histogram_counts=np.array([2.0]),
+        applied_T=ZERO,
+        calculation_parameters={"commensurate_max_period": 12},
+    )
+    fields = {**_current_fields(), "kind": "distribution", "results": [distribution.to_json()]}
+    if version is not None:
+        fields[TRANSLATION_METHOD_VERSION_KEY] = version
+    document.project.magnetic_structure = collinear_waves_model(
+        (0.22, 0.0, 0.0), (0.78 if aliased else 0.44, 0.0, 0.0)
+    ).to_json()
+    _store_fields(document, MAGNETIC_FIELD_PAGE_OWNER, fields)
+    record = _simulate_page(document)
+    older = aliased and version != TRANSLATION_METHOD_VERSION
+    assert bool(older_method_sources(record, document)) is older
+    # Historical simulations already recorded version 2; their original field record scopes it.
+    if version in (None, 2):
+        historical_version = TRANSLATION_METHOD_NOT_USED if version is None else 2
+        historical = replace(
+            record,
+            sources=tuple(
+                replace(source, translation_method_version=historical_version)
+                for source in record.sources
+            ),
+        )
+        assert bool(older_method_sources(historical, document)) is older
+    restored = polarisation_simulation(document, record.simulation_id)
+    assert restored is not None
+    assert bool(older_method_sources(restored, document)) is older
+
+
+def test_removed_sources_are_those_with_no_fields_left(document) -> None:
+    record = run_polarisation_simulation(
+        document,
+        title="Both",
+        settings=SETTINGS,
+        sources=[
+            SimulationSource(MAGNETIC_FIELD_PAGE_OWNER, "", ""),
+            SimulationSource("ws-1", "", ""),
+        ],
+    )
+    assert removed_sources(document, record) == []
+
+    _store_fields(document, MAGNETIC_FIELD_PAGE_OWNER, _current_fields())
+    remove_magnetic_field_results(document, "ws-1")
+
+    assert [source.owner for source in removed_sources(document, record)] == ["ws-1"]
+    assert stale_sources(document, record) == list(record.sources)
+
+
+def test_a_recorded_method_version_survives_save_and_reopen(document) -> None:
+    _store_fields(document, MAGNETIC_FIELD_PAGE_OWNER, _current_fields())
+    record = _simulate_page(document)
+    service = ProjectService()
+    service.save_project(document)
+
+    reloaded = service.load_project(document.project_root)
+
+    assert polarisation_simulation(reloaded, record.simulation_id).sources == record.sources
+    assert older_method_sources(polarisation_simulation_summaries(reloaded)[0], reloaded) == []
+
+
+def test_a_simulation_stored_with_no_version_counts_as_older(document) -> None:
+    _store_fields(document, MAGNETIC_FIELD_PAGE_OWNER, _current_fields())
+    record = _simulate_page(document)
+    stored = next(
+        result
+        for result in document.results.values()
+        if result.data.get("simulation_id") == record.simulation_id
+    )
+    assert stored.data["sources"][0][CALCULATION_VERSION_KEY] == CALCULATION_METHOD_VERSION
+    del stored.data["sources"][0][CALCULATION_VERSION_KEY]
+
+    assert len(older_method_sources(polarisation_simulation_summaries(document)[0], document)) == 1
+
+
+def test_field_sources_list_the_page_then_each_workspace(document) -> None:
+    _add_workspace(document, "ws-empty", "No fields yet")
+
+    sources = field_sources(document)
+
+    assert [source.owner for source in sources] == [MAGNETIC_FIELD_PAGE_OWNER, "ws-1"]
+    page, workspace = sources
+    assert page.label == "Magnetic Fields · 1 field at site 1"
+    assert not page.estimate
+    assert page.applied_T == ZERO
+    assert workspace.site_labels == ("B1", "B2")
+    assert workspace.estimate
+    assert workspace.label == "Site B · 2 fields (B1, …) (unrelaxed estimate)"
+
+
+def test_a_distribution_source_decodes_to_distribution_results(document) -> None:
+    distribution = MagneticFieldDistributionResult(
+        site_label="helix",
+        muon_position=(0.5, 0.5, 0.5),
+        fields_T=np.array([[0.0, 0.0, 0.01], [0.0, 0.01, 0.0]]),
+        histogram_centres_T=np.array([0.01]),
+        histogram_counts=np.array([2.0]),
+        applied_T=ZERO,
+    )
+    _store_fields(
+        document,
+        MAGNETIC_FIELD_PAGE_OWNER,
+        {"kind": "distribution", "results": [distribution.to_json()]},
+    )
+
+    (result,) = field_results_for_source(document, MAGNETIC_FIELD_PAGE_OWNER)
+
+    assert isinstance(result, MagneticFieldDistributionResult)
+    assert field_sources(document)[0].label == "Magnetic Fields · 1 distribution at helix"
+
+
+def test_a_distribution_stored_as_factors_is_offered_and_decodes_every_sample(document) -> None:
+    distribution = MagneticFieldDistributionResult(
+        site_label="helix",
+        muon_position=(0.5, 0.5, 0.5),
+        fields_T=np.zeros((4, 3)),
+        histogram_centres_T=np.array([0.01]),
+        histogram_counts=np.array([4.0]),
+        applied_T=ZERO,
+        fields_T_factors=(
+            np.array([[0.0, 0.0, 0.01], [0.0, 0.0, 0.02]]),
+            np.array([[0.001, 0.0, 0.0], [-0.001, 0.0, 0.0]]),
+        ),
+    )
+    _store_fields(
+        document,
+        MAGNETIC_FIELD_PAGE_OWNER,
+        {"kind": "distribution", "results": [distribution.to_json()]},
+    )
+
+    (result,) = field_results_for_source(document, MAGNETIC_FIELD_PAGE_OWNER)
+
+    np.testing.assert_allclose(
+        result.fields_T,
+        [[0.001, 0.0, 0.01], [-0.001, 0.0, 0.01], [0.001, 0.0, 0.02], [-0.001, 0.0, 0.02]],
+    )
+    assert field_sources(document)[0].label == "Magnetic Fields · 1 distribution at helix"
+
+
+def test_a_malformed_field_record_is_not_offered(document) -> None:
+    _store_fields(document, MAGNETIC_FIELD_PAGE_OWNER, {"kind": "commensurate", "results": [{}]})
+
+    assert [source.owner for source in field_sources(document)] == ["ws-1"]
+    with pytest.raises(PolarisationError, match="malformed"):
+        field_results_for_source(document, MAGNETIC_FIELD_PAGE_OWNER)
+
+
+def test_a_simulation_weights_each_source_and_shares_it_among_its_equivalents(document) -> None:
+    record = run_polarisation_simulation(
+        document,
+        title="  ZF  ",
+        settings=SETTINGS,
+        sources=[
+            SimulationSource(MAGNETIC_FIELD_PAGE_OWNER, "", "", weight=1.0),
+            SimulationSource("ws-1", "", "", weight=3.0),
+        ],
+    )
+
+    fields = [
+        _field((0.0, 0.0, 0.01)),
+        _field((0.02, 0.0, 0.0), label="B1"),
+        _field((0.0, 0.02, 0.0), label="B2"),
+    ]
+    expected = calculate_polarisation(fields, SETTINGS.times_us, site_weights=(1.0, 1.5, 1.5))
+    np.testing.assert_allclose(record.simulation.static.polarisation, expected.polarisation)
+    assert record.title == "ZF"
+    assert record.estimate
+    assert [source.title for source in record.sources] == ["Magnetic Fields", "Site B"]
+    assert stale_sources(document, record) == []
+
+
+def test_nuclear_widths_are_summed_at_each_field_position(tmp_path: Path) -> None:
+    document, host = muon_host_document(ProjectService(), tmp_path)
+    _store_fields(document, MAGNETIC_FIELD_PAGE_OWNER, _commensurate(_field((0.05, 0.0, 0.0))))
+
+    record = run_polarisation_simulation(
+        document,
+        title="widths",
+        settings=PolarisationSettings(
+            sigma_from_nuclear_widths=True, end_time_us=4.0, time_points=401
+        ),
+        sources=[SimulationSource(MAGNETIC_FIELD_PAGE_OWNER, "", "")],
+    )
+
+    expected = simulate_polarisation(
+        record.settings,
+        [_field((0.05, 0.0, 0.0))],
+        lattice_vectors=host.lattice_vectors,
+        nuclear_width_tensors=[calculate_nuclear_width_tensors(host, (0.25, 0.25, 0.25))],
+    )
+    np.testing.assert_allclose(record.simulation.static.polarisation, expected.static.polarisation)
+    assert record.simulation.static.parameters["sigma_nuclear"] == "auto"
+
+
+@pytest.mark.parametrize(
+    ("sources", "message"),
+    [
+        ([], "at least one"),
+        ([SimulationSource("ws-missing", "", "Gone")], "Gone has no field results"),
+        ([SimulationSource(MAGNETIC_FIELD_PAGE_OWNER, "", "", weight=0.0)], "positive weight"),
+        ([SimulationSource(MAGNETIC_FIELD_PAGE_OWNER, "", "", weight=-1.0)], ">= 0"),
+    ],
+)
+def test_a_simulation_refuses_unusable_sources(document, sources, message: str) -> None:
+    with pytest.raises(PolarisationError, match=message):
+        run_polarisation_simulation(document, title="x", settings=SETTINGS, sources=sources)
+
+
+def test_a_simulation_needs_a_host(tmp_path: Path) -> None:
+    document = ProjectService().create_project(tmp_path / "p.mufinder", "P")
+
+    with pytest.raises(PolarisationError, match="host"):
+        run_polarisation_simulation(
+            document,
+            title="x",
+            settings=SETTINGS,
+            sources=[SimulationSource(MAGNETIC_FIELD_PAGE_OWNER, "", "")],
+        )
+
+
+def test_simulations_are_stored_listed_replaced_and_removed(document) -> None:
+    source = [SimulationSource(MAGNETIC_FIELD_PAGE_OWNER, "", "")]
+    first = run_polarisation_simulation(document, title="A", settings=SETTINGS, sources=source)
+    second = run_polarisation_simulation(document, title="B", settings=SETTINGS, sources=source)
+    stored = store_polarisation_simulation(document, first)
+    store_polarisation_simulation(document, second)
+
+    assert store_polarisation_simulation(document, first) is stored
+    assert [record.title for record in polarisation_simulations(document)] == ["A", "B"]
+    # The static trace stays readable through the record-owner helper.
+    assert polarisation_result(document, simulation_owner(first.simulation_id)) is not None
+
+    again = run_polarisation_simulation(
+        document,
+        title="A, damped",
+        settings=PolarisationSettings(end_time_us=4.0, time_points=401, lambda_z_per_us=0.5),
+        sources=source,
+        simulation_id=first.simulation_id,
+    )
+    replaced = store_polarisation_simulation(document, again)
+    assert replaced.id != stored.id
+    assert replaced.created_at == stored.created_at
+    assert [record.title for record in polarisation_simulations(document)] == ["A, damped", "B"]
+
+    remove_polarisation_simulation(document, first.simulation_id)
+    assert polarisation_simulation(document, first.simulation_id) is None
+    assert [record.title for record in polarisation_simulations(document)] == ["B"]
+    remove_polarisation_simulation(document, first.simulation_id)
+
+
+def test_a_simulation_survives_a_save_and_reload(document) -> None:
+    service = ProjectService()
+    record = run_polarisation_simulation(
+        document,
+        title="dynamic",
+        settings=PolarisationSettings(
+            end_time_us=4.0,
+            time_points=401,
+            collision_rate_per_us=1.0,
+            padding_factor=2,
+            polycrystalline=True,
+        ),
+        sources=[SimulationSource("ws-1", "", "")],
+    )
+    store_polarisation_simulation(document, record)
+    service.save_project(document)
+
+    (restored,) = polarisation_simulations(service.load_project(document.project_root))
+
+    assert restored.simulation_id == record.simulation_id
+    assert restored.settings == record.settings
+    assert restored.sources == record.sources
+    assert restored.site_source == UEP_SITE_SOURCE
+    assert restored.simulation.dynamic is not None
+    np.testing.assert_allclose(
+        restored.simulation.spectrum.amplitudes, record.simulation.spectrum.amplitudes
+    )
+
+
+def test_recalculated_or_removed_fields_make_a_simulation_stale(document) -> None:
+    record = run_polarisation_simulation(
+        document,
+        title="both",
+        settings=SETTINGS,
+        sources=[
+            SimulationSource(MAGNETIC_FIELD_PAGE_OWNER, "", ""),
+            SimulationSource("ws-1", "", ""),
+        ],
+    )
+    store_polarisation_simulation(document, record)
+
+    _store_fields(document, MAGNETIC_FIELD_PAGE_OWNER, _commensurate(_field((0.0, 0.0, 0.03))))
+    remove_magnetic_field_results(document, "ws-1")
+
+    stale = stale_sources(document, record)
+    assert [source.owner for source in stale] == [MAGNETIC_FIELD_PAGE_OWNER, "ws-1"]
+    # The simulation itself is kept.
+    assert polarisation_simulation(document, record.simulation_id) is not None
+
+
+def test_a_malformed_simulation_record_is_skipped(document) -> None:
+    record = run_polarisation_simulation(
+        document,
+        title="x",
+        settings=SETTINGS,
+        sources=[SimulationSource(MAGNETIC_FIELD_PAGE_OWNER, "", "")],
+    )
+    stored = store_polarisation_simulation(document, record)
+    stored.data["settings"] = {"time_points": "many"}
+
+    assert polarisation_simulations(document) == []
+    assert polarisation_simulation(document, record.simulation_id) is None
+
+
+def test_a_source_listed_twice_is_refused(document) -> None:
+    with pytest.raises(PolarisationError, match="more than once"):
+        run_polarisation_simulation(
+            document,
+            title="x",
+            settings=SETTINGS,
+            sources=[
+                SimulationSource(MAGNETIC_FIELD_PAGE_OWNER, "", ""),
+                SimulationSource(MAGNETIC_FIELD_PAGE_OWNER, "", ""),
+            ],
+        )
+
+
+def test_nuclear_widths_are_summed_once_per_muon_position(tmp_path: Path, monkeypatch) -> None:
+    from mufinder.services import polarisation_simulations as module
+
+    document, _host = muon_host_document(ProjectService(), tmp_path)
+    translations = [
+        _field((0.0, 0.0, 0.01 * (n + 1)), label=f"t{n}", position=(0.25 + n, 0.25, 0.25))
+        for n in range(5)
+    ]
+    _store_fields(document, MAGNETIC_FIELD_PAGE_OWNER, _commensurate(*translations))
+    calls: list[tuple[float, ...]] = []
+    real = module.calculate_nuclear_width_tensors
+
+    def counting(host, position, **kwargs):
+        calls.append(tuple(position))
+        return real(host, position, **kwargs)
+
+    monkeypatch.setattr(module, "calculate_nuclear_width_tensors", counting)
+
+    run_polarisation_simulation(
+        document,
+        title="widths",
+        settings=PolarisationSettings(
+            sigma_from_nuclear_widths=True, end_time_us=4.0, time_points=401
+        ),
+        sources=[SimulationSource(MAGNETIC_FIELD_PAGE_OWNER, "", "")],
+    )
+
+    assert calls == [(0.25, 0.25, 0.25)]
+
+
+def test_a_simulation_decodes_only_the_sources_it_uses(document, monkeypatch) -> None:
+    from mufinder.services import polarisation_simulations as module
+
+    decoded: list[str] = []
+    real = module.MagneticFieldResult.from_json
+
+    def counting(payload):
+        decoded.append(str(payload.get("site_label")))
+        return real(payload)
+
+    monkeypatch.setitem(module._FIELD_KINDS, "commensurate", counting)
+
+    run_polarisation_simulation(
+        document,
+        title="page only",
+        settings=SETTINGS,
+        sources=[SimulationSource(MAGNETIC_FIELD_PAGE_OWNER, "", "")],
+    )
+
+    assert decoded == ["site 1"]
+
+
+@pytest.mark.parametrize("samples", [None, 3, "fields", []])
+def test_a_distribution_with_malformed_samples_is_not_offered(document, samples) -> None:
+    _store_fields(
+        document,
+        MAGNETIC_FIELD_PAGE_OWNER,
+        {"kind": "distribution", "results": [{"site_label": "x", "fields_T": samples}]},
+    )
+
+    assert [source.owner for source in field_sources(document)] == ["ws-1"]
+
+
+def test_summaries_list_simulations_without_their_traces(document) -> None:
+    from mufinder.services.polarisation_simulations import polarisation_simulation_summaries
+
+    record = run_polarisation_simulation(
+        document,
+        title="ZF",
+        settings=SETTINGS,
+        sources=[SimulationSource("ws-1", "", "")],
+    )
+    store_polarisation_simulation(document, record)
+
+    (summary,) = polarisation_simulation_summaries(document)
+
+    assert summary.simulation_id == record.simulation_id
+    assert summary.settings == record.settings
+    assert summary.sources == record.sources
+    assert summary.estimate
+    assert stale_sources(document, summary) == []
+    # The record id stays while the simulation is stored unchanged and moves with new data.
+    store_polarisation_simulation(document, record)
+    assert polarisation_simulation_summaries(document)[0].result_id == summary.result_id
+    changed = run_polarisation_simulation(
+        document,
+        title="Renamed",
+        settings=SETTINGS,
+        sources=[SimulationSource("ws-1", "", "")],
+        simulation_id=record.simulation_id,
+    )
+    store_polarisation_simulation(document, changed)
+    assert polarisation_simulation_summaries(document)[0].result_id not in {"", summary.result_id}
+
+
+def test_a_prepared_simulation_keeps_the_fields_it_was_made_with(document) -> None:
+    sources = [SimulationSource(MAGNETIC_FIELD_PAGE_OWNER, "", "")]
+    expected = run_polarisation_simulation(
+        document, title="ZF", settings=SETTINGS, sources=sources, simulation_id="sim"
+    )
+    request = prepare_polarisation_simulation(
+        document, title=" ZF ", settings=SETTINGS, sources=sources, simulation_id="sim"
+    )
+
+    # The project changes, and loses its host, while the request is simulated.
+    _store_fields(document, MAGNETIC_FIELD_PAGE_OWNER, _commensurate(_field((0.0, 0.05, 0.0))))
+    document.structures.clear()
+    record = run_prepared_polarisation_simulation(request)
+
+    assert record.title == "ZF"
+    assert record.sources == expected.sources
+    assert stale_sources(document, record) == list(record.sources)
+    np.testing.assert_allclose(
+        record.simulation.static.polarisation, expected.simulation.static.polarisation
+    )
+
+
+def test_preparing_a_simulation_refuses_what_it_cannot_run(document) -> None:
+    with pytest.raises(PolarisationError, match="select at least one field result"):
+        prepare_polarisation_simulation(document, title="", settings=SETTINGS, sources=[])
+    with pytest.raises(PolarisationError, match="weights must be >= 0"):
+        prepare_polarisation_simulation(
+            document,
+            title="",
+            settings=SETTINGS,
+            sources=[SimulationSource(MAGNETIC_FIELD_PAGE_OWNER, "", "", weight=-1.0)],
+        )
+
+
+def _stored_finding_count(document) -> int:
+    return sum(record.action == "polarisation_simulated" for record in document.provenance)
+
+
+def test_each_distinct_simulation_records_one_finding(document) -> None:
+    _store_fields(document, MAGNETIC_FIELD_PAGE_OWNER, _commensurate(_field((0.0, 0.0, 0.1))))
+    source = SimulationSource(MAGNETIC_FIELD_PAGE_OWNER, "", "Magnetic Fields")
+    settings = PolarisationSettings(polycrystalline=True, sphere_points=8, time_points=11)
+
+    def simulate(simulation_settings: PolarisationSettings, simulation_id: str | None = None):
+        return store_and_return(
+            document,
+            run_polarisation_simulation(
+                document,
+                title="Simulation 1",
+                settings=simulation_settings,
+                sources=[source],
+                simulation_id=simulation_id,
+            ),
+        )
+
+    first = simulate(settings)
+    simulate(settings, first.simulation_id)
+    assert _stored_finding_count(document) == 1
+
+    finding = next(r for r in document.provenance if r.action == "polarisation_simulated")
+    assert finding.parameters["settings"]["geometry"] == "zero_field"
+    assert finding.parameters["settings"]["polycrystalline"] is True
+    assert finding.parameters["site_count"] == 1
+    assert finding.parameters["sources"][0]["title"] == "Magnetic Fields"
+
+    # A new simulation is its own subject, even with the same inputs.
+    simulate(settings)
+    assert _stored_finding_count(document) == 2
+
+    changed = replace(settings, end_time_us=5.0)
+    simulate(changed, first.simulation_id)
+    assert _stored_finding_count(document) == 3
+    # Back to the earlier settings: the last entry about this simulation stays current.
+    simulate(settings, first.simulation_id)
+    assert _stored_finding_count(document) == 4
+
+
+def store_and_return(document, record):
+    store_polarisation_simulation(document, record)
+    return record
+
+
+def _moved_host_document(tmp_path: Path):
+    """A project whose page fields came from a host moment the label rule now moves."""
+
+    service, document = spin_host_project(tmp_path)
+    _store_fields(document, MAGNETIC_FIELD_PAGE_OWNER, _current_fields())
+    return service, document
+
+
+def test_a_simulation_of_fields_from_a_moved_host_moment_is_marked(tmp_path: Path) -> None:
+    service, document = _moved_host_document(tmp_path)
+
+    moved = _simulate_page(document)
+
+    assert moved.sources[0].host_moment_method_version == 1
+    assert older_method_sources(moved, document) == list(moved.sources)
+    assert SimulationSource.from_json(moved.sources[0].to_json()) == moved.sources[0]
+    # The mark follows the simulation after a spin edit rewrites the host record.
+    service.set_host_magnetic_configuration(document, [0.0, 3.0], [0.0, 0.0, 0.0])
+    stored = polarisation_simulation(document, moved.simulation_id)
+    assert older_method_sources(stored, document) == list(stored.sources)
+
+    _store_fields(
+        document,
+        MAGNETIC_FIELD_PAGE_OWNER,
+        {**_current_fields(), HOST_MOMENT_METHOD_VERSION_KEY: HOST_MOMENT_METHOD_VERSION},
+    )
+    fresh = _simulate_page(document)
+    assert fresh.sources[0].host_moment_method_version == HOST_MOMENT_METHOD_VERSION
+    assert older_method_sources(fresh, document) == []
+
+
+def test_a_simulation_of_fields_from_an_unmoved_host_is_not_marked(document) -> None:
+    _store_fields(document, MAGNETIC_FIELD_PAGE_OWNER, _current_fields())
+
+    record = _simulate_page(document)
+
+    assert record.sources[0].host_moment_method_version == HOST_MOMENT_METHOD_VERSION
+    assert older_method_sources(record, document) == []
+
+
+def test_a_simulation_saved_before_the_host_moment_method_reads_the_host(tmp_path: Path) -> None:
+    service, document = _moved_host_document(tmp_path)
+    record = SimpleNamespace(
+        sources=[
+            SimulationSource(
+                MAGNETIC_FIELD_PAGE_OWNER,
+                "id",
+                "Page",
+                calculation_version=CALCULATION_METHOD_VERSION,
+            )
+        ]
+    )
+
+    assert older_method_sources(record, document) == list(record.sources)
+    service.set_host_magnetic_configuration(document, [0.0, 3.0], [0.0, 0.0, 0.0])
+    assert older_method_sources(record, document) == []
+
+
+def test_a_simulation_saved_before_the_host_moment_method_keeps_its_mark_on_a_host_switch(
+    tmp_path: Path,
+) -> None:
+    service, document = _moved_host_document(tmp_path)
+    record = _simulate_page(document)
+    legacy = replace(
+        record,
+        sources=tuple(
+            replace(source, host_moment_method_version=None) for source in record.sources
+        ),
+    )
+    other = host_with_spin_record(atom_index=True)
+    service.add_structure(document, other)
+
+    service.set_active_host_structure(document, other.id)
+
+    assert older_method_sources(legacy, document) == list(legacy.sources)

@@ -1,0 +1,36 @@
+{
+  "magnetic_field_form": {
+    "histogram_bins": 512,
+    "magnetic_field_results": {
+      "kind": "commensurate",
+      "results": [
+        {
+          "magnitude_T": 0.374166,
+          "muon_position": [0.25, 0.25, 0.25],
+          "site_label": "site 1",
+          "total_T": [0.1, 0.2, 0.3]
+        }
+      ]
+    },
+    "dipolar_tensor_results": [],
+    "nuclear_relaxation_results": {}
+  },
+  "magnetic_field_workspaces": [
+    {
+      "id": "d3b07384-d9a0-4c9b-8f1e-2a3b4c5d6e7f",
+      "title": "Pinned helix",
+      "magnetic_structure": null,
+      "form": {
+        "histogram_bins": 256,
+        "magnetic_field_results": null,
+        "dipolar_tensor_results": [
+          {
+            "site_label": "site 1",
+            "tensor_T_per_muB": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, -2.0]]
+          }
+        ],
+        "nuclear_relaxation_results": {"mode": "zero_field_powder", "sigma_us_inv": 0.4}
+      }
+    }
+  ]
+}

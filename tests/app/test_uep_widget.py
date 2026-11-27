@@ -1,0 +1,935 @@
+"""Tests for the UEP workflow widget."""
+
+from __future__ import annotations
+
+from collections.abc import Mapping
+from typing import Any
+
+import pytest
+
+from PySide6.QtCore import QItemSelectionModel, Qt
+from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QComboBox, QDialog, QLabel, QMessageBox, QPushButton, QToolButton
+
+from mufinder.app import workflow_table_utils
+from mufinder.app import selection_snapshot as selection_snapshot_module
+from mufinder.app.selection_snapshot import SelectionScope
+from mufinder.app.param_dialog import ParameterDialog
+from mufinder.app.uep_adapter import expand_uep_jobs
+from mufinder.app.uep_types import UepConfig, UepRunState, UepSourceRow
+from mufinder.app.uep_widget import UEPWidget
+from mufinder.castep_io import write_cell
+from mufinder.castep_io.types import ValueWithUnit
+from tests.support.row_menu import (
+    ENDED_ROW_STATUSES,
+    assert_offers_no_reset,
+    install_fake_menu,
+    open_row_menu,
+    trigger,
+)
+from tests.support.structures import si_pair_host
+
+
+def test_uep_widget_source_structure_selector_emits_selection_signal(qapp) -> None:
+    widget = UEPWidget()
+    selected: list[str] = []
+    widget.source_structure_selection_requested.connect(
+        lambda payload: selected.append(str(payload))
+    )
+
+    widget.set_source_structure_options(
+        [
+            {"id": "host", "label": "Host structure"},
+            {"id": "pristine_relaxed", "label": "Best pristine relaxation"},
+        ],
+        selected_id="host",
+    )
+    widget._source_structure_combo.setCurrentIndex(1)
+
+    assert selected[-1] == "pristine_relaxed"
+
+
+def test_uep_widget_programmatic_defaults_and_source_updates_do_not_emit_form_state(qapp) -> None:
+    widget = UEPWidget()
+    emitted: list[dict[str, object]] = []
+    widget.form_state_changed.connect(emitted.append)
+
+    widget.set_project_defaults(
+        cutoff_energy=500.0,
+        kpoint_grid=(2, 2, 2),
+        kpoint_reference_lattice=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        xc_functional="PBE",
+    )
+    widget.set_source_structure_options(
+        [
+            {"id": "host", "label": "Host structure"},
+            {"id": "relaxed", "label": "Relaxed structure"},
+        ],
+        selected_id="relaxed",
+        summary="Using source structure: Relaxed structure",
+    )
+
+    assert emitted == []
+    assert widget.selected_source_structure_id() == "relaxed"
+    assert widget._default_params["cut_off_energy"] == ValueWithUnit(500.0, "eV")
+    assert widget._default_params["xc_functional"] == "PBE"
+
+    widget.set_project_defaults(cutoff_energy=None, kpoint_grid=None)
+    assert "xc_functional" not in widget._default_params
+
+
+def test_uep_widget_supercell_dropdown_lists_project_cells(qapp) -> None:
+    widget = UEPWidget()
+    widget.set_supercell_options(
+        [
+            {
+                "label": "pristine_relaxation 2x2x1",
+                "matrix": [[2, 0, 0], [0, 2, 0], [0, 0, 1]],
+            }
+        ]
+    )
+    widget._add_row()
+
+    combo = widget._table.cellWidget(0, widget._SUPERCELL_COLUMN)
+    assert isinstance(combo, QComboBox)
+    labels = [combo.itemText(index) for index in range(combo.count())]
+    assert labels[0] == "Unit cell"
+    assert "pristine_relaxation 2x2x1" in labels
+    assert labels[-1] == "Manage Supercells…"
+
+
+def test_uep_widget_supercell_combo_shows_a_restored_custom_matrix(qapp) -> None:
+    widget = UEPWidget()
+    widget.set_supercell_options([{"label": "2x2x1", "matrix": [[2, 0, 0], [0, 2, 0], [0, 0, 1]]}])
+    widget.set_form_state(
+        {
+            "name_prefix": "uep",
+            "rows": [{"label": "source_01", "supercell_matrix": [[1, 1, 0], [0, 1, 0], [0, 0, 2]]}],
+        }
+    )
+
+    combo = widget._table.cellWidget(0, widget._SUPERCELL_COLUMN)
+    row_id = widget._row_id_at(0)
+    assert [combo.itemText(index) for index in range(combo.count())] == [
+        "Unit cell",
+        "2x2x1",
+        "Custom 3x3",
+        "Manage Supercells…",
+    ]
+    assert combo.currentText() == "Custom 3x3"
+    assert widget.row_supercell_matrix(row_id) == ((1, 1, 0), (0, 1, 0), (0, 0, 2))
+
+
+def test_uep_widget_manage_supercells_entry_requests_the_manager(qapp) -> None:
+    widget = UEPWidget()
+    widget.set_supercell_options([{"label": "2x2x1", "matrix": [[2, 0, 0], [0, 2, 0], [0, 0, 1]]}])
+    widget._add_row()
+    row_id = widget._row_id_at(0)
+    requested: list[int] = []
+    widget.row_supercell_edit_requested.connect(lambda payload: requested.append(int(payload)))
+    states: list[dict] = []
+    widget.form_state_changed.connect(states.append)
+
+    combo = widget._table.cellWidget(0, widget._SUPERCELL_COLUMN)
+    combo.setCurrentIndex(combo.findText("Manage Supercells…"))
+
+    assert requested == [row_id]
+    assert widget.row_supercell_matrix(row_id) is None
+    assert combo.currentText() == "Unit cell"
+    assert states == []
+
+    combo.setCurrentIndex(combo.findText("2x2x1"))
+    assert widget.row_supercell_matrix(row_id) == ((2, 0, 0), (0, 2, 0), (0, 0, 1))
+    assert len(states) == 1
+
+
+def test_uep_widget_dialog_locks_write_formatted_density(qapp) -> None:
+    widget = UEPWidget()
+    dialog = ParameterDialog(
+        specs=widget._specs,
+        workflow_stage="uep",
+        locked_values={
+            "task": "SINGLEPOINT",
+            "write_formatted_density": "TRUE (required for UEP source analysis)",
+        },
+    )
+
+    assert "write_formatted_density" in dialog._rows
+    assert dialog._rows["write_formatted_density"].locked is True
+
+
+def test_uep_widget_defaults_symmetry_generate(qapp) -> None:
+    widget = UEPWidget()
+    dialog = ParameterDialog(specs=widget._specs, workflow_stage="uep")
+    dialog.set_values(widget._default_params)
+
+    assert widget._default_params["symmetry_generate"] is True
+    assert dialog.collect_values()["symmetry_generate"] is True
+
+    dialog._rows["symmetry_generate"].editor.set_value(False)
+    dialog._reset_parameter("symmetry_generate")
+
+    assert dialog.collect_values()["symmetry_generate"] is True
+
+
+def test_uep_widget_uses_uep_name_prefix_by_default(qapp) -> None:
+    widget = UEPWidget()
+
+    assert widget._name_prefix.text() == "uep"
+
+
+def _iter_layout_widgets(layout):
+    for index in range(layout.count()):
+        item = layout.itemAt(index)
+        widget = item.widget()
+        if widget is not None:
+            yield widget
+            nested_layout = widget.layout()
+            if nested_layout is not None:
+                yield from _iter_layout_widgets(nested_layout)
+        nested = item.layout()
+        if nested is not None:
+            yield from _iter_layout_widgets(nested)
+
+
+def test_uep_widget_shows_name_prefix_field(qapp) -> None:
+    widget = UEPWidget()
+
+    # DL-1: the name-prefix field was previously created and wired up but never
+    # added to any layout, so users could not see or edit it.
+    assert widget._name_prefix.parentWidget() is not None
+    assert widget.isAncestorOf(widget._name_prefix)
+
+    layout_widgets = list(_iter_layout_widgets(widget.layout()))
+    assert widget._name_prefix in layout_widgets
+
+    labels = [w.text() for w in layout_widgets if isinstance(w, QLabel)]
+    assert "Job name prefix" in labels
+
+
+def test_uep_widget_uses_source_labels_by_default(qapp) -> None:
+    widget = UEPWidget()
+    widget._add_row()
+
+    label_item = widget._table.item(0, widget._LABEL_COLUMN)
+    assert label_item is not None
+    assert label_item.text() == "source_01"
+
+
+def test_uep_widget_normalizes_legacy_uep_source_prefix_in_form_state(qapp) -> None:
+    widget = UEPWidget()
+
+    widget.set_form_state({"name_prefix": "uep_source", "rows": []})
+
+    assert widget._name_prefix.text() == "uep"
+
+
+def test_uep_widget_enables_wizard_only_for_completed_density_sources(qapp) -> None:
+    widget = UEPWidget()
+    widget._add_row()
+    row_id = widget._row_id_at(0)
+    assert row_id is not None
+
+    wizard_button = widget._table.cellWidget(0, widget._WIZARD_COLUMN)
+    assert isinstance(wizard_button, QPushButton)
+    assert wizard_button.isEnabled() is False
+
+    label_item = widget._table.item(0, widget._LABEL_COLUMN)
+    assert label_item is not None
+    widget.set_runtime_states(
+        {
+            label_item.text(): UepRunState(
+                status="completed",
+                total_energy=-10.5,
+                density_available=True,
+            )
+        }
+    )
+
+    assert wizard_button.isEnabled() is True
+
+
+def test_the_uep_page_has_no_3d_potential_column(qapp) -> None:
+    widget = UEPWidget()
+    headers = [
+        widget._table.horizontalHeaderItem(column).text()
+        for column in range(widget._table.columnCount())
+    ]
+
+    assert headers == [
+        "Label",
+        "Supercell",
+        "Status",
+        "Total Energy (eV)",
+        "Parameters",
+        "Analysis",
+        "",
+    ]
+
+
+def test_uep_widget_configure_row_uses_current_parameter_dialog_api(qapp, monkeypatch) -> None:
+    widget = UEPWidget()
+    widget._add_row()
+    row_id = widget._row_id_at(0)
+    assert row_id is not None
+
+    calls: list[tuple[str, Any]] = []
+    collected_values = {"cut_off_energy": 450}
+
+    class DummyDialog:
+        class DialogCode:
+            Accepted = 1
+
+        def __init__(
+            self,
+            *,
+            specs: list[Any],
+            workflow_stage: str,
+            locked_values: Mapping[str, object],
+            intro_text: str | None = None,
+            read_only: bool = False,
+            species_options: tuple[str, ...] = (),
+            values: Mapping[str, object],
+            preferred_exclusive: str | None = None,
+            advanced_names: set[str],
+            mixed_names: set[str],
+            parent: object | None = None,
+        ) -> None:
+            del specs, workflow_stage, locked_values, intro_text, read_only, species_options
+            del preferred_exclusive, mixed_names, parent
+            calls.append(("values", dict(values)))
+            calls.append(("advanced_names", tuple(sorted(advanced_names))))
+
+        def setWindowTitle(self, title: str) -> None:  # noqa: N802 - Qt API naming.
+            del title
+
+        def deleteLater(self) -> None:  # noqa: N802 - Qt API naming.
+            calls.append(("deleteLater", None))
+
+        def untouched_mixed_names(self) -> set[str]:
+            return set()
+
+        def exec(self) -> int:
+            return self.DialogCode.Accepted
+
+        def collect_values(self) -> dict[str, object]:
+            return dict(collected_values)
+
+        def advanced_names(self) -> tuple[str, ...]:
+            return ("spin_polarized",)
+
+    monkeypatch.setattr("mufinder.app.workflow_dialogs.ParameterDialog", DummyDialog)
+    widget._row_added_advanced[row_id] = {"spin_polarized"}
+
+    widget._open_parameter_dialog((row_id,))
+
+    assert ("advanced_names", ("spin_polarized",)) in calls
+    assert calls[-1] == ("deleteLater", None)
+    assert widget._row_parameter_values[row_id]["task"] == "SINGLEPOINT"
+    assert widget._row_parameter_values[row_id]["write_formatted_density"] is True
+    assert widget._row_added_advanced[row_id] == {"spin_polarized"}
+
+
+def test_uep_widget_reopens_dialog_with_saved_row_values(qapp, monkeypatch) -> None:
+    widget = UEPWidget()
+    widget._add_row()
+    row_id = widget._row_id_at(0)
+    assert row_id is not None
+
+    seen_values: list[dict[str, object]] = []
+    dialog_payloads = iter(
+        (
+            {"cut_off_energy": 500.0, "kpoint_mp_grid": (2, 2, 2)},
+            {"cut_off_energy": 500.0, "kpoint_mp_grid": (2, 2, 2)},
+        )
+    )
+
+    class DummyDialog:
+        class DialogCode:
+            Accepted = 1
+
+        def __init__(
+            self,
+            *,
+            specs: list[Any],
+            workflow_stage: str,
+            locked_values: Mapping[str, object],
+            intro_text: str | None = None,
+            read_only: bool = False,
+            species_options: tuple[str, ...] = (),
+            values: Mapping[str, object],
+            preferred_exclusive: str | None = None,
+            advanced_names: set[str],
+            mixed_names: set[str],
+            parent: object | None = None,
+        ) -> None:
+            del specs, workflow_stage, locked_values, intro_text, read_only, species_options
+            del preferred_exclusive, advanced_names, mixed_names, parent
+            seen_values.append(dict(values))
+            self._payload = next(dialog_payloads)
+
+        def setWindowTitle(self, title: str) -> None:  # noqa: N802 - Qt API naming.
+            del title
+
+        def deleteLater(self) -> None:  # noqa: N802 - Qt API naming.
+            pass
+
+        def untouched_mixed_names(self) -> set[str]:
+            return set()
+
+        def exec(self) -> int:
+            return self.DialogCode.Accepted
+
+        def collect_values(self) -> dict[str, object]:
+            return dict(self._payload)
+
+        def advanced_names(self) -> tuple[str, ...]:
+            return ()
+
+    monkeypatch.setattr("mufinder.app.workflow_dialogs.ParameterDialog", DummyDialog)
+
+    widget._open_parameter_dialog((row_id,))
+    widget._open_parameter_dialog((row_id,))
+
+    assert seen_values[0]["task"] == "SINGLEPOINT"
+    assert seen_values[0]["write_formatted_density"] is True
+    assert seen_values[1]["cut_off_energy"] == ValueWithUnit(500.0, "eV")
+    assert seen_values[1]["kpoint_mp_grid"] == (2, 2, 2)
+
+
+def test_uep_widget_marks_row_configure_button_as_configured_when_customized(qapp) -> None:
+    widget = UEPWidget()
+    widget._add_row()
+
+    configure_button = widget._table.cellWidget(0, widget._CONFIGURE_COLUMN)
+    assert isinstance(configure_button, QPushButton)
+    assert configure_button.text() == "Configure…"
+
+    row_id = widget._row_id_at(0)
+    assert row_id is not None
+    widget._row_parameter_values[row_id] = {"cut_off_energy": ValueWithUnit(500.0, "eV")}
+    widget._refresh_all_rows()
+
+    assert configure_button.text() == "Configured…"
+
+
+def test_uep_widget_queued_row_locks_controls_and_parameters(qapp) -> None:
+    widget = UEPWidget()
+    widget._add_row()
+    row_id = widget._row_id_at(0)
+    assert row_id is not None
+    label = widget._table.item(0, widget._LABEL_COLUMN).text()
+
+    widget.set_runtime_states({label: UepRunState(status="queued")})
+
+    label_item = widget._table.item(0, widget._LABEL_COLUMN)
+    assert label_item is not None
+    assert not bool(label_item.flags() & Qt.ItemFlag.ItemIsEditable)
+    combo = widget._table.cellWidget(0, widget._SUPERCELL_COLUMN)
+    assert isinstance(combo, QComboBox)
+    assert not combo.isEnabled()
+    configure_button = widget._table.cellWidget(0, widget._CONFIGURE_COLUMN)
+    assert isinstance(configure_button, QPushButton)
+    assert configure_button.text() == "Configured…"
+    remove_button = widget._table.cellWidget(0, widget._REMOVE_COLUMN)
+    assert isinstance(remove_button, QToolButton)
+    assert remove_button.isEnabled()
+    assert workflow_table_utils.workflow_row_is_locked(widget._row_status_for_id(row_id))
+
+
+def test_uep_widget_delete_shortcut_removes_selected_job(qapp) -> None:
+    widget = UEPWidget()
+    widget._add_row()
+    widget._add_row()
+    removed: list[list[str]] = []
+    widget.remove_requested.connect(lambda labels: removed.append(list(labels)))
+    removed_label = widget._table.item(0, widget._LABEL_COLUMN).text()
+
+    widget._table.selectRow(0)
+    widget._delete_shortcut.activated.emit()
+
+    assert removed == [[removed_label]]
+    assert widget._table.rowCount() == 1
+
+
+def test_uep_widget_delete_key_removes_selected_job_from_child_focus(qapp) -> None:
+    widget = UEPWidget()
+    widget._add_row()
+    widget._add_row()
+    removed: list[list[str]] = []
+    widget.remove_requested.connect(lambda labels: removed.append(list(labels)))
+    removed_label = widget._table.item(0, widget._LABEL_COLUMN).text()
+    configure_button = widget._table.cellWidget(0, widget._CONFIGURE_COLUMN)
+    assert isinstance(configure_button, QPushButton)
+
+    widget.show()
+    widget._table.selectRow(0)
+    configure_button.setFocus()
+    qapp.processEvents()
+    QTest.keyClick(configure_button, Qt.Key.Key_Delete)
+
+    assert removed == [[removed_label]]
+    assert widget._table.rowCount() == 1
+
+
+def test_uep_widget_cancelled_row_keeps_parameters_editable(qapp) -> None:
+    widget = UEPWidget()
+    widget._add_row()
+    row_id = widget._row_id_at(0)
+    assert row_id is not None
+    label = widget._table.item(0, widget._LABEL_COLUMN).text()
+
+    widget.set_runtime_states({label: UepRunState(status="cancelled")})
+
+    assert not workflow_table_utils.workflow_row_is_locked(widget._row_status_for_id(row_id))
+    label_item = widget._table.item(0, widget._LABEL_COLUMN)
+    assert label_item is not None
+    assert bool(label_item.flags() & Qt.ItemFlag.ItemIsEditable)
+    combo = widget._table.cellWidget(0, widget._SUPERCELL_COLUMN)
+    assert isinstance(combo, QComboBox)
+    assert combo.isEnabled()
+
+
+def test_uep_widget_run_cluster_submits_selected_rows_only(qapp) -> None:
+    widget = UEPWidget()
+    widget._add_row()
+    widget._add_row()
+
+    emitted: list[list[str]] = []
+    widget.submit_cluster_requested.connect(lambda labels: emitted.append(list(labels)))
+
+    widget._table.selectRow(1)
+    widget._run_cluster_selected_rows()
+
+    assert emitted == [["source_02"]]
+
+
+def test_uep_widget_restores_structured_parameter_values_from_form_state(qapp) -> None:
+    widget = UEPWidget()
+
+    widget.set_form_state(
+        {
+            "name_prefix": "uep_source",
+            "rows": [
+                {
+                    "label": "source_01",
+                    "supercell_matrix": None,
+                    "parameter_values": {
+                        "cut_off_energy": {"value": 500.0, "unit": "eV"},
+                        "kpoint_mp_grid": [2, 2, 2],
+                    },
+                    "added_advanced": [],
+                }
+            ],
+        }
+    )
+
+    row_id = widget._row_id_at(0)
+    assert row_id is not None
+    assert widget._row_parameter_values[row_id]["cut_off_energy"] == ValueWithUnit(500.0, "eV")
+    assert widget._row_parameter_values[row_id]["kpoint_mp_grid"] == (2, 2, 2)
+
+
+def _select_uep_rows(widget: UEPWidget, rows: tuple[int, ...]) -> None:
+    selection = widget._table.selectionModel()
+    assert selection is not None
+    selection.clearSelection()
+    for row in rows:
+        selection.select(
+            widget._table.model().index(row, 0),
+            QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows,
+        )
+
+
+def test_uep_batch_configure_button_tracks_selection(qapp) -> None:
+    widget = UEPWidget()
+    widget._add_row()
+    widget._add_row()
+
+    assert widget._batch_configure_button.text() == "Configure Selected Parameters…"
+    widget._refresh_batch_button_state()
+    assert widget._batch_configure_button.isEnabled() is False
+
+    _select_uep_rows(widget, (0, 1))
+    widget._refresh_batch_button_state()
+    assert widget._batch_configure_button.isEnabled() is True
+
+    widget._table.clearSelection()
+    widget._refresh_batch_button_state()
+    assert widget._batch_configure_button.isEnabled() is False
+
+
+def test_uep_batch_configure_applies_to_all_selected_rows(qapp, monkeypatch) -> None:
+    widget = UEPWidget()
+    widget._add_row()
+    widget._add_row()
+    widget._add_row()
+    first_id = widget._row_id_at(0)
+    third_id = widget._row_id_at(2)
+    unselected_id = widget._row_id_at(1)
+    assert first_id is not None and third_id is not None and unselected_id is not None
+
+    monkeypatch.setattr(
+        ParameterDialog,
+        "exec",
+        lambda _self: QDialog.DialogCode.Accepted,
+    )
+    monkeypatch.setattr(
+        ParameterDialog,
+        "collect_values",
+        lambda _self: {"cut_off_energy": 555.0},
+    )
+    monkeypatch.setattr(
+        ParameterDialog,
+        "advanced_names",
+        lambda _self: (),
+    )
+
+    _select_uep_rows(widget, (0, 2))
+    widget._configure_selected_rows()
+
+    # The collected value is round-tripped through the widget's structured
+    # sanitizer, which restores the eV unit on cut_off_energy.
+    expected_cutoff = ValueWithUnit(555.0, "eV")
+    assert widget._row_parameter_values[first_id]["cut_off_energy"] == expected_cutoff
+    assert widget._row_parameter_values[third_id]["cut_off_energy"] == expected_cutoff
+    # UEP always pins the source-job task/density flags on batch apply.
+    assert widget._row_parameter_values[first_id]["task"] == "SINGLEPOINT"
+    assert widget._row_parameter_values[first_id]["write_formatted_density"] is True
+    # Row 1 was not selected → no custom parameters applied.
+    assert "cut_off_energy" not in widget._row_parameter_values.get(unselected_id, {})
+
+
+def test_uep_batch_configure_empty_selection_is_noop(qapp, monkeypatch) -> None:
+    widget = UEPWidget()
+    widget._add_row()
+
+    opened: list[int] = []
+    monkeypatch.setattr(
+        ParameterDialog,
+        "exec",
+        lambda _self: opened.append(1) or QDialog.DialogCode.Accepted,
+    )
+    infos: list[str] = []
+    monkeypatch.setattr(
+        QMessageBox, "information", lambda _parent, title, _message: infos.append(title)
+    )
+
+    widget._table.clearSelection()
+    widget._configure_selected_rows()
+
+    assert opened == []
+    assert infos == ["No rows selected"]
+
+
+def test_uep_configure_uses_selection_snapshot_not_collapsed(qapp, monkeypatch) -> None:
+    # The per-row Configure button snapshots the selection so a platform
+    # focus-collapse to the clicked row does not shrink a multi-row batch.
+    from mufinder.app.selection_snapshot import SelectionSnapshotPushButton
+
+    widget = UEPWidget()
+    widget._add_row()
+    widget._add_row()
+    first_id = widget._row_id_at(0)
+    second_id = widget._row_id_at(1)
+    assert first_id is not None and second_id is not None
+
+    captured: list[tuple[int, ...]] = []
+    # Every Configure target, single- or multi-row, routes to _open_parameter_dialog.
+    monkeypatch.setattr(
+        UEPWidget,
+        "_open_parameter_dialog",
+        lambda _self, ids: captured.append(tuple(ids)),
+    )
+    monkeypatch.setattr(
+        selection_snapshot_module,
+        "ask_selection_scope",
+        lambda *_args, **_kwargs: SelectionScope.ALL_SELECTED,
+    )
+
+    _select_uep_rows(widget, (0, 1))
+    configure_button = widget._table.cellWidget(0, widget._CONFIGURE_COLUMN)
+    assert isinstance(configure_button, SelectionSnapshotPushButton)
+    configure_button.selection_snapshot_rows = (0, 1)
+    configure_button.clicked.emit()
+
+    assert captured, "per-row Configure did not open the multi-row dialog"
+    assert set(captured[0]) == {first_id, second_id}
+
+
+def test_uep_batch_configure_does_not_swallow_delete_shortcut(qapp) -> None:
+    # The batch-configure button must not consume the widget-scoped
+    # Delete/Backspace shortcuts (WidgetWithChildrenShortcut) that remove rows.
+    widget = UEPWidget()
+    widget._add_row()
+    widget._add_row()
+    removed: list[list[str]] = []
+    widget.remove_requested.connect(lambda labels: removed.append(list(labels)))
+
+    widget._table.selectRow(0)
+    widget._delete_shortcut.activated.emit()
+    assert removed and widget._table.rowCount() == 1
+
+    widget._table.selectRow(0)
+    widget._backspace_shortcut.activated.emit()
+    assert widget._table.rowCount() == 0
+
+
+@pytest.mark.parametrize("status", ENDED_ROW_STATUSES)
+def test_uep_widget_ended_row_menu_runs_configures_and_removes_without_reset(
+    qapp, monkeypatch, status
+) -> None:
+    widget = UEPWidget()
+    widget._add_row()
+    label_item = widget._table.item(0, widget._LABEL_COLUMN)
+    assert label_item is not None
+    label = label_item.text()
+    widget.set_runtime_states({label: UepRunState(status=status)})
+    submitted: list[object] = []
+    configured: list[object] = []
+    removed: list[object] = []
+    widget.submit_local_requested.connect(submitted.append)
+    widget.remove_requested.connect(removed.append)
+    monkeypatch.setattr(widget, "_open_parameter_dialog", configured.append)
+    install_fake_menu(monkeypatch)
+
+    menu = open_row_menu(widget._table, row=0)
+
+    assert_offers_no_reset(menu)
+    trigger(menu, "Run Local")
+    trigger(menu, "Configure…")
+    trigger(menu, "Remove")
+    assert [list(payload) for payload in submitted] == [[label]]
+    assert len(configured) == 1
+    assert removed and widget._table.rowCount() == 0
+
+
+def test_uep_wizard_button_opens_clicked_row_without_prompt(
+    qapp, monkeypatch, answered_choices, confirmed_destructive_actions
+) -> None:
+    # The wizard runs on one row at a time, so a multi-row selection neither
+    # prompts nor changes which row it opens for.
+    widget = UEPWidget()
+    widget._add_row()
+    widget._add_row()
+    prompts: list[object] = []
+    monkeypatch.setattr(
+        selection_snapshot_module, "ask_selection_scope", lambda *a, **kw: prompts.append(a)
+    )
+    requested: list[str] = []
+    widget.wizard_requested.connect(requested.append)
+
+    _select_uep_rows(widget, (0, 1))
+    wizard_button = widget._table.cellWidget(1, widget._WIZARD_COLUMN)
+    wizard_button.selection_snapshot_rows = (0, 1)
+    wizard_button.clicked.emit()
+
+    assert prompts == []
+    assert answered_choices == []
+    assert confirmed_destructive_actions == []
+    assert requested == [widget._table.item(1, widget._LABEL_COLUMN).text()]
+    assert wizard_button.selection_snapshot_rows == ()
+
+
+def test_uep_supercell_cancel_restores_combo_and_changes_nothing(qapp, monkeypatch) -> None:
+    widget = UEPWidget()
+    widget.set_supercell_options([{"label": "2x2x1", "matrix": [[2, 0, 0], [0, 2, 0], [0, 0, 1]]}])
+    widget._add_row()
+    widget._add_row()
+    first_id = widget._row_id_at(0)
+    second_id = widget._row_id_at(1)
+    monkeypatch.setattr(
+        selection_snapshot_module, "ask_selection_scope", lambda *a, **kw: SelectionScope.CANCEL
+    )
+    states: list[dict] = []
+    widget.form_state_changed.connect(states.append)
+
+    _select_uep_rows(widget, (0, 1))
+    combo = widget._table.cellWidget(0, widget._SUPERCELL_COLUMN)
+    combo.selection_snapshot_rows = (0, 1)
+    combo.setCurrentIndex(combo.findText("2x2x1"))
+
+    assert widget.row_supercell_matrix(first_id) is None
+    assert widget.row_supercell_matrix(second_id) is None
+    assert combo.currentText() == "Unit cell"
+    assert states == []
+
+
+def test_uep_delete_shortcut_declined_removes_nothing(qapp, monkeypatch) -> None:
+    widget = UEPWidget()
+    widget._add_row()
+    widget._add_row()
+    removed: list[object] = []
+    widget.remove_requested.connect(removed.append)
+    monkeypatch.setattr(workflow_table_utils, "confirm_destructive", lambda *_a, **_k: False)
+
+    widget._table.selectRow(0)
+    widget._backspace_shortcut.activated.emit()
+
+    assert removed == []
+    assert widget._table.rowCount() == 2
+
+
+def test_uep_remove_button_single_row_is_confirmed(qapp, confirmed_destructive_actions) -> None:
+    widget = UEPWidget()
+    widget._add_row()
+    widget._add_row()
+
+    btn = widget._table.cellWidget(1, widget._REMOVE_COLUMN)
+    btn.selection_snapshot_rows = (1,)
+    btn.clicked.emit()
+
+    assert widget._table.rowCount() == 1
+    assert [prompt["text"] for prompt in confirmed_destructive_actions] == ["Remove 1 row?"]
+
+
+def test_uep_wizard_button_is_not_marked_as_a_multi_row_target(qapp) -> None:
+    widget = UEPWidget()
+    widget._add_row()
+    widget._add_row()
+    _select_uep_rows(widget, (0, 1))
+    prop = workflow_table_utils.MULTI_ROW_TARGET_PROPERTY
+
+    assert bool(widget._table.cellWidget(0, widget._CONFIGURE_COLUMN).property(prop)) is True
+    assert bool(widget._table.cellWidget(0, widget._WIZARD_COLUMN).property(prop)) is False
+    assert widget._selection_count_label.text() == "2 selected"
+    assert widget._run_cluster_button.text() == "Run Selected on Cluster"
+
+
+def test_uep_row_menu_uses_the_shared_core(qapp, monkeypatch) -> None:
+    from tests.support.row_menu import install_fake_menu, open_row_menu
+
+    widget = UEPWidget()
+    widget._add_row()
+    install_fake_menu(monkeypatch)
+
+    menu = open_row_menu(widget._table)
+
+    assert [action.text for action in menu.actions] == [
+        "Run Local",
+        "Run on Cluster",
+        "Cancel",
+        "Inspect Failure",
+        "Configure…",
+        "Remove",
+        "Open Containing Folder",
+        "Export Inputs/Outputs…",
+    ]
+
+
+def test_uep_batch_configure_keeps_each_rows_own_differing_values(qapp, monkeypatch) -> None:
+    from PySide6.QtWidgets import QDialog
+
+    widget = UEPWidget()
+    widget._add_row()
+    widget._add_row()
+    first_id, second_id = widget._row_id_at(0), widget._row_id_at(1)
+    assert "max_scf_cycles" in widget._specs_by_name
+    for row_id, cycles in ((first_id, 80), (second_id, 120)):
+        widget._row_parameter_values[row_id] = {
+            **widget._effective_params_for_row(row_id),
+            "max_scf_cycles": cycles,
+        }
+    mixed: list[set[str]] = []
+
+    def _fake_exec(dialog) -> int:
+        mixed.append(dialog.untouched_mixed_names())
+        return QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(ParameterDialog, "exec", _fake_exec)
+
+    widget._open_parameter_dialog((first_id, second_id))
+
+    assert mixed == [{"max_scf_cycles"}]
+    assert widget._row_parameter_values[first_id]["max_scf_cycles"] == 80
+    assert widget._row_parameter_values[second_id]["max_scf_cycles"] == 120
+
+
+def test_uep_widget_label_edit_emits_form_state(qapp) -> None:
+    widget = UEPWidget()
+    widget._add_row()
+    states: list[dict] = []
+    widget.form_state_changed.connect(states.append)
+
+    widget._table.item(0, widget._LABEL_COLUMN).setText("renamed_source")
+
+    assert [row["label"] for row in states[-1]["rows"]] == ["renamed_source"]
+
+
+def test_uep_widget_result_cells_are_read_only(qapp) -> None:
+    widget = UEPWidget()
+    widget._add_row()
+    widget.set_runtime_states({"source_01": UepRunState(status="completed", total_energy=-1.5)})
+
+    for column in (widget._STATUS_COLUMN, widget._TOTAL_ENERGY_COLUMN):
+        item = widget._table.item(0, column)
+        assert item is not None
+        assert not bool(item.flags() & Qt.ItemFlag.ItemIsEditable)
+    assert widget._table.item(0, widget._TOTAL_ENERGY_COLUMN).text() == "-1.500000"
+
+
+def test_uep_widget_supercell_shows_the_kpoint_adjustment(qapp) -> None:
+    cubic = [[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]]
+    widget = UEPWidget()
+    widget.set_host_lattice(cubic)
+    widget.set_project_defaults(
+        cutoff_energy=None, kpoint_grid=(4, 4, 4), kpoint_reference_lattice=cubic
+    )
+    widget._add_row()
+    row_id = widget._row_id_at(0)
+
+    widget.set_row_supercell(row_id, ((2, 0, 0), (0, 2, 0), (0, 0, 2)))
+
+    assert not widget._kpoint_message.isHidden()
+    assert (
+        widget._kpoint_message.text()
+        == "K-point grid adjusted from 4x4x4 to 2x2x2 for equivalent density."
+    )
+    assert widget._effective_params_for_row(row_id)["kpoint_mp_grid"] == (2, 2, 2)
+
+
+def test_uep_supercell_choice_skips_locked_rows_in_a_multi_row_selection(qapp, monkeypatch) -> None:
+    widget = UEPWidget()
+    widget.set_supercell_options([{"label": "2x2x1", "matrix": [[2, 0, 0], [0, 2, 0], [0, 0, 1]]}])
+    widget._add_row()
+    widget._add_row()
+    first_id, second_id = widget._row_id_at(0), widget._row_id_at(1)
+    widget.set_runtime_states({"source_02": UepRunState(status="running")})
+    monkeypatch.setattr(
+        selection_snapshot_module,
+        "ask_selection_scope",
+        lambda *a, **kw: SelectionScope.ALL_SELECTED,
+    )
+
+    _select_uep_rows(widget, (0, 1))
+    combo = widget._table.cellWidget(0, widget._SUPERCELL_COLUMN)
+    combo.selection_snapshot_rows = (0, 1)
+    combo.setCurrentIndex(combo.findText("2x2x1"))
+
+    assert widget.row_supercell_matrix(first_id) == ((2, 0, 0), (0, 2, 0), (0, 0, 1))
+    assert widget.row_supercell_matrix(second_id) is None
+
+
+def test_uep_widget_disabled_symmetry_is_stored_and_omitted_from_the_cell(qapp) -> None:
+    widget = UEPWidget()
+    dialog = ParameterDialog(
+        specs=widget._specs,
+        workflow_stage="uep",
+        values=dict(widget._default_params),
+    )
+    dialog._rows["symmetry_generate"].editor.set_value(False)
+    collected = dialog.collect_values()
+    assert collected["symmetry_generate"] is False
+
+    expansion = expand_uep_jobs(
+        host_structure=si_pair_host(),
+        config=UepConfig(
+            name_prefix="uep",
+            rows=(UepSourceRow(label="row_a", parameter_values=collected),),
+        ),
+        project_cutoff_energy=600.0,
+        project_kpoint_grid=(3, 3, 3),
+        project_kpoint_reference_lattice=None,
+    )
+
+    assert "SYMMETRY_GENERATE" not in write_cell(expansion.jobs[0].cell_file)

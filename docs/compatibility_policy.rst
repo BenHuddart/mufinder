@@ -1,0 +1,1808 @@
+Compatibility and Deprecation Policy
+====================================
+
+MuFinder keeps a small number of compatibility aliases and persisted-field
+shims so older projects, tests, and user workflows continue to load while the
+workflow model evolves. New aliases should be added only when they protect a
+saved-project migration path or a documented public import path.
+
+Compatibility ledger
+--------------------
+
+.. list-table::
+   :header-rows: 1
+   :widths: 24 20 36 20
+
+   * - Name
+     - Location
+     - Purpose
+     - Expiry policy
+   * - ``.migration-save.json`` recovery journal
+     - Project root; ``mufinder.persistence.migration_save``
+     - A pending schema-advancing save's redo plan. Format 1 stores
+       ``journal_version``, the target ``manifest``, changed ``entities``
+       keyed by type and UUID, per-type ``keep_ids`` for pruning, and
+       ``state`` (a replacement UI-state dict, or ``null`` to leave it alone).
+       Recovery validates the plan and project identity, replays the target
+       payloads without migration, writes the manifest last, then removes
+       the journal. Ordinary entity formats and schema versions are unchanged.
+     - Current recovery data. Keep readers for format 1 until pending journals
+       can be upgraded safely. Do not open a project with a pending journal
+       in a build without journal recovery, or remove the journal by hand.
+   * - ``accounting_command_path`` absent from cluster settings
+     - ``mufinder.cluster_setup``
+     - Redwood profiles without the key use
+       ``/usr/local/shared/slurm/bin/sacct``. Other profiles default to command
+       discovery; explicit empty or custom paths are preserved.
+     - Settings read default. Keep while profiles without the key may be loaded.
+   * - ``node_groups`` absent from cluster settings
+     - ``mufinder.cluster_setup``
+     - Redwood profiles on the preset's host without the key take the preset's
+       node groups (19 nodes of 32 processes, 28 of 64). Other profiles, and a
+       Redwood profile pointed at another host, have none; a saved empty list
+       stays empty.
+     - Settings read default. Keep while profiles without the key may be loaded.
+   * - ``processes_per_node`` absent from the last cluster submission
+     - ``mufinder.app.main_window`` (project ``ui_state``)
+     - A last-used submission saved without the key, or with an unreadable
+       value, restores as ``None`` (the scheduler places the processes).
+     - Settings read default. Keep while projects without the key may be loaded.
+   * - ``num_atoms`` absent from a convergence ``plot_data``
+     - ``mufinder.app.convergence_plot`` (``ConvergencePlotData.from_mapping``;
+       examiner state and overview snapshots in project ``ui_state``)
+     - A plot saved without the atom count, or with one that is not a positive
+       whole number, draws its energy panel as the cell's energy relative to the
+       finest point, in meV, labelled ``ΔE of the cell (meV)``, with no threshold
+       band. The examiner fills the count
+       in when it restores its own plot; an overview snapshot gains it when a
+       default is adopted again.
+     - Read default. Keep while projects without the key may be loaded.
+   * - ``ConvergenceWidget``
+     - ``mufinder.app.convergence_widget``
+     - Import alias for ``CutoffConvergenceWidget``, also exported from
+       ``mufinder.app``, kept for external imports. No in-repo code or test
+       imports it; one test checks that it still resolves. Not persisted.
+     - Public import alias. Keep for one minor release (through 0.6.x) or until
+       the next major release, whichever comes first; then drop the alias and
+       its ``mufinder.app`` export.
+   * - ``imported`` / ``import_batch_id`` row fields
+     - ``MuonRelaxationRow`` / muon-relaxation definition ``configuration``
+     - Mark a relaxation row ingested from a calculation performed outside
+       MuFinder, and group the rows one import produced. Both are additive with
+       defaults, so a project saved before relaxation import existed loads with
+       every row treated as natively staged, which is correct.
+     - Current project data, not deprecated. These fields are load-bearing for
+       read-only enforcement: a row whose ``imported`` flag is lost becomes
+       editable and resubmittable while its imported entities and files remain,
+       so neither field may be dropped without a schema migration that first
+       relocates the marker.
+   * - ``mufinder.services.legacy_import``, ``legacy_import_commit``,
+       ``legacy_import_removal``
+     - Those modules
+     - Import aliases for ``mufinder.services.relaxation_import``,
+       ``relaxation_import_commit`` and ``relaxation_import_removal``, with
+       ``LegacyFolderScan``, ``scan_legacy_folder``, ``LegacyImportOutcome`` and
+       ``commit_legacy_import`` naming ``RelaxationFolderScan``,
+       ``scan_relaxation_folder``, ``RelaxationImportOutcome`` and
+       ``commit_relaxation_import``. No in-repo code imports them; one test checks
+       that they resolve. Not persisted.
+     - Public import alias. Keep for one minor release; then drop the three modules.
+   * - ``job_seed_names_by_label`` values read exactly
+     - ``mufinder.services.job_paths``
+     - A muon-relaxation seed names the folder with exactly that name when one
+       exists, and is trimmed otherwise, as it always was. No saved value changes and
+       no existing job's path moves, except an imported seed with a space at either
+       end, which now resolves to the folder that was written, where it used to
+       resolve to another job's.
+     - Current behaviour, not a shim.
+   * - ``configure_muon_relaxation`` records with no rows
+     - ``provenance.jsonl``, read by ``mufinder.services.journal``
+     - An empty definition no longer records one. The Journal shows no entry for one
+       an older project holds, and the record stays in the append-only file.
+     - Read-side filter. Keep while such projects may be opened.
+   * - ``import_legacy_relaxations`` provenance action
+     - ``provenance.jsonl``, read through ``IMPORT_ACTIONS`` in
+       ``mufinder.services.relaxation_import_commit`` and the action tables in
+       ``mufinder.services.journal``
+     - The action an import batch recorded before it was named
+       ``import_castep_relaxations``. Its batch keeps its source-folder name in
+       ``Remove Imported Relaxations`` and its Journal entry. ``site_index`` in
+       such a record's ``skipped`` entries is read where a newer record has
+       ``run``. ``provenance.jsonl`` is append-only, so nothing rewrites them.
+     - Project-file shim. Keep while projects holding such records may be opened;
+       removing it needs a schema version bump that rewrites the action.
+   * - ``imported_legacy`` site ``generation_method``
+     - ``MuonSite.generation_method``, read by
+       ``mufinder.services.project_survey`` and
+       ``mufinder.app.muon_generation_widget``
+     - The value an imported site stored before ``imported``. Both readers show
+       either as ``imported``.
+     - Project-file shim. Keep until a schema version bump migrates the value.
+   * - ``legacy_mufinder`` job tag and ``import_source`` kind,
+       ``legacy_site_index`` site property, ``import_source["site_index"]``,
+       ``legacy_source/`` job folder
+     - ``Job.tags``, ``Structure.properties``, ``MuonSite.properties``, the
+       imported job's directory
+     - What an import batch stored before it was named from the seed. Current
+       batches write ``castep_folder`` as the kind, no tag or index, and
+       ``original_inputs/source_manifest.json``. Read-only rows, the run-again
+       guards and removal key on the ``imported`` tag and ``import_batch_id``, so these
+       stored values load, stay where they are and are removed with their batch.
+     - Inert stored data, with no reader to retire. Needs no migration.
+   * - Task-only ``cutoff_parameter_rows`` entries
+     - ``convergence_form`` UI state, read by
+       ``CutoffConvergenceWidget._is_default_parameter_set``
+     - A cutoff row saved with parameters of exactly ``{"task": ...}`` and no
+       advanced keywords is read back as "uses the defaults". A restore bug
+       wrote such entries for default rows, which made the rows stop matching
+       the definition their jobs ran under, so they were submitted again. The
+       parameter dialog cannot produce a task-only row, so nothing a user
+       configured is reinterpreted.
+     - Read-side repair. Keep until a saved-project schema version bump
+       includes a migration that drops task-only rows from ``convergence_form``.
+   * - Bare site-id source keys and Quantum ``sources`` without ``key``
+     - Quantum Corrections and Energy Barriers row keys;
+       ``mufinder.services.source_candidates`` (``quantum_source_key``) and the
+       Quantum Corrections definition ``configuration["sources"]``
+     - A relaxed site's source key is its bare site id for the relaxation the
+       site records, which is every source key a project held before one site
+       could reach those stages in both charge states; a relaxation in the
+       other charge state keys by ``"{site id}:{charge-state prefix}"``. The
+       owning charge state is ``MuonSite.properties["source_key_charge_state"]``,
+       written when the site is first relaxed; a site saved before the property
+       existed takes it from the charge state of its linked relaxation, and the
+       property is written at its next relaxation. A stored Quantum Corrections
+       source entry without ``key`` is read as keyed by its ``site_id``.
+     - Current project data, not deprecated. Row bindings, seed names and
+       generated paths are stored under these keys, so the bare-id form may
+       not change without a schema migration that rewrites them.
+   * - Pinned sites without ``representative_job_id``
+     - ``muon_sites_summary_snapshots`` UI state, read by
+       ``mufinder.services.muon_sites_summary`` (``pinned_muon_sites``)
+     - A Muon Sites summary snapshot pinned before sites recorded their
+       cluster's representative relaxation job has no ``representative_job_id``
+       key. Such a site takes the job id from the cluster with the same index in
+       the pinned workspace while that workspace exists; otherwise it is
+       reported as no longer resolving, and re-pinning the analysis writes the
+       key. A site whose key is present but ``null`` is never repaired this way.
+     - Read-side repair. Keep until a saved-project schema version bump
+       includes a migration that adds the key to stored snapshots.
+   * - ``generation_runs`` entities and generated sites without a run
+     - ``entities/generation_runs`` (``mufinder.persistence.project_codec``,
+       ``generation_run_from_dict``); ``MuonSite.source_generation_batch_id``;
+       ``mufinder.services.generation_runs`` (``generation_run_groups``)
+     - Each ``Generate Sites`` run is saved as a ``GenerationRun`` and its sites
+       name it in ``source_generation_batch_id``. A project saved before runs
+       existed has no ``generation_runs`` directory and loads with none; its
+       sites keep ``source_generation_batch_id`` ``null`` and are listed under
+       an "Earlier starts" header built from their ``properties``, as is a site
+       whose run is missing. Optional run fields that are missing or malformed
+       load as ``None``. The same additive rule covers the ``grouping`` key of a
+       Muon Sites summary snapshot: a snapshot pinned before it existed shows no
+       grouping lines and exports none, until the analysis is pinned again.
+     - Current project data, not deprecated. Additive with defaults, so no
+       migration; runs may not be dropped without a schema migration that keeps
+       the seed and inputs elsewhere.
+   * - ``relative_energy_eV`` muon-site key
+     - ``mufinder.persistence.project_codec`` (``site_from_dict``)
+     - ``MuonSite`` stored the source relaxation's absolute final total energy
+       under the misleading name ``relative_energy_eV``. The field is now
+       ``total_energy_eV`` and new saves write only that key; a project saved
+       before the rename is read through the old key, which holds the same
+       value. Relative energies are computed for display and never stored on
+       the site.
+     - Read-side repair. Keep until a saved-project schema version bump
+       includes a migration that renames the key in stored sites.
+   * - ``castep_transition_state_search`` /
+       ``castep_transition_state_search_set`` calc types
+     - ``TRANSITION_STATE_SEARCH_CALC_TYPE`` /
+       ``TRANSITION_STATE_SEARCH_SET_CALC_TYPE``
+       (``mufinder.workflow.energy_barriers``, re-exported from
+       ``mufinder.workflow``) / job, result and calculation entity files
+     - Calc types of the LST/QST transition-state search, which Energy
+       Barriers no longer creates; it expands only NEB jobs. They are read so
+       an older project's records still load:
+       ``EnergyBarriersController`` owns jobs of the search calc type,
+       ``RetrievalFlags.for_calc_type`` retrieves their ``.ts`` output, and the
+       Energy Barriers completion rule and stage facts in
+       ``mufinder.services.project_summary`` count their results.
+       The diffusion-path ``sources`` in a set definition's ``configuration``
+       join the generated paths
+       (``mufinder.services.source_candidates.energy_barrier_generated_sources``)
+       and are removed with them (``EnergyBarriersController.path_definitions``).
+     - Project-file shim. The set calc type can go once a saved-project schema
+       version bump includes a migration that moves each set's ``sources``
+       into the Energy Barriers form state. The search calc type names what
+       CASTEP ran, so a stored job or result keeps it; drop its readers only
+       when projects holding such records are no longer supported.
+   * - ``castep_quantum_singlepoint`` calc type
+     - ``QUANTUM_SINGLEPOINT_CALC_TYPE`` (``mufinder.workflow.quantum``) / job
+       and result entity files
+     - Calc type of the singlepoint job Quantum Corrections ran before each
+       phonon job; it now runs one phonon job per row and creates no such
+       job. It is read so an older project's records still load and collect:
+       ``QuantumCorrectionsController`` owns jobs of the type, contributes an
+       empty result for them, shows a row whose singlepoint is still active
+       with that job's status and refuses to submit it, and names a finished
+       one as the phonon job's directory companion when the phonon job
+       starts again.
+     - Project-file shim. The calc type names what CASTEP ran, so a stored
+       job or result keeps it; drop its readers only when projects holding
+       such records are no longer supported.
+   * - Quantum Corrections ``phonon_method`` / ``method`` and
+       ``pseudopotential_family`` values
+     - Quantum Corrections ``castep_quantum_phonon_set`` definitions: a row's
+       ``row_settings`` entry (``parameter_values["phonon_method"]`` and the
+       ``phonon_method`` / ``pseudopotential_family`` extras) and the
+       definition ``configuration`` (``method``, ``pseudopotential_family``);
+       read by ``QuantumCorrectionsController.legacy_phonon_method``
+     - Quantum Corrections runs finite displacement only, and new
+       configurations write none of these keys. A row an older version
+       configured for ``DFPT`` or ``LINEARRESPONSE`` loads; submitting it
+       writes ``PHONON_METHOD : FINITEDISPLACEMENT``, also over a ``defined``
+       job an older version wrote, and shows a one-line notice naming the row
+       and its stored method unless the row's job already has finite
+       displacement in its ``.param``. The stored method is read only for
+       that notice (the row's own parameter, then its extras, then the
+       definition), and ``pseudopotential_family`` is ignored. Saving the
+       row's Configure dialog replaces its ``row_settings`` entry, which drops
+       the row-level keys. A completed job keeps its result and its
+       provenance's ``phonon_method``.
+     - Project-file shim. Keep until a saved-project schema version bump
+       includes a migration that removes the keys from stored definitions.
+   * - ``grid_size`` / ``padding`` arguments of
+       ``magnetometric_rectangular_prism_tensor``
+     - ``mufinder.science.demagnetization``, also exported from
+       ``mufinder.science``
+     - The function returns the exact closed-form tensor of a rectangular
+       prism, so the two keyword arguments of its sampled predecessor are
+       ignored; passing either raises a ``DeprecationWarning``. One test checks
+       the warning.
+     - Deprecated public arguments. Keep for one minor release (through 0.9.x)
+       or until the next major release, whichever comes first; then drop them.
+   * - ``fourier_grid``, ``thickness_voxels``, ``padding`` and ``smoothing``
+       keys of a saved demagnetizing sample
+     - ``demag_sample`` in the ``magnetic_field_form`` and
+       ``magnetic_field_workspaces`` UI state; ``DemagnetizingSample.from_json``
+       (``mufinder.science.demagnetization``)
+     - A sample stored its Fourier resolution and Gaussian filter before they
+       were fixed. The keys are read and ignored, so a saved plate or voxel grid
+       loads and takes the fixed resolution and no filter when it is next
+       calculated, or is refused if its proportions are too extreme. Saves write
+       none of them, except a voxel grid's ``padding`` and ``smoothing`` while
+       results calculated with them are still stored, since those keys are what
+       mark such results as older. A result already stored keeps its numbers. An
+       incommensurate distribution also records the sample's summary, with these
+       keys if it had them; a commensurate result records no sample.
+     - Read-side repair. Ignoring an unknown key needs no code; keep this entry
+       until a saved-project schema version bump includes a migration that drops
+       the keys from stored forms.
+   * - ``plate_method_version`` key of a field result and a simulation source
+     - ``data`` of a ``magnetic_field`` result, ``magnetic_field_results`` in a
+       form, and each source of a polarisation simulation
+       (``mufinder.services.magnetic_field_results``, ``PLATE_METHOD_VERSION``)
+     - Written for a field result calculated with a ``Plate from photo``, and for
+       every source of a simulation, where 0 means its fields used no plate. A
+       field record or source without it was written before the key existed, or
+       is a field record with no plate, and reads the sample in its owner's saved
+       form: a plate from a photo, or a voxel grid saved with another padding or
+       with smoothing, is older. Additive, so no migration.
+     - Current project data, not deprecated. It may not be dropped without a
+       schema migration that first records which results used a plate.
+   * - ``translation_method_version`` key of a field result and a simulation source
+     - ``data`` of a ``magnetic_field`` result, ``magnetic_field_results`` in a
+       form, and each source of a polarisation simulation
+       (``mufinder.services.magnetic_field_results``, ``TRANSLATION_METHOD_VERSION``)
+     - Written for a commensurate field result with a component at ``q ≠ 0``, for every
+       distribution, and for every source of a simulation, where 0 means the method
+       does not apply. A commensurate record without it reads its own rows: one whose
+       rows have ``modulated`` in ``calculation_parameters`` and all lie in the home cell
+       is older. A distribution without it reads the magnetic structure its owner keeps
+       (the project's for the page, the workspace's own for a workspace), which is the
+       one it was calculated from because a new structure clears the results: one with
+       a ``q ≠ 0`` term of period up to the ``commensurate_max_period`` in its
+       ``calculation_parameters``, or 64 when none is recorded, is older. A simulation source without it reads the record named by its
+       ``record_id`` and that owner's structure, and is not marked once that record is
+       gone, when the simulation is stale instead. Version 3 also resolves the signed
+       phase of reciprocal-equivalent long-period terms. Version 2 distributions and
+       keyless distributions with such a pair are older; unaffected version 2 fields
+       retain their status. Simulation sources read their original field record to scope
+       version 2 and keep the recorded older status when that record is unavailable.
+       Additive, so no migration.
+     - Current project data, not deprecated. It may not be dropped without a schema
+       migration that first records which results list their translations.
+   * - ``host_moment_method_version`` key of a field result, a tensor result and a
+       simulation source
+     - ``data`` of a ``magnetic_field`` and a ``magnetic_dipolar_tensor`` result,
+       ``magnetic_field_results`` and each ``dipolar_tensor_results`` row in a form, and
+       each source of a polarisation simulation
+       (``mufinder.services.magnetic_field_results``, ``HOST_MOMENT_METHOD_VERSION``)
+     - Written for every field and tensor result and every simulation source. A record,
+       row or source without it reads the spin record its owner's model is built from
+       (the host's ``magnetic_structure`` when the owner keeps no model with
+       ``components``): one with a non-MCIF moment without ``atom_index`` whose label
+       names another atom than its list position is older (version 1); anything else is
+       not. A tensor is read that way only when its saved ``dipolar_tensor_selector``
+       sums over the atoms with assigned moments. The version each such result reads
+       as is written into it before a spin edit rewrites the host's record, before the
+       active host changes (switching or loading one), into a pinned workspace's copy,
+       and into tensor rows when the ``Dipolar Tensor`` dialog opens, so the mark does
+       not change with the spins, the host, the workspace's own model or the selection. A simulation source without it reads the field record named by its
+       ``record_id``, or the owner's spin record once that is gone. Additive, so no
+       migration.
+     - Current project data, not deprecated. It may not be dropped while saved host
+       records without ``atom_index`` can still be read.
+   * - ``generate_random_sites_by_distance``
+     - ``mufinder.science.site_generation``, also exported from
+       ``mufinder.science``
+     - Public helper that filled the cell with random sites at a minimum
+       spacing. ``generate_random_sites`` with ``count=None`` does the same, and
+       the helper now calls it and raises a ``DeprecationWarning``. No in-repo
+       code calls it; one test checks the warning and the result. Not persisted.
+     - Public helper, deprecated. Keep for one minor release (through 0.9.x)
+       or until the next major release, whichever comes first; then drop it.
+   * - ``singlepoint_job_ids_by_label`` /
+       ``singlepoint_seed_names_by_label`` definition keys
+     - Quantum Corrections ``castep_quantum_phonon_set`` definitions;
+       ``QUANTUM_SINGLEPOINT_JOB_MAPPING`` / ``QUANTUM_SINGLEPOINT_SEED_MAPPING``
+       (``mufinder.services.job_paths``)
+     - ``singlepoint_job_ids_by_label`` binds a row to its legacy singlepoint
+       job; new definitions no longer write it. It is read by
+       ``QuantumCorrectionsController`` (``legacy_singlepoint_job_for_key``,
+       ``definition_and_key_for_job``), by ``job_output_directory`` to find
+       the job's directory and by ``JobFileCleanup.delete_job_records``, which
+       unbinds a deleted job. ``singlepoint_seed_names_by_label`` is written
+       only when such a row's new phonon job is given a fresh seed because the
+       shared seed directory already exists; it keeps the singlepoint's
+       directory resolving to the seed it ran under.
+     - Project-file shim, read only for rows that hold a legacy singlepoint
+       job. Keep both keys with the ``castep_quantum_singlepoint`` readers.
+   * - Phonon jobs with no ``phonon_source_run_ids_by_label`` entry
+     - Quantum Corrections ``castep_quantum_phonon_set`` definitions;
+       ``phonon_zpe_source_state`` (``mufinder.services.source_candidates``)
+     - ``materialize`` records the relaxation run each phonon job's inputs were
+       written from. A job with no entry is settled by its timestamps where they
+       prove the answer, and is otherwise unconfirmed and left out of ``dE + ZPE``.
+     - Read-time shim for stored jobs. Keep while projects may hold such jobs; a
+       job gains an entry the next time its inputs are written.
+   * - ``recommended_cutoff_*`` project fields
+     - ``Project`` / project manifest
+     - Persisted project defaults used by current cutoff, k-point, relaxation,
+       and UEP setup flows.
+     - Current project data, not deprecated. Do not remove without a schema
+       migration and replacement project-default model.
+   * - ``recommended_xc_functional`` /
+       ``recommended_cutoff_xc_functional`` /
+       ``recommended_kpoint_xc_functional`` project fields
+     - ``Project`` / project manifest
+     - The project default XC functional, and the functional each convergence
+       default was converged with. All three are additive and default to
+       ``None``, so a project saved before they existed loads with no project
+       functional and no recorded converged-with functional: workflows keep
+       their schema-default functional and nothing is flagged as stale, which
+       matches the pre-existing behaviour. ``recommended_cutoff_method`` /
+       ``recommended_kpoint_method`` may now also hold ``manual`` for a
+       hand-entered default; older builds display that string verbatim.
+     - Current project data, not deprecated. Do not remove without a schema
+       migration and replacement project-default model.
+   * - ``recommended_cutoff_method`` / ``recommended_kpoint_method`` values
+       ``delta-threshold``, ``derivative`` and ``asymptotic``
+     - ``Project`` / project manifest; read by ``project_codec`` through
+       ``normalize_default_method`` (``mufinder.domain.models``)
+     - Builds that offered a choice of energy method stored its name. There is
+       now one convergence criterion, so a project default is either
+       ``converged`` or ``manual``: any stored value other than ``manual``
+       (these three included) loads as ``converged``, and new adoptions write
+       ``converged``. The manifest keeps the old string until the project is
+       next saved. Older builds display ``converged`` verbatim.
+     - Keep until the next saved-project schema version bump, whose migration
+       can rewrite the values to ``converged``.
+   * - ``execution_target`` / ``num_processes`` /
+       ``remote_job_id`` / ``remote_directory`` job fields
+     - ``Job`` (``mufinder.domain.models``) / job entity files
+     - Load-bearing persisted job-contract state, not deprecation shims.
+       ``execution_target`` and ``num_processes`` drive resubmission and
+       dashboard columns; ``remote_job_id`` and ``remote_directory`` are the
+       metadata each cluster check uses to ask the scheduler about a job and
+       to look at its remote folder, including after a project is reopened. The
+       local job check also reads ``execution_target`` to decide which active
+       jobs it looks at.
+     - Current job data, not deprecated. Renaming or removing any of these
+       fields breaks reload of saved projects and cluster checks, so it
+       requires a schema-version bump with a migration entry (and an update to
+       the persistence codec and the check call sites).
+   * - ``last_checked_at`` / ``last_status_source`` /
+       ``last_status_message`` job fields
+     - ``Job`` (``mufinder.domain.models``) / job entity files
+     - Persisted monitor metadata, not deprecation shims. ``last_checked_at``
+       records when a job's status was last confirmed (cluster check, local
+       runner event, or the local job check); ``last_status_source`` names
+       that origin; ``last_status_message`` carries non-failure context such as
+       the raw scheduler state or what the job's folder held. The dashboard uses
+       them to distinguish "still queued" from "not checked recently" and to
+       render stale/offline markers. All three are optional and default to
+       ``None``, so projects saved before their introduction load unchanged.
+     - Current job data, not deprecated. Removing or renaming any of these
+       fields silently degrades staleness display for existing projects, so it
+       requires a schema-version bump with a migration entry and updates to the
+       persistence codec and dashboard rendering.
+   * - ``dismissed_at`` job field
+     - ``Job`` (``mufinder.domain.models``) / job entity files
+     - Persisted dismissal timestamp for ended jobs hidden from the
+       dashboard via the Dismiss action. The job record, its runs, results,
+       and provenance remain in the project; only dashboard visibility
+       changes, and nothing else reads the stamp. Every change of state
+       clears it. Optional with a ``None`` default, so older projects load
+       unchanged and are fully visible.
+     - Current job data, not deprecated. Removing the field un-dismisses jobs
+       in existing projects, so it requires a schema-version bump with a
+       migration entry and an update to the persistence codec and the
+       dashboard visibility filter.
+   * - ``end_reason`` job field
+     - ``Job`` (``mufinder.domain.models``) / job entity files
+     - Why an ``ended`` job did not finish (an ``EndReason`` value such as
+       ``walltime``, ``out_of_memory`` or ``cancelled``), shown beside the
+       dashboard status and deciding whether an ended job reads ``failed``,
+       ``stopped`` or ``cancelled``; see ``docs/job_lifecycle.rst``. Written
+       from schema 7, when it replaced ``failure_reason``. An ended job saved
+       without one, or with a value this build does not know (a newer build's),
+       loads as ``unknown``; any other job loads with none.
+     - Current job data, not deprecated. Removing the field or renaming an
+       ``EndReason`` value drops recorded causes from existing projects, so it
+       requires a schema-version bump with a migration entry and updates to the
+       persistence codec and dashboard rendering.
+   * - ``activity`` job field
+     - ``Job`` (``mufinder.domain.models``) / job entity files
+     - What an ``active`` job was last seen doing (``submitting``,
+       ``queued``, ``running``, ``retrieving``), shown as its status word.
+       Display only: it has no transitions. Written from schema 7. An active
+       job saved without one, or with a value this build does not know, loads
+       with none and reads ``active``; any other job loads with none.
+     - Current job data, not deprecated. Renaming a value changes what existing
+       rows show, so it requires a schema-version bump with a migration entry.
+   * - ``FailureReason``
+     - ``mufinder.domain.enums`` (also exported from ``mufinder.domain``)
+     - Import alias for ``EndReason``, which added ``cancelled`` and
+       ``unknown`` to its seven values. Not persisted.
+     - Public import alias. Keep for one minor release (through 0.9.x); then
+       drop it and its ``mufinder.domain`` export.
+   * - ``RESULT_NOT_RECORDED_PREFIX``
+     - ``mufinder.services.failure_diagnosis``
+     - Import alias for ``mufinder.services.job_monitoring.RESULT_NOT_RECORDED_PREFIX``,
+       which moved there so ``has_unretrieved_cluster_output`` can read it.
+       The text itself is persisted: it starts the ``error_message`` of a job
+       whose result could not be recorded, and ``result_not_recorded`` matches
+       saved jobs on it, so it must not be reworded.
+     - Public import alias. Keep for one minor release (through 0.9.x); then
+       drop the alias. The text stays while saved jobs may carry it.
+   * - ``created_at`` job field
+     - ``Job`` (``mufinder.domain.models``) / job entity files
+     - Persisted creation timestamp that fixes a job's position in the
+       dashboard across reloads (``load_project`` sorts jobs by
+       ``(created_at, id)``). Job files written before the field existed are
+       backfilled on load by
+       ``mufinder.persistence.project_codec.jobs_in_creation_order``: the
+       job's first provenance mention (plus its position within a batch
+       record), else its earliest lifecycle timestamp, else the load time so
+       it sorts last. Backfilled jobs are left out of the dirty-tracking cache
+       so the next save persists the value.
+     - The field is current job data, not deprecated. The backfill is the
+       shim: keep it until the next saved-project schema version bump, whose
+       migration can stamp ``created_at`` on every job file that lacks it.
+   * - UEP searches and display data of schema 7: ``batch_results``,
+       ``batch_summary_data`` and ``batch_summary_text`` in each UEP analysis
+       state; ``potential_grid``, ``clustering_window_state``,
+       ``batch_zpe_completed``, ``isosurface_slider_value``,
+       ``isosurface_status_text``, ``isosurface_status_kind``,
+       ``slice_status_text`` and ``slice_status_kind``; the retired page keys
+       ``probe_point``, ``latest_probe``, ``probe_output``, ``line_start``,
+       ``line_end``, ``line_points``, ``line_sample``, ``line_data``,
+       ``plane_origin``, ``plane_x``, ``plane_y``, ``plane_points_x``,
+       ``plane_points_y``, ``plane_sample`` and ``plane_data``; ``mesh``,
+       ``status_text`` and ``status_kind`` in each of ``isosurface_layers``;
+       ``sample``, ``status_text`` and ``status_kind`` in each of
+       ``slice_planes``; all but ``level_ev`` of a top-level
+       ``isosurface_mesh``; and every ``uep_potential_grid`` result
+     - ``mufinder.persistence.migrations``
+       (``_uep_batch_searches_become_results``, the schema 7 to 8 step); no
+       other reader remains
+     - Schema 7 kept each UEP batch search in ``ui_state`` and could hold the
+       full-cell potential grid as a result, the isosurface meshes and the
+       slice samples. The step moves each search into a ``uep_batch_search``
+       result as it was saved and drops the rest; see
+       `Saved-project schema migrations`_. The window computes the grid,
+       meshes and samples again from the density.
+     - Migration step, which loading also runs at every schema version: keep
+       while schema 7 projects may be loaded, or projects a build from before
+       schema 8 has saved. Such a build does not read ``uep_batch_search``
+       results: it shows a migrated project with no UEP search and no
+       Generation UEP rows, keeps the manifest's version, and saves a search
+       it runs in ``ui_state``. Opened again here, that search moves into the
+       job's record, replacing the one moved before. Its window writes an empty
+       ``batch_results`` whenever it closes, so an empty one removes nothing: a
+       search discarded in such a build comes back here.
+   * - ``group_relaxed_sites`` provenance action
+     - ``provenance.jsonl``; read by ``mufinder.services.journal``
+     - A grouping applied to an analysis workspace is recorded as
+       ``sites_grouped``, with its sites. Records written as
+       ``group_relaxed_sites`` keep their own Journal entry.
+     - Provenance is append-only and never rewritten, so the reader stays for as
+       long as a project may hold such a record.
+   * - Top-level ``isosurface_mesh`` (its ``level_ev``), ``isosurface_level_value`` and
+       ``isosurface_color`` in UEP analysis UI state
+     - ``uep_analysis_states`` UI state; read by ``UepAnalysisDialog._restore_initial_state``
+       when a snapshot has no ``isosurface_layers``
+     - A window saved before isosurface layers kept one level and colour. The schema 8
+       step keeps only ``level_ev`` of the mesh, and the next save of the window's state
+       writes ``isosurface_layers`` instead.
+     - Keep the read until a saved-project schema version bump includes a migration that
+       wraps the keys into a one-entry ``isosurface_layers`` list.
+   * - ``current_tab`` of a window saved with the ``Isosurfaces`` and ``Slices`` tabs or the
+       seven tabs before them
+     - ``uep_analysis_states`` UI state; read by
+       ``UepAnalysisDialog._normalized_visible_tab_index``
+     - The window now has ``Batch Search`` (0) and ``Potential`` (1), and saves that index.
+       A saved 1, 2, 4 or 5 opens ``Potential``, a saved 0, 3 or 6 ``Batch Search``, as does
+       anything else.
+     - Read-side repair of a view setting. Keep until a saved-project schema version bump
+       includes a migration that rewrites saved tabs.
+   * - ``isosurface_viewer_muons``, ``slice_viewer_muons``, ``isosurface_selected_muon_keys``
+       and ``slice_selected_muon_keys``
+     - ``uep_analysis_states`` UI state; read by ``UepAnalysisDialog._restored_viewer_muons``
+       and ``_restore_initial_state``
+     - The two viewers became one, with ``viewer_muons`` and ``selected_viewer_muon_keys``.
+       The two lists are shown together, a muon in both once, and the next save writes
+       the new keys.
+     - Read-side repair. Keep until a saved-project schema version bump includes a migration
+       that merges the lists.
+   * - ``isosurface_zero_minimum``
+     - ``uep_analysis_states`` UI state, written and read by ``mufinder.app.uep_wizard``
+     - The key was the ``Set minimum potential to zero`` checkbox, and now says which scale
+       the saved ``level_ev`` values and ``slice_saturation_bounds`` are on. ``True`` holds
+       them above the grid's minimum. ``False`` or absent holds them on the potential's own
+       scale, whose zero is the cell average: they are moved above the minimum when the grid
+       is computed, so a surface stays at the potential it was at, and a saturation over the
+       whole range becomes the default. It reads ``False`` only until then.
+     - Keep until a saved-project schema version bump includes a migration, which needs the
+       density to find each job's minimum.
+   * - ``default_cut_off_*`` / ``default_kpoint_stress_threshold`` keys in
+       project UI state
+     - Top-level ``ui_state`` (``state.json``); removed by
+       ``mufinder.persistence.migrations.drop_retired_ui_state_keys``, which
+       ``ProjectService.load_project`` calls on every load
+     - Projects saved by earlier releases may carry
+       ``default_cut_off_energy``, ``default_cut_off_energy_method``,
+       ``default_cut_off_energy_threshold``, ``default_cut_off_force_threshold``,
+       ``default_cut_off_stress_threshold`` and
+       ``default_kpoint_stress_threshold``, copies of the adopted convergence
+       defaults that the project's ``recommended_*`` fields record. They may also
+       carry ``_integrity_warnings``, the findings of an integrity check at an
+       earlier load, which a save kept so that the warning came back after the
+       problem was mended; the findings are now ``ProjectDocument.integrity_warnings``,
+       made afresh at each load and never saved. Nothing reads or writes these
+       keys. Loading removes them (``RETIRED_UI_STATE_KEYS``), and the next save
+       writes ``state.json`` without them.
+     - Keep until the next saved-project schema version bump, whose migration
+       can drop the keys; then remove the load-time helper.
+   * - ``castep/keywords_json_path`` setting pointing outside the
+       application-data directory
+     - ``mufinder.castep_setup`` / application settings (``QSettings``)
+     - Before catalogs were installed as a managed copy, this setting held a
+       path the user chose. At startup,
+       ``mufinder.castep_setup.apply_saved_castep_environment`` installs a
+       complete catalog at such a path as the managed copy and repoints the
+       setting at it, once. A path that cannot be adopted (missing, not a
+       complete catalog, or the copy cannot be written) stays in the setting
+       and is still read; a missing file, or one that is not a keyword catalog
+       at all, is reported as the catalog issue.
+     - Application setting, not project data. Keep indefinitely: reading an
+       unadoptable path costs nothing, and dropping it would silently return
+       existing users to the starter catalog.
+   * - ``candidate`` muon-site status
+     - ``MuonSite.status`` / site entity files; read by
+       ``mufinder.persistence.project_codec.site_from_dict`` and
+       ``MuonGenerationWidget._display_site_status``
+     - Older projects stored freshly generated sites as ``candidate``. Loading
+       maps the value to ``generated``, the display shows it as
+       ``generated``, and ``mufinder.services.site_generation_service`` still
+       treats ``candidate`` as a generated, stageable status
+       (``LEGACY_GENERATED_SITE_STATUSES``).
+     - Keep until the next saved-project schema version bump, whose migration
+       can rewrite ``candidate`` to ``generated`` in every site file.
+   * - ``converged_cutoff`` key in convergence-examiner result snapshots
+     - Examiner UI state; written and read by
+       ``ConvergenceExaminerDialog._serialize_result`` /
+       ``_deserialize_result``
+     - Cutoff-only snapshots stored the converged value as
+       ``converged_cutoff``. Snapshots now write ``converged_value`` and still
+       write ``converged_cutoff`` alongside it; loading falls back to
+       ``converged_cutoff`` when ``converged_value`` is absent.
+     - Keep until the next saved-project schema version bump, whose migration
+       can rename the key to ``converged_value``.
+   * - ``fractional_position`` / ``cartesian_position`` attributes
+     - ``MuonSite`` (``mufinder.domain.models``)
+     - Read-write attribute aliases of ``initial_fractional_position`` /
+       ``initial_cartesian_position``, the names those fields had before the
+       relaxed position was stored beside them. They are properties, not
+       dataclass fields: the constructor takes only the new names and the
+       site entity file stores only the new keys (the 2 to 3 schema step
+       below renames stored keys). No MuFinder code reads them; one test
+       checks that they still resolve.
+     - Public attribute alias. Keep for one minor release (through 0.6.x);
+       then drop both properties.
+   * - ``task_farming_for_job`` / ``retrieve_flags_for_job`` keywords
+     - ``JobExecutionController.submit_local_jobs``
+     - The two-callback form of ``retrieval_for_job``: one callback returns
+       ``(task_farming_enabled, num_farms)`` and the other a mapping of
+       ``retrieve_*`` flags. They are read only when ``retrieval_for_job`` is
+       ``None`` and are combined into one
+       ``mufinder.services.job_artifacts.RetrievalFlags``. The application
+       passes ``retrieval_for_job``. Not persisted.
+     - Public keyword alias. Keep for one minor release (through 0.6.x); then
+       move the remaining test callers to ``retrieval_for_job`` and drop both
+       keywords.
+   * - ``lattice_frac_to_cart`` / ``lattice_cart_to_frac``
+     - ``mufinder.science.site_generation``
+     - Public names for the scalar conversions that live in
+       ``mufinder.science.lattice``. The ``site_generation`` versions are thin
+       wrappers that raise ``SiteGenerationError`` for a malformed or singular
+       lattice, which callers in ``mufinder.app``, ``mufinder.services`` and
+       ``mufinder.science`` catch. Not persisted.
+     - Public import path. Keep until the callers that catch
+       ``SiteGenerationError`` around these conversions move to
+       ``mufinder.science.lattice`` and ``LatticeError``; then drop both
+       wrappers.
+   * - ``radius`` / ``convergence_rtol`` keys
+     - ``nuclear_relaxation_options`` in the Magnetic Fields form state, read by
+       ``NuclearRelaxationDialog``
+     - Saved options of projects written when the nuclear sum had a user-set
+       radius and tolerance. The dialog ignores both keys and writes options
+       without them, and ``NuclearRelaxationOptions`` has no such fields: every
+       width uses the fixed sum radius and the analytic tail. Saved results
+       keep the numbers they were calculated with until recalculated.
+     - Read-side tolerance, no code to remove while the dialog reads named keys
+       only. Drop the keys in a migration if a later schema version rewrites
+       this form state.
+   * - ``convergence_radius_a``
+     - ``NuclearRelaxationResult``, ``NuclearWidthTensors`` and their saved
+       ``nuclear_relaxation`` results
+     - Persisted name kept as it is: it holds the largest radius of the explicit
+       sum over the elements.
+       The Magnetic Fields dialog
+       labels it ``Explicit sum radius (Å)``.
+     - Current project data, not deprecated. Rename only with a schema
+       migration.
+   * - ``structure_to_atoms``
+     - ``mufinder.science.nuclear_relaxation``
+     - Thin wrapper over ``mufinder.science.ase_bridge.structure_to_ase_atoms``
+       that keeps the muon-skipping default, sanitised symbols, recorded
+       species labels and ``NuclearRelaxationError``. Imported by the nuclear
+       relaxation tests. Not persisted.
+     - Public helper alias. Keep for one minor release (through 0.6.x); then
+       move the tests to ``structure_to_ase_atoms`` and make the wrapper
+       private.
+   * - ``ClusterConfig``
+     - ``mufinder.cluster_setup``
+     - Re-export of ``mufinder.domain.cluster.ClusterConfig``, so the cluster
+       record carries no Qt dependency into ``mufinder.services``. MuFinder
+       code imports it from the domain module. Not persisted: the ``QSettings``
+       keys that ``cluster_setup`` reads and writes are unchanged.
+     - Public import alias. Keep for one minor release (through 0.6.x); then
+       drop the re-export and its ``__all__`` entry.
+   * - ``parse_formatted_density`` / ``parse_castep_pseudopotentials``
+     - ``mufinder.science.uep``
+     - Thin wrappers over the ``mufinder.castep_io.charge_density`` readers
+       that turn ``ChargeDensityInputError`` into ``UepError``. Callers of
+       ``load_uep_source`` (the UEP analysis window) and the UEP science
+       tests catch ``UepError``. Not persisted.
+     - Public import path. Keep until the callers that catch ``UepError``
+       around these readers catch ``ChargeDensityInputError`` instead; then
+       drop both wrappers.
+   * - ``batch_summary_data`` with a retired ``clustering_method``
+       (``hier``, ``kmeans``, ``legacy_cartesian_hier``, or none) and
+       ``clustering_window_state``
+     - The ``grouping`` of a ``uep_batch_search`` result, into which the schema 8
+       step moves ``batch_summary_data`` unchanged; read by
+       ``mufinder.services.uep_results`` (``regroup_saved_uep_searches``) when a
+       project loads and by ``mufinder.app.uep_wizard`` when its window opens
+     - Older projects saved the Soprano clustering of a batch search, with its
+       ``clustering_hier_t``, ``clustering_kmeans_k``,
+       ``clustering_linkage_method``, ``feature_mode`` and ``similarities``, and the
+       state of its clustering window. Such a search, or one saved with no grouping,
+       is regrouped from its stored results at the default tolerance when the project
+       loads, and its selection, which named the old clusters, is dropped. The next
+       save writes the new form. A search whose results are malformed, or whose
+       structure is gone, keeps what it has and stays a retired summary until it is
+       searched again.
+     - Read-side repair. Keep until a saved-project schema version bump
+       includes a migration that regroups stored searches; the step that moves
+       them does not, as the persistence layer cannot reach the science that
+       groups them.
+   * - ``fractional_position`` of a saved UEP ``selected_muon_site`` that holds the
+       job cell's position
+     - Magnetic Fields form state in ``ui_state``, read by
+       ``mufinder.services.magnetic_field_sites`` (``uep_site_in_host_cell``) when the
+       page restores it
+     - A selection saved from a supercell UEP job holds the position in the job cell.
+       It carries the result it was chosen from, so its position is worked out again on
+       restore, as a new option's is, and the next save writes that. A selection without that
+       result keeps its position. Stored field, tensor and relaxation results are not
+       rewritten: they keep the numbers they were calculated with until calculated again.
+     - Read-side repair. Keep until a saved-project schema version bump includes a
+       migration that rewrites saved selections.
+   * - ``batch_selected_row``
+     - UEP analysis states in ``ui_state``, read by ``mufinder.app.uep_wizard`` when its
+       window opens; dropped by ``mufinder.services.uep_results`` when it regroups a
+       stored search
+     - Older projects saved the selected row of the batch-search table by position
+       rather than by key. Opening the window selects that row's group when the
+       state has no ``batch_selected_keys``, and the next save writes the keys.
+     - Read-side repair. Keep until a saved-project schema version bump includes a
+       migration that turns the row into a key, which needs the search's groups.
+   * - ``uep_source`` name prefix
+     - ``name_prefix`` of the UEP page's saved form state; read by
+       ``mufinder.app.uep_widget``
+     - Older projects may hold the job-name prefix ``uep_source``. The page reads it
+       as ``uep``, the default, and saves ``uep``. Jobs already named from the old
+       prefix keep their names.
+     - Read-side repair. Keep until a saved-project schema version bump includes a
+       migration that rewrites saved prefixes.
+   * - ``batch_optimization_tolerance_ev``
+     - UEP analysis states in ``ui_state`` and the ``settings`` of a
+       ``uep_batch_search`` result, written and read by ``mufinder.app.uep_wizard``
+       and ``mufinder.services.uep_results``
+     - The field is ``Force tolerance (eV/Å)``, a gradient norm in eV/Å, and the key
+       keeps its older name and holds that value, so saved projects restore it. The
+       schema 8 step copies it into the search's settings under the same name.
+     - Current key. Rename only with a saved-project schema version bump whose
+       migration rewrites both the form state and the stored settings.
+   * - ``hier`` and ``kmeans`` grouping values on sites, generation runs and
+       Journal records
+     - ``MuonSite.properties`` of sites made from UEP clusters;
+       ``GenerationRun.parameters["grouping"]``; ``uep_minima_found`` provenance.
+       Read by ``mufinder.services.generation_runs``
+       (``_UEP_CLUSTERING_NAMES``) and ``mufinder.services.journal``
+       (``_UEP_GROUPING_TEXT``)
+     - Sites generated from an older clustering keep the source job, cluster
+       index, member index and clustering settings they recorded, and those are
+       history, so they are not regrouped. Their methods sentence and Journal entry
+       still name the old method, and an old Journal record's ``includes_zpe`` is
+       still read. A Magnetic Fields selection saved as ``UEP cluster <n>`` keeps
+       that text until it is chosen again, and still matches today's ``UEP site <n>``
+       (``same_muon_site``); ``site_source`` stays ``uep_clustering``. Such a site also keeps its ``UEP Cluster <n>`` label, where a
+       new one reads ``UEP Site <n>``, and the field names ``cluster_index``,
+       ``cluster_size``, ``clusters``, ``uep_cluster`` and ``uep_source_key`` stay
+       as they are in new records.
+     - Current project data, not deprecated. These records say how a past result
+       was made and are not rewritten.
+   * - ``clusters/<name>/default_queue_name`` without
+       ``clusters/<name>/queues``
+     - ``mufinder.cluster_setup`` (``load_cluster_configs``)
+     - A cluster profile saved before profiles listed queues holds at most one
+       queue, ``default_queue_name``, and no ``queues`` key. It loads with an
+       empty ``queues`` tuple, so the submission dialog offers that one name
+       with no overrides and every resource comes from the profile, as
+       before. An ``addqueue`` profile with no queue at all still loads with
+       ``redwood``. The setup dialog shows such a profile's queue as one row
+       and saves it into ``queues`` the next time the profile is saved.
+     - Application setting, not project data. Current behaviour, not
+       deprecated: ``default_queue_name`` stays the name of the default queue,
+       and a profile with no queues is valid.
+   * - ``clusters/<name>/username`` holding ``username`` and
+       ``clusters/<name>/jump_username`` holding ``physics_username``
+     - ``mufinder.cluster_setup`` (``load_cluster_configs``) and
+       ``ClusterSubmissionDialog`` (a project's last cluster submission)
+     - The built-in presets once shipped these literal names as values, so a
+       profile saved from them never held a real username. Each reads as empty,
+       and ``username`` path components of that profile's
+       ``default_working_directory`` read as ``{username}``. The next save
+       stores the values as read. A profile with any other username keeps its
+       directory unchanged. A project's recorded submission with the username
+       ``username`` restores neither its username nor its directory.
+     - Application setting and ``ui_state`` read-side repair. Keep until the
+       next major release.
+   * - ``magnetic_structure`` moments with ``coordinate_system: "crystalaxis"``
+     - ``mufinder.science.magnetic_structure``
+       (``magnetic_model_from_host_spins``)
+     - The MCIF importer stores each moment as a Cartesian ``vector`` in μB,
+       with ``coordinate_system: "cartesian"`` and the components as written
+       in ``source_components`` under ``source_coordinate_system``. A moment
+       saved with ``coordinate_system: "crystalaxis"`` holds the file's
+       components along the unit lattice directions, so building the magnetic
+       model converts it with the host lattice. The per-atom spins such a
+       project already stores are not recomputed.
+     - Read-side repair. Keep until a saved-project schema version bump
+       includes a migration that converts stored crystal-axis moments.
+   * - ``magnetic_structure`` moments without ``atom_index`` stored from the
+       atom table's spins
+     - ``mufinder.science.magnetic_structure``
+       (``magnetic_model_from_host_spins``)
+     - ``ProjectService.set_host_magnetic_configuration`` writes each moment
+       with the ``atom_index`` of its atom. A record saved without the indices
+       has a moment only for each atom with a non-zero spin, labelled by
+       species and one-based atom number (``Co2``), so its list position is
+       not its atom when a zero-spin atom comes first. In a record without
+       ``source: "mcif"``, a moment with no ``atom_index`` whose label is
+       exactly one atom's species followed by its one-based number goes on
+       that atom; any other moment with no index keeps its list position, as
+       does every moment with no index in an MCIF record. The stored record is
+       not rewritten; the next spin edit writes the indices.
+     - Read-side repair. Keep until a saved-project schema version bump
+       includes a migration that adds ``atom_index`` to such moments.
+   * - ``magnetic_model_from_legacy_structure``
+     - ``mufinder.science.magnetic_structure``, also exported from
+       ``mufinder.science``
+     - Import alias for ``magnetic_model_from_host_spins``, kept for external
+       imports. Only the ``mufinder.science`` export and one test that it still
+       resolves refer to it. Not persisted. The component ``kind`` value ``legacy_moment``
+       and the ``legacy_atom_N`` component ids are unchanged, so saved models
+       need no shim.
+     - Public import alias. Keep for one minor release (through 0.9.x); then
+       drop the alias and its ``mufinder.science`` export.
+   * - ``magnetic_field`` records without ``site_source``
+     - ``mufinder.services.magnetic_field_results``
+       (``field_result_site_source``, ``attach_magnetic_field_results``)
+     - A dipolar-field record names the source of the muon site it was
+       computed at in ``data["site_source"]``, so fields at an unrelaxed UEP
+       site are shown as estimates. A record saved before the key existed
+       takes the ``source`` of its form's ``selected_muon_site``, which is the
+       site the results were computed at because choosing another site clears
+       them. A record whose form has no selected site shows no estimate
+       marker. The next calculation writes the key.
+     - Read-side repair. Keep until a saved-project schema version bump
+       includes a migration that copies the selected site's source into each
+       stored ``magnetic_field`` record.
+   * - ``magnetic_field``, ``magnetic_dipolar_tensor`` and ``nuclear_relaxation``
+       records without ``calculation_version``
+     - ``mufinder.services.magnetic_field_results`` (``uses_older_method``,
+       ``CALCULATION_METHOD_VERSION``), read by the Magnetic Fields page, its
+       dipolar-tensor, nuclear-relaxation and distribution dialogs and, for
+       field records, ``mufinder.services.polarisation_simulations``, which
+       copies the version
+       into each simulation source
+     - A calculation writes the method version of its numbers in
+       ``data["calculation_version"]``. A record saved before the key existed
+       counts as older than any version: it keeps its numbers and shows the
+       older-method note until it is recalculated. Saving, reopening or copying
+       a record to a workspace never writes the key. An older MuFinder ignores
+       the key and drops it on save, which marks the result older again.
+     - Current project data, not deprecated. The key is additive and no
+       migration may fill it in, because a missing version is what marks a
+       result as older.
+   * - ``muon_polarisation`` simulation ``sources`` entries without
+       ``calculation_version``
+     - ``mufinder.services.polarisation_simulations`` (``SimulationSource``,
+       ``older_method_sources``)
+     - Each source records the method version of its fields when the simulation
+       ran, because the stored traces came from those fields whatever has
+       happened to them since. An entry saved before the key existed, or from
+       fields with no version, counts as older until the simulation is run
+       again. An older MuFinder ignores the key.
+     - Current project data, not deprecated. The key is additive and no
+       migration may fill it in, for the same reason as on the field records.
+   * - ``magnetic_field`` distribution entries without ``terms``
+     - ``mufinder.science.magnetic_fields``
+       (``MagneticFieldDistributionResult.from_json``,
+       ``regenerate_phase_samples``), read by the Magnetic Fields results
+       table
+     - A distribution entry stores ``terms``, ``total_rms_T``, ``applied_T``
+       and ``demag_T``, and its ``calculation_parameters`` hold
+       ``phase_sampling_seed``, ``component_phase_coefficients`` and
+       ``listed_phase_q_rlu``. An entry saved before the first of these keys
+       existed loads with empty ``terms`` and ``None`` for the rest; selecting its
+       row shows its convergence checks and asks for a recalculation instead of a
+       breakdown, and ``regenerate_phase_samples`` refuses it. One without
+       ``listed_phase_q_rlu`` sampled no exact phases, and
+       ``regenerate_phase_samples`` rebuilds it with none. The next calculation
+       writes the keys. Nothing is recomputed on load.
+     - Read-side repair. Current behaviour for any entry without the keys;
+       keep until a saved-project schema version bump includes a migration
+       that drops such entries or the page stops reading them.
+   * - ``fields_T_factors`` of a ``magnetic_field`` distribution entry
+     - ``mufinder.science.magnetic_fields`` (``MagneticFieldDistributionResult``,
+       ``distribution_fields_from_json``), read by the Magnetic Fields results
+       table, Polarisation sources and the non-finite field check
+     - A grid distribution with exact phase sets stores ``continuous_T`` and
+       ``listed_T`` under ``fields_T_factors`` in place of ``fields_T``; every
+       sample is ``continuous_T[i] + listed_T[k]``, the sets varying fastest, and is
+       rebuilt bit for bit. Every other entry, and every entry an older project
+       holds, stores ``fields_T`` and loads unchanged. Readers take either through
+       ``distribution_fields_from_json``.
+     - Current project data, not deprecated. Additive, so no migration; it may not
+       be dropped without a migration that expands the factors into ``fields_T``.
+   * - ``magnetic_field`` commensurate entries without
+       ``calculation_parameters``, and Magnetic Fields form state without
+       ``contact_nnn`` or ``contact_rcont``
+     - ``mufinder.science.magnetic_fields`` (``MagneticFieldResult.from_json``)
+       and ``mufinder.app.magnetic_field_widget`` (the form-state restore)
+     - A commensurate entry records the ``contact_coupling``, ``nnn`` and
+       ``rcont`` its contact term used in ``calculation_parameters``, and the
+       form state saves the contact shell as ``contact_nnn`` and
+       ``contact_rcont``. An entry saved before the key existed loads with
+       empty ``calculation_parameters``; its fields were computed with
+       ``muesr``'s shell of 2 ions within 10 Å. A form without the keys, or
+       with values outside the dialog's ranges, takes those defaults. The
+       next calculation writes the keys. ``contact_shell_warnings`` is
+       written only when a site's shell splits a tie, so an entry without it,
+       including one saved before it existed, shows no tie warning.
+     - Read-side repair. Current behaviour for any entry or form without the
+       keys; keep until a saved-project schema version bump includes a
+       migration that writes the default shell into stored entries and forms.
+   * - ``w1_entanglement_witness`` result payloads without ``w1_definition``
+     - ``mufinder.services.quantum_results`` (``w1_from_result_data``), read
+       by the Quantum Corrections results table
+     - A quantum-phonon result stores the ``w1`` witness with
+       ``w1_definition: "participation_minus_3"``, the ``P - 3`` definition
+       of Gomilšek et al. A payload without ``w1_definition`` holds the value
+       as ``-sqrt(3 - P)``, so the witness shown is recomputed as the summed
+       ``participation`` of its ``muon_zpe_modes`` minus 3. When the payload
+       has no usable ``muon_zpe_modes`` the stored value is shown as it is.
+       The stored value is never rewritten.
+     - Read-side repair. Keep until a saved-project schema version bump
+       includes a migration that rewrites the stored witness of each
+       quantum-phonon result, or indefinitely.
+   * - Relaxed structures without ``atomic_spins`` in a project stored below
+       schema 6
+     - ``mufinder.services.relaxed_structure_spins``
+       (``backfill_relaxed_structure_spins``), called by
+       ``ProjectService.load_project``
+     - The job-file half of the 5 to 6 step (see the table below), which a
+       payload migration cannot do because it never sees the job folders.
+     - Keep while schema 5 projects may still be opened, or indefinitely.
+   * - ``no_demag`` / ``off`` / ``plate`` demagnetizing-shape values
+     - Magnetic Fields form state (``demag_shape`` in ``ui_state``), read by
+       ``MagneticFieldWidget.set_form_state``;
+       ``MagneticFieldOptions.demag_shape``
+       (``mufinder.science.magnetic_fields``); ``DemagnetizingSample.shape``
+       (``mufinder.science.demagnetization``)
+     - The page writes ``none``, ``sphere``, ``infinite_plate`` or an advanced
+       sample shape. A saved form and a saved sample read ``no_demag`` and
+       ``off`` as ``none`` and ``plate`` as ``infinite_plate``; calculation
+       options read ``plate`` as ``infinite_plate`` and refuse ``no_demag``
+       and ``off`` as unknown shapes, as they always have. A form or sample
+       saved under those names loads with the same demagnetizing correction.
+     - Read-side alias. Keep until a saved-project schema version bump
+       includes a migration that rewrites the three values in stored form
+       states and samples.
+   * - Comparison-table metric keys without a definition
+       (``similarity_score``, ``mean_displacement``, ``delta_a_pct``,
+       ``delta_b_pct``, ``delta_c_pct``, ``delta_volume_pct``,
+       ``mean_bond_length_diff``, ``max_bond_length_diff``,
+       ``mean_bond_angle_diff``, ``coordination_changes``,
+       ``topology_preserved``)
+     - ``ComparisonTable.result_data``; read by
+       ``mufinder.app.comparison_export`` (``table_metric_definitions``) for
+       the comparison table widget and the CSV export
+     - A saved table names its metrics by key. The widget and the export show
+       the keys that ``mufinder.science.structure_metrics`` still defines, with
+       the current label, unit, group and tooltip, and skip every other key,
+       so a table holding these keys opens with its lattice, displacement and
+       space-group rows. A saved ``space_group`` value shows its stored text
+       (such as ``Match (P4_2/mnm)``) under ``Space group``. The stored payload
+       is never rewritten.
+     - Read-side skip. Keep while projects holding such tables may be opened,
+       or until a saved-project schema version bump includes a migration that
+       drops the keys from stored tables.
+   * - ``metric_definitions`` key of a comparison table
+     - ``ComparisonTable.result_data``; read by
+       ``mufinder.app.comparison_export`` (``table_metric_definitions``)
+     - A new table stores values only and names its metrics by the keys of
+       its values. A table saved with a ``metric_definitions`` list, whose
+       entries carry each metric's label, unit, group and help text, still
+       opens: only each entry's ``key`` is read, and everything else comes
+       from ``mufinder.science.structure_metrics``. The stored list is not
+       rewritten, so it stays in the file until the table is generated again.
+       Tables carry no format marker. A table that holds supercell lattice
+       values, saved before those rows were read per host cell, is recognised
+       by a ``supercell_matrix`` that is not the identity in a column and no
+       ``shown per host cell`` note in its ``warnings``.
+     - Read-side shim. Keep while projects holding such tables may be opened,
+       or until a saved-project schema version bump includes a migration that
+       drops the key from stored tables.
+   * - ``supercell_matrix`` project field
+     - ``Project``; read by ``mufinder.services.supercell_assets``
+       (``supercell_editor_seed_matrix``)
+     - Nothing writes the field: new projects keep the identity, and a project
+       that holds another matrix keeps it through saves. It seeds the Supercell
+       Editor only when the active host has no saved supercell. The Supercell
+       Editor otherwise seeds from the most recently saved cell.
+     - Read-side shim. Keep while projects holding a non-identity value may be
+       opened, or until a saved-project schema version bump includes a migration
+       that drops the field.
+   * - ``owner_workflow_stage`` and ``saved_at`` of ``supercell_asset``
+     - ``Structure.properties``; read by ``mufinder.services.supercell_assets``
+       (``supercell_asset``)
+     - ``owner_workflow_stage`` is null for a cell saved from the Host Structure
+       page. A release before null owners does not read such a cell as a saved
+       supercell: it offers the cell as a host to promote, and a sweep that
+       selected it falls back to the unit cell with no warning, permanently once
+       the project is saved there. A named owner is provenance only: it no longer
+       limits which workflows share the cell.
+       A cell with no ``saved_at`` counts as older than any cell that has one;
+       among cells without it, the first by name counts as the most recent.
+       A copy that an older project made for another workflow stays in the
+       library as an ordinary cell, with its ``source_asset_structure_id``.
+     - Current project data, not deprecated. Additive with defaults, so no
+       migration.
+
+Saved-project schema migrations
+-------------------------------
+
+``project.json`` records the ``schema_version`` a project was saved at, and
+every save writes ``PROJECT_SCHEMA_VERSION`` (``mufinder.domain.models``).
+``ProjectService.load_project`` passes the manifest and the raw entity payloads
+to ``mufinder.persistence.migrations.migrate_project_payloads`` before it
+builds any domain object. That function applies one step per version, from the
+stored version up to the current one, and sets the manifest's version to the
+result. The entity files a step changed are left out of the dirty-tracking
+cache, so the next save rewrites them together with the new manifest version.
+Provenance is history: no step rewrites it, and readers of provenance accept
+every name a record was ever written with. A project saved at the current
+version or a newer one is loaded as it is. A manifest without
+``schema_version`` is read as schema 1.
+
+A save that advances the stored schema commits a synced, atomic
+``.migration-save.json`` redo plan before changing canonical metadata. Only
+changed or missing entities and UI state are included; calculation outputs
+and provenance are not copied. The manifest is written last and the journal
+is removed only after the whole plan succeeds. Loading and retrying a save
+finish a pending plan before reading project metadata or deciding which
+files to skip. Recovery writes already-migrated values, so repeated recovery
+cannot repeat unit conversions or create duplicate migrated results.
+
+A failed journal creation leaves canonical metadata untouched. A failure
+after journal creation leaves the plan available for retry. A malformed or
+unsupported journal refuses recovery before changing files; restore a complete
+backup and retain the journal for diagnosis. Filesystem failures during replay
+report the project path and ask the user to resolve the error and reopen or
+retry saving. The existing platform-dependent directory-sync policy applies.
+This recovery covers saves that advance the schema; ordinary saves retain
+their per-file atomic-write behaviour.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 12 44 44
+
+   * - Step
+     - Payloads changed
+     - Readers that rely on it
+   * - 1 to 2
+     - Convergence-cutoff and convergence-k-point definitions
+       (``calculations`` entities with ``workflow_stage``
+       ``convergence_cutoff`` or ``convergence_kpoint``). Schema 1 stored the
+       sweep in ``parameters.configuration`` under both ``sweep_values`` and
+       the legacy ``cutoff_energies`` key, and read a cutoff sweep from
+       ``cutoff_energies`` first. The step moves the values that reader used
+       into ``sweep_values`` and removes ``cutoff_energies``.
+     - ``deserialize_convergence_config`` and
+       ``remove_cutoff_from_definition`` read only ``sweep_values``;
+       ``ConvergenceConfig`` has no ``cutoff_energies`` field. The journal
+       counts a ``configure_convergence_cutoff`` record's cutoffs from
+       ``sweep_values``, else from ``cutoff_energies``. The widget form state
+       (``ui_state["convergence_form"]``) is not part of the step and keeps its
+       own ``cutoff_energies`` key; see :doc:`/architecture`.
+   * - 2 to 3
+     - Muon sites (``sites`` entities). Schema 2 stored a site's generated
+       position as ``fractional_position`` / ``cartesian_position`` and kept
+       it unchanged after relaxation. The step renames the keys to
+       ``initial_fractional_position`` / ``initial_cartesian_position``. A
+       site whose ``relaxation_run_id`` names a run with a result recording
+       ``muon_final_fractional_position_host`` gains that triplet as
+       ``relaxed_fractional_position``; other sites have none.
+     - ``site_from_dict`` reads only the new keys, and
+       ``MuonSite.current_fractional_position`` reads
+       ``relaxed_fractional_position``. Muon-relaxation completion sets the
+       relaxed position and removing the run's records clears it, so after
+       the step every relaxed site carries it when its result does.
+   * - 3 to 4
+     - Results (``results`` entities) and the Magnetic Fields form state in
+       ``ui_state``: ``magnetic_field_form`` for the page and the ``form`` of
+       each entry in ``magnetic_field_workspaces``. Schema 3 kept the latest
+       field, dipolar-tensor and nuclear-relaxation results inline in those
+       forms under ``magnetic_field_results``, ``dipolar_tensor_results`` and
+       ``nuclear_relaxation_results``. The step removes the three keys from
+       every form and turns each non-empty value into a result entity of type
+       ``magnetic_field``, ``magnetic_dipolar_tensor`` or
+       ``nuclear_relaxation`` with no ``calculation_run_id``, whose
+       ``data["owner"]`` is ``magnetic_fields`` for the page or the workspace
+       id. A workspace without an id has no owner and keeps its form.
+     - ``mufinder.services.magnetic_field_results`` reads the page's results
+       only from result records and never from the persisted form; the
+       project survey reads a workspace's field results from its record.
+       ``migrate_project_payloads`` receives ``ui_state`` and reports it
+       changed, so the next save rewrites ``state.json``.
+   * - 4 to 5
+     - Dipolar-tensor results (``results`` entities of type
+       ``magnetic_dipolar_tensor``). Schema 4 stored ``muesr``'s tensor under
+       ``dipolar_tensor_T_per_muB`` without converting it from ``Å⁻³``. The
+       step multiplies every numeric ``3 x 3`` tensor in ``data["results"]``
+       by :math:`\mu_0 \mu_B / (4\pi\,\text{Å}^3) = 0.9274` T/μB and leaves
+       any other entry as it is. A schema 3 project reaches this step after
+       its inline tensors have become records, so they are converted too.
+     - The dipolar tensor dialog reads ``dipolar_tensor_T_per_muB`` as T/μB,
+       and ``calculate_dipolar_tensors_for_atoms`` applies the same factor to
+       new tensors. Saved commensurate field results are not rewritten.
+   * - 5 to 6
+     - Relaxed structures (``structures`` entities). Schema 5 did not store a
+       relaxation's ``SPIN=`` values on its relaxed structure. They live in the
+       job folders, which payloads cannot reach, so the payload step changes
+       nothing; ``ProjectService.load_project`` instead calls
+       ``backfill_relaxed_structure_spins`` for a project stored below schema
+       6. Each structure a pristine or muon relaxation job derived (through
+       ``source_job_id`` or its run's ``derived_structure_ids``) and that has
+       no ``atomic_spins`` key gains the nonzero ``SPIN=`` values of that job's
+       ``-out.cell``, else its input ``.cell``, when the file has the
+       structure's atom count. Those structures are rewritten by the next
+       save. A structure whose job files are gone, or whose run had no spins,
+       keeps no key and is not checked again once the project is saved at
+       schema 6.
+     - ``workflow.bridge.structure_to_spec`` prefers ``atomic_spins``, so the
+       ``.cell`` export and every job started from a relaxed structure write
+       the run's spins. Relaxation completion stores them for new runs.
+   * - 6 to 7
+     - Jobs and calculation runs (``jobs`` and ``runs`` entities). Schema 6
+       stored nine job statuses and a ``failure_reason``. The step
+       (``legacy_job_state``) stores four: ``submitting``, ``queued``,
+       ``running`` and ``retrieving`` become ``active`` with that
+       ``activity``; ``stopped`` and ``failed`` become ``ended`` with their
+       ``failure_reason`` as ``end_reason``, or ``unknown`` when none (or one
+       schema 6 did not know) was recorded; ``cancelled`` becomes ``ended``
+       with ``end_reason`` ``cancelled``; ``defined`` and ``completed`` keep
+       their names. ``failure_reason`` is removed. A run keeps only its
+       status, mapped the same way. A payload whose status schema 6 did not
+       store is left as it is, and a run without a status is not touched.
+       Provenance keeps the words it was written with.
+     - ``job_from_dict`` and ``run_from_dict`` read only the four states, and
+       a job state this build does not know refuses to load rather than being
+       guessed. A build from before schema 7 cannot open a project a schema 7
+       build has saved: it does not know ``active`` or ``ended``.
+   * - 7 to 8
+     - UEP batch searches (new ``results`` entities of type
+       ``uep_batch_search``), ``uep_potential_grid`` results, and the UEP
+       analysis states in ``ui_state["uep_analysis_states"]``. Each state with
+       a non-empty ``batch_results`` becomes one result whose ``data`` holds
+       ``source_job_id`` (the state's key), ``settings`` (``gw_factor`` and the
+       ``batch_*`` form values the state holds, which it keeps), ``results``
+       (``batch_results``), ``grouping`` (``batch_summary_data``, or ``None``)
+       and ``log`` (``batch_summary_text``), moved without recomputing
+       anything. Its ``calculation_run_id`` is the job's run with the highest
+       ``run_index``, or ``None``. Results are created in the states' order,
+       a microsecond apart. A record already stored for the job keeps its id
+       and takes the state's search; an empty ``batch_results`` leaves the
+       record as it is. Loading runs the step at every schema
+       version too, as a build from before schema 8 keeps the manifest's
+       version when it saves. The step removes those three keys, the
+       other keys listed in the ledger row for schema 7 UEP data, the meshes
+       and samples, and every ``uep_potential_grid`` result. A state that is
+       not a mapping, or whose results, grouping, log, layers, planes or mesh
+       have another type, is left as it is. The whole move is made in memory
+       and written by the next save, through the migration journal.
+     - ``mufinder.services.uep_results`` reads searches only from their
+       records, and ``regroup_saved_uep_searches`` then regroups a moved search
+       with a retired or missing grouping, as loading did before the step.
+       The analysis window, Generation, Magnetic Fields, the project survey
+       and the project summary read the records. A build from before schema 8
+       loads a schema 8 project without its searches; see the ledger.
+
+A schema bump adds ``PROJECT_SCHEMA_VERSION + 1``, one entry in
+``_MIGRATIONS`` keyed by the version it upgrades from, a row in the table
+above, and a fixture project saved at the old version under
+``tests/fixtures/projects/`` that loads, round-trips and reloads.
+
+Rules for new shims
+-------------------
+
+- Every new compatibility alias should have a row in this ledger.
+- Project-file shims must state the schema version or migration event that can
+  remove them.
+- Public import aliases should be removed only in major releases or after a
+  documented replacement has existed for at least one minor release.
+- Tests that exercise legacy data should name the legacy field explicitly, so
+  future cleanup work can find the remaining callers with ``rg``.
+
+
+Removed aliases and settings
+----------------------------
+
+Each public import alias below was removed after its documented replacement had
+shipped for at least one minor release. None was persisted, so projects need no
+migration; code that imported one switches to the replacement named.
+
+- ``radius`` and ``convergence_rtol`` of ``NuclearRelaxationOptions`` and
+  ``calculate_nuclear_width_tensors`` (``mufinder.science.nuclear_relaxation``):
+  drop the argument. Every width sums to ``NUCLEAR_SUM_RADIUS_A`` with the
+  analytic tail, so there is no radius or tolerance to choose. These keywords had
+  no replacement release, as the sum they tuned no longer exists; the saved
+  option keys are covered in the ledger above.
+- ``ConvergenceWorkflow`` (``mufinder.workflow.convergence``, re-exported from
+  ``mufinder.workflow``): call ``expand_convergence_sweep_jobs``.
+- ``MuonSiteWorkflow`` (``mufinder.workflow.muon_site``, re-exported from
+  ``mufinder.workflow``): call ``expand_muon_site_jobs``.
+- ``build_convergence_workflow`` (``mufinder.app.convergence_adapter``,
+  re-exported from ``mufinder.app``): call ``expand_convergence_jobs``.
+- ``RelaxationExpansion`` (``mufinder.app.relaxation_adapter``) and
+  ``UepExpansion`` (``mufinder.app.uep_adapter``): use ``AdapterExpansion``
+  from ``mufinder.app.adapter_common``.
+- ``AdapterExpansion.kpoint_messages``: read ``AdapterExpansion.messages``.
+- ``CutoffRunState`` (``mufinder.app.convergence_types`` and
+  ``mufinder.app.main_window``): use ``SweepPointRunState`` from
+  ``mufinder.app.convergence_types``.
+- ``recommended_cutoff`` (``mufinder.science.convergence_analysis``,
+  re-exported from ``mufinder.science``): call ``recommended_value``.
+- ``ConvergenceResult.converged_cutoff``: read
+  ``ConvergenceResult.converged_value``. The persisted ``converged_cutoff``
+  key in convergence-examiner snapshots is a separate project-file shim and
+  stays in the ledger above.
+- ``workflow_tick_icon`` (``mufinder.app.icons``): call
+  ``workflow_stage_icon("completed")`` or ``workflow_stage_icon("incomplete")``.
+- ``ConstructionSignWidget`` (``mufinder.app.project_home_trail``, the module
+  now named ``mufinder.app.project_home``, re-exported from
+  ``mufinder.app.main_window`` and ``mufinder.app.jobs_controller``): no
+  replacement, as no page shows a placeholder.
+- ``WorkflowDefinition`` and ``MuonChargeStateDialog`` imported from
+  ``mufinder.app.main_window``: import them from their defining modules,
+  ``mufinder.app.project_navigator`` (see below) and
+  ``mufinder.app.muon_generation_support``.
+- ``clusters/<name>/keyword_python_command`` (application setting, removed with
+  the shell-loop keyword generator described in :doc:`/castep_keyword_catalog`).
+  Cluster keyword generation no longer runs Python on the cluster, so the value
+  has no meaning. It was never project data; a value left in saved settings is
+  ignored and needs no migration.
+- ``supercell_editor`` (navigator route and ``--page`` value): the Supercell
+  Editor is a dialog opened from the Host Structure page and the workflows'
+  ``Manage Supercells…``. ``--page supercell_editor`` warns of an unknown page
+  and leaves the project home showing. A ``project_home_stage`` that holds the
+  value is ignored with the key itself (see below). No alias is kept, since the
+  route held no project data.
+- ``project_home_stage`` (project ``ui_state`` key, the stage the project home
+  last opened on): the project home shows the stage of the project's latest
+  activity, which it reads from the jobs and the Journal, so it keeps no
+  stage of its own. A project that holds the key loads as usual; the value is
+  ignored, kept as it is and written back unchanged, and nothing writes it
+  any more. Moving between pages no longer changes the UI state, so the save
+  check has no keys it leaves out. It needs no migration, since the key held
+  no project data.
+
+The public helper below was removed once its ledger expiry (through 0.7.x)
+had passed. It was deprecated with a ``DeprecationWarning`` in 0.8.0, and its
+replacement has shipped since 0.6.0. It was not persisted, so projects need no
+migration; the ``castep_quantum_singlepoint`` jobs and results of older
+projects still load through the calc-type shim in the ledger above.
+
+- ``expand_quantum_singlepoint_jobs`` (``mufinder.workflow.quantum``):
+  Quantum Corrections runs one phonon job per row, which converges its own
+  ground state; call ``expand_quantum_phonon_jobs``.
+
+The demagnetizing settings below were removed without a deprecation period
+when the Fourier resolution was fixed and the filter retired. Ignoring an
+argument would change a result without saying so, so passing one raises
+``TypeError``. Saved values are covered by the ledger entry above.
+
+- The ``fourier_grid``, ``thickness_voxels``, ``padding`` and ``smoothing``
+  fields of ``DemagnetizingSample`` (``mufinder.science.demagnetization``): a
+  plate's voxels follow from its size, its box from ``PLATE_FOURIER_PADDING``
+  and a voxel grid's box from ``FOURIER_PADDING``.
+- The ``smoothing`` argument of ``voxel_demagnetizing_tensor``, which has no
+  replacement. ``padding`` stays, with ``FOURIER_PADDING`` as its default.
+
+The widget below was removed without a deprecation period because nothing in
+MuFinder used it: every workflow edits its CASTEP parameters in the shared
+parameter dialog. It was not persisted, so projects need no migration.
+
+- ``CastepParamForm`` (``mufinder.app.param_form``, exported from
+  ``mufinder.app``): use ``ParameterDialog`` (``mufinder.app.param_dialog``,
+  also exported from ``mufinder.app``).
+
+The Quantum Corrections phonon-method helpers below were removed without a
+deprecation period when the workflow moved to finite displacement only. Keeping
+them would keep the retired DFPT and linear-response choice in the API, and no
+project data depends on them; stored method values are covered by the ledger
+entry above.
+
+- ``method_to_castep``, ``phonon_method_compatibility`` and the
+  ``QuantumPhononMethod`` / ``PseudopotentialFamily`` types
+  (``mufinder.workflow.quantum``), and the ``method`` and
+  ``pseudopotential_family`` fields of ``QuantumPhononJobConfig``: every job
+  writes ``QUANTUM_PHONON_METHOD`` (``FINITEDISPLACEMENT``), and
+  ``expand_quantum_phonon_jobs`` refuses a ``PHONON_METHOD`` in
+  ``param_overrides`` or ``user_overrides``. Job provenance records ``phonon_method`` as
+  ``finite_displacement``, as before, and carries no ``method_warning``.
+
+The convergence functions below were removed without a deprecation period,
+together with their ``mufinder.science`` re-exports, when the examiner moved to
+one criterion relative to the finest sweep point. They implemented the
+retired criteria, so keeping them would keep those criteria in the API; no
+project data depends on them. Code that called one switches to the
+replacement named.
+
+- ``delta_threshold_energy``, ``derivative_energy``,
+  ``asymptotic_extrapolation_energy``, ``delta_threshold_force`` and
+  ``delta_threshold_stress`` (``mufinder.science.convergence_analysis``): call
+  ``analyze_convergence`` (cutoff sweeps, with ``max_stresses`` and
+  ``stress_threshold`` for stress) or ``analyze_kpoint_convergence``, which
+  return a ``ConvergenceAnalysis``. ``check_sweep_length`` runs the power-law
+  sweep-length check on its own.
+- ``apply_kpoint_label_to_stress_result``: pass ``max_stresses``,
+  ``stress_threshold`` and ``point_grids`` to ``analyze_kpoint_convergence``.
+- The ``method`` argument of ``analyze_convergence``, and the ``method``,
+  ``fallback_suggestion`` and ``deltas`` fields of ``ConvergenceResult``:
+  results now carry ``quantity``, ``summary``, ``explanation``,
+  ``reference_value`` and ``deviations`` (each point's distance from the
+  reference); ``details`` is a property joining them.
+
+The examiner's saved state (``ui_state``) no longer writes ``method``,
+``selected_method_for_recommendation`` or ``results_text`` (the results are
+stored as ``results_rows``), and overview snapshots no longer write
+``method``. An examiner state that still has ``method`` was produced by the
+retired criteria: the examiner keeps its thresholds and plot data, drops its
+results and recommendation, and says so in an ``Earlier analysis`` row. Old overview snapshots render as before; their
+``method`` is ignored. No shim or migration is needed for UI state.
+
+The setting below was removed without a deprecation period, because nothing
+read it and it has no replacement.
+
+- ``job_name_prefix``: the cluster submission dialog's ``Job name prefix``
+  field, the ``ClusterSubmissionConfig.job_name_prefix`` field (``mufinder.app``,
+  not in the API reference), the key of the ``last_cluster_submission_config``
+  entry in project ``ui_state`` that saved it, and the helper
+  ``default_cluster_job_name_prefix`` (``mufinder.workflow.naming``, never
+  re-exported from ``mufinder.workflow``). No submission read the value: the
+  scheduler names each job after its CASTEP seed. A project that still carries
+  the key loads unchanged; the key is ignored and dropped the next time a
+  cluster submission saves its settings, so no shim or schema migration is
+  needed. Code that built ``ClusterSubmissionConfig`` drops the argument; the
+  fields after ``username`` move up one place, so pass them by keyword.
+
+The job-lifecycle helpers below were removed without a deprecation period.
+They were service methods with no documented import path, called only by
+MuFinder's own application code and tests, and nothing they wrote is
+persisted differently, so projects need no migration. A job's state is decided
+by ``mufinder.services.job_reconcile.reconcile`` and applied by
+``JobExecutionController.apply_evidence`` (see :doc:`/job_lifecycle`).
+
+- ``ProjectService.reconcile_orphaned_local_jobs``, the
+  ``mufinder.services.job_watchdog`` module and
+  ``JobExecutionController.stop_stuck_job``: use
+  ``JobExecutionController.check_local_jobs``.
+- ``ProjectService.retry_job_retrieval`` and
+  ``ProjectService.resume_reappeared_job``: use
+  ``ProjectService.mark_job_active``.
+- ``JobExecutionController.prepare_retry_retrieval``,
+  ``mark_cluster_status_changed``, ``resume_reappeared_cluster_job``,
+  ``mark_queue_checked`` and ``stale_reappearance_watches``, and
+  ``awaits_scheduler_reappearance``: use ``apply_evidence`` and
+  ``check_cluster_jobs``.
+- ``ClusterJobRunner.track_existing_job``, ``retrieve_outputs_for``,
+  ``stop_watching``, ``clear_tracked_jobs`` and ``refresh_queue``, and the
+  ``job_started``, ``job_finished``, ``job_failed``, ``status_changed`` and
+  ``job_reappeared`` signals: use ``check_jobs`` and ``job_checked``.
+- ``services.job_monitoring.is_unmonitored_cluster_job``: use
+  ``JobExecutionController.staleness``.
+
+The job-state names below were removed without a deprecation period when a job
+came to store four states (schema 7). They were service methods and module
+constants with no documented import path, called only by MuFinder's own code
+and tests. Saved projects are migrated (see Saved-project schema migrations).
+
+- ``JobStatus.SUBMITTING``, ``QUEUED``, ``RUNNING`` and ``RETRIEVING``: use
+  ``JobStatus.ACTIVE`` with a ``JobActivity``. ``JobStatus.FAILED``,
+  ``STOPPED`` and ``CANCELLED``: use ``JobStatus.ENDED`` with an
+  ``EndReason``. ``services.job_monitoring.job_status_word`` gives the word a
+  job table shows.
+- ``ProjectService.mark_job_queued``, ``start_job``, ``mark_job_retrieving``
+  and ``reactivate_job``: use ``ProjectService.mark_job_active``.
+  ``ProjectService.stop_job``, ``fail_job`` and ``cancel_job``: use
+  ``ProjectService.end_job``.
+- ``mufinder.domain.enums.ACTIVE_JOB_STATUSES``,
+  ``mufinder.services.job_reconcile.ENDED_JOB_STATUSES``,
+  ``ProjectService.TERMINAL_RECOVERABLE_JOB_STATUSES`` and
+  ``mufinder.app.workflow_submission.RESUBMITTABLE_AFTER_DISMISSAL_STATUSES``:
+  compare with ``JobStatus.ACTIVE`` or ``JobStatus.ENDED``.
+- ``Scheduler.map_to_job_status``: use ``Scheduler.map_to_scheduler_state``,
+  which returns a ``SchedulerState``.
+
+The names below were removed without a deprecation period when Reset stopped
+being a user action, since an ended job runs again from its row or the Job
+Dashboard's ``Resubmit…``. Only MuFinder's own code and tests used them. Nothing
+persisted changes: a project's ``job_reset`` journal milestones load and show
+as before, and running a job again still records them.
+
+- ``JobExecutionController.reset_ended_jobs`` lost its ``clean_folders``,
+  ``file_cleanup``, ``directory_companions`` and ``detach_convergence_job``
+  arguments and returns the ids of the jobs reset; ``EndedJobReset`` is gone.
+  Clear a job's output before starting it again with
+  ``JobFileCleanup.clear_directory_contents``, after
+  ``JobFileCleanup.directory_ownership_refusals``.
+- ``mufinder.services.job_file_cleanup.refusal_because``, and the ``cleaned``
+  count of ``mufinder.domain.text.folder_outcome_status``: no route reports
+  cleaned folders.
+- The ``reuse_existing_remote_files`` argument of
+  ``cluster_submission_planner.plan_remote_targets`` and
+  ``plan_cluster_submission``, ``RemoteTarget.reuse_existing_files``,
+  ``ClusterJobSubmission.reuse_existing_files`` and the ``reuse_existing_files``
+  argument of ``ClusterJobRunner.submit``: every cluster submission uploads its
+  ``.cell`` and ``.param``. A job continuing on its own cluster is submitted
+  into its folder with ``continue_job_ids``.
+- A cutoff-convergence job an earlier version left unbound and ``defined`` in a
+  folder when it was reset (Reset detached it from its sweep point) still loads,
+  and ``JobFileCleanup`` does not count it as another job using that folder.
+  Nothing creates one now. Keep this exemption while projects holding such jobs
+  are supported; it needs no migration.
+- In ``mufinder.app``: ``JobsController.reset_failed_jobs``; the
+  ``reset_failed_requested`` signal of every workflow widget; and in
+  ``workflow_table_utils`` ``RESETTABLE_ROW_STATUSES``,
+  ``RESET_FAILED_ACTION_TEXT``, ``RESET_FAILED_TABLE_TOOLTIP``,
+  ``resettable_keys`` and ``add_reset_failed_action``.
+  ``bind_reset_failed_context_menu`` and ``open_reset_failed_context_menu`` are
+  ``bind_row_context_menu`` and ``open_row_context_menu``, which take one
+  ``actions`` sequence; ``standard_row_actions`` returns one tuple.
+
+The helper below was removed without a deprecation period when Dismiss came to
+only hide a job from the dashboard. It was an app-layer function with no
+documented import path, called only by MuFinder's own code and tests. Projects
+need no migration: ``dismissed_at`` keeps its name and meaning.
+
+- ``mufinder.app.workflow_submission.job_is_resubmittable_after_dismissal``:
+  compare with ``JobStatus.ENDED``; ``effective_row_status`` reads the job's
+  state alone.
+
+The names below moved to a lower layer without a deprecation period or a
+shim. They were app-layer names with no documented import path, called only by
+MuFinder's own code and tests. Nothing persisted changes: the
+``last_cluster_submission_config`` entry of project ``ui_state`` keeps its key
+and fields.
+
+- ``ClusterSubmissionConfig``: import it from ``mufinder.domain.cluster``. The
+  ``mufinder.app`` export now points there.
+- ``job_is_imported`` and ``job_resumes_from_checkpoint``
+  (``mufinder.app.workflow_submission``): import them from
+  ``mufinder.services.job_monitoring``.
+
+The private forwarders below were removed without a deprecation period. They
+were one-line ``MainWindow`` methods, not part of any public import path, and
+only MuFinder's own code and tests called them.
+
+- ``_serialize_uep_config`` / ``_deserialize_uep_config`` /
+  ``_serialize_pristine_relaxation_config`` /
+  ``_deserialize_pristine_relaxation_config`` /
+  ``_serialize_muon_relaxation_config`` /
+  ``_deserialize_muon_relaxation_config`` / ``_serialize_convergence_config`` /
+  ``_deserialize_convergence_config``: call the codec of the same name without
+  the leading underscore in ``mufinder.app.workflow_config_codecs``. The stored
+  configuration shape is unchanged.
+
+The names below were removed without a deprecation period. None is in the API
+reference and no project data depends on them: nothing constructed the dialog,
+the Supercell Editor was the only caller of the private forwarder, and the main
+window was the only caller of the host widget's setter.
+
+- ``HostStructureWidget.set_project_supercell_matrix`` and the
+  ``supercell_matrix`` key of its ``magnetic_configuration_changed`` payload
+  (``mufinder.app.host_structure_widget``): call
+  ``ProjectService.supercell_editor_seed_matrix`` for the matrix the Supercell
+  Editor opens on.
+- The ``magnetic_structure`` key of ``HostStructureWidget``'s
+  ``magnetic_configuration_changed`` payload
+  (``mufinder.app.host_structure_widget``): the payload carries
+  ``atomic_spins`` and ``propagation_vector`` only, and
+  ``ProjectService.set_host_magnetic_configuration`` builds and stores the
+  magnetic structure. What the page stores for each spin and propagation
+  vector is unchanged. The service raises ``ValueError``, before storing
+  anything, for a propagation vector without three components.
+- ``SupercellPreviewDialog`` (``mufinder.app.supercell_dialog``): open
+  ``SupercellEditorDialog`` from the same module, which previews, names and
+  saves supercells.
+- ``ProjectService._supercell_asset``: call ``supercell_asset`` from
+  ``mufinder.services.supercell_assets``.
+
+The helper below was removed without a deprecation period. ``mufinder.app`` is
+not in the API reference, no project data depends on it, and only MuFinder's own
+code called it.
+
+- ``ConvergenceExaminerDialog.recompute_spacings_in_snapshot``
+  (``mufinder.app.convergence_examiner``): call ``recompute_snapshot_spacings``
+  from ``mufinder.services.convergence_defaults``, which takes the same
+  arguments and returns the same copy.
+
+The names below were removed without a deprecation period. ``mufinder.app`` is
+not in the API reference, no project data depends on them, and nothing outside
+MuFinder's own code and tests used them.
+
+- ``ConvergenceExaminerDialog.cutoff_adopted`` and its ``point_labels``
+  keyword (``mufinder.app.convergence_examiner``): connect to
+  ``default_adopted``, which carries the adopted cutoff in eV or k-point grid,
+  and pass ``point_grids`` (the grid of each k-point count).
+- ``ConvergenceExaminerDialog._recommended_cutoff``: read
+  ``_recommended_value``.
+
+The helper below was removed without a deprecation period. It is not in the API
+reference, no project data depends on it, and only MuFinder's own code called it.
+
+- ``count_phrase`` (``mufinder.app.workflow_table_utils``): call ``plural`` from
+  ``mufinder.domain.text``; ``count_phrase(n, ("row", "rows"))`` is
+  ``plural(n, "row", "rows")``.
+
+The name below moved without a deprecation period or a shim when the project
+navigator left the main window. It is not in the API reference, no project data
+depends on it, and only MuFinder's own code and tests used it.
+
+- ``WorkflowDefinition`` (``mufinder.app.project_home_trail``, the module now
+  named ``mufinder.app.project_home``): import it from
+  ``mufinder.app.project_navigator``, with ``workflow_definitions``, which lists
+  the navigator's nodes.
+
+The names below were removed or renamed without a deprecation period or a shim
+when the project home stopped drawing a workflow chart. None is in the API
+reference, no project data depends on them, and only MuFinder's own code and
+tests used them.
+
+- ``mufinder.app.project_home_trail``: the module is ``mufinder.app.project_home``.
+  Import ``ProjectHomeWidget`` from there. ``ProjectHomeChartWidget``,
+  ``FieldNotesPanel`` and ``_FitToViewportLayout`` have no replacement; the
+  project home's own sections replace the chart and its field notes.
+- ``STAGE_DEPENDENCIES``, ``StageDependency``, ``DependencyKind`` and
+  ``PROJECT_HOME_STAGE_KEY`` (``mufinder.services.project_summary``): no
+  replacement. The dependency graph only drew the chart.
+- ``ProjectSummary.current_stage``, ``ProjectSummary.completed_count`` and
+  ``ProjectSummary.active_jobs``, and ``StageSummary.guidance``,
+  ``StageSummary.unmet_requirements`` and ``StageSummary.active_jobs``: read
+  ``ProjectSummary.last_stage`` for where the user left off and
+  ``StageSummary.status`` and ``StageSummary.facts`` for a stage's progress.
+  ``WorkflowStageInfo.guidance`` and its positional argument are gone.
+- ``survey_layers`` and ``SurveyPath`` (``mufinder.services.project_survey``,
+  with ``SurveyLayer.paths``): call ``discovered_sites_layer`` or
+  ``pinned_sites_layer``. The per-stage zero-point energy, contact field,
+  magnetic field and diffusion path layers have no replacement; each
+  workflow's own page shows them.
+- ``FALLBACK_NOTE``, ``CellSurveyWidget.layer_changed``, ``layers``,
+  ``current_index``, ``step`` and the ``previous_button`` and ``next_button``
+  (``mufinder.app.cell_survey_widget``): the survey shows one layer, set with
+  ``set_survey(host, layer)``.
+
+The names below were removed without a deprecation period or a shim when the
+project home's cell survey became a 3D view. None is in the API reference
+except ``mufinder.science.cell_projection``, no project data depends on them,
+and only MuFinder's own code and tests used them.
+
+- ``CellSurveyWidget.set_axis``, ``axis``, ``axis_buttons`` and ``canvas``
+  (``mufinder.app.cell_survey_widget``), with the private ``_SurveyCanvas``:
+  the survey's ``viewer`` (an ``AtomicStructureViewer``) has its own ``Along``
+  buttons and ``Reset View``. ``set_survey``, ``current_layer``,
+  ``highlight_marker`` and ``highlighted_marker`` stay.
+- ``mufinder.science.cell_projection`` (``cell_projection``,
+  ``CellProjection``, ``ProjectedPoint``, ``PROJECTION_AXES`` and
+  ``periodic_boundary_images``): no replacement; nothing draws a flat
+  projection of a cell any more.
+- ``cell_survey_species_tones`` (``mufinder.app.theme``): no replacement; the
+  3D view colours atoms by element.
+
+The names below were removed or renamed without a deprecation period or a shim
+when the project navigator became a flat list. None is in the API reference, no
+project data depends on them, and only MuFinder's own code and tests used them.
+
+- ``WorkflowDefinition`` and ``workflow_definitions``
+  (``mufinder.app.project_navigator``): ``navigator_rows`` lists the rows as
+  ``NavigatorRow`` records, built from the stage catalogue.
+- ``ProjectNavigator.tree``, ``home_button``, ``find_item``, ``rebuild``,
+  ``refresh_stage_icons``, ``select_route``, ``set_item_label``,
+  ``clear_selection``, ``focus_tree``, ``COMPLETE_ROLE`` and ``GOAL_ROLE``:
+  use ``view``, ``rows``, ``row``, ``has_route``, ``index_of``, ``refresh``,
+  ``set_current_route`` (which emits nothing), ``set_row_label`` and
+  ``focus_list``. The ``Project Home`` row replaces the home button.
+- ``ProjectSummary.completed_groups`` (``mufinder.services.project_summary``):
+  call ``group_status``, which calls a group complete when every stage in it
+  is complete. ``convergence_complete``,
+  ``relaxation_analysis_workspace_clustered`` and
+  ``magnetic_field_workspace_complete`` have no replacement: a group's rule
+  is ``COMPLETION_CHECKS[group_key]``, and workspace rows carry no seal.
+- ``AnalysisWorkspacesDeps.refresh_stage_icons`` and
+  ``refresh_project_tree`` (``mufinder.app.workflow_controllers``), and
+  ``ComparisonTablesDeps.refresh_project_tree`` and ``set_tree_label``: use
+  ``refresh_navigator`` and ``set_navigator_label``.
+
+The keywords below were removed without a deprecation period. They belonged to
+an unpersisted record that is not in the API reference and that only MuFinder
+constructs, so no project data or packaged build depends on them. Code that
+passed one switches to the replacement named.
+
+- ``retrieve_den_fmt`` / ``retrieve_out_cell`` / ``retrieve_phonon`` /
+  ``retrieve_ts`` / ``task_farming_enabled`` / ``num_farms`` keywords of
+  ``ClusterJobSubmission`` (``mufinder.services.job_execution_controller``,
+  last accepted in 0.5.0): pass ``retrieval=RetrievalFlags(...)`` with the
+  same keyword names, or ``retrieval=RetrievalFlags.for_calc_type(...)``, from
+  ``mufinder.services.job_artifacts``.
+
+The module below was removed without a deprecation period, together with the
+analysis window tab that was its only caller. It was in the API reference, but
+no workflow fed it and nothing it returned was persisted, so projects need no
+migration and load unchanged. It has no replacement: each muon mode's harmonic
+zero-point energy and width are in the Quantum Corrections results, from
+``mufinder.science.quantum_phonons``.
+
+- ``mufinder.science.quantum_adiabatic``, with ``DirectionalPotential``,
+  ``SingleParticleResult``, ``solve_single_particle_ground_state`` and
+  ``effective_mass_from_relaxed_scan``.
+
+The names below were removed without a deprecation period. They were in the
+API reference (last in 0.8.0), but no MuFinder code called them and nothing
+they returned was persisted, so projects need no migration and load
+unchanged. Code that used one switches to the replacement named.
+
+- ``calculate_dipolar_tensors`` (``mufinder.science.magnetic_fields``,
+  re-exported from ``mufinder.science``): call
+  ``calculate_dipolar_tensors_for_atoms`` with
+  ``magnetic_ion_indices=assigned_magnetic_atom_indices(structure, model)``,
+  and ``to_json()`` on each result for the dictionaries it returned.
+- ``rectangular_prism_tensor``, ``rectangular_prism_shape``,
+  ``fourier_k_grid``, ``magnetometric_demagnetizing_tensor``,
+  ``demagnetizing_tensor_field`` and ``DemagnetizingTensorField``
+  (``mufinder.science.demagnetization``): the magnetometric tensor of a voxel
+  shape is ``voxel_demagnetizing_tensor``, and of a rectangular prism
+  ``demagnetizing_factors_rectangular_prism``. The local tensor at a point
+  has no replacement.
+- ``MUON_GYROMAGNETIC_RATIO_MHZ_PER_T`` (``mufinder.science.magnetic_fields``)
+  and ``GAMMA_MU_OVER_2PI_MHZ_T`` / ``GAMMA_MU_RAD_S_T``
+  (``mufinder.science.nuclear_relaxation``): import
+  ``MUON_GAMMA_OVER_2PI_MHZ_T`` / ``MUON_GAMMA_RAD_S_T`` from
+  ``mufinder.domain.constants``, which hold the same values.
+
+The dialog below was removed without a deprecation period. ``mufinder.app`` is
+not in the API reference, no project data depends on it, and only MuFinder's
+tests constructed it.
+
+- ``DipolarTensorResultsDialog`` (``mufinder.app.magnetic_field_widget``):
+  ``DipolarTensorDialog`` from ``mufinder.app.magnetic_analysis_dialogs``
+  shows the calculated tensors in the same units.
+
+The module and method below were removed without a deprecation period, with
+the ``Using: …`` lines of the Generation and Relaxations pages that were their
+only users. ``mufinder.app`` is not in the API reference, no project data
+depends on them, and only MuFinder's code and tests used them.
+
+- ``mufinder.app.active_host_badge``, with ``ActiveHostBadge``, and
+  ``MuonRelaxationWidget.set_active_host``: the navigator's ``Host Structure``
+  row names the active host (``mufinder.app.project_navigator``).
+
+The module-level names below live in another module and keep no import alias
+at their former path. That module is not in the API reference and no MuFinder
+code imported these names from it. Code that did imports them from the module
+named.
+
+- ``REMOTE_STALE_OUTPUT_SLACK_SECONDS``
+  (``mufinder.services.cluster_runner``): import it from
+  ``mufinder.services.cluster_retrieval``.
+
+The names below belong to the relaxation import and keep no alias. No project
+data depends on them, and only MuFinder's own code and tests used them.
+
+- ``mufinder.app.legacy_import_dialog``, with ``LegacyImportDialog``,
+  ``LegacyScanWorker`` and ``start_legacy_scan``: use
+  ``mufinder.app.relaxation_import_dialog``, with ``RelaxationImportDialog``,
+  ``RelaxationScanWorker`` and ``start_relaxation_scan``.
+- ``site_index_from_stem`` and ``LEGACY_MUON_LABELS``
+  (``mufinder.services.legacy_import``), ``LEGACY_SOURCE_DIRNAME`` and
+  ``LEGACY_MANIFEST_NAME`` (``mufinder.services.legacy_import_commit``): runs are
+  named from their seed, and ``SOURCE_DIRNAME`` and ``SOURCE_MANIFEST_NAME`` name
+  the current archive. ``DetectedRun.site_index`` and
+  ``RelaxationFolderScan.host_cif`` are gone with them.
+
+The Magnetic Fields names below live in the module named and keep no import
+alias in ``mufinder.app.magnetic_field_widget``, which holds the page and its
+Calculation Settings dialog. ``mufinder.app`` is not in the API reference, no
+project data depends on where a class is defined, and only MuFinder's own code,
+tests and documentation scripts imported them from there.
+
+- ``MagneticComponentDialog``, ``AtomPhaseDialog``, ``MagneticPresetDialog``
+  and ``MagneticComponentTable``: ``mufinder.app.magnetic_component_dialogs``.
+- ``MagneticTextureDialog``, ``MagneticTexturePreview`` and
+  ``CornerHelpGroupBox``: ``mufinder.app.magnetic_texture_dialog``.
+- ``MagneticStructureBuilderDialog``:
+  ``mufinder.app.magnetic_structure_builder``.
+- ``MuonSiteSelectionDialog``: ``mufinder.app.magnetic_site_dialog``.
+- ``MagneticFieldDistributionDialog``:
+  ``mufinder.app.magnetic_field_distribution_dialog``.
+- ``DemagnetizingFieldAdvancedDialog``, ``demag_sample_summary`` and the
+  ``ADVANCED_DEMAG_SHAPE_OPTIONS``, ``ADVANCED_DEMAG_SHAPES``,
+  ``DEMAG_VOXEL_GRID_OPTION``, ``DEMAG_ORIENTATION_OPTIONS`` and
+  ``DEMAG_SAVED_ROTATION_OPTION`` constants:
+  ``mufinder.app.demagnetizing_dialogs``.
+- ``NuclearRelaxationDialog`` and ``DipolarTensorDialog``:
+  ``mufinder.app.magnetic_analysis_dialogs``.
+
+The keywords below were replaced without a deprecation period, last accepted
+in 0.8.0. They are in the API reference, but only MuFinder's own code passed
+them and neither changes what a project stores: a k-point overview snapshot
+still records its grids as ``point_labels``, and older snapshots read as
+before. Code that passed one passes the grids instead.
+
+- ``point_labels`` of ``analyze_kpoint_convergence``
+  (``mufinder.science.convergence_analysis``): pass ``point_grids``, which maps
+  each k-point count to its grid (``{27.0: (3, 3, 3)}``) in place of the grid's
+  text (``{27.0: "3 x 3 x 3"}``).
+- ``labels`` of ``build_kpoint_overview_snapshot``
+  (``mufinder.services.convergence_defaults``): pass ``point_grids``, which
+  maps each k-point count to its grid in place of its ``Grid: a x b x c``
+  label.
+
+The Magnetic Fields page no longer offers a stored muon site whose
+``generation_method`` is ``uep_batch_cluster``, a value that only an early
+version of the UEP workflow wrote and that nothing writes now. Such a site
+stays in the project: it loads unchanged, the duplicate-site check of site
+generation still reads it, and the project survey and the muon generation
+table still label it as a UEP site. It is left off the ``UEP sites`` source of
+``Select Muon Site`` (``UEP_CLUSTER_SITE_METHODS`` in
+``mufinder.services.magnetic_field_sites``), so no shim or schema migration is
+needed; a field calculation for that position uses a custom site, or a site
+generated again with the ``UEP clusters`` method.
+
+The hierarchical and k-means clustering of relaxed sites lives in
+``mufinder.science.feature_clustering`` and keeps no import alias in
+``mufinder.science.uep_clustering``, which now holds the grouping of UEP minima:
+only MuFinder's own code and tests imported these names, and no project stores
+them. ``UepClusterSimilaritySummary`` is ``FeatureClusterSimilarity``,
+``UepClusteringConfig`` is ``FeatureClusteringConfig``, ``UepClusteringResult`` is
+``FeatureClusteringResult``, ``UepPreparedClusteringDataset`` is
+``PreparedFeatureDataset``, ``prepare_uep_clustering_dataset`` is
+``prepare_feature_dataset`` and ``cluster_prepared_uep_dataset`` is
+``cluster_prepared_features``; ``dendrogram_node_clusters`` keeps its name. In
+``mufinder.science.relaxation_analysis``, ``uep_summary_to_relaxation_clusters`` is
+``feature_summary_to_relaxation_clusters``.
+
+``cluster_optimized_positions``, ``cluster_uep_optimizations`` and
+``mufinder.services.uep_optimize_job.summarize_batch_results`` are gone, with no
+replacement of the same shape: group a batch with ``group_uep_minima``. So is the
+lazy ``__getattr__`` in ``mufinder.science.uep`` that resolved the clustering names
+from there; its one minor release of grace ended with 0.6.x.
+
+``calculate_optimization_zero_point_energy`` and the ``include_zero_point_energy``
+argument of ``probe_point`` and ``optimize_muon_position`` are gone:
+``optimize_muon_position`` always returns the zero-point energy. Its ``tolerance_ev``
+argument is ``force_tolerance_ev_per_ang``, because it holds a gradient norm. No alias
+is kept, since nothing outside MuFinder calls them and no project stores them.
+
+The names below were removed without a deprecation period, together with the
+point-probe, line and plane pages of the UEP analysis window, which were built but
+never shown, and a UEP job runner that nothing started. They were in the API
+reference (last in 0.8.0), but no MuFinder code called them, nothing they returned
+was persisted, and no project refers to a file the runner wrote, so projects need
+no migration and load unchanged. The saved inputs and outputs of those pages are
+covered in the ledger above.
+
+- ``sample_line``, ``sample_plane``, ``UepLineSample`` and ``UepPlaneSample``
+  (``mufinder.science.uep``): ``sample_grid_slice`` samples the potential on a
+  plane through the cell, and ``UepField.potential`` at any points.
+- ``particle_mass_kg_from_amu`` (``mufinder.science.uep``): multiply by
+  ``ATOMIC_MASS_KG`` from ``mufinder.domain.constants``.
+- ``mufinder.services.uep_optimize_job``, with ``UepJobResult``,
+  ``manifest_file_name``, ``result_file_name``, ``write_manifest``,
+  ``parse_result_file``, ``payload_to_probe`` and ``run_manifest_file``: the batch
+  search of the UEP analysis window runs ``optimize_muon_position`` from
+  ``mufinder.science.uep``.
+- ``regroup_saved_uep_searches`` and ``UEP_ANALYSIS_STATES_KEY``
+  (``mufinder.services.uep_grouping``, the key also re-exported from
+  ``mufinder.services.project_survey``): import them from
+  ``mufinder.services.uep_results``, where regrouping works on stored searches.
+
+``serialize_potential_grid`` and ``deserialize_potential_grid``
+(``mufinder.science.uep``) are removed with no replacement. Their payload was
+stored, as the ``uep_potential_grid`` result, and the schema 7 to 8 step removes
+those results; the window computes the grid with ``potential_grid`` from a
+``UepField`` whenever it shows it.
+
+The names below are no longer importable from ``mufinder.science.uep``. Their
+one minor release of grace ended with 0.6.x; only MuFinder's tests imported them
+from there, and none is persisted.
+
+- ``FormattedDensity``, ``IonicPseudopotential`` and ``castep_total_charge``:
+  import them from ``mufinder.castep_io.charge_density``.
+
+UEP generated-site coordinate frame
+-----------------------------------
+
+``MuonSite.properties["uep_position_frame"] == "host"`` records that a UEP
+selection was converted to host-cell coordinates at generation. It is additive;
+no schema migration is required. A saved UEP start without the marker retains
+both stored positions and shows a coordinate warning. The warning is conservative:
+absence of the marker does not prove that a site is wrong. The marker survives
+clustering and staging, which operate in the host cell. Keep the missing-marker
+reader while projects with unverified starts can be opened.

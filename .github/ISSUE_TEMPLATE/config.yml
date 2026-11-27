@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Documentation
+    url: https://benhuddart.github.io/mufinder/
+    about: The user guide and workflow reference.
+  - name: Contributing guidelines
+    url: https://github.com/BenHuddart/mufinder/blob/main/CONTRIBUTING.md
+    about: How to report problems, and how to become a collaborator.

@@ -1,0 +1,25 @@
+{
+  "calc_type": "castep_positive_muon_relaxation",
+  "completed_at": null,
+  "created_at": "2026-10-14T20:17:07.787712+00:00",
+  "dismissed_at": null,
+  "error_message": null,
+  "execution_target": "local",
+  "failure_reason": null,
+  "id": "75fec760-3aa4-4f34-b452-ca05f0e74650",
+  "label": "Site 1",
+  "last_checked_at": null,
+  "last_status_message": null,
+  "last_status_source": null,
+  "num_processes": null,
+  "remote_directory": null,
+  "remote_job_id": null,
+  "started_at": null,
+  "status": "completed",
+  "submitted_at": null,
+  "tags": [
+    "muon_relaxation",
+    "castep_positive_muon_relaxation"
+  ],
+  "workflow_stage": "muon_relaxation"
+}

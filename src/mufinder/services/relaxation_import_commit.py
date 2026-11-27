@@ -1,0 +1,1126 @@
+"""Turn detected CASTEP relaxations into project entities and files.
+
+Where :mod:`mufinder.services.relaxation_import` only *reports* what a folder holds,
+this module commits it: for each selected run it builds the five-entity chain
+the downstream eligibility gate requires, materialises a job directory, and
+records provenance.
+
+Two contracts govern what is built, and both are easy to satisfy incompletely:
+
+**The eligibility gate** (``workflow.quantum.quantum_source_eligibility``, plus
+the caller that resolves run → job → result → structure) decides whether an
+imported site appears as a Quantum Corrections or Energy Barriers source.
+
+**Host resolution** (``ProjectService.resolve_underlying_host``) decides whether
+a downstream job can actually be *submitted*. It walks
+``Structure.parent_structure_id`` for an ancestor whose origin is ``imported``
+or ``pristine_relaxation``. An imported relaxed structure has origin
+``muon_relaxation``, so without a parent the walk returns ``None`` and every
+submission dies in a host-mismatch dialog — after passing every visible check.
+Setting the parent is one line and the whole feature depends on it.
+
+Files are laid out so the *downstream parameter inheritance* path finds them:
+that path re-reads ``<jobdir>/<seed>.cell`` and ``<jobdir>/<seed>.param`` from
+disk rather than consulting the document. An input frequently states neither
+the cutoff (implied by ``BASIS_PRECISION``) nor the k-point grid (never written
+to the local input cell), so the seed files are **re-rendered** from the
+parameters the ``.castep`` reports, with the byte-exact originals archived
+alongside. See ``docs/relaxation_import.rst``.
+
+Layering: ``services`` may use ``castep_io``, ``science`` and ``domain``. It must
+not import ``app`` or ``workflow``, so the definition rows this module produces
+are plain payload dictionaries in the persisted configuration shape rather than
+``MuonRelaxationRow`` instances.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+import json
+import os
+from pathlib import Path
+import shutil
+from typing import Any, Callable, Mapping, Sequence
+from uuid import UUID, uuid4
+
+from mufinder.castep_io.cell_writer import write_cell
+from mufinder.castep_io.param_writer import write_param
+from mufinder.castep_io.schema import canonical_keyword_name, get_keyword_spec
+from mufinder.castep_io.types import (
+    AtomicPosition,
+    BlockSection,
+    CellFile,
+    KeywordAssignment,
+    LatticeCart,
+    ParamFile,
+    PositionBlock,
+)
+from mufinder.domain.charge_states import (
+    POSITIVE_MUON_CHARGE_STATE,
+    muon_charge_for_state,
+    muon_charge_state_prefix,
+    muon_relaxation_calc_type,
+)
+from mufinder.domain.constants import IMPORTED_JOB_TAG, MUON_GAMMA_RAD_S_T, MUON_MASS_AMU
+from mufinder.services.job_paths import free_job_seed
+from mufinder.domain.enums import JobStatus, WorkflowStage
+from mufinder.domain.models import (
+    CalculationRun,
+    Job,
+    MuonSite,
+    ProvenanceRecord,
+    Result,
+    Structure,
+    next_job_created_at,
+    utc_now,
+)
+from mufinder.domain.text import plain_error, plural
+from mufinder.science.lattice import lattice_frac_to_cart, vector_length, wrap_fractional
+from mufinder.services.relaxation_import import (
+    MUON_SPECIES,
+    DetectedRun,
+    RelaxationFolderScan,
+    file_digest,
+    seed_is_usable,
+)
+
+#: Directory inside a job folder holding the byte-exact original inputs.
+SOURCE_DIRNAME = "original_inputs"
+#: Manifest naming every archived file with its digest.
+SOURCE_MANIFEST_NAME = "source_manifest.json"
+#: Provenance action for one import. ``services.journal`` renders nothing for an
+#: action it does not know, so a matching journal builder is required.
+IMPORT_ACTION = "import_castep_relaxations"
+#: Every action that records an import batch, including the one older projects hold.
+IMPORT_ACTIONS = frozenset({IMPORT_ACTION, "import_legacy_relaxations"})
+#: ``MuonSite.generation_method`` of an imported site.
+IMPORTED_GENERATION_METHOD = "imported"
+#: ``import_source`` kind on an imported structure.
+IMPORT_SOURCE_KIND = "castep_folder"
+#: ``Structure.origin`` demanded by the eligibility gate. The import marker lives
+#: in ``properties`` instead — see :func:`_build_structure`.
+RELAXED_STRUCTURE_ORIGIN = "muon_relaxation"
+
+
+@dataclass(frozen=True, slots=True)
+class ImportedRelaxation:
+    """Everything one imported run contributed to the project."""
+
+    site_id: UUID
+    job_id: UUID
+    run_id: UUID
+    result_id: UUID
+    structure_id: UUID
+    label: str
+    seed_name: str
+    charge_state: str
+    job_directory: Path
+    #: Definition row in the persisted configuration shape, for the app layer to
+    #: merge into the active muon-relaxation definition.
+    row_payload: dict[str, Any] = field(default_factory=dict)
+    warnings: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class RelaxationImportOutcome:
+    """The result of committing one import batch."""
+
+    batch_id: UUID
+    imported: tuple[ImportedRelaxation, ...] = ()
+    #: ``(run, reason)`` for each selected run left out.
+    skipped: tuple[tuple[str, str], ...] = ()
+    warnings: tuple[str, ...] = ()
+    #: The batch's provenance record, for the caller to persist. Returned rather
+    #: than appended to the document, because appending only reaches memory:
+    #: ``provenance.jsonl`` is append-only through
+    #: ``ProjectService.append_provenance`` and ``save_project`` never rewrites
+    #: it, so a record appended here would vanish on reload.
+    provenance: ProvenanceRecord | None = None
+
+    @property
+    def row_payloads(self) -> list[dict[str, Any]]:
+        """Return the definition rows this batch added, in import order."""
+
+        return [item.row_payload for item in self.imported]
+
+
+def _fold_to_host(
+    position: tuple[float, float, float],
+    matrix: tuple[tuple[int, int, int], tuple[int, int, int], tuple[int, int, int]] | None,
+) -> tuple[float, float, float]:
+    """Fold a supercell fractional position back into host-cell coordinates.
+
+    Mirrors the native muon-relaxation completion path, so an imported site's
+    recorded position means the same thing as a natively relaxed one's.
+    """
+
+    # A supercell fractional row vector times the supercell matrix is the host fractional position.
+    folded = position if matrix is None else lattice_frac_to_cart(position, matrix)
+    return tuple(wrap_fractional(folded))  # type: ignore[return-value]
+
+
+def _relabelled(species: Sequence[str], muon_label: str | None) -> list[str]:
+    """Return species with the muon relabelled to ``H:mu``.
+
+    The eligibility gate hard-requires ``H:mu``. A run may have used a
+    bare ``H``, so the label is normalised here and the change is recorded as a
+    warning rather than applied silently.
+    """
+
+    if muon_label is None or muon_label == MUON_SPECIES:
+        return [str(item) for item in species]
+    relabelled: list[str] = []
+    replaced = False
+    for item in reversed([str(value) for value in species]):
+        if not replaced and item == muon_label:
+            relabelled.append(MUON_SPECIES)
+            replaced = True
+        else:
+            relabelled.append(item)
+    return list(reversed(relabelled))
+
+
+def _cell_for_seed(
+    *,
+    lattice_vectors: Sequence[Sequence[float]],
+    species: Sequence[str],
+    positions: Sequence[Sequence[float]],
+    parameters: dict[str, Any],
+) -> CellFile:
+    """Build the ``.cell`` an imported job directory should carry.
+
+    Holds the run's **initial** structure — so initial-versus-relaxed comparison
+    stays truthful — with the k-point grid the run actually used made explicit.
+    That grid is what the downstream inheritance path reads, and an input cell
+    frequently does not contain it.
+    """
+
+    grid = parameters.get(canonical_keyword_name("cell", "kpoint_mp_grid"))
+    kpoint_mp_grid: tuple[int, int, int] | None = None
+    if isinstance(grid, (list, tuple)) and len(grid) == 3:
+        try:
+            kpoint_mp_grid = (int(grid[0]), int(grid[1]), int(grid[2]))
+        except (TypeError, ValueError):
+            kpoint_mp_grid = None
+
+    return CellFile(
+        lattice_cart=LatticeCart(
+            vectors=tuple(tuple(float(value) for value in row) for row in lattice_vectors),  # type: ignore[arg-type]
+            unit="ang",
+        ),
+        positions_frac=PositionBlock(
+            positions=tuple(
+                AtomicPosition(
+                    species=str(name),
+                    coordinates=(float(row[0]), float(row[1]), float(row[2])),
+                )
+                for name, row in zip(species, positions, strict=False)
+            )
+        ),
+        kpoint_mp_grid=kpoint_mp_grid,
+        blocks=(
+            BlockSection(name="species_mass", rows=((MUON_SPECIES, MUON_MASS_AMU),), unit="AMU"),
+            BlockSection(
+                name="species_gamma",
+                rows=((MUON_SPECIES, MUON_GAMMA_RAD_S_T),),
+                unit="radsectesla",
+            ),
+        ),
+        scalars=(KeywordAssignment("fix_all_cell", True),),
+    )
+
+
+#: Keywords that belong in the rendered ``.param``. Structure-controlled and
+#: cell-file keywords are excluded: they are carried by the ``.cell``, and
+#: emitting them here would produce a file CASTEP rejects.
+_PARAM_EXCLUDED = frozenset(
+    {"kpoint_mp_grid", "kpoint_mp_spacing", "fix_all_cell", "symmetry_generate"}
+)
+
+#: Keywords the import *asserts* rather than recovers. ``TASK`` and ``CHARGE``
+#: define what the job is; ``FIX_ALL_CELL`` and ``WRITE_CELL_STRUCTURE`` are
+#: required by the workflow. All four are rendered as locked values in the
+#: parameter dialog, so a recovered value for one of them must never reach a
+#: definition row and appear as if the row had chosen it.
+_ASSERTED_KEYWORDS = frozenset({"task", "charge", "fix_all_cell", "write_cell_structure"})
+
+#: Resolved first, so a mutually exclusive pair resolves the right way round.
+_PRIORITY_KEYWORDS = ("cut_off_energy",)
+
+
+def resolve_recovered_parameters(
+    parameters: Mapping[str, Any],
+) -> tuple[dict[str, Any], list[str]]:
+    """Resolve a merged recovery into the parameter set the run actually used.
+
+    Returns the resolved ``param`` keywords in canonical form, in deterministic
+    emission order, and the keywords deliberately dropped because a mutually
+    exclusive partner won.
+
+    Only keywords the runtime schema recognises as ``param`` keywords survive,
+    so a file rendered from this always validates.
+
+    **Mutually exclusive keywords must be resolved, not merged.** A run often
+    declares ``BASIS_PRECISION`` in its ``.param`` while the output
+    echo reports the ``CUT_OFF_ENERGY`` CASTEP derived from it, so a merged
+    parameter set naturally holds both — and CASTEP treats them as exclusive.
+    The resolved cutoff wins: it is what the calculation actually used, and it
+    is the value downstream jobs inherit. Emitting them in the order they happen
+    to sort would keep the wrong one.
+
+    Shared deliberately by the rendered ``.param`` and by the definition row the
+    parameter dialog displays. The row is what a user reads to learn what the
+    run used; the file is what downstream jobs inherit. Two descriptions of one
+    historical run that disagree would be worse than either being wrong alone,
+    so the rule lives here once rather than being restated at each call site.
+    """
+
+    resolved: dict[str, Any] = {}
+    dropped: list[str] = []
+    # ``task`` and ``charge`` are forced by the caller, so seed them as seen:
+    # anything mutually exclusive with them must lose, exactly as it would have
+    # had they been emitted from recovery.
+    seen = {"task", "charge"}
+
+    def _emit(canonical: str, value: Any) -> None:
+        spec = get_keyword_spec("param", canonical)
+        if spec is None:
+            return
+        for other in spec.mutually_exclusive_with:
+            if canonical_keyword_name("param", other) in seen:
+                dropped.append(canonical)
+                return
+        resolved[canonical] = value
+        seen.add(canonical)
+
+    for preferred in _PRIORITY_KEYWORDS:
+        canonical = canonical_keyword_name("param", preferred)
+        if parameters.get(canonical) is not None:
+            _emit(canonical, parameters[canonical])
+
+    for name, value in sorted(parameters.items()):
+        canonical = canonical_keyword_name("param", str(name))
+        if canonical in seen or canonical in _PARAM_EXCLUDED or value is None:
+            continue
+        _emit(canonical, value)
+
+    return resolved, dropped
+
+
+def _param_for_seed(
+    parameters: dict[str, Any], *, charge_state: str
+) -> tuple[ParamFile, list[str]]:
+    """Build the ``.param`` an imported job directory should carry.
+
+    Returns the file and the keywords deliberately dropped from it. ``TASK`` and
+    ``CHARGE`` are forced to the values the import asserts rather than taken from
+    recovery, because they define what the job *is*; everything else comes from
+    :func:`resolve_recovered_parameters`.
+    """
+
+    resolved, dropped = resolve_recovered_parameters(parameters)
+    keywords: list[KeywordAssignment] = [
+        KeywordAssignment("task", "GEOMETRYOPTIMIZATION"),
+        KeywordAssignment("charge", muon_charge_for_state(charge_state)),
+    ]
+    keywords.extend(KeywordAssignment(name, value) for name, value in resolved.items())
+
+    return ParamFile(keywords=tuple(keywords)), dropped
+
+
+class RelaxationImportCancelled(Exception):
+    """Raised when an import's file step is cancelled; nothing it wrote is kept.
+
+    ``left_behind`` names what the step created and could not remove again,
+    innermost first; it is empty when the clean-up was complete.
+    """
+
+    def __init__(self, message: str = "The import was cancelled.", *, left_behind=()) -> None:
+        super().__init__(message)
+        self.left_behind: tuple[Path, ...] = tuple(left_behind)
+
+
+class RelaxationImportFailed(Exception):
+    """Raised when an import's file step fails; nothing it wrote is kept.
+
+    ``source`` is the run's file that could not be read from the chosen folder,
+    or ``None`` when writing into the project failed. The underlying
+    ``OSError`` is the exception's ``__cause__``. ``left_behind`` names what
+    the step created and could not remove again, as for
+    :class:`RelaxationImportCancelled`.
+    """
+
+    def __init__(self, error: OSError, *, source: Path | None, left_behind=()) -> None:
+        super().__init__(plain_error(error))
+        self.error = error
+        self.source = source
+        self.left_behind: tuple[Path, ...] = tuple(left_behind)
+
+
+class _SourceUnreadable(Exception):
+    """A run's own file could not be read; carries the file, the ``OSError`` is the cause."""
+
+    def __init__(self, source: Path) -> None:
+        super().__init__(str(source))
+        self.source = source
+
+
+def _copy_file(source: Path, target: Path) -> None:
+    """``shutil.copy2``, telling a file that cannot be read from one that cannot be written."""
+
+    try:
+        shutil.copy2(source, target)
+    except OSError as exc:
+        if exc.filename is not None and os.fspath(exc.filename) == os.fspath(source):
+            raise _SourceUnreadable(source) from exc
+        raise
+
+
+def _innermost(paths: Sequence[Path]) -> tuple[Path, ...]:
+    """Return the paths with no other of ``paths`` inside them, sorted."""
+
+    unique = set(paths)
+    return tuple(
+        sorted(path for path in unique if not any(path in other.parents for other in unique))
+    )
+
+
+class _CreatedPaths:
+    """What one import's file step created, so a failed or cancelled step can undo it.
+
+    Only paths that did not exist before are recorded, so undoing never touches
+    a file or folder that was there already, such as another import's folder.
+    """
+
+    def __init__(self, should_cancel: Callable[[], bool] | None = None) -> None:
+        self._should_cancel = should_cancel
+        self.files: list[Path] = []
+        self.directories: list[Path] = []
+
+    def checkpoint(self) -> None:
+        """Stop here when the caller has asked to cancel."""
+
+        if self._should_cancel is not None and self._should_cancel():
+            raise RelaxationImportCancelled()
+
+    def make_directory(self, directory: Path) -> None:
+        missing: list[Path] = []
+        for candidate in (directory, *directory.parents):
+            if os.path.lexists(candidate):
+                break
+            missing.append(candidate)
+        # Outermost first, one at a time, each recorded as soon as it exists, so a
+        # failure part-way still leaves every folder made so far on the record and
+        # removal in reverse order empties children before their parents.
+        for candidate in reversed(missing):
+            candidate.mkdir()
+            self.directories.append(candidate)
+
+    def file(self, path: Path) -> Path:
+        """Record ``path`` before it is written, so a partial write is undone too."""
+
+        if not os.path.lexists(path):
+            self.files.append(path)
+        return path
+
+    def remove(self) -> tuple[Path, ...]:
+        """Delete the recorded files, then the recorded folders, children first.
+
+        Returns what could not be removed (the system refused, or something
+        else wrote into a folder), innermost paths only: a path's folders are
+        implied by it. Nothing that was not recorded is touched.
+        """
+
+        for path in reversed(self.files):
+            try:
+                path.unlink()
+            except OSError:
+                pass
+        for directory in reversed(self.directories):
+            try:
+                directory.rmdir()
+            except OSError:
+                # Refused, or not empty: reported below, never forced.
+                pass
+        left = [path for path in (*self.files, *self.directories) if os.path.lexists(path)]
+        self.files.clear()
+        self.directories.clear()
+        return _innermost(left)
+
+
+def _materialise_files(
+    *,
+    run: DetectedRun,
+    job_directory: Path,
+    seed_name: str,
+    species: Sequence[str],
+    positions: Sequence[Sequence[float]],
+    lattice_vectors: Sequence[Sequence[float]],
+    parameters: dict[str, Any],
+    charge_state: str,
+    created: _CreatedPaths,
+) -> tuple[list[str], list[str]]:
+    """Write one imported job directory. Returns (relative files, warnings).
+
+    Records every path it creates in ``created`` and checks for cancellation
+    before each file it copies.
+    """
+
+    warnings: list[str] = []
+    created.make_directory(job_directory)
+    archive = job_directory / SOURCE_DIRNAME
+    created.make_directory(archive)
+
+    written: list[str] = []
+
+    # Byte-exact results, named for the job's seed: job file lookups go by that
+    # seed, and it differs from the source's when two runs share a name.
+    manifest: list[dict[str, str]] = []
+    for source, target_name in (
+        (run.castep_path, f"{seed_name}.castep"),
+        (run.out_cell_path, f"{seed_name}-out.cell"),
+    ):
+        if source is None or not source.is_file():
+            continue
+        created.checkpoint()
+        target = created.file(job_directory / target_name)
+        _copy_file(source, target)
+        written.append(target.name)
+        manifest.append({"file": target.name, "source": str(source), "sha256": file_digest(target)})
+
+    # Byte-exact originals of the *inputs*, which the rendered seed files replace.
+    for source in (run.input_cell_path, run.run_param_path):
+        if source is None or not source.is_file():
+            continue
+        created.checkpoint()
+        target = created.file(archive / source.name)
+        _copy_file(source, target)
+        manifest.append(
+            {
+                "file": f"{SOURCE_DIRNAME}/{target.name}",
+                "source": str(source),
+                "sha256": file_digest(target),
+            }
+        )
+
+    created.file(archive / SOURCE_MANIFEST_NAME).write_text(
+        json.dumps({"version": 1, "files": manifest}, indent=2) + "\n", encoding="utf-8"
+    )
+
+    # A file that cannot be rendered is reported and left out; one that cannot be
+    # written is an error like a failed copy, so the whole import is undone.
+    cell_text: str | None = None
+    try:
+        cell_text = write_cell(
+            _cell_for_seed(
+                lattice_vectors=lattice_vectors,
+                species=species,
+                positions=positions,
+                parameters=parameters,
+            )
+        )
+    except Exception as exc:  # noqa: BLE001 - reported, never fatal
+        warnings.append(
+            f"Could not render {seed_name}.cell, so downstream jobs will not inherit "
+            f"this run's k-point grid: {plain_error(exc)}."
+        )
+    if cell_text is not None:
+        created.file(job_directory / f"{seed_name}.cell").write_text(
+            cell_text, encoding="utf-8", newline="\n"
+        )
+        written.append(f"{seed_name}.cell")
+
+    param_text: str | None = None
+    dropped: list[str] = []
+    try:
+        param_file, dropped = _param_for_seed(parameters, charge_state=charge_state)
+        param_text = write_param(param_file)
+    except Exception as exc:  # noqa: BLE001 - reported, never fatal
+        warnings.append(
+            f"Could not render {seed_name}.param, so downstream jobs will not inherit "
+            f"this run's cutoff: {plain_error(exc)}."
+        )
+    if param_text is not None:
+        created.file(job_directory / f"{seed_name}.param").write_text(
+            param_text, encoding="utf-8", newline="\n"
+        )
+        written.append(f"{seed_name}.param")
+        if dropped:
+            warnings.append(
+                "Superseded by the value the run actually used, so omitted from the "
+                f"rendered .param: {', '.join(sorted(dropped))}."
+            )
+
+    return written, warnings
+
+
+def _build_structure(
+    *,
+    run: DetectedRun,
+    label: str,
+    host_structure: Structure,
+    species: Sequence[str],
+    positions: Sequence[Sequence[float]],
+    lattice_vectors: Sequence[Sequence[float]],
+    job_id: UUID,
+    batch_id: UUID,
+    mulliken_spins: Sequence[float] | None,
+) -> Structure:
+    """Build the relaxed structure an imported run contributes.
+
+    ``origin`` and ``source_workflow_stage`` are pinned to the values the
+    eligibility gate demands, so the import marker lives in ``properties``
+    instead. ``parent_structure_id`` is the active host: without it every
+    downstream submission fails host resolution.
+    """
+
+    properties: dict[str, Any] = {
+        "source_workflow_stage": WorkflowStage.MUON_RELAXATION.value,
+        "source_job_id": str(job_id),
+        "import_source": {
+            "kind": IMPORT_SOURCE_KIND,
+            "batch_id": str(batch_id),
+            "seed_name": run.seed_name,
+            "relative_name": run.relative_name,
+            "castep_version": run.castep_version,
+        },
+    }
+    if mulliken_spins:
+        # The converged Mulliken moments are output rather than input spins, so
+        # they are recorded as such rather than presented as user-specified input.
+        properties["atomic_spins"] = [float(value) for value in mulliken_spins]
+        properties["atomic_spins_source"] = "castep_mulliken"
+
+    return Structure(
+        label=label,
+        origin=RELAXED_STRUCTURE_ORIGIN,
+        lattice_vectors=[[float(value) for value in row] for row in lattice_vectors],
+        species=[str(name) for name in species],
+        fractional_positions=[[float(value) for value in row] for row in positions],
+        parent_structure_id=host_structure.id,
+        properties=properties,
+    )
+
+
+def row_parameter_values(run: DetectedRun) -> dict[str, Any]:
+    """Return the parameters an imported definition row should carry.
+
+    The resolved recovery — the same set the rendered ``.param`` holds — plus
+    ``KPOINT_MP_GRID``, which belongs to the ``.cell`` rather than the ``.param``
+    and is frequently recoverable only from the output echo. The keywords the
+    import asserts are excluded; see :data:`_ASSERTED_KEYWORDS`.
+
+    An empty result is meaningful and must be preserved: it says recovery found
+    nothing, not that the run used the workflow's current defaults.
+    """
+
+    resolved, _ = resolve_recovered_parameters(run.parameters)
+    values = {name: value for name, value in resolved.items() if name not in _ASSERTED_KEYWORDS}
+
+    grid = run.parameters.get(canonical_keyword_name("cell", "kpoint_mp_grid"))
+    if isinstance(grid, (list, tuple)) and len(grid) == 3:
+        try:
+            values["kpoint_mp_grid"] = [int(component) for component in grid]
+        except (TypeError, ValueError):
+            pass
+    return values
+
+
+def _row_payload(
+    *,
+    site_id: UUID,
+    label: str,
+    run: DetectedRun,
+    charge_state: str,
+    batch_id: UUID,
+) -> dict[str, Any]:
+    """Build one definition row in the persisted configuration shape.
+
+    Plain data rather than a ``MuonRelaxationRow``: that dataclass lives in the
+    app layer, which ``services`` may not import.
+
+    ``added_advanced`` is deliberately left empty rather than computed from the
+    recovered names. The parameter dialog promotes any advanced keyword that
+    arrives carrying an active value, so a recovered advanced keyword renders
+    without being listed here — and an empty list cannot drift with the runtime
+    keyword catalog, which keeps the row signature stable across machines.
+    """
+
+    # Host frame, not the supercell frame the input cell states it in. Every
+    # other relaxation row takes this field from ``MuonSite.initial_fractional_position``
+    # (host coordinates), and job expansion converts host -> supercell on the way
+    # out. Storing supercell coordinates here would show the wrong numbers in the
+    # table's Initial columns and, if the row were ever re-expanded, transform
+    # them a second time.
+    initial = _fold_to_host(
+        run.initial_muon_fractional_supercell or (0.0, 0.0, 0.0),
+        run.supercell_matrix,
+    )
+    return {
+        "site_id": str(site_id),
+        "label": label,
+        "initial_fractional_position": [float(value) for value in initial],
+        "charge_state": charge_state,
+        "supercell_matrix": (
+            [list(line) for line in run.supercell_matrix]
+            if run.supercell_matrix is not None
+            else None
+        ),
+        "parameter_values": row_parameter_values(run),
+        "added_advanced": [],
+        "imported": True,
+        "import_batch_id": str(batch_id),
+    }
+
+
+def _unique_label(base: str, taken: set[str]) -> str:
+    """Return ``base``, suffixed until unused.
+
+    Row keys are ``{charge_prefix}:{label}``, so a collision would silently
+    overwrite an existing row's job mapping.
+    """
+
+    if base not in taken:
+        taken.add(base)
+        return base
+    index = 2
+    while f"{base} ({index})" in taken:
+        index += 1
+    label = f"{base} ({index})"
+    taken.add(label)
+    return label
+
+
+@dataclass(frozen=True, slots=True)
+class StagedRelaxation:
+    """One run whose files are in the project, waiting for its entities."""
+
+    run: DetectedRun
+    label: str
+    seed_name: str
+    charge_state: str
+    job_directory: Path
+    #: The relaxed cell, with the muon relabelled to ``H:mu``.
+    species: tuple[str, ...]
+    fractional_positions: tuple[tuple[float, ...], ...]
+    lattice_vectors: tuple[tuple[float, ...], ...]
+    #: Files in the job folder that the result lists, relative to it.
+    written: tuple[str, ...]
+    file_warnings: tuple[str, ...]
+
+
+@dataclass(slots=True)
+class StagedRelaxationImport:
+    """An import whose files are written and whose entities are not built yet.
+
+    :func:`stage_relaxation_import` returns it; :func:`build_relaxation_import`
+    turns it into entities, and :func:`discard_staged_import` removes its files
+    when the import goes no further.
+    """
+
+    batch_id: UUID
+    scan: RelaxationFolderScan
+    staged: tuple[StagedRelaxation, ...] = ()
+    #: ``(run, reason)`` for each selected run left out.
+    skipped: tuple[tuple[str, str], ...] = ()
+    warnings: tuple[str, ...] = ()
+    _created: _CreatedPaths | None = None
+
+
+def stage_relaxation_import(
+    *,
+    scan: RelaxationFolderScan,
+    runs: Sequence[DetectedRun],
+    output_root: Path,
+    batch_id: UUID | None = None,
+    label_prefix: str = "Imported",
+    existing_labels: Sequence[str] = (),
+    should_cancel: Callable[[], bool] | None = None,
+) -> StagedRelaxationImport:
+    """Write the job folders for ``runs`` and return what entities to build.
+
+    The file step of an import: it reads the runs' relaxed cells, chooses each
+    row's label and job folder, and copies and renders the files, but builds no
+    entity and touches no project document, so it may run off the GUI thread.
+
+    It is all or nothing. When a file cannot be read or written, or
+    ``should_cancel`` returns true before a file is copied, every file and folder
+    this call created is removed, children before parents, and
+    :class:`RelaxationImportFailed` or :class:`RelaxationImportCancelled` is
+    raised, naming anything the system refused to remove. Files and folders that
+    existed before are never touched.
+    """
+
+    batch = batch_id or uuid4()
+    created = _CreatedPaths(should_cancel)
+    staged: list[StagedRelaxation] = []
+    skipped: list[tuple[str, str]] = []
+    warnings: list[str] = list(scan.warnings)
+    taken = set(existing_labels)
+
+    try:
+        for run in runs:
+            created.checkpoint()
+            if not run.importable:
+                skipped.append((run.display_name, "; ".join(run.blockers)))
+                continue
+            if run.out_cell_path is None:
+                skipped.append((run.display_name, "No relaxed cell to import."))
+                continue
+            if not seed_is_usable(run.seed_name):
+                skipped.append((run.display_name, "Its file name cannot name a job folder."))
+                continue
+
+            charge_state = run.charge_state or POSITIVE_MUON_CHARGE_STATE
+            if run.charge_state is None:
+                warnings.append(
+                    f"{run.display_name}: charge state was undetermined; "
+                    "imported as a positive muon."
+                )
+
+            from mufinder.castep_io.cell_parser import parse_cell_file
+
+            try:
+                relaxed = parse_cell_file(run.out_cell_path, geometry_only=True)
+            except Exception as exc:  # noqa: BLE001
+                skipped.append(
+                    (run.display_name, f"Could not read the relaxed cell: {plain_error(exc)}.")
+                )
+                continue
+
+            species = _relabelled(relaxed.species, run.muon_label)
+            label = _unique_label(f"{label_prefix} {run.seed_name}", taken)
+            prefix = muon_charge_state_prefix(charge_state)
+            # Runs in different folders often share a seed. Writing into an occupied folder
+            # would overwrite the other run's outputs, and removing either batch delete both.
+            seed_name = free_job_seed(run.seed_name, Path(output_root) / prefix)
+            job_directory = Path(output_root) / prefix / seed_name
+
+            written, file_warnings = _materialise_files(
+                run=run,
+                job_directory=job_directory,
+                seed_name=seed_name,
+                species=species,
+                positions=_initial_positions(run) or relaxed.fractional_positions,
+                lattice_vectors=relaxed.lattice_vectors,
+                parameters=run.parameters,
+                charge_state=charge_state,
+                created=created,
+            )
+            staged.append(
+                StagedRelaxation(
+                    run=run,
+                    label=label,
+                    seed_name=seed_name,
+                    charge_state=charge_state,
+                    job_directory=job_directory,
+                    species=tuple(species),
+                    fractional_positions=tuple(tuple(row) for row in relaxed.fractional_positions),
+                    lattice_vectors=tuple(tuple(row) for row in relaxed.lattice_vectors),
+                    written=tuple(written),
+                    file_warnings=tuple(file_warnings),
+                )
+            )
+    except _SourceUnreadable as exc:
+        left = created.remove()
+        cause = exc.__cause__ if isinstance(exc.__cause__, OSError) else OSError(str(exc))
+        raise RelaxationImportFailed(cause, source=exc.source, left_behind=left) from cause
+    except RelaxationImportCancelled:
+        raise RelaxationImportCancelled(left_behind=created.remove()) from None
+    except OSError as exc:
+        raise RelaxationImportFailed(exc, source=None, left_behind=created.remove()) from exc
+    except BaseException:
+        created.remove()
+        raise
+
+    return StagedRelaxationImport(
+        batch_id=batch,
+        scan=scan,
+        staged=tuple(staged),
+        skipped=tuple(skipped),
+        warnings=tuple(warnings),
+        _created=created,
+    )
+
+
+def discard_staged_import(staged: StagedRelaxationImport) -> tuple[Path, ...]:
+    """Remove the files and folders a staged import created.
+
+    For an import that goes no further than its file step, such as one
+    cancelled just as its copies finished. Never touches anything that existed
+    before the import. Returns what could not be removed, innermost paths only.
+    """
+
+    if staged._created is None:
+        return ()
+    return staged._created.remove()
+
+
+def build_relaxation_import(
+    document: Any,
+    staged: StagedRelaxationImport,
+    *,
+    host_structure: Structure,
+) -> RelaxationImportOutcome:
+    """Build the entities for a staged import and add them to ``document``.
+
+    The entity step of an import, run on the GUI thread once the files are in
+    place. ``document`` is a ``ProjectDocument``; it is typed loosely to avoid a
+    circular import with :mod:`mufinder.services.project_service`. Every
+    entity is built before any is inserted, so the document gains the whole
+    batch or none of it.
+    """
+
+    batch = staged.batch_id
+    imported: list[ImportedRelaxation] = []
+    site_records: list[dict[str, Any]] = []
+    new_jobs: list[Job] = []
+    entities: list[tuple[Structure, MuonSite, Job, CalculationRun, Result]] = []
+
+    for item in staged.staged:
+        run = item.run
+        charge_state = item.charge_state
+        label = item.label
+        seed_name = item.seed_name
+        job_directory = item.job_directory
+        prefix = muon_charge_state_prefix(charge_state)
+
+        job = Job(
+            label=label,
+            workflow_stage=WorkflowStage.MUON_RELAXATION,
+            calc_type=muon_relaxation_calc_type(charge_state),
+            status=JobStatus.COMPLETED,
+            execution_target="local",
+            created_at=next_job_created_at([*document.jobs.values(), *new_jobs]),
+            tags=[
+                WorkflowStage.MUON_RELAXATION.value,
+                muon_relaxation_calc_type(charge_state),
+                IMPORTED_JOB_TAG,
+            ],
+            completed_at=utc_now(),
+        )
+        new_jobs.append(job)
+
+        structure = _build_structure(
+            run=run,
+            label=f"{host_structure.label}_{prefix}_{label}".replace(" ", "_"),
+            host_structure=host_structure,
+            species=item.species,
+            positions=item.fractional_positions,
+            lattice_vectors=item.lattice_vectors,
+            job_id=job.id,
+            batch_id=batch,
+            mulliken_spins=None,
+        )
+
+        # The site's initial position is where the muon *started*; the native
+        # completion path never rewrites it. The relaxed host-cell position is
+        # copied to ``relaxed_fractional_position`` below from the same value
+        # the result payload records, exactly as a native completion does.
+        initial_host = _fold_to_host(
+            run.initial_muon_fractional_supercell
+            or run.final_muon_fractional_supercell
+            or (0.0, 0.0, 0.0),
+            run.supercell_matrix,
+        )
+        site = MuonSite(
+            label=label,
+            status="relaxed",
+            initial_fractional_position=list(initial_host),
+            initial_cartesian_position=lattice_frac_to_cart(
+                initial_host, host_structure.lattice_vectors
+            ),
+            generation_method=IMPORTED_GENERATION_METHOD,
+            source_structure_id=host_structure.id,
+            properties={"import_batch_id": str(batch)},
+        )
+
+        run_record = CalculationRun(
+            job_id=job.id,
+            status=JobStatus.COMPLETED,
+            completed_at=utc_now(),
+            convergence_achieved=run.converged,
+        )
+        final_supercell = run.final_muon_fractional_supercell
+        final_host = (
+            _fold_to_host(final_supercell, run.supercell_matrix)
+            if final_supercell is not None
+            else None
+        )
+        site.record_relaxation(
+            run_record.id,
+            total_energy_eV=run.total_energy,
+            fractional_position=final_host,
+        )
+
+        payload: dict[str, Any] = {
+            "completed": True,
+            "total_energy": run.total_energy,
+            "geom_converged": run.converged,
+            "imported": True,
+        }
+        if final_supercell is not None and final_host is not None:
+            payload["muon_final_fractional_position_supercell"] = list(final_supercell)
+            payload["muon_final_fractional_position_host"] = list(final_host)
+        lattice_a, lattice_b, lattice_c = (vector_length(row) for row in item.lattice_vectors)
+        payload["lattice_a"] = lattice_a
+        payload["lattice_b"] = lattice_b
+        payload["lattice_c"] = lattice_c
+
+        result = Result(
+            calculation_run_id=run_record.id,
+            result_type="castep_muon_relaxation",
+            data=payload,
+            output_files=[str(Path(job_directory.name) / name) for name in item.written],
+            derived_structure_ids=[structure.id],
+        )
+        run_record.result_id = result.id
+        entities.append((structure, site, job, run_record, result))
+
+        site_records.append(
+            {
+                "seed_name": seed_name,
+                "relative_name": run.relative_name,
+                "label": label,
+                "charge_state": charge_state,
+                "castep_version": run.castep_version,
+                "supercell_matrix": (
+                    [list(line) for line in run.supercell_matrix]
+                    if run.supercell_matrix is not None
+                    else None
+                ),
+                "parameter_sources": dict(run.parameter_sources),
+                "conflicts": [conflict.describe() for conflict in run.conflicts],
+                "unmapped": list(run.unmapped),
+                "warnings": [*run.warnings, *item.file_warnings],
+                "files": list(item.written),
+            }
+        )
+        imported.append(
+            ImportedRelaxation(
+                site_id=site.id,
+                job_id=job.id,
+                run_id=run_record.id,
+                result_id=result.id,
+                structure_id=structure.id,
+                label=label,
+                seed_name=seed_name,
+                charge_state=charge_state,
+                job_directory=job_directory,
+                row_payload=_row_payload(
+                    site_id=site.id,
+                    label=label,
+                    run=run,
+                    charge_state=charge_state,
+                    batch_id=batch,
+                ),
+                warnings=tuple([*run.warnings, *item.file_warnings]),
+            )
+        )
+
+    record = ProvenanceRecord(
+        action=IMPORT_ACTION,
+        workflow_stage=WorkflowStage.MUON_RELAXATION,
+        actor="user",
+        description=(
+            f"Imported {plural(len(imported), 'CASTEP muon relaxation')} "
+            f"from {staged.scan.root.name}"
+        ),
+        parameters={
+            "batch_id": str(batch),
+            "source_folder": str(staged.scan.root),
+            "keyword_catalog_origin": staged.scan.catalog_origin,
+            "imported_sites": site_records,
+            "skipped": [{"run": name, "reason": reason} for name, reason in staged.skipped],
+        },
+        input_entity_ids=[host_structure.id],
+        output_entity_ids=[item.site_id for item in imported],
+    )
+
+    for structure, site, job, run_record, result in entities:
+        document.structures[structure.id] = structure
+        document.sites[site.id] = site
+        document.jobs[job.id] = job
+        document.runs[run_record.id] = run_record
+        document.results[result.id] = result
+
+    return RelaxationImportOutcome(
+        batch_id=batch,
+        imported=tuple(imported),
+        skipped=staged.skipped,
+        warnings=staged.warnings,
+        provenance=record,
+    )
+
+
+def commit_relaxation_import(
+    document: Any,
+    *,
+    scan: RelaxationFolderScan,
+    runs: Sequence[DetectedRun],
+    host_structure: Structure,
+    output_root: Path,
+    batch_id: UUID | None = None,
+    label_prefix: str = "Imported",
+    existing_labels: Sequence[str] = (),
+) -> RelaxationImportOutcome:
+    """Build entities and files for ``runs``, returning what was created.
+
+    :func:`stage_relaxation_import` then :func:`build_relaxation_import`, in
+    one call on the calling thread. ``document`` is a ``ProjectDocument``.
+
+    The caller owns two things this does not do: merging
+    :attr:`RelaxationImportOutcome.row_payloads` into the active definition (which
+    needs the widget, and so belongs to the app layer), and saving the project.
+    """
+
+    staged = stage_relaxation_import(
+        scan=scan,
+        runs=runs,
+        output_root=output_root,
+        batch_id=batch_id,
+        label_prefix=label_prefix,
+        existing_labels=existing_labels,
+    )
+    return build_relaxation_import(document, staged, host_structure=host_structure)
+
+
+def _initial_positions(run: DetectedRun) -> list[list[float]]:
+    """Return the run's initial positions, read back from its input cell.
+
+    The rendered ``.cell`` must hold the structure the run *started* from, so
+    initial-versus-relaxed comparison stays truthful. Returns an empty list when
+    the input cell cannot be re-read, so the caller can fall back to the relaxed
+    geometry rather than emitting a cell with no atoms.
+    """
+
+    from mufinder.castep_io.cell_parser import parse_cell_file
+
+    if run.input_cell_path is None:
+        return []
+    try:
+        parsed = parse_cell_file(run.input_cell_path, geometry_only=True)
+    except Exception:  # noqa: BLE001
+        return []
+    return [[float(value) for value in row] for row in parsed.fractional_positions]
+
+
+__all__ = [
+    "IMPORT_ACTION",
+    "IMPORT_ACTIONS",
+    "IMPORTED_GENERATION_METHOD",
+    "SOURCE_DIRNAME",
+    "SOURCE_MANIFEST_NAME",
+    "ImportedRelaxation",
+    "RelaxationImportCancelled",
+    "RelaxationImportFailed",
+    "RelaxationImportOutcome",
+    "StagedRelaxation",
+    "StagedRelaxationImport",
+    "build_relaxation_import",
+    "commit_relaxation_import",
+    "discard_staged_import",
+    "resolve_recovered_parameters",
+    "row_parameter_values",
+    "stage_relaxation_import",
+]

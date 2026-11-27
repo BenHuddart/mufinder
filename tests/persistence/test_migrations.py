@@ -1,0 +1,748 @@
+"""Tests for the saved-project schema migrations."""
+
+from __future__ import annotations
+
+import copy
+
+import numpy as np
+import pytest
+
+from mufinder.domain.models import PROJECT_SCHEMA_VERSION, Project
+from mufinder.persistence.migrations import (
+    RETIRED_UI_STATE_KEYS,
+    UI_STATE_KEY,
+    drop_retired_ui_state_keys,
+    legacy_job_state,
+    migrate_project_payloads,
+    move_uep_searches_to_results,
+    stored_schema_version,
+)
+from mufinder.science.magnetic_fields import DIPOLAR_TENSOR_T_PER_MUB_PER_ANGSTROM_MINUS3
+
+
+def _definition(
+    stage: str, configuration: object, definition_id: str = "def-1"
+) -> dict[str, object]:
+    return {
+        "id": definition_id,
+        "workflow_stage": stage,
+        "parameters": {"configuration": configuration, "output_directory": "files/out"},
+    }
+
+
+def test_new_projects_are_written_at_the_current_schema_version() -> None:
+    assert PROJECT_SCHEMA_VERSION == 8
+    assert Project().schema_version == PROJECT_SCHEMA_VERSION
+
+
+def test_schema_1_cutoff_definition_keeps_its_sweep_in_sweep_values_only() -> None:
+    manifest = {"schema_version": 1}
+    cutoff = _definition(
+        "convergence_cutoff",
+        {
+            "sweep_parameter": "cut_off_energy",
+            "sweep_values": [300.0, 400.0],
+            "cutoff_energies": [300.0, 400.0],
+            "overrides": [{"cutoffs": [400.0], "params": {"max_scf_cycles": 120}}],
+        },
+    )
+    entities = {"calculations": [cutoff]}
+
+    changed = migrate_project_payloads(manifest, entities)
+
+    assert manifest["schema_version"] == PROJECT_SCHEMA_VERSION
+    assert changed == {("calculations", "def-1")}
+    assert cutoff["parameters"]["configuration"] == {
+        "sweep_parameter": "cut_off_energy",
+        "sweep_values": [300.0, 400.0],
+        "overrides": [{"cutoffs": [400.0], "params": {"max_scf_cycles": 120}}],
+    }
+
+
+def test_schema_1_cutoff_values_win_over_a_disagreeing_sweep_values_list() -> None:
+    # Schema 1 read a cutoff sweep from ``cutoff_energies`` first, so those are
+    # the values the project was running with.
+    legacy_only = _definition("convergence_cutoff", {"cutoff_energies": [300.0, 360.0]}, "legacy")
+    disagreeing = _definition(
+        "convergence_cutoff",
+        {"sweep_values": [999.0], "cutoff_energies": [500.0]},
+        "disagreeing",
+    )
+    entities = {"calculations": [legacy_only, disagreeing]}
+
+    changed = migrate_project_payloads({"schema_version": 1}, entities)
+
+    assert changed == {("calculations", "legacy"), ("calculations", "disagreeing")}
+    assert legacy_only["parameters"]["configuration"] == {"sweep_values": [300.0, 360.0]}
+    assert disagreeing["parameters"]["configuration"] == {"sweep_values": [500.0]}
+
+
+def test_schema_1_kpoint_definition_drops_the_empty_cutoff_energies_key() -> None:
+    kpoint = _definition(
+        "convergence_kpoint",
+        {
+            "sweep_parameter": "kpoint_mp_grid",
+            "sweep_values": [[2, 2, 2], [4, 4, 4]],
+            "cutoff_energies": [],
+        },
+    )
+
+    changed = migrate_project_payloads({"schema_version": 1}, {"calculations": [kpoint]})
+
+    assert changed == {("calculations", "def-1")}
+    assert kpoint["parameters"]["configuration"] == {
+        "sweep_parameter": "kpoint_mp_grid",
+        "sweep_values": [[2, 2, 2], [4, 4, 4]],
+    }
+
+
+def test_migration_leaves_other_payloads_alone() -> None:
+    other_stage = _definition("pristine_relaxation", {"cutoff_energies": [300.0]}, "relax")
+    already_current = _definition("convergence_cutoff", {"sweep_values": [300.0]}, "current")
+    malformed = {
+        "id": "bad",
+        "workflow_stage": "convergence_cutoff",
+        "parameters": {"configuration": []},
+    }
+    entities = {"calculations": [other_stage, already_current, malformed], "jobs": [{"id": "job"}]}
+
+    changed = migrate_project_payloads({"schema_version": 1}, entities)
+
+    assert changed == set()
+    assert other_stage["parameters"]["configuration"] == {"cutoff_energies": [300.0]}
+    assert already_current["parameters"]["configuration"] == {"sweep_values": [300.0]}
+
+
+def _relaxed_site_payloads() -> dict[str, list[dict[str, object]]]:
+    """A schema 2 relaxed site, its run and result, and an unrelaxed site."""
+
+    return {
+        "sites": [
+            {
+                "id": "relaxed",
+                "status": "relaxed",
+                "fractional_position": [0.1, 0.2, 0.3],
+                "cartesian_position": [0.4, 0.8, 1.2],
+                "relaxation_run_id": "run-1",
+            },
+            {
+                "id": "staged",
+                "status": "staged",
+                "fractional_position": [0.5, 0.5, 0.5],
+                "cartesian_position": [2.0, 2.0, 2.0],
+                "relaxation_run_id": None,
+            },
+        ],
+        "runs": [{"id": "run-1", "result_id": "result-1"}],
+        "results": [
+            {
+                "id": "result-1",
+                "calculation_run_id": "run-1",
+                "data": {
+                    "muon_final_fractional_position_host": [0.15, 0.25, 0.35],
+                    "muon_final_fractional_position_supercell": [0.075, 0.125, 0.175],
+                },
+            }
+        ],
+    }
+
+
+def test_schema_2_site_positions_become_initial_positions() -> None:
+    entities = _relaxed_site_payloads()
+
+    changed = migrate_project_payloads({"schema_version": 2}, entities)
+
+    assert changed == {("sites", "relaxed"), ("sites", "staged")}
+    staged = entities["sites"][1]
+    assert staged["initial_fractional_position"] == [0.5, 0.5, 0.5]
+    assert staged["initial_cartesian_position"] == [2.0, 2.0, 2.0]
+    assert "fractional_position" not in staged
+    assert "cartesian_position" not in staged
+    assert "relaxed_fractional_position" not in staged
+
+
+def test_schema_2_relaxed_site_is_backfilled_from_its_run_result() -> None:
+    entities = _relaxed_site_payloads()
+
+    migrate_project_payloads({"schema_version": 2}, entities)
+
+    relaxed = entities["sites"][0]
+    assert relaxed["initial_fractional_position"] == [0.1, 0.2, 0.3]
+    assert relaxed["relaxed_fractional_position"] == [0.15, 0.25, 0.35]
+
+
+def test_schema_2_backfill_finds_a_result_by_its_run_when_the_run_has_no_result_id() -> None:
+    entities = _relaxed_site_payloads()
+    entities["runs"][0]["result_id"] = None
+
+    migrate_project_payloads({"schema_version": 2}, entities)
+
+    assert entities["sites"][0]["relaxed_fractional_position"] == [0.15, 0.25, 0.35]
+
+
+@pytest.mark.parametrize(
+    "breakage",
+    [
+        lambda entities: entities["runs"].clear(),
+        lambda entities: entities["results"].clear(),
+        lambda entities: entities["results"][0]["data"].pop("muon_final_fractional_position_host"),
+        lambda entities: entities["results"][0]["data"].update(
+            muon_final_fractional_position_host=[0.1, 0.2]
+        ),
+        lambda entities: entities["results"][0]["data"].update(
+            muon_final_fractional_position_host=["a", 0.2, 0.3]
+        ),
+    ],
+    ids=[
+        "missing-run",
+        "missing-result",
+        "no-final-position",
+        "short-position",
+        "non-numeric-position",
+    ],
+)
+def test_schema_2_relaxed_site_without_a_usable_result_position_is_not_backfilled(breakage) -> None:
+    entities = _relaxed_site_payloads()
+    breakage(entities)
+
+    changed = migrate_project_payloads({"schema_version": 2}, entities)
+
+    relaxed = entities["sites"][0]
+    assert ("sites", "relaxed") in changed
+    assert relaxed["initial_fractional_position"] == [0.1, 0.2, 0.3]
+    assert "relaxed_fractional_position" not in relaxed
+
+
+def test_schema_2_site_already_using_the_new_keys_is_left_alone() -> None:
+    site = {
+        "id": "current",
+        "initial_fractional_position": [0.1, 0.2, 0.3],
+        "relaxation_run_id": None,
+    }
+
+    changed = migrate_project_payloads({"schema_version": 2}, {"sites": [site]})
+
+    assert changed == set()
+    assert site == {
+        "id": "current",
+        "initial_fractional_position": [0.1, 0.2, 0.3],
+        "relaxation_run_id": None,
+    }
+
+
+def test_current_and_newer_projects_are_not_migrated() -> None:
+    configuration = {"sweep_values": [300.0], "cutoff_energies": [300.0]}
+    for version in (PROJECT_SCHEMA_VERSION, PROJECT_SCHEMA_VERSION + 1):
+        manifest = {"schema_version": version}
+        definition = _definition("convergence_cutoff", dict(configuration))
+
+        assert migrate_project_payloads(manifest, {"calculations": [definition]}) == set()
+        assert manifest["schema_version"] == version
+        assert definition["parameters"]["configuration"] == configuration
+
+
+def test_manifest_without_a_schema_version_is_read_as_schema_1() -> None:
+    manifest: dict[str, object] = {}
+    definition = _definition("convergence_cutoff", {"cutoff_energies": [300.0]})
+
+    assert stored_schema_version(manifest) == 1
+    migrate_project_payloads(manifest, {"calculations": [definition]})
+
+    assert manifest["schema_version"] == PROJECT_SCHEMA_VERSION
+    assert definition["parameters"]["configuration"] == {"sweep_values": [300.0]}
+
+
+def _schema_3_magnetic_ui_state() -> dict[str, object]:
+    """Schema 3 Magnetic Fields form state with results kept inline."""
+
+    return {
+        "magnetic_field_form": {
+            "histogram_bins": 512,
+            "magnetic_field_results": {
+                "kind": "commensurate",
+                "results": [{"site_label": "a", "total_T": [0, 0, 1]}],
+            },
+            "dipolar_tensor_results": [],
+            "nuclear_relaxation_results": {"mode": "zero_field_powder", "sigma_us_inv": 0.4},
+        },
+        "magnetic_field_workspaces": [
+            {
+                "id": "ws-1",
+                "title": "Helix",
+                "form": {
+                    "magnetic_field_results": {
+                        "kind": "distribution",
+                        "results": [{"site_label": "b"}],
+                    },
+                    "dipolar_tensor_results": [
+                        {"site_label": "b", "tensor": [[1, 0, 0], [0, 1, 0], [0, 0, -2]]}
+                    ],
+                },
+            },
+            {"id": "ws-2", "title": "Empty", "form": {"magnetic_field_results": None}},
+            {
+                "title": "No id",
+                "form": {"magnetic_field_results": {"kind": "commensurate", "results": [{}]}},
+            },
+        ],
+    }
+
+
+def test_schema_3_magnetic_field_results_become_result_entities() -> None:
+    ui_state = _schema_3_magnetic_ui_state()
+    entities: dict[str, list[dict[str, object]]] = {}
+
+    changed = migrate_project_payloads({"schema_version": 3}, entities, ui_state)
+
+    results = entities["results"]
+    assert changed == {UI_STATE_KEY} | {("results", str(result["id"])) for result in results}
+    by_owner_and_type = {
+        (result["data"]["owner"], result["result_type"]): result for result in results
+    }
+    assert set(by_owner_and_type) == {
+        ("magnetic_fields", "magnetic_field"),
+        ("magnetic_fields", "nuclear_relaxation"),
+        ("ws-1", "magnetic_field"),
+        ("ws-1", "magnetic_dipolar_tensor"),
+    }
+    page_field = by_owner_and_type[("magnetic_fields", "magnetic_field")]
+    assert page_field["calculation_run_id"] is None
+    assert page_field["output_files"] == []
+    assert page_field["data"] == {
+        "owner": "magnetic_fields",
+        "kind": "commensurate",
+        "results": [{"site_label": "a", "total_T": [0, 0, 1]}],
+    }
+    assert by_owner_and_type[("magnetic_fields", "nuclear_relaxation")]["data"]["result"] == {
+        "mode": "zero_field_powder",
+        "sigma_us_inv": 0.4,
+    }
+    assert (
+        by_owner_and_type[("ws-1", "magnetic_dipolar_tensor")]["data"]["results"][0]["site_label"]
+        == "b"
+    )
+    assert ui_state["magnetic_field_form"] == {"histogram_bins": 512}
+    assert ui_state["magnetic_field_workspaces"][0]["form"] == {}
+    assert ui_state["magnetic_field_workspaces"][1]["form"] == {}
+    # A workspace without an id has no owner, so its form is left alone.
+    assert "magnetic_field_results" in ui_state["magnetic_field_workspaces"][2]["form"]
+
+
+def test_schema_3_project_without_magnetic_results_changes_nothing() -> None:
+    ui_state: dict[str, object] = {
+        "magnetic_field_form": {"histogram_bins": 512},
+        "other": {"x": 1},
+    }
+    entities: dict[str, list[dict[str, object]]] = {"results": []}
+
+    assert migrate_project_payloads({"schema_version": 3}, entities, ui_state) == set()
+    assert ui_state == {"magnetic_field_form": {"histogram_bins": 512}, "other": {"x": 1}}
+    assert entities == {"results": []}
+
+
+def _tensor_record(
+    record_id: str, entries: list[object], result_type: str = "magnetic_dipolar_tensor"
+) -> dict[str, object]:
+    return {
+        "id": record_id,
+        "calculation_run_id": None,
+        "result_type": result_type,
+        "data": {"owner": "magnetic_fields", "results": entries},
+    }
+
+
+def test_schema_4_dipolar_tensors_are_converted_from_inverse_cubic_angstrom_to_tesla_per_mu_b() -> (
+    None
+):
+    raw = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, -2.0]]
+    tensor = _tensor_record(
+        "tensor", [{"site_label": "a", "dipolar_tensor_T_per_muB": raw}, {"site_label": "b"}]
+    )
+    field = _tensor_record(
+        "field", [{"dipolar_tensor_T_per_muB": raw}], result_type="magnetic_field"
+    )
+    entities = {"results": [tensor, field]}
+
+    changed = migrate_project_payloads({"schema_version": 4}, entities)
+
+    assert changed == {("results", "tensor")}
+    np.testing.assert_allclose(
+        tensor["data"]["results"][0]["dipolar_tensor_T_per_muB"],
+        DIPOLAR_TENSOR_T_PER_MUB_PER_ANGSTROM_MINUS3 * np.asarray(raw),
+    )
+    assert tensor["data"]["results"][1] == {"site_label": "b"}
+    assert field["data"]["results"][0]["dipolar_tensor_T_per_muB"] == raw
+
+
+@pytest.mark.parametrize(
+    "tensor",
+    [
+        None,
+        "1 0 0",
+        [[1.0, 0.0], [0.0, 1.0]],
+        [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, "x"]],
+        [[True] * 3] * 3,
+    ],
+    ids=["missing", "string", "two-by-two", "non-numeric", "boolean"],
+)
+def test_schema_4_migration_leaves_malformed_tensors_alone(tensor) -> None:
+    record = _tensor_record("tensor", [{"dipolar_tensor_T_per_muB": tensor}, "not a mapping"])
+    entities = {"results": [record]}
+
+    assert migrate_project_payloads({"schema_version": 4}, entities) == set()
+    assert record["data"]["results"] == [{"dipolar_tensor_T_per_muB": tensor}, "not a mapping"]
+
+
+def test_schema_3_inline_dipolar_tensor_is_converted_after_becoming_a_record() -> None:
+    ui_state = {
+        "magnetic_field_form": {
+            "dipolar_tensor_results": [
+                {"site_label": "a", "dipolar_tensor_T_per_muB": [[0, 0, 0], [0, 0, 0], [0, 0, 2]]}
+            ]
+        }
+    }
+    entities: dict[str, list[dict[str, object]]] = {}
+
+    migrate_project_payloads({"schema_version": 3}, entities, ui_state)
+
+    (record,) = entities["results"]
+    assert record["data"]["results"][0]["dipolar_tensor_T_per_muB"][2][2] == pytest.approx(
+        2.0 * DIPOLAR_TENSOR_T_PER_MUB_PER_ANGSTROM_MINUS3
+    )
+
+
+def test_retired_ui_state_keys_are_dropped_and_reported() -> None:
+    ui_state: dict[str, object] = {key: 1.0 for key in RETIRED_UI_STATE_KEYS}
+    ui_state["convergence_form"] = {"kept": True}
+
+    assert drop_retired_ui_state_keys(ui_state) == {UI_STATE_KEY}
+    assert ui_state == {"convergence_form": {"kept": True}}
+    # Nothing left to drop: ui_state is not reported as changed.
+    assert drop_retired_ui_state_keys(ui_state) == set()
+
+
+def test_dropping_retired_keys_leaves_a_malformed_ui_state_alone() -> None:
+    # state.json can hold any JSON value; only a mapping has keys to drop.
+    assert drop_retired_ui_state_keys(None) == set()  # type: ignore[arg-type]
+    assert drop_retired_ui_state_keys(["default_cut_off_energy"]) == set()  # type: ignore[arg-type]
+
+
+_FAILURE_REASONS = (
+    "walltime",
+    "out_of_memory",
+    "node_failure",
+    "castep_error",
+    "output_unavailable",
+    "interrupted",
+    "submission",
+)
+
+
+@pytest.mark.parametrize(
+    ("status", "failure_reason", "expected"),
+    [
+        ("defined", None, ("defined", None, None)),
+        ("defined", "walltime", ("defined", None, None)),
+        ("submitting", None, ("active", "submitting", None)),
+        ("queued", None, ("active", "queued", None)),
+        ("running", None, ("active", "running", None)),
+        ("retrieving", None, ("active", "retrieving", None)),
+        ("completed", None, ("completed", None, None)),
+        ("completed", "castep_error", ("completed", None, None)),
+        *[("stopped", reason, ("ended", None, reason)) for reason in _FAILURE_REASONS],
+        ("stopped", None, ("ended", None, "unknown")),
+        ("stopped", "solar_flare", ("ended", None, "unknown")),
+        *[("failed", reason, ("ended", None, reason)) for reason in _FAILURE_REASONS],
+        ("failed", None, ("ended", None, "unknown")),
+        ("failed", "solar_flare", ("ended", None, "unknown")),
+        ("cancelled", None, ("ended", None, "cancelled")),
+        ("cancelled", "walltime", ("ended", None, "cancelled")),
+    ],
+)
+def test_each_schema_6_job_status_and_reason_has_one_schema_7_state(
+    status, failure_reason, expected
+) -> None:
+    new_status, activity, end_reason = expected
+
+    assert legacy_job_state(status, failure_reason) == {
+        "status": new_status,
+        "activity": activity,
+        "end_reason": end_reason,
+    }
+
+
+@pytest.mark.parametrize("status", ["active", "ended", "paused", None])
+def test_a_status_schema_6_did_not_store_has_no_legacy_state(status) -> None:
+    assert legacy_job_state(status) is None
+
+
+def test_schema_6_job_payloads_store_four_states_and_drop_failure_reason() -> None:
+    stopped = {
+        "id": "job-1",
+        "status": "stopped",
+        "failure_reason": "walltime",
+        "error_message": "Walltime reached.",
+        "dismissed_at": "2026-11-01T00:00:00+00:00",
+    }
+    running = {"id": "job-2", "status": "running", "failure_reason": None}
+    entities = {"jobs": [stopped, running]}
+
+    manifest = {"schema_version": 6}
+
+    changed = migrate_project_payloads(manifest, entities)
+
+    assert manifest["schema_version"] == PROJECT_SCHEMA_VERSION
+    assert changed == {("jobs", "job-1"), ("jobs", "job-2")}
+    assert stopped == {
+        "id": "job-1",
+        "status": "ended",
+        "activity": None,
+        "end_reason": "walltime",
+        "error_message": "Walltime reached.",
+        "dismissed_at": "2026-11-01T00:00:00+00:00",
+    }
+    assert running == {"id": "job-2", "status": "active", "activity": "running", "end_reason": None}
+
+
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    [
+        ("defined", "defined"),
+        ("submitting", "active"),
+        ("queued", "active"),
+        ("running", "active"),
+        ("retrieving", "active"),
+        ("completed", "completed"),
+        ("stopped", "ended"),
+        ("failed", "ended"),
+        ("cancelled", "ended"),
+    ],
+)
+def test_schema_6_run_payloads_store_only_the_new_status(status, expected) -> None:
+    run = {"id": "run-1", "job_id": "job-1", "status": status, "result_id": None}
+    entities = {"runs": [run]}
+
+    changed = migrate_project_payloads({"schema_version": 6}, entities)
+
+    assert changed == {("runs", "run-1")}
+    assert run == {"id": "run-1", "job_id": "job-1", "status": expected, "result_id": None}
+
+
+def test_schema_6_run_without_a_status_is_left_alone() -> None:
+    # It loads as defined at any schema.
+    run = {"id": "run-1"}
+
+    assert migrate_project_payloads({"schema_version": 6}, {"runs": [run]}) == set()
+    assert run == {"id": "run-1"}
+
+
+def test_job_and_run_payloads_with_an_unknown_status_are_left_alone() -> None:
+    job = {"id": "job-1", "status": "paused", "failure_reason": "walltime"}
+    run = {"id": "run-1", "status": "paused"}
+
+    changed = migrate_project_payloads({"schema_version": 6}, {"jobs": [job], "runs": [run]})
+
+    assert changed == set()
+    assert job == {"id": "job-1", "status": "paused", "failure_reason": "walltime"}
+    assert run == {"id": "run-1", "status": "paused"}
+
+
+def test_schema_6_jobs_reach_the_same_state_from_an_older_schema() -> None:
+    job = {"id": "job-1", "status": "failed", "failure_reason": "out_of_memory"}
+    manifest = {"schema_version": 1}
+
+    changed = migrate_project_payloads(manifest, {"jobs": [job]})
+
+    assert manifest["schema_version"] == PROJECT_SCHEMA_VERSION
+    assert ("jobs", "job-1") in changed
+    assert job == {
+        "id": "job-1",
+        "status": "ended",
+        "activity": None,
+        "end_reason": "out_of_memory",
+    }
+
+
+def test_schema_7_jobs_are_not_migrated_again() -> None:
+    job = {"id": "job-1", "status": "ended", "activity": None, "end_reason": "walltime"}
+
+    assert migrate_project_payloads({"schema_version": 7}, {"jobs": [job]}) == set()
+    assert job == {"id": "job-1", "status": "ended", "activity": None, "end_reason": "walltime"}
+
+
+# --- Schema 7 to 8: UEP batch searches -------------------------------------------
+
+
+def _uep_state(**extra: object) -> dict[str, object]:
+    return {
+        "gw_factor": 5.0,
+        "current_tab": 1,
+        "batch_count": 12,
+        "batch_max_steps": 300,
+        "batch_results": [{"classical_energy_ev": -1.0}, {"classical_energy_ev": -0.5}],
+        "batch_summary_data": {"clustering_method": "symmetry_distance", "clusters": []},
+        "batch_summary_text": "Requested random starts: 12",
+        "batch_selected_keys": ["cluster:1"],
+        **extra,
+    }
+
+
+def _uep_runs() -> list[dict[str, object]]:
+    return [
+        {"id": "run-1", "job_id": "job-1", "run_index": 1},
+        {"id": "run-2", "job_id": "job-1", "run_index": 2},
+    ]
+
+
+def _searches(entities: dict) -> list[dict]:
+    return [r for r in entities["results"] if r["result_type"] == "uep_batch_search"]
+
+
+def test_schema_7_uep_searches_become_results_and_the_state_keeps_the_view() -> None:
+    state = _uep_state(
+        isosurface_layers=[{"label": "Isosurface 1", "level_ev": 0.5, "mesh": {"faces": []}}],
+        slice_planes=[{"label": "Plane 1", "plane": {"anchor_ang": [0, 0, 0]}, "sample": {}}],
+        isosurface_mesh={"level_ev": 0.7, "vertices_ang": [[0, 0, 0]]},
+        probe_point=[0, 0, 0],
+        potential_grid={"grid": [1, 1, 1]},
+        clustering_window_state={},
+        isosurface_status_text="Ready",
+    )
+    grid = {"id": "grid-1", "result_type": "uep_potential_grid", "data": {"grid": [9, 9, 9]}}
+    other = {"id": "other-1", "result_type": "castep_uep_source", "data": {}}
+    ui_state = {"uep_analysis_states": {"job-1": state}, "uep_form": {"rows": []}}
+    entities = {"runs": _uep_runs(), "results": [grid, other]}
+    manifest = {"schema_version": 7}
+
+    changed = migrate_project_payloads(manifest, entities, ui_state)
+
+    assert manifest["schema_version"] == PROJECT_SCHEMA_VERSION
+    (search,) = _searches(entities)
+    assert search["calculation_run_id"] == "run-2"
+    assert search["data"] == {
+        "source_job_id": "job-1",
+        "settings": {"gw_factor": 5.0, "batch_count": 12, "batch_max_steps": 300},
+        "results": state["batch_results"],
+        "grouping": state["batch_summary_data"],
+        "log": "Requested random starts: 12",
+    }
+    assert [r["id"] for r in entities["results"]] == ["other-1", search["id"]]
+    assert ui_state["uep_analysis_states"]["job-1"] == {
+        "gw_factor": 5.0,
+        "current_tab": 1,
+        "batch_count": 12,
+        "batch_max_steps": 300,
+        "batch_selected_keys": ["cluster:1"],
+        "isosurface_layers": [{"label": "Isosurface 1", "level_ev": 0.5}],
+        "slice_planes": [{"label": "Plane 1", "plane": {"anchor_ang": [0, 0, 0]}}],
+        "isosurface_mesh": {"level_ev": 0.7},
+    }
+    assert ui_state["uep_form"] == {"rows": []}
+    assert changed == {UI_STATE_KEY, ("results", search["id"])}
+
+
+def test_a_state_without_a_search_keeps_its_view_and_makes_no_result() -> None:
+    ui_state = {"uep_analysis_states": {"job-1": {"gw_factor": 4.0, "batch_results": []}}}
+    entities: dict = {"results": []}
+
+    migrate_project_payloads({"schema_version": 7}, entities, ui_state)
+
+    assert entities["results"] == []
+    assert ui_state["uep_analysis_states"]["job-1"] == {"gw_factor": 4.0}
+
+
+def test_a_search_of_a_job_with_no_run_has_no_run_and_searches_keep_their_order() -> None:
+    ui_state = {"uep_analysis_states": {"job-b": _uep_state(), "job-a": _uep_state()}}
+    entities: dict = {"results": []}
+
+    migrate_project_payloads({"schema_version": 7}, entities, ui_state)
+
+    searches = _searches(entities)
+    assert [s["data"]["source_job_id"] for s in searches] == ["job-b", "job-a"]
+    assert [s["calculation_run_id"] for s in searches] == [None, None]
+    assert searches[0]["created_at"] < searches[1]["created_at"]
+
+
+@pytest.mark.parametrize(
+    "state",
+    [
+        "not a state",
+        {"batch_results": "not a list"},
+        {"batch_results": ["not a result"]},
+        {"batch_results": [{}], "batch_summary_data": "not a grouping"},
+        {"batch_results": [{}], "batch_summary_text": 3},
+        {"batch_results": [{}], "isosurface_layers": "not a list"},
+        {"batch_results": [{}], "slice_planes": {}},
+        {"batch_results": [{}], "isosurface_mesh": []},
+    ],
+)
+def test_a_uep_state_the_step_does_not_understand_is_left_as_it_is(state: object) -> None:
+    ui_state = {"uep_analysis_states": {"job-1": state, "job-2": _uep_state()}}
+    entities: dict = {"results": []}
+
+    migrate_project_payloads({"schema_version": 7}, entities, ui_state)
+
+    assert ui_state["uep_analysis_states"]["job-1"] == state
+    assert [s["data"]["source_job_id"] for s in _searches(entities)] == ["job-2"]
+
+
+def test_the_uep_step_run_again_on_its_own_output_changes_nothing() -> None:
+    ui_state = {"uep_analysis_states": {"job-1": _uep_state()}}
+    entities: dict = {"runs": _uep_runs(), "results": []}
+    migrate_project_payloads({"schema_version": 7}, entities, ui_state)
+    before = (copy.deepcopy(entities), copy.deepcopy(ui_state))
+
+    assert migrate_project_payloads({"schema_version": 7}, entities, ui_state) == set()
+    assert (entities, ui_state) == before
+
+
+def test_a_later_search_saved_by_an_older_build_replaces_the_moved_one_under_its_id() -> None:
+    ui_state = {"uep_analysis_states": {"job-1": _uep_state()}}
+    entities: dict = {"runs": _uep_runs(), "results": []}
+    migrate_project_payloads({"schema_version": 7}, entities, ui_state)
+    (moved,) = _searches(entities)
+    ui_state["uep_analysis_states"]["job-1"] = _uep_state(
+        batch_summary_text="Requested random starts: 20"
+    )
+
+    migrate_project_payloads({"schema_version": 7}, entities, ui_state)
+
+    (search,) = _searches(entities)
+    assert search["id"] == moved["id"]
+    assert search["data"]["log"] == "Requested random starts: 20"
+
+
+def test_an_empty_search_an_older_build_wrote_never_removes_the_moved_record() -> None:
+    # Both origin/main and v0.8.0 write batch_results: [] whenever their window closes.
+    ui_state = {"uep_analysis_states": {"job-1": _uep_state()}}
+    entities: dict = {"runs": _uep_runs(), "results": []}
+    migrate_project_payloads({"schema_version": 7}, entities, ui_state)
+    (moved,) = _searches(entities)
+    ui_state["uep_analysis_states"]["job-1"] = {"gw_factor": 4.0, "batch_results": []}
+
+    move_uep_searches_to_results(entities, ui_state)
+
+    assert _searches(entities) == [moved]
+    assert ui_state["uep_analysis_states"]["job-1"] == {"gw_factor": 4.0}
+
+
+def test_a_run_payload_that_is_not_a_mapping_does_not_stop_the_move() -> None:
+    ui_state = {"uep_analysis_states": {"job-1": _uep_state()}}
+    entities: dict = {"runs": [None, ["not", "a", "run"], *_uep_runs()], "results": []}
+
+    migrate_project_payloads({"schema_version": 7}, entities, ui_state)
+
+    (search,) = _searches(entities)
+    assert search["calculation_run_id"] == "run-2"
+
+
+def test_a_project_without_uep_states_only_loses_its_stored_grids() -> None:
+    grid = {"id": "grid-1", "result_type": "uep_potential_grid", "data": {}}
+    entities = {"results": [grid]}
+    ui_state = {"uep_analysis_states": "not a mapping"}
+
+    changed = migrate_project_payloads({"schema_version": 7}, entities, ui_state)
+
+    assert entities["results"] == []
+    assert ui_state == {"uep_analysis_states": "not a mapping"}
+    assert changed == set()

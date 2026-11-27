@@ -1,0 +1,1287 @@
+"""Behavior tests for the muon-relaxation widget."""
+
+from __future__ import annotations
+
+from uuid import uuid4
+
+import pytest
+
+from PySide6.QtCore import QItemSelectionModel, Qt
+from PySide6.QtTest import QTest
+from PySide6.QtWidgets import (
+    QApplication,
+    QComboBox,
+    QDialog,
+    QHeaderView,
+    QLabel,
+    QMessageBox,
+    QPushButton,
+    QToolButton,
+)
+
+from mufinder.app import workflow_table_utils
+from mufinder.app import selection_snapshot as selection_snapshot_module
+from mufinder.app.selection_snapshot import SelectionScope
+from mufinder.app.muon_relaxation_widget import MuonRelaxationWidget
+from mufinder.app.param_dialog import ParameterDialog
+from mufinder.app.relaxation_types import RelaxationRunState
+from mufinder.app.theme import THEME_LIGHT, apply_theme
+from mufinder.castep_io.gui_metadata import keyword_visible_in_workflow
+from mufinder.app.workflow_table_utils import EXPORT_RELAXED_STRUCTURE_ACTION_TEXT
+from mufinder.castep_io.types import ValueWithUnit
+from mufinder.domain.charge_states import MUONIUM_CHARGE_STATE
+from mufinder.services.structure_export import NO_STRUCTURE_REASON, RelaxedStructureExport
+from tests.support.row_menu import (
+    ENDED_ROW_STATUSES,
+    assert_offers_no_reset,
+    install_fake_menu,
+    open_row_menu,
+    trigger,
+)
+
+
+def test_muon_relaxation_widget_stages_sites_with_positive_muon_default(qapp) -> None:
+    widget = MuonRelaxationWidget()
+    site_id = uuid4()
+
+    widget.add_staged_sites(
+        [
+            {
+                "id": str(site_id),
+                "label": "Random Site 1",
+                "fractional_position": [0.1, 0.2, 0.3],
+            }
+        ]
+    )
+
+    assert widget._table.rowCount() == 1
+    assert widget._charge_tabs.count() == 2
+    assert widget._charge_tabs.tabText(0) == "Positive muon"
+    assert widget._charge_tabs.tabText(1) == "Muonium"
+    assert widget._table.item(0, 0).text() == "Random Site 1"
+    assert widget._table.horizontalHeaderItem(widget._INITIAL_FX_COLUMN).text() == "fX"
+    assert widget._table.horizontalHeaderItem(widget._FINAL_FX_COLUMN).text() == "fX"
+    assert "Charge" not in [
+        widget._table.horizontalHeaderItem(column).text()
+        for column in range(widget._table.columnCount())
+        if widget._table.horizontalHeaderItem(column) is not None
+    ]
+    assert widget._table.horizontalHeader()._groups == (
+        (widget._INITIAL_FX_COLUMN, widget._INITIAL_FZ_COLUMN, "Initial"),
+        (widget._FINAL_FX_COLUMN, widget._FINAL_FZ_COLUMN, "Final"),
+    )
+    assert widget._table.item(0, widget._INITIAL_FX_COLUMN).text() == "0.100"
+    assert widget._tables_by_charge_state["muonium"].rowCount() == 0
+
+    config = widget._build_config_or_warn()
+    assert config is not None
+    assert config.rows[0].site_id == site_id
+    assert config.rows[0].charge_state == "positive_muon"
+
+
+def test_muon_relaxation_widget_tabbed_tables_use_square_corner_theme(qapp) -> None:
+    widget = MuonRelaxationWidget()
+
+    for table in widget._tables_by_charge_state.values():
+        assert table.property("tabbedTable") == "true"
+        assert table.property("squareTopCorners") == "true"
+
+
+def test_muon_relaxation_widget_label_and_supercell_can_be_dragged(qapp) -> None:
+    widget = MuonRelaxationWidget()
+
+    for table in widget._tables_by_charge_state.values():
+        header = table.horizontalHeader()
+        for column in (widget._LABEL_COLUMN, widget._SUPERCELL_COLUMN):
+            assert header.sectionResizeMode(column) == QHeaderView.ResizeMode.Interactive
+        assert (
+            header.sectionResizeMode(widget._INITIAL_FX_COLUMN)
+            == QHeaderView.ResizeMode.ResizeToContents
+        )
+
+
+def test_muon_table_fits_the_default_window_in_its_worst_realistic_row(qapp) -> None:
+    # 893 px is the table's viewport at the 1280x864 default window with a vertical scrollbar.
+    apply_theme(qapp, THEME_LIGHT)
+    view = MuonRelaxationWidget()
+    view.resize(964, 600)
+    view.add_staged_sites(
+        [
+            {
+                "id": str(uuid4()),
+                "label": f"Attached-F Site {index}",
+                "fractional_position": [0.123, 0.456, 0.789],
+            }
+            for index in range(40)
+        ]
+    )
+    view.show()
+    table = view._table
+    view.set_runtime_states(
+        {
+            view._submission_key_at_row(row, table=table): RelaxationRunState(
+                status="not converged",
+                total_energy=-144985.741,
+                final_fractional_position=(0.123, 0.456, 0.789),
+            )
+            for row in range(table.rowCount())
+        }
+    )
+    QApplication.processEvents()
+
+    assert table.item(0, view._STATUS_COLUMN).text() == "not converged"
+    assert table.horizontalHeader().length() <= 893
+    view.close()
+
+
+def test_muon_relaxation_widget_exposes_geometry_optimization_parameters(qapp) -> None:
+    widget = MuonRelaxationWidget()
+
+    visible_basic = {
+        spec.name
+        for spec in widget._specs
+        if keyword_visible_in_workflow(
+            spec,
+            workflow_stage="muon_relaxation",
+            include_advanced=False,
+        )
+    }
+
+    assert {
+        "geom_max_iter",
+        "geom_energy_tol",
+        "geom_force_tol",
+        "geom_disp_tol",
+        "geom_stress_tol",
+        "geom_frequency_est",
+    } <= visible_basic
+
+
+def test_muon_relaxation_widget_defaults_continuation_to_default(qapp) -> None:
+    widget = MuonRelaxationWidget()
+    dialog = ParameterDialog(specs=widget._specs, workflow_stage="muon_relaxation")
+    dialog.set_values(widget._default_params)
+
+    assert widget._default_params["continuation"] == "DEFAULT"
+    assert dialog.collect_values()["continuation"] == "DEFAULT"
+
+    dialog._rows["continuation"].editor.set_value("CUSTOM")
+    dialog._reset_parameter("continuation")
+
+    assert dialog.collect_values()["continuation"] == "DEFAULT"
+
+
+def test_muon_relaxation_widget_does_not_default_symmetry_generate(qapp) -> None:
+    widget = MuonRelaxationWidget()
+    dialog = ParameterDialog(specs=widget._specs, workflow_stage="muon_relaxation")
+    dialog.set_values(widget._default_params)
+
+    assert "symmetry_generate" not in widget._default_params
+    assert "symmetry_generate" not in dialog.collect_values()
+
+
+def test_muon_relaxation_widget_defaults_geometry_max_iterations_to_300(qapp) -> None:
+    widget = MuonRelaxationWidget()
+    dialog = ParameterDialog(specs=widget._specs, workflow_stage="muon_relaxation")
+    dialog.set_values(widget._default_params)
+
+    assert widget._default_params["geom_max_iter"] == 300
+    assert dialog.collect_values()["geom_max_iter"] == 300
+
+    dialog._rows["geom_max_iter"].editor.set_value(30)
+    dialog._reset_parameter("geom_max_iter")
+
+    assert dialog.collect_values()["geom_max_iter"] == 300
+
+
+def test_muon_relaxation_widget_can_stage_both_charge_states(qapp) -> None:
+    widget = MuonRelaxationWidget()
+    site_id = uuid4()
+
+    widget.add_staged_sites(
+        [
+            {
+                "id": str(site_id),
+                "label": "Shared Site",
+                "fractional_position": [0.1, 0.2, 0.3],
+            }
+        ],
+        charge_states=("positive_muon", "muonium"),
+    )
+
+    positive = widget._tables_by_charge_state["positive_muon"]
+    muonium = widget._tables_by_charge_state["muonium"]
+    assert positive.rowCount() == 1
+    assert muonium.rowCount() == 1
+    assert positive.item(0, widget._LABEL_COLUMN).text() == "Shared Site"
+    assert muonium.item(0, widget._LABEL_COLUMN).text() == "Shared Site"
+
+    config = widget._build_config_or_warn()
+    assert config is not None
+    assert [row.charge_state for row in config.rows] == ["positive_muon", "muonium"]
+
+
+def test_muon_relaxation_widget_emits_analysis_workspace_from_selected_rows(qapp) -> None:
+    widget = MuonRelaxationWidget()
+    widget.add_staged_sites(
+        [
+            {
+                "id": str(uuid4()),
+                "label": "Site A",
+                "fractional_position": [0.1, 0.2, 0.3],
+            },
+            {
+                "id": str(uuid4()),
+                "label": "Site B",
+                "fractional_position": [0.4, 0.5, 0.6],
+            },
+        ]
+    )
+    captured: list[list[str]] = []
+    widget.analysis_workspace_requested.connect(lambda labels: captured.append(labels))
+
+    widget._table.selectRow(1)
+    widget._create_analysis_workspace_from_selection()
+
+    assert captured == [["positivemuon:Site B"]]
+
+
+def test_muon_relaxation_widget_queued_row_locks_controls_and_parameters(qapp) -> None:
+    widget = MuonRelaxationWidget()
+    site_id = uuid4()
+    widget.add_staged_sites(
+        [
+            {
+                "id": str(site_id),
+                "label": "Queued Site",
+                "fractional_position": [0.1, 0.2, 0.3],
+            }
+        ]
+    )
+    widget.set_runtime_states({"positivemuon:Queued Site": RelaxationRunState(status="queued")})
+
+    label_item = widget._table.item(0, widget._LABEL_COLUMN)
+    assert label_item is not None
+    assert not bool(label_item.flags() & Qt.ItemFlag.ItemIsEditable)
+    combo = widget._table.cellWidget(0, widget._SUPERCELL_COLUMN)
+    assert isinstance(combo, QComboBox)
+    assert not combo.isEnabled()
+    configure_button = widget._table.cellWidget(0, widget._CONFIGURE_COLUMN)
+    assert isinstance(configure_button, QPushButton)
+    assert configure_button.text() == "Configured…"
+    remove_button = widget._table.cellWidget(0, widget._REMOVE_COLUMN)
+    assert isinstance(remove_button, QToolButton)
+    assert remove_button.isEnabled()
+    row_id = widget._row_id_at(0)
+    assert row_id is not None
+    assert widget._row_parameters_locked((row_id,)) is True
+
+
+def test_muon_relaxation_widget_cancelled_row_keeps_parameters_editable(qapp) -> None:
+    widget = MuonRelaxationWidget()
+    site_id = uuid4()
+    widget.add_staged_sites(
+        [
+            {
+                "id": str(site_id),
+                "label": "Cancelled Site",
+                "fractional_position": [0.1, 0.2, 0.3],
+                "charge_state": "positive_muon",
+            }
+        ]
+    )
+
+    widget.set_runtime_states(
+        {"positivemuon:Cancelled Site": RelaxationRunState(status="cancelled")}
+    )
+
+    label_item = widget._table.item(0, widget._LABEL_COLUMN)
+    assert label_item is not None
+    assert bool(label_item.flags() & Qt.ItemFlag.ItemIsEditable)
+    combo = widget._table.cellWidget(0, widget._SUPERCELL_COLUMN)
+    assert isinstance(combo, QComboBox)
+    assert combo.isEnabled()
+    row_id = widget._row_id_at(0)
+    assert row_id is not None
+    assert widget._row_parameters_locked((row_id,)) is False
+
+
+def test_muon_relaxation_widget_state_roundtrip_preserves_muonium(qapp) -> None:
+    site_id = uuid4()
+    widget = MuonRelaxationWidget()
+    widget.set_form_state(
+        {
+            "rows": [
+                {
+                    "site_id": str(site_id),
+                    "label": "Manual Site 1",
+                    "fractional_position": [0.4, 0.5, 0.6],
+                    "charge_state": "muonium",
+                }
+            ]
+        }
+    )
+
+    state = widget.collect_state()
+
+    assert state["rows"][0]["site_id"] == str(site_id)
+    assert state["rows"][0]["charge_state"] == "muonium"
+    assert state["rows"][0]["fractional_position"] == [0.4, 0.5, 0.6]
+
+
+def test_muon_relaxation_widget_allows_same_site_to_be_staged_multiple_times(qapp) -> None:
+    site_id = uuid4()
+    widget = MuonRelaxationWidget()
+
+    row = {
+        "id": str(site_id),
+        "label": "Random Site 1",
+        "fractional_position": [0.1, 0.2, 0.3],
+    }
+    widget.add_staged_sites([row])
+    widget.add_staged_sites([row])
+
+    assert widget._table.rowCount() == 2
+    assert widget._table.item(0, 0).text() == "Random Site 1"
+    assert widget._table.item(1, 0).text() == "Random Site 1 2"
+
+    config = widget._build_config_or_warn()
+    assert config is not None
+    assert [entry.site_id for entry in config.rows] == [site_id, site_id]
+
+
+def test_muon_relaxation_widget_delete_shortcut_removes_selected_jobs(qapp) -> None:
+    widget = MuonRelaxationWidget()
+    widget.add_staged_sites(
+        [
+            {"id": str(uuid4()), "label": "Site A", "fractional_position": [0.1, 0.2, 0.3]},
+            {"id": str(uuid4()), "label": "Site B", "fractional_position": [0.4, 0.5, 0.6]},
+        ]
+    )
+    removed: list[list[str]] = []
+    widget.remove_requested.connect(lambda labels: removed.append(list(labels)))
+
+    widget._table.selectRow(0)
+    widget._delete_shortcut.activated.emit()
+
+    assert removed == [["positivemuon:Site A"]]
+    assert widget._table.rowCount() == 1
+    assert widget._label_at_row(0, table=widget._table) == "Site B"
+
+
+def test_muon_relaxation_widget_delete_shortcut_removes_current_job_without_selection(qapp) -> None:
+    widget = MuonRelaxationWidget()
+    widget.add_staged_sites(
+        [
+            {"id": str(uuid4()), "label": "Site A", "fractional_position": [0.1, 0.2, 0.3]},
+            {"id": str(uuid4()), "label": "Site B", "fractional_position": [0.4, 0.5, 0.6]},
+        ]
+    )
+    removed: list[list[str]] = []
+    widget.remove_requested.connect(lambda labels: removed.append(list(labels)))
+
+    widget._table.setCurrentCell(1, widget._LABEL_COLUMN)
+    widget._table.clearSelection()
+    widget._delete_shortcut.activated.emit()
+
+    assert removed == [["positivemuon:Site B"]]
+    assert widget._table.rowCount() == 1
+    assert widget._label_at_row(0, table=widget._table) == "Site A"
+
+
+def test_muon_relaxation_widget_delete_shortcuts_include_cell_widgets(qapp) -> None:
+    widget = MuonRelaxationWidget()
+
+    assert widget._delete_shortcut.context() == Qt.ShortcutContext.WidgetWithChildrenShortcut
+    assert widget._backspace_shortcut.context() == Qt.ShortcutContext.WidgetWithChildrenShortcut
+
+
+def test_muon_relaxation_widget_delete_key_removes_selected_row_from_child_focus(qapp) -> None:
+    widget = MuonRelaxationWidget()
+    widget.add_staged_sites(
+        [
+            {"id": str(uuid4()), "label": "Site A", "fractional_position": [0.1, 0.2, 0.3]},
+            {"id": str(uuid4()), "label": "Site B", "fractional_position": [0.4, 0.5, 0.6]},
+        ]
+    )
+    removed: list[list[str]] = []
+    widget.remove_requested.connect(lambda labels: removed.append(list(labels)))
+    configure_button = widget._table.cellWidget(0, widget._CONFIGURE_COLUMN)
+    assert isinstance(configure_button, QPushButton)
+
+    widget.show()
+    widget._table.selectRow(0)
+    configure_button.setFocus()
+    qapp.processEvents()
+    QTest.keyClick(configure_button, Qt.Key.Key_Delete)
+
+    assert removed == [["positivemuon:Site A"]]
+    assert widget._table.rowCount() == 1
+    assert widget._label_at_row(0, table=widget._table) == "Site B"
+
+
+def test_muon_relaxation_widget_backspace_shortcut_removes_selected_jobs_from_active_charge_tab(
+    qapp,
+) -> None:
+    widget = MuonRelaxationWidget()
+    widget.add_staged_sites(
+        [
+            {"id": str(uuid4()), "label": "Shared Site", "fractional_position": [0.1, 0.2, 0.3]},
+        ],
+        charge_states=("positive_muon", "muonium"),
+    )
+    removed: list[list[str]] = []
+    widget.remove_requested.connect(lambda labels: removed.append(list(labels)))
+    muonium_table = widget._tables_by_charge_state["muonium"]
+
+    widget._charge_tabs.setCurrentWidget(muonium_table)
+    muonium_table.selectRow(0)
+    widget._backspace_shortcut.activated.emit()
+
+    assert removed == [["muonium:Shared Site"]]
+    assert muonium_table.rowCount() == 0
+    assert widget._tables_by_charge_state["positive_muon"].rowCount() == 1
+
+
+def test_muon_relaxation_widget_project_cutoff_removes_basis_precision_default(qapp) -> None:
+    site_id = uuid4()
+    widget = MuonRelaxationWidget()
+    widget.add_staged_sites(
+        [
+            {
+                "id": str(site_id),
+                "label": "Random Site 1",
+                "fractional_position": [0.1, 0.2, 0.3],
+            }
+        ]
+    )
+
+    widget.set_project_defaults(
+        cutoff_energy=650.0, kpoint_grid=None, kpoint_reference_lattice=None
+    )
+
+    effective = widget._effective_params_for_row(1)
+    assert effective["cut_off_energy"] == ValueWithUnit(650.0, "eV")
+    assert "basis_precision" not in effective
+    assert widget._build_config_or_warn() is not None
+
+
+def test_muon_relaxation_widget_explicit_basis_precision_removes_implicit_cutoff(qapp) -> None:
+    site_id = uuid4()
+    widget = MuonRelaxationWidget()
+    widget.add_staged_sites(
+        [
+            {
+                "id": str(site_id),
+                "label": "Random Site 1",
+                "fractional_position": [0.1, 0.2, 0.3],
+            }
+        ]
+    )
+    widget.set_project_defaults(
+        cutoff_energy=650.0, kpoint_grid=None, kpoint_reference_lattice=None
+    )
+    widget._row_parameter_values[1] = {"basis_precision": "FINE"}
+
+    effective = widget._effective_params_for_row(1)
+    assert effective["basis_precision"] == "FINE"
+    assert "cut_off_energy" not in effective
+    assert widget._build_config_or_warn() is not None
+
+
+def test_muon_relaxation_configure_dialog_uses_radio_group_for_basis_control(qapp) -> None:
+    widget = MuonRelaxationWidget()
+
+    dialog = ParameterDialog(specs=widget._specs, workflow_stage="muon_relaxation")
+    dialog.set_values(widget._default_params)
+
+    assert "basis_precision" in dialog._rows
+    assert "cut_off_energy" in dialog._rows
+    assert dialog._rows["basis_precision"].radio is not None
+    assert dialog._rows["cut_off_energy"].radio is not None
+    assert "cut_off_energy" not in {spec.name for spec in dialog._available_advanced_specs()}
+
+
+def test_muon_relaxation_widget_runtime_states_are_charge_aware(qapp) -> None:
+    site_id = uuid4()
+    widget = MuonRelaxationWidget()
+    rows = [
+        {
+            "site_id": str(site_id),
+            "label": "Shared Site",
+            "fractional_position": [0.1, 0.2, 0.3],
+            "charge_state": "positive_muon",
+        },
+        {
+            "site_id": str(site_id),
+            "label": "Shared Site",
+            "fractional_position": [0.1, 0.2, 0.3],
+            "charge_state": "muonium",
+        },
+    ]
+    widget.set_form_state({"rows": rows})
+
+    widget.set_runtime_states(
+        {
+            "positivemuon:Shared Site": RelaxationRunState(
+                status="completed",
+                total_energy=-12.3456789,
+                final_fractional_position=(0.7, 0.8, 0.9),
+            ),
+            "muonium:Shared Site": RelaxationRunState(
+                status="running",
+                final_fractional_position=(0.4, 0.5, 0.6),
+            ),
+        }
+    )
+
+    assert (
+        widget._table.horizontalHeaderItem(widget._TOTAL_ENERGY_COLUMN).text()
+        == "Total Energy\n(eV)"
+    )
+    assert widget._table.item(0, widget._STATUS_COLUMN).text() == "completed"
+    assert widget._table.item(0, widget._FINAL_FX_COLUMN).text() == "0.700"
+    assert widget._table.item(0, widget._FINAL_FY_COLUMN).text() == "0.800"
+    assert widget._table.item(0, widget._FINAL_FZ_COLUMN).text() == "0.900"
+    assert widget._table.item(0, widget._TOTAL_ENERGY_COLUMN).text() == "-12.345679"
+    muonium_table = widget._tables_by_charge_state["muonium"]
+    assert muonium_table.item(0, widget._STATUS_COLUMN).text() == "running"
+    assert muonium_table.item(0, widget._FINAL_FX_COLUMN).text() == "0.400"
+
+
+def test_muon_relaxation_widget_submits_charge_qualified_selection(qapp) -> None:
+    site_id = uuid4()
+    widget = MuonRelaxationWidget()
+    widget.set_form_state(
+        {
+            "rows": [
+                {
+                    "site_id": str(site_id),
+                    "label": "Shared Site",
+                    "fractional_position": [0.1, 0.2, 0.3],
+                    "charge_state": "positive_muon",
+                },
+                {
+                    "site_id": str(site_id),
+                    "label": "Shared Site",
+                    "fractional_position": [0.1, 0.2, 0.3],
+                    "charge_state": "muonium",
+                },
+            ]
+        }
+    )
+    submitted: list[list[str]] = []
+    widget.submit_local_requested.connect(lambda payload: submitted.append(list(payload)))
+
+    widget._charge_tabs.setCurrentWidget(widget._tables_by_charge_state["muonium"])
+    widget._tables_by_charge_state["muonium"].selectRow(0)
+    widget._run_local_selected_rows()
+
+    assert submitted == [["muonium:Shared Site"]]
+
+
+def test_muon_relaxation_widget_submits_current_charge_tab_without_selection(qapp) -> None:
+    site_id = uuid4()
+    widget = MuonRelaxationWidget()
+    widget.set_form_state(
+        {
+            "rows": [
+                {
+                    "site_id": str(site_id),
+                    "label": "Positive Only",
+                    "fractional_position": [0.1, 0.2, 0.3],
+                    "charge_state": "positive_muon",
+                },
+                {
+                    "site_id": str(site_id),
+                    "label": "Muonium Only",
+                    "fractional_position": [0.1, 0.2, 0.3],
+                    "charge_state": "muonium",
+                },
+            ]
+        }
+    )
+    submitted: list[list[str]] = []
+    widget.submit_local_requested.connect(lambda payload: submitted.append(list(payload)))
+
+    widget._charge_tabs.setCurrentWidget(widget._tables_by_charge_state["muonium"])
+    widget._run_local_selected_rows()
+
+    assert submitted == [["muonium:Muonium Only"]]
+
+
+def test_muon_relaxation_widget_ignores_hidden_charge_tab_selection_for_submission(qapp) -> None:
+    site_id = uuid4()
+    widget = MuonRelaxationWidget()
+    widget.set_form_state(
+        {
+            "rows": [
+                {
+                    "site_id": str(site_id),
+                    "label": "Shared Site",
+                    "fractional_position": [0.1, 0.2, 0.3],
+                    "charge_state": "positive_muon",
+                },
+                {
+                    "site_id": str(site_id),
+                    "label": "Shared Site",
+                    "fractional_position": [0.1, 0.2, 0.3],
+                    "charge_state": "muonium",
+                },
+            ]
+        }
+    )
+    submitted: list[list[str]] = []
+    widget.submit_local_requested.connect(lambda payload: submitted.append(list(payload)))
+
+    widget._charge_tabs.setCurrentWidget(widget._tables_by_charge_state["positive_muon"])
+    widget._tables_by_charge_state["muonium"].selectRow(0)
+    widget._run_local_selected_rows()
+
+    assert submitted == [["positivemuon:Shared Site"]]
+
+
+def test_muon_relaxation_widget_locks_supercell_after_queue(qapp) -> None:
+    widget = MuonRelaxationWidget()
+    rows = [
+        {
+            "site_id": str(uuid4()),
+            "label": "Queued Site",
+            "fractional_position": [0.1, 0.2, 0.3],
+            "charge_state": "positive_muon",
+        },
+        {
+            "site_id": str(uuid4()),
+            "label": "Ready Site",
+            "fractional_position": [0.4, 0.5, 0.6],
+            "charge_state": "positive_muon",
+        },
+    ]
+    widget.set_form_state({"rows": rows})
+
+    widget.set_runtime_states(
+        {
+            "positivemuon:Queued Site": RelaxationRunState(status="queued"),
+            "positivemuon:Ready Site": RelaxationRunState(status="ready"),
+        }
+    )
+
+    queued_supercell = widget._table.cellWidget(0, widget._SUPERCELL_COLUMN)
+    ready_supercell = widget._table.cellWidget(1, widget._SUPERCELL_COLUMN)
+    assert isinstance(queued_supercell, QComboBox)
+    assert isinstance(ready_supercell, QComboBox)
+    assert not queued_supercell.isEnabled()
+    assert ready_supercell.isEnabled()
+
+    widget.set_runtime_states({"positivemuon:Queued Site": RelaxationRunState(status="ready")})
+
+    assert queued_supercell.isEnabled()
+
+
+def test_muon_relaxation_widget_supercell_selection_can_apply_to_selected_rows(
+    qapp,
+    monkeypatch,
+) -> None:
+    widget = MuonRelaxationWidget()
+    widget.set_supercell_options(
+        [
+            {
+                "label": "Shared 2x2x1",
+                "matrix": [[2, 0, 0], [0, 2, 0], [0, 0, 1]],
+            }
+        ]
+    )
+    widget.add_staged_sites(
+        [
+            {"id": str(uuid4()), "label": "Site A", "fractional_position": [0.1, 0.2, 0.3]},
+            {"id": str(uuid4()), "label": "Site B", "fractional_position": [0.4, 0.5, 0.6]},
+        ]
+    )
+    first_id = widget._row_id_at(0)
+    second_id = widget._row_id_at(1)
+    assert first_id is not None
+    assert second_id is not None
+
+    monkeypatch.setattr(
+        selection_snapshot_module,
+        "ask_selection_scope",
+        lambda *_args: SelectionScope.ALL_SELECTED,
+    )
+
+    selection = widget._table.selectionModel()
+    assert selection is not None
+    for row in (0, 1):
+        selection.select(
+            widget._table.model().index(row, 0),
+            QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows,
+        )
+    combo = widget._table.cellWidget(0, widget._SUPERCELL_COLUMN)
+    assert isinstance(combo, QComboBox)
+    # Simulate the press snapshot (real interaction captures this via mousePressEvent).
+    combo.selection_snapshot_rows = (0, 1)
+    combo.setCurrentIndex(combo.findText("Shared 2x2x1"))
+
+    expected = ((2, 0, 0), (0, 2, 0), (0, 0, 1))
+    assert widget.row_supercell_matrix(first_id) == expected
+    assert widget.row_supercell_matrix(second_id) == expected
+
+
+def _stage_muon_rows(widget: MuonRelaxationWidget, count: int) -> None:
+    widget.add_staged_sites(
+        [
+            {
+                "id": str(uuid4()),
+                "label": f"Site {index}",
+                "fractional_position": [0.1 * index, 0.2, 0.3],
+            }
+            for index in range(count)
+        ]
+    )
+
+
+def _select_muon_rows(widget: MuonRelaxationWidget, rows: tuple[int, ...]) -> None:
+    table = widget._active_table()
+    selection = table.selectionModel()
+    assert selection is not None
+    selection.clearSelection()
+    for row in rows:
+        selection.select(
+            table.model().index(row, 0),
+            QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows,
+        )
+
+
+def test_muon_relaxation_batch_configure_button_tracks_selection(qapp) -> None:
+    widget = MuonRelaxationWidget()
+    _stage_muon_rows(widget, 2)
+
+    assert widget._batch_configure_button.text() == "Configure Selected Parameters…"
+    widget._refresh_batch_button_state()
+    assert widget._batch_configure_button.isEnabled() is False
+
+    _select_muon_rows(widget, (0, 1))
+    widget._refresh_batch_button_state()
+    assert widget._batch_configure_button.isEnabled() is True
+
+    widget._active_table().clearSelection()
+    widget._refresh_batch_button_state()
+    assert widget._batch_configure_button.isEnabled() is False
+
+
+def test_muon_relaxation_batch_configure_applies_to_all_selected_rows(qapp, monkeypatch) -> None:
+    widget = MuonRelaxationWidget()
+    _stage_muon_rows(widget, 3)
+    first_id = widget._row_id_at(0)
+    third_id = widget._row_id_at(2)
+    unselected_id = widget._row_id_at(1)
+    assert first_id is not None and third_id is not None and unselected_id is not None
+
+    monkeypatch.setattr(
+        ParameterDialog,
+        "exec",
+        lambda _self: QDialog.DialogCode.Accepted,
+    )
+    monkeypatch.setattr(
+        ParameterDialog,
+        "collect_values",
+        lambda _self: {"task": "GEOMETRYOPTIMIZATION", "max_scf_cycles": 88},
+    )
+    monkeypatch.setattr(
+        ParameterDialog,
+        "advanced_names",
+        lambda _self: (),
+    )
+
+    _select_muon_rows(widget, (0, 2))
+    widget._configure_selected_rows()
+
+    assert widget._row_parameter_values[first_id]["max_scf_cycles"] == 88
+    assert widget._row_parameter_values[third_id]["max_scf_cycles"] == 88
+    assert widget._row_parameter_values.get(unselected_id, {}) == {}
+
+
+def test_muon_relaxation_batch_configure_empty_selection_shows_info(qapp, monkeypatch) -> None:
+    widget = MuonRelaxationWidget()
+    _stage_muon_rows(widget, 1)
+
+    infos: list[str] = []
+    monkeypatch.setattr(
+        QMessageBox,
+        "information",
+        lambda _parent, title, _message: infos.append(title),
+    )
+    opened: list[int] = []
+    monkeypatch.setattr(
+        MuonRelaxationWidget,
+        "_open_parameter_dialog",
+        lambda _self, _ids: opened.append(1),
+    )
+
+    widget._active_table().clearSelection()
+    widget._configure_selected_rows()
+
+    assert infos == ["No rows selected"]
+    assert opened == []
+
+
+def test_muon_relaxation_configure_uses_selection_snapshot_not_collapsed(qapp, monkeypatch) -> None:
+    # The per-row Configure button snapshots the selection so a platform
+    # focus-collapse to the clicked row does not shrink a multi-row batch.
+    from PySide6.QtWidgets import QPushButton as _QPushButton
+
+    from mufinder.app.selection_snapshot import SelectionSnapshotPushButton
+
+    widget = MuonRelaxationWidget()
+    _stage_muon_rows(widget, 2)
+    first_id = widget._row_id_at(0)
+    second_id = widget._row_id_at(1)
+    assert first_id is not None and second_id is not None
+
+    captured: list[tuple[int, ...]] = []
+    monkeypatch.setattr(
+        MuonRelaxationWidget,
+        "_open_parameter_dialog",
+        lambda _self, ids: captured.append(ids),
+    )
+    monkeypatch.setattr(
+        selection_snapshot_module,
+        "ask_selection_scope",
+        lambda *_args, **_kwargs: SelectionScope.ALL_SELECTED,
+    )
+
+    _select_muon_rows(widget, (0, 1))
+    configure_button = widget._active_table().cellWidget(0, widget._CONFIGURE_COLUMN)
+    assert isinstance(configure_button, SelectionSnapshotPushButton)
+    assert isinstance(configure_button, _QPushButton)
+    configure_button.selection_snapshot_rows = (0, 1)
+    configure_button.clicked.emit()
+
+    assert captured, "per-row Configure did not open the dialog"
+    assert set(captured[0]) == {first_id, second_id}
+
+
+def test_muon_relaxation_batch_configure_does_not_swallow_delete_shortcut(qapp) -> None:
+    # Adding the batch-configure button must not consume the widget-scoped
+    # Delete/Backspace shortcuts (WidgetWithChildrenShortcut) that remove rows.
+    widget = MuonRelaxationWidget()
+    _stage_muon_rows(widget, 2)
+    removed: list[list[str]] = []
+    widget.remove_requested.connect(lambda labels: removed.append(list(labels)))
+
+    _select_muon_rows(widget, (0,))
+    widget._delete_shortcut.activated.emit()
+    assert removed and widget._table.rowCount() == 1
+
+    _select_muon_rows(widget, (0,))
+    widget._backspace_shortcut.activated.emit()
+    assert widget._table.rowCount() == 0
+
+
+@pytest.mark.parametrize("status", ENDED_ROW_STATUSES)
+def test_muon_relaxation_widget_ended_row_menu_runs_configures_and_removes_without_reset(
+    qapp, monkeypatch, status
+) -> None:
+    widget = MuonRelaxationWidget()
+    widget.add_staged_sites(
+        [
+            {
+                "id": str(uuid4()),
+                "label": "Ended Site",
+                "fractional_position": [0.1, 0.2, 0.3],
+            }
+        ]
+    )
+    widget.set_runtime_states({"positivemuon:Ended Site": RelaxationRunState(status=status)})
+    widget.set_continuable_predicate(lambda _key: True)
+    submitted: list[object] = []
+    configured: list[object] = []
+    continued: list[object] = []
+    inspected: list[object] = []
+    removed: list[object] = []
+    widget.submit_local_requested.connect(submitted.append)
+    widget.continue_relaxation_requested.connect(continued.append)
+    widget.inspect_failed_requested.connect(inspected.append)
+    widget.remove_requested.connect(removed.append)
+    monkeypatch.setattr(widget, "_open_parameter_dialog", configured.append)
+    install_fake_menu(monkeypatch)
+
+    menu = open_row_menu(widget._table, row=0)
+
+    assert_offers_no_reset(menu)
+    trigger(menu, "Run Local")
+    trigger(menu, "Configure…")
+    trigger(menu, "Continue relaxation…")
+    if status != "cancelled":
+        trigger(menu, "Inspect Failure")
+        # The payload is the runtime submission key, not the bare label, so
+        # MuonRelaxationController.jobs_for_keys can resolve the right job.
+        assert inspected == [["positivemuon:Ended Site"]]
+    trigger(menu, "Remove")
+    assert len(submitted) == 1
+    assert len(configured) == 1
+    assert continued == ["positivemuon:Ended Site"]
+    assert removed and widget._table.rowCount() == 0
+
+
+def test_muon_relaxation_widget_context_menu_targets_the_clicked_charge_state_table(
+    qapp, monkeypatch
+) -> None:
+    widget = MuonRelaxationWidget()
+    widget.add_staged_sites(
+        [
+            {
+                "id": str(uuid4()),
+                "label": "Mu Site",
+                "fractional_position": [0.1, 0.2, 0.3],
+            }
+        ],
+        charge_states=(MUONIUM_CHARGE_STATE,),
+    )
+    widget.set_runtime_states({"muonium:Mu Site": RelaxationRunState(status="failed")})
+    muonium_table = widget._tables_by_charge_state[MUONIUM_CHARGE_STATE]
+    assert muonium_table.rowCount() == 1
+    # The positive-muon tab stays current, so a menu that read _active_table()
+    # instead of its own table would resolve the wrong (empty) table.
+    assert widget._active_table() is not muonium_table
+
+    payloads: list[object] = []
+    widget.inspect_failed_requested.connect(payloads.append)
+    install_fake_menu(monkeypatch)
+
+    menu = open_row_menu(muonium_table, row=0)
+    assert_offers_no_reset(menu)
+    trigger(menu, "Inspect Failure")
+
+    assert payloads == [["muonium:Mu Site"]]
+
+
+def test_muon_relaxation_widget_continue_action_defaults_disabled_when_unwired(
+    qapp, monkeypatch
+) -> None:
+    widget = MuonRelaxationWidget()
+    widget.add_staged_sites(
+        [{"id": str(uuid4()), "label": "Site 1", "fractional_position": [0.1, 0.2, 0.3]}]
+    )
+    widget.set_runtime_states({"positivemuon:Site 1": RelaxationRunState(status="completed")})
+
+    install_fake_menu(monkeypatch)
+    menu = open_row_menu(widget._table, row=0)
+
+    assert menu is not None
+    action = menu.action("Continue relaxation…")
+    assert action is not None
+    assert action.enabled is False
+
+
+def test_muon_relaxation_widget_continue_action_uses_injected_predicate_with_charge_key(
+    qapp, monkeypatch
+) -> None:
+    widget = MuonRelaxationWidget()
+    widget.add_staged_sites(
+        [{"id": str(uuid4()), "label": "Site 1", "fractional_position": [0.1, 0.2, 0.3]}]
+    )
+    widget.set_runtime_states({"positivemuon:Site 1": RelaxationRunState(status="completed")})
+
+    seen_keys: list[object] = []
+
+    def predicate(key: object) -> bool:
+        seen_keys.append(key)
+        return key == "positivemuon:Site 1"
+
+    widget.set_continuable_predicate(predicate)
+
+    install_fake_menu(monkeypatch)
+    menu = open_row_menu(widget._table, row=0)
+
+    assert menu is not None
+    action = menu.action("Continue relaxation…")
+    assert action is not None
+    assert action.enabled is True
+    assert seen_keys == ["positivemuon:Site 1"]
+
+
+def test_muon_relaxation_widget_continue_action_emits_charge_qualified_key(
+    qapp, monkeypatch
+) -> None:
+    widget = MuonRelaxationWidget()
+    widget.add_staged_sites(
+        [{"id": str(uuid4()), "label": "Mu Site", "fractional_position": [0.1, 0.2, 0.3]}],
+        charge_states=(MUONIUM_CHARGE_STATE,),
+    )
+    widget.set_continuable_predicate(lambda _key: True)
+    muonium_table = widget._tables_by_charge_state[MUONIUM_CHARGE_STATE]
+
+    payloads: list[object] = []
+    widget.continue_relaxation_requested.connect(payloads.append)
+    install_fake_menu(monkeypatch)
+
+    menu = open_row_menu(muonium_table, row=0)
+    action = menu.action("Continue relaxation…")
+    assert action is not None
+    action.triggered.emit()
+
+    assert payloads == ["muonium:Mu Site"]
+
+
+def test_muon_relaxation_widget_continue_dialog_seed_includes_charge_locked_value(
+    qapp,
+) -> None:
+    widget = MuonRelaxationWidget()
+    widget.add_staged_sites(
+        [{"id": str(uuid4()), "label": "Site 1", "fractional_position": [0.1, 0.2, 0.3]}]
+    )
+    row_id = widget._row_id_at(0)
+    widget._row_parameter_values[row_id] = {"geom_max_iter": 250}
+    widget._row_added_advanced[row_id] = {"geom_max_iter"}
+
+    seed = widget.continue_relaxation_dialog_seed("positivemuon:Site 1")
+
+    assert seed is not None
+    assert seed["workflow_stage"] == "muon_relaxation"
+    assert seed["specs"] == widget._specs
+    assert seed["parameter_values"]["geom_max_iter"] == 250
+    assert seed["added_advanced"] == ("geom_max_iter",)
+    assert seed["locked_values"]["task"] == "GEOMETRYOPTIMIZATION"
+    assert seed["locked_values"]["charge"] == "+1 (positive muon)"
+    assert seed["species_options"] == widget._parameter_species_options
+
+    assert widget.continue_relaxation_dialog_seed("positivemuon:does-not-exist") is None
+
+
+def test_muon_relaxation_delete_shortcut_declined_removes_nothing(qapp, monkeypatch) -> None:
+    widget = MuonRelaxationWidget()
+    _stage_muon_rows(widget, 2)
+    removed: list[object] = []
+    widget.remove_requested.connect(removed.append)
+    monkeypatch.setattr(workflow_table_utils, "confirm_destructive", lambda *_a, **_k: False)
+
+    widget._table.selectRow(0)
+    widget._delete_shortcut.activated.emit()
+
+    assert removed == []
+    assert widget._table.rowCount() == 2
+
+
+def test_muon_relaxation_remove_button_single_row_is_confirmed(
+    qapp, confirmed_destructive_actions
+) -> None:
+    widget = MuonRelaxationWidget()
+    _stage_muon_rows(widget, 2)
+
+    btn = widget._table.cellWidget(0, widget._REMOVE_COLUMN)
+    btn.selection_snapshot_rows = (0,)
+    btn.clicked.emit()
+
+    assert widget._table.rowCount() == 1
+    assert [prompt["text"] for prompt in confirmed_destructive_actions] == ["Remove 1 row?"]
+
+
+def test_muon_relaxation_row_menu_cancel_emits_submission_keys(
+    qapp, monkeypatch, confirmed_destructive_actions
+) -> None:
+    from tests.support.row_menu import install_fake_menu, open_row_menu
+
+    widget = MuonRelaxationWidget()
+    _stage_muon_rows(widget, 2)
+    keys = [widget._submission_key_at_row(row, table=widget._table) for row in range(2)]
+    widget.set_runtime_states({key: RelaxationRunState(status="running") for key in keys})
+    cancelled: list[object] = []
+    widget.cancel_requested.connect(cancelled.append)
+    install_fake_menu(monkeypatch)
+    widget._table.selectAll()
+
+    menu = open_row_menu(widget._table)
+    assert [action.text for action in menu.actions][:4] == [
+        "Run Local",
+        "Run on Cluster",
+        "Cancel",
+        "Inspect Failure",
+    ]
+    menu.action("Cancel").triggered.emit()
+
+    assert cancelled == [keys]
+    assert [prompt["text"] for prompt in confirmed_destructive_actions] == [
+        "Cancel 2 calculations?"
+    ]
+
+
+def test_muon_relaxation_shared_controls_follow_the_table_on_show(qapp) -> None:
+    widget = MuonRelaxationWidget()
+    _stage_muon_rows(widget, 2)
+    _select_muon_rows(widget, (0, 1))
+    assert widget._selection_count_label.text() == "2 selected"
+    assert widget._run_local_button.text() == "Run Selected Locally"
+
+    other_index = next(
+        index
+        for index in range(widget._charge_tabs.count())
+        if widget._charge_tabs.widget(index) is not widget._table
+    )
+    widget._charge_tabs.setCurrentIndex(other_index)
+
+    assert widget._selection_count_label.text() == ""
+    assert widget._run_local_button.text() == "Run All Locally"
+    assert not widget._remove_selected_button.isEnabled()
+
+
+def _expanded_spin_polarized(widget: MuonRelaxationWidget) -> object:
+    from mufinder.app.relaxation_adapter import expand_muon_relaxation_jobs
+    from mufinder.domain.models import Structure
+
+    config = widget._build_config_or_warn()
+    assert config is not None
+    expansion = expand_muon_relaxation_jobs(
+        host_structure=Structure(
+            label="Si",
+            lattice_vectors=[[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]],
+            species=["Si", "Si"],
+            fractional_positions=[[0.0, 0.0, 0.0], [0.25, 0.25, 0.25]],
+        ),
+        config=config,
+        project_cutoff_energy=600.0,
+        project_kpoint_grid=(4, 4, 4),
+        project_kpoint_reference_lattice=[[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]],
+    )
+    (job,) = expansion.jobs
+    return {keyword.name: keyword.value for keyword in job.param_file.keywords}.get(
+        "spin_polarized"
+    )
+
+
+def _staged_muonium_row(widget: MuonRelaxationWidget) -> int:
+    widget.add_staged_sites(
+        [{"id": str(uuid4()), "label": "Mu Site", "fractional_position": [0.1, 0.2, 0.3]}],
+        charge_states=(MUONIUM_CHARGE_STATE,),
+    )
+    row_id = widget._row_id_at(0, table=widget._tables_by_charge_state[MUONIUM_CHARGE_STATE])
+    assert row_id is not None
+    return row_id
+
+
+def _save_dialog(
+    monkeypatch, widget: MuonRelaxationWidget, row_id: int, *, spin_polarized: bool | None = None
+) -> bool:
+    """Accept the real dialog, optionally setting Spin Polarized; return what it first showed."""
+
+    shown: list[bool] = []
+
+    def _accept(dialog: ParameterDialog) -> QDialog.DialogCode:
+        editor = dialog._rows["spin_polarized"].editor
+        shown.append(editor.value())
+        if spin_polarized is not None:
+            editor.set_value(spin_polarized)
+        return QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(ParameterDialog, "exec", _accept)
+    widget._open_parameter_dialog((row_id,))
+    return shown[0]
+
+
+def test_muonium_row_dialog_shows_spin_polarised_and_saving_it_unchanged_keeps_it(
+    qapp, monkeypatch
+) -> None:
+    widget = MuonRelaxationWidget()
+    row_id = _staged_muonium_row(widget)
+    assert _expanded_spin_polarized(widget) is True
+
+    assert _save_dialog(monkeypatch, widget, row_id) is True
+    assert _expanded_spin_polarized(widget) is True
+
+
+def test_muonium_row_spin_polarisation_can_be_turned_off_in_the_dialog(qapp, monkeypatch) -> None:
+    widget = MuonRelaxationWidget()
+    row_id = _staged_muonium_row(widget)
+
+    _save_dialog(monkeypatch, widget, row_id, spin_polarized=False)
+
+    assert widget._row_parameter_values[row_id]["spin_polarized"] is False
+    assert _expanded_spin_polarized(widget) is False
+    # ...and the dialog reopens showing the user's choice.
+    assert _save_dialog(monkeypatch, widget, row_id) is False
+
+
+def test_muonium_row_keeps_an_explicit_spin_polarized_through_normalisation(qapp) -> None:
+    # A row saved before the dialog showed muonium as spin-polarised may hold an
+    # explicit True; stripping it would change the row signature and drop a
+    # completed run back to "ready".
+    widget = MuonRelaxationWidget()
+    row_id = _staged_muonium_row(widget)
+    widget._row_parameter_values[row_id] = {"spin_polarized": True}
+
+    widget._normalize_all_row_parameter_values()
+
+    assert widget._row_parameter_values[row_id] == {"spin_polarized": True}
+
+
+def test_muon_relaxation_export_action_asks_with_the_charge_qualified_key(
+    qapp, monkeypatch
+) -> None:
+    widget = MuonRelaxationWidget()
+    widget.add_staged_sites(
+        [{"id": str(uuid4()), "label": "Mu Site", "fractional_position": [0.1, 0.2, 0.3]}],
+        charge_states=(MUONIUM_CHARGE_STATE,),
+    )
+    seen_keys: list[object] = []
+    widget.set_relaxed_structure_export_provider(
+        lambda key: seen_keys.append(key) or RelaxedStructureExport(None, NO_STRUCTURE_REASON)
+    )
+    muonium_table = widget._tables_by_charge_state[MUONIUM_CHARGE_STATE]
+
+    install_fake_menu(monkeypatch)
+    action = open_row_menu(muonium_table, row=0).action(EXPORT_RELAXED_STRUCTURE_ACTION_TEXT)
+
+    assert action.enabled is False
+    assert action.tooltip == NO_STRUCTURE_REASON
+    assert seen_keys and all(str(key).endswith(":Mu Site") for key in seen_keys)
+    assert not str(seen_keys[0]).startswith("positivemuon")
+
+
+def test_select_rows_for_keys_selects_across_charge_state_tabs(qapp) -> None:
+    widget = MuonRelaxationWidget()
+    widget.add_staged_sites(
+        [{"id": str(uuid4()), "label": "Shared Site", "fractional_position": [0.1, 0.2, 0.3]}],
+        charge_states=("positive_muon", "muonium"),
+    )
+    positive = widget._tables_by_charge_state["positive_muon"]
+    muonium = widget._tables_by_charge_state["muonium"]
+    keys = [
+        widget._submission_key_at_row(0, table=positive),
+        widget._submission_key_at_row(0, table=muonium),
+    ]
+
+    assert widget.select_rows_for_keys(keys) is True
+
+    assert [index.row() for index in positive.selectionModel().selectedRows()] == [0]
+    assert [index.row() for index in muonium.selectionModel().selectedRows()] == [0]
+    assert widget._active_table() is positive
+
+
+def test_select_rows_for_keys_clears_an_earlier_selection_on_the_other_tab(qapp) -> None:
+    widget = MuonRelaxationWidget()
+    widget.add_staged_sites(
+        [{"id": str(uuid4()), "label": "Shared Site", "fractional_position": [0.1, 0.2, 0.3]}],
+        charge_states=("positive_muon", "muonium"),
+    )
+    positive = widget._tables_by_charge_state["positive_muon"]
+    muonium = widget._tables_by_charge_state["muonium"]
+    positive_key = widget._submission_key_at_row(0, table=positive)
+    positive.selectRow(0)
+
+    # A key that matches nothing leaves the selection alone.
+    assert widget.select_rows_for_keys(["no such row"]) is False
+    assert [index.row() for index in positive.selectionModel().selectedRows()] == [0]
+
+    assert widget.select_rows_for_keys([widget._submission_key_at_row(0, table=muonium)]) is True
+
+    assert positive.selectionModel().selectedRows() == []
+    assert [index.row() for index in muonium.selectionModel().selectedRows()] == [0]
+    assert widget._active_table() is muonium
+    assert positive_key != widget._submission_key_at_row(0, table=muonium)
+
+
+def test_the_page_does_not_name_the_active_host(qapp) -> None:
+    """The navigator's Host Structure row names the active host instead."""
+
+    widget = MuonRelaxationWidget()
+
+    assert not [label for label in widget.findChildren(QLabel) if label.text().startswith("Using")]

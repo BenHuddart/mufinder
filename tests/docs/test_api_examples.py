@@ -1,0 +1,97 @@
+"""The worked examples on the ``Using MuFinder as a library`` page run.
+
+``docs/api/using_mufinder.rst`` includes each script under ``docs/api/examples``
+verbatim, so these tests run the scripts as a reader would: in a fresh process,
+from the repository root (the parsing example reads a fixture by relative
+path), against the installed package. Each test checks one stable line of the
+script's output.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+import subprocess
+import sys
+
+import pytest
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+EXAMPLES = PROJECT_ROOT / "docs" / "api" / "examples"
+
+# Each script runs in well under a second; the limit only stops a hung run.
+RUN_TIMEOUT_S = 60
+
+
+def _run_example(name: str) -> list[str]:
+    completed = subprocess.run(
+        [sys.executable, str(EXAMPLES / name)],
+        cwd=PROJECT_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=RUN_TIMEOUT_S,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    return [line.strip() for line in completed.stdout.splitlines()]
+
+
+def test_parse_castep_output_example_prints_the_final_energy() -> None:
+    lines = _run_example("parse_castep_output.py")
+
+    assert "Final energy: -340.682656 eV" in lines
+    assert "Geometry converged: True" in lines
+
+
+def test_generate_muon_sites_example_is_reproducible_from_its_seed() -> None:
+    lines = _run_example("generate_muon_sites.py")
+
+    assert "Generated 5 sites" in lines
+    assert "Random Site 1  0.6394 0.0250 0.2750" in lines
+
+
+def test_dipolar_field_example_matches_the_documented_iron_ferromagnet() -> None:
+    pytest.importorskip("muesr")
+    pytest.importorskip("mulfc")
+
+    lines = _run_example("dipolar_field.py")
+
+    # docs/user_guide/magnetic_fields_theory.rst, "Ferromagnet", octahedral site.
+    assert "Dipolar Bz: -0.9261 T" in lines
+    assert "Lorentz Bz: 0.7243 T" in lines
+    assert "Total Bz: -0.2018 T" in lines
+
+
+def test_magnetic_structure_export_example_builds_the_antiferromagnet() -> None:
+    lines = _run_example("magnetic_structure_export.py")
+
+    assert "Atoms: 16 Fe16" in lines
+    assert "Moments along c: [-2.2, 2.2] muB" in lines
+    assert "MnSi q (r.l.u.): (0.0147, 0.0147, 0.0147)" in lines
+
+
+def test_polarisation_example_finds_the_iron_precession_line() -> None:
+    pytest.importorskip("muesr")
+    pytest.importorskip("mulfc")
+
+    lines = _run_example("polarisation.py")
+
+    assert "|B| at each site: 0.2018 T, 0.2018 T, 2.5765 T" in lines
+    assert "Zero-field P(0): 1.000" in lines
+    # gamma_mu / 2 pi x 0.2018 T = 27.35 MHz, on the spectrum's 0.0625 MHz grid.
+    assert "Spectrum peak: 27.36 MHz, 0.202 T" in lines
+
+
+def test_dynamics_example_shows_the_tail_and_motional_narrowing() -> None:
+    lines = _run_example("dynamics.py")
+
+    assert "nu = 0.0 us^-1: G(10 us) = 0.333" in lines
+    assert "Largest difference from Abragam at nu = 5 us^-1: 0.0034" in lines
+
+
+def test_demagnetizing_tensor_example_matches_the_closed_form_prism() -> None:
+    lines = _run_example("demagnetizing_tensor.py")
+
+    assert "Fourier N: [0.1756 0.1756 0.6487]" in lines
+    assert "Aharoni N: [0.1747 0.1747 0.6506]" in lines
+    assert "Tr N: 1.000000, FFT box: (80, 80, 40)" in lines

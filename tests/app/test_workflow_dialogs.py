@@ -1,0 +1,500 @@
+from __future__ import annotations
+
+from collections.abc import Callable, Mapping
+from functools import partial
+
+import numpy as np
+import pytest
+from PySide6.QtTest import QTest
+from PySide6.QtCore import QCoreApplication, QEvent
+from PySide6.QtWidgets import QDialog, QWidget
+
+from mufinder.app import param_dialog as param_dialog_module
+from mufinder.app.atomic_structure_viewer import AtomicStructureViewer
+from mufinder.app.param_dialog import ParameterDialog
+from mufinder.app.param_widgets import create_param_editor
+from mufinder.app.workflow_controllers.energy_barriers import EnergyBarriersController
+from mufinder.app.workflow_controllers.hyperfine_coupling import HyperfineCouplingController
+from mufinder.app.workflow_controllers.quantum_corrections import QuantumCorrectionsController
+from mufinder.app.workflow_dialogs import (
+    HyperfineCouplingConfigDialog,
+    NudgedElasticBandConfigDialog,
+    QuantumCorrectionsConfigDialog,
+    RowParameterRequest,
+    SourceConfigureRequest,
+    run_row_parameter_dialog,
+    run_source_configure_dialog,
+)
+from mufinder.app.workflow_parameters import (
+    build_workflow_parameter_surface,
+    workflow_basic_parameter_names,
+)
+from mufinder.castep_io.schema import KeywordSpec
+from tests.support.structures import host_structure
+
+
+def _quantum_specs() -> list[KeywordSpec]:
+    return [
+        KeywordSpec(
+            name="task",
+            file="param",
+            kind="scalar",
+            value_type="enum",
+            allowed_values=("SINGLEPOINT", "PHONON"),
+            widget_hint="dropdown",
+            category="workflow",
+            basic_workflows=("quantum_corrections",),
+            default_value="SINGLEPOINT",
+        ),
+        KeywordSpec(
+            name="metals_method",
+            file="param",
+            kind="scalar",
+            value_type="enum",
+            allowed_values=("DM", "EDFT"),
+            widget_hint="dropdown",
+            category="electronic",
+            basic_workflows=("quantum_corrections",),
+            default_value="DM",
+        ),
+    ]
+
+
+def test_quantum_corrections_config_dialog_locks_task_and_keeps_the_farm_count(qapp) -> None:
+    dialog = QuantumCorrectionsConfigDialog(specs=_quantum_specs(), num_farms=6)
+
+    assert dialog.collect_values()["task"] == "PHONON"
+    assert dialog.num_farms() == 6
+
+
+def test_quantum_corrections_config_dialog_labels_the_farm_count(qapp) -> None:
+    from PySide6.QtWidgets import QLabel
+
+    dialog = QuantumCorrectionsConfigDialog(specs=_quantum_specs(), num_farms=5)
+
+    labels = [label.text() for label in dialog.findChildren(QLabel)]
+    assert "Farms" in labels
+    assert "A value of 1 disables task farming." in labels
+    assert not any("stage" in text.lower() for text in labels)
+    # Finite displacement is the only method, so nothing asks for pseudopotentials.
+    assert "Pseudopotentials" not in labels
+    assert dialog._num_farms_spin.isEnabled() is True
+
+
+@pytest.mark.parametrize("read_only", [False, True])
+def test_quantum_corrections_config_dialog_locks_everything_or_nothing(
+    qapp, read_only: bool
+) -> None:
+    dialog = QuantumCorrectionsConfigDialog(
+        specs=_quantum_specs(), num_farms=5, read_only=read_only
+    )
+
+    assert dialog._rows["metals_method"].editor is not None
+    assert dialog._rows["metals_method"].editor.isEnabled() is not read_only
+    assert dialog._num_farms_spin.isEnabled() is not read_only
+
+
+def test_atomic_structure_viewer_line_overlays_extend_scene(qapp) -> None:
+    viewer = AtomicStructureViewer()
+    viewer.set_structure(host_structure(label="supercell"))
+    viewer.set_line_overlays(
+        [
+            {
+                "start": (1.0, 1.0, 1.0),
+                "end": (6.0, 1.0, 1.0),
+                "arrow": True,
+            }
+        ]
+    )
+
+    _positions, _numbers, _symbols, _colors, _radii, extra_points = viewer._scene_geometry()
+
+    assert viewer._line_overlay_specs
+    assert any(np.allclose(point, [1.0, 1.0, 1.0]) for point in extra_points)
+    assert any(np.allclose(point, [6.0, 1.0, 1.0]) for point in extra_points)
+    viewer.close()
+
+
+def _row_request(
+    row_values: Mapping[int, Mapping[str, object]],
+    *,
+    row_advanced: Mapping[int, set[str]] | None = None,
+    values: Mapping[str, object] | None = None,
+    read_only: bool = False,
+    sanitize: Callable[[Mapping[str, object]], dict[str, object]] = dict,
+) -> RowParameterRequest[int]:
+    return RowParameterRequest(
+        specs=build_workflow_parameter_surface(
+            workflow_stage="pristine_relaxation",
+            basic_names=workflow_basic_parameter_names(),
+        ),
+        workflow_stage="pristine_relaxation",
+        subject="Relaxation Parameters",
+        values=dict(next(iter(row_values.values()), {})) if values is None else values,
+        row_values=row_values,
+        row_advanced=row_advanced or {},
+        sanitize=sanitize,
+        locked_values={"task": "GEOMETRYOPTIMIZATION"},
+        read_only=read_only,
+        intro_text="Included rows: a, b",
+    )
+
+
+def _capture_exec(
+    monkeypatch: pytest.MonkeyPatch,
+    result: QDialog.DialogCode,
+    edit: Callable[[ParameterDialog], None] | None = None,
+) -> list[ParameterDialog]:
+    opened: list[ParameterDialog] = []
+
+    def fake_exec(dialog: ParameterDialog) -> QDialog.DialogCode:
+        opened.append(dialog)
+        if edit is not None:
+            edit(dialog)
+        return result
+
+    monkeypatch.setattr(ParameterDialog, "exec", fake_exec)
+    return opened
+
+
+def test_run_row_parameter_dialog_merges_batch_edit_into_each_row(qapp, monkeypatch) -> None:
+    rows = {
+        1: {"max_scf_cycles": 80, "xc_functional": "PBE"},
+        2: {"max_scf_cycles": 120, "xc_functional": "PBE"},
+    }
+    sanitized: list[dict[str, object]] = []
+
+    def sanitize(values: Mapping[str, object]) -> dict[str, object]:
+        sanitized.append(dict(values))
+        return {**values, "sanitized": True}
+
+    opened = _capture_exec(
+        monkeypatch,
+        QDialog.DialogCode.Accepted,
+        lambda dialog: dialog._rows["xc_functional"].editor.set_value("LDA"),
+    )
+
+    result = run_row_parameter_dialog(
+        _row_request(
+            rows,
+            values={"xc_functional": "PBE"},
+            row_advanced={1: {"max_scf_cycles"}, 2: set()},
+            sanitize=sanitize,
+        )
+    )
+
+    assert result is not None
+    (dialog,) = opened
+    assert dialog.windowTitle() == "Configure Relaxation Parameters"
+    assert dialog.untouched_mixed_names() == {"max_scf_cycles"}
+    assert len(sanitized) == 1 and result.values["sanitized"] is True
+    # The differing parameter the user left alone stays per row; the edit applies to both.
+    assert {key: values["max_scf_cycles"] for key, values in result.row_values.items()} == {
+        1: 80,
+        2: 120,
+    }
+    assert {values["xc_functional"] for values in result.row_values.values()} == {"LDA"}
+    assert result.row_values[1]["sanitized"] is True
+    assert set(result.row_values) == set(result.row_advanced) == {1, 2}
+
+
+def test_run_row_parameter_dialog_seeds_advanced_names_from_every_row(qapp, monkeypatch) -> None:
+    opened = _capture_exec(monkeypatch, QDialog.DialogCode.Rejected)
+
+    run_row_parameter_dialog(
+        _row_request(
+            {1: {"xc_functional": "PBE"}, 2: {"xc_functional": "PBE"}},
+            row_advanced={1: {"max_scf_cycles"}, 2: {"spin_polarized"}},
+        )
+    )
+
+    (dialog,) = opened
+    assert {"max_scf_cycles", "spin_polarized"} <= set(dialog.advanced_names())
+
+
+def test_run_row_parameter_dialog_prefers_spacing_when_every_row_uses_it(qapp, monkeypatch) -> None:
+    collected: list[dict[str, object]] = []
+    _capture_exec(
+        monkeypatch,
+        QDialog.DialogCode.Rejected,
+        lambda dialog: collected.append(dialog.collect_values()),
+    )
+    rows = {1: {"kpoint_mp_spacing": 0.05}, 2: {"kpoint_mp_spacing": 0.05}}
+
+    run_row_parameter_dialog(
+        _row_request(rows, values={"kpoint_mp_spacing": 0.05, "kpoint_mp_grid": (4, 4, 4)})
+    )
+
+    assert "kpoint_mp_spacing" in collected[0]
+    assert "kpoint_mp_grid" not in collected[0]
+
+
+@pytest.mark.parametrize("exec_result", [QDialog.DialogCode.Accepted, QDialog.DialogCode.Rejected])
+def test_run_row_parameter_dialog_inspects_locked_rows_without_a_result(
+    qapp, monkeypatch, exec_result
+) -> None:
+    opened = _capture_exec(monkeypatch, exec_result)
+
+    result = run_row_parameter_dialog(_row_request({1: {"xc_functional": "PBE"}}, read_only=True))
+
+    assert result is None
+    (dialog,) = opened
+    assert dialog.windowTitle() == "Inspect Relaxation Parameters"
+    assert dialog._read_only is True
+
+
+def test_run_row_parameter_dialog_returns_none_when_cancelled(qapp, monkeypatch) -> None:
+    sanitized: list[object] = []
+    _capture_exec(monkeypatch, QDialog.DialogCode.Rejected)
+
+    request = _row_request(
+        {1: {"xc_functional": "PBE"}}, sanitize=lambda v: sanitized.append(v) or {}
+    )
+
+    assert run_row_parameter_dialog(request) is None
+    assert sanitized == []
+
+
+def test_run_row_parameter_dialog_without_rows_opens_nothing(qapp, monkeypatch) -> None:
+    opened = _capture_exec(monkeypatch, QDialog.DialogCode.Accepted)
+
+    assert run_row_parameter_dialog(_row_request({}, values={})) is None
+    assert opened == []
+
+
+@pytest.mark.parametrize(
+    ("exec_result", "read_only"),
+    [
+        (QDialog.DialogCode.Accepted, False),
+        (QDialog.DialogCode.Rejected, False),
+        (QDialog.DialogCode.Accepted, True),
+    ],
+)
+def test_run_row_parameter_dialog_deletes_the_dialog_after_it_closes(
+    qapp, monkeypatch, exec_result, read_only
+) -> None:
+    _capture_exec(monkeypatch, exec_result)
+    parent = QWidget()
+
+    for _ in range(5):
+        run_row_parameter_dialog(
+            _row_request({1: {"xc_functional": "PBE"}}, read_only=read_only), parent=parent
+        )
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+    assert parent.findChildren(ParameterDialog) == []
+    parent.deleteLater()
+
+
+def _count_editor_parents(monkeypatch: pytest.MonkeyPatch) -> list[object]:
+    """Record the parent of every parameter editor the dialogs create."""
+
+    editor_parents: list[object] = []
+
+    def counting_create_param_editor(spec, parent=None, **kwargs):
+        editor_parents.append(parent)
+        return create_param_editor(spec, parent, **kwargs)
+
+    monkeypatch.setattr(param_dialog_module, "create_param_editor", counting_create_param_editor)
+    return editor_parents
+
+
+def test_run_row_parameter_dialog_builds_each_editor_once(qapp, monkeypatch) -> None:
+    editor_parents = _count_editor_parents(monkeypatch)
+    opened = _capture_exec(monkeypatch, QDialog.DialogCode.Rejected)
+
+    run_row_parameter_dialog(
+        _row_request(
+            {1: {"max_scf_cycles": 80, "xc_functional": "PBE"}, 2: {"max_scf_cycles": 120}},
+            values={"xc_functional": "PBE"},
+            row_advanced={1: {"max_scf_cycles"}, 2: set()},
+        )
+    )
+
+    (dialog,) = opened
+    table_editors = [parent for parent in editor_parents if parent is dialog._table_widget]
+    row_editors = [row.editor for row in dialog._rows.values() if row.editor is not None]
+    assert row_editors
+    assert len(table_editors) == len(row_editors)
+    # The batch seed still reaches the single build.
+    assert "max_scf_cycles" in dialog.advanced_names()
+    assert "max_scf_cycles" in dialog.untouched_mixed_names()
+
+
+def _source_request(*, read_only: bool = False) -> SourceConfigureRequest:
+    return SourceConfigureRequest(
+        keys=("a", "b"),
+        row_values=({"metals_method": "DM"}, {"metals_method": "EDFT"}),
+        advanced_names=frozenset(),
+        title="Configure Things",
+        intro_text="Selected: 2",
+        read_only=read_only,
+        num_farms=1,
+        species_options=(),
+    )
+
+
+def _plain_dialog(**kwargs: object) -> ParameterDialog:
+    return ParameterDialog(specs=_quantum_specs(), workflow_stage="quantum_corrections", **kwargs)
+
+
+def test_run_source_configure_dialog_seeds_shared_values_and_returns_the_edit(
+    qapp, monkeypatch
+) -> None:
+    opened = _capture_exec(monkeypatch, QDialog.DialogCode.Accepted)
+    collected: list[dict[str, object]] = []
+
+    result = run_source_configure_dialog(
+        _plain_dialog,
+        _source_request(),
+        extras=lambda dialog: collected.append(dialog.collect_values()) or {"num_farms": 3},
+    )
+
+    (dialog,) = opened
+    assert dialog.windowTitle() == "Configure Things"
+    assert result is not None
+    # The rows disagree on the metals method, so the dialog marks it mixed and,
+    # left untouched, reports it so each row keeps its own.
+    assert result.untouched_mixed == frozenset({"metals_method"})
+    assert "metals_method" not in result.values
+    assert result.values == collected[0]
+    assert result.extras == {"num_farms": 3}
+
+
+def test_run_source_configure_dialog_returns_nothing_when_cancelled_or_read_only(
+    qapp, monkeypatch
+) -> None:
+    extras_read: list[object] = []
+    _capture_exec(monkeypatch, QDialog.DialogCode.Rejected)
+    assert (
+        run_source_configure_dialog(_plain_dialog, _source_request(), extras=extras_read.append)
+        is None
+    )
+
+    _capture_exec(monkeypatch, QDialog.DialogCode.Accepted)
+    assert (
+        run_source_configure_dialog(
+            partial(_plain_dialog, read_only=True),
+            _source_request(read_only=True),
+            extras=extras_read.append,
+        )
+        is None
+    )
+    assert extras_read == []
+
+
+def _source_dialog_builders() -> list[object]:
+    return [
+        pytest.param(
+            partial(
+                QuantumCorrectionsConfigDialog,
+                specs=QuantumCorrectionsController.parameter_specs(),
+                num_farms=2,
+            ),
+            id="quantum-corrections",
+        ),
+        pytest.param(
+            partial(
+                HyperfineCouplingConfigDialog,
+                specs=HyperfineCouplingController.parameter_specs(),
+            ),
+            id="hyperfine-coupling",
+        ),
+        pytest.param(
+            partial(
+                NudgedElasticBandConfigDialog,
+                specs=EnergyBarriersController.parameter_specs(),
+                num_farms=2,
+            ),
+            id="nudged-elastic-band",
+        ),
+    ]
+
+
+def _batch_source_request(*, read_only: bool = False) -> SourceConfigureRequest:
+    return SourceConfigureRequest(
+        keys=("a", "b"),
+        row_values=(
+            {"cut_off_energy": 600.0, "max_scf_cycles": 80},
+            {"cut_off_energy": 700.0, "max_scf_cycles": 80},
+        ),
+        advanced_names=frozenset({"max_scf_cycles"}),
+        title="Configure Sources",
+        intro_text="Selected sources: 2",
+        read_only=read_only,
+        num_farms=2,
+        species_options=("Si", "H:mu"),
+    )
+
+
+@pytest.mark.parametrize("build", _source_dialog_builders())
+@pytest.mark.parametrize(
+    ("exec_result", "read_only"),
+    [
+        (QDialog.DialogCode.Accepted, False),
+        (QDialog.DialogCode.Rejected, False),
+        (QDialog.DialogCode.Accepted, True),
+    ],
+)
+def test_run_source_configure_dialog_deletes_the_dialog_after_it_closes(
+    qapp, monkeypatch, build, exec_result, read_only
+) -> None:
+    _capture_exec(monkeypatch, exec_result)
+    parent = QWidget()
+
+    for _ in range(5):
+        run_source_configure_dialog(
+            partial(build, read_only=read_only, parent=parent),
+            _batch_source_request(read_only=read_only),
+            extras=lambda dialog: {"num_farms": 1},
+        )
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+    assert parent.findChildren(ParameterDialog) == []
+    parent.deleteLater()
+
+
+@pytest.mark.parametrize("build", _source_dialog_builders())
+def test_run_source_configure_dialog_builds_each_editor_once(qapp, monkeypatch, build) -> None:
+    editor_parents = _count_editor_parents(monkeypatch)
+    opened = _capture_exec(monkeypatch, QDialog.DialogCode.Accepted)
+
+    result = run_source_configure_dialog(build, _batch_source_request())
+
+    (dialog,) = opened
+    table_editors = [parent for parent in editor_parents if parent is dialog._table_widget]
+    row_editors = [row.editor for row in dialog._rows.values() if row.editor is not None]
+    assert row_editors
+    assert len(table_editors) == len(row_editors)
+    # The seed still reaches the single build: shared values, advanced and mixed names.
+    assert dialog.windowTitle() == "Configure Sources"
+    assert dialog.collect_values()["max_scf_cycles"] == 80
+    assert "max_scf_cycles" in dialog.advanced_names()
+    assert "cut_off_energy" in dialog.untouched_mixed_names()
+    assert result is not None
+    assert "cut_off_energy" in result.untouched_mixed
+    # The shared parameter order still leads the dialog.
+    assert list(dialog._rows)[:4] == list(workflow_basic_parameter_names())[:4]
+
+
+def test_quantum_dialog_counts_typing_the_shown_farm_count_as_an_edit(qapp) -> None:
+    dialog = QuantumCorrectionsConfigDialog(specs=[], num_farms=1)
+
+    dialog._num_farms_spin.selectAll()
+    QTest.keyClicks(dialog._num_farms_spin.lineEdit(), "1")
+
+    assert dialog.num_farms() == 1
+    assert dialog.num_farms_edited() is True
+    dialog.deleteLater()
+
+
+def test_quantum_dialog_reports_an_edited_farm_count_even_back_at_its_first_value(qapp) -> None:
+    dialog = QuantumCorrectionsConfigDialog(specs=[], num_farms=1)
+    assert dialog.num_farms_edited() is False
+
+    dialog._num_farms_spin.setValue(3)
+    dialog._num_farms_spin.setValue(1)
+
+    assert dialog.num_farms_edited() is True
+    assert dialog.num_farms() == 1
+    dialog.deleteLater()

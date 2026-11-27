@@ -1,0 +1,22 @@
+{
+  "calc_type": "castep_uep_source",
+  "created_at": "2026-11-23T02:40:37.140645+00:00",
+  "custom_param_text": null,
+  "id": "6d0c4c1e-0000-4000-8000-000000000041",
+  "input_site_ids": [],
+  "input_structure_ids": [
+    "6d0c4c1e-0000-4000-8000-000000000001"
+  ],
+  "parameters": {
+    "configuration": {
+      "rows": []
+    },
+    "job_ids_by_label": {
+      "source_01": "6d0c4c1e-0000-4000-8000-000000000011",
+      "source_02": "6d0c4c1e-0000-4000-8000-000000000012",
+      "source_03": "6d0c4c1e-0000-4000-8000-000000000013"
+    },
+    "output_directory": "files/uep"
+  },
+  "workflow_stage": "uep"
+}

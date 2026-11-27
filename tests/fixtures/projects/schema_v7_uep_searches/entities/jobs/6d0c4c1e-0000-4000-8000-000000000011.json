@@ -1,0 +1,26 @@
+{
+  "activity": null,
+  "calc_type": "castep_uep_source",
+  "completed_at": null,
+  "created_at": "2026-11-23T02:40:37.140987+00:00",
+  "dismissed_at": null,
+  "end_reason": null,
+  "error_message": null,
+  "execution_target": "local",
+  "id": "6d0c4c1e-0000-4000-8000-000000000011",
+  "label": "uep_source_01",
+  "last_checked_at": null,
+  "last_status_message": null,
+  "last_status_source": null,
+  "num_processes": null,
+  "remote_directory": null,
+  "remote_job_id": null,
+  "started_at": null,
+  "status": "completed",
+  "submitted_at": null,
+  "tags": [
+    "uep",
+    "castep_uep_source"
+  ],
+  "workflow_stage": "uep"
+}

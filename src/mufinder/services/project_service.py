@@ -1,0 +1,2803 @@
+"""Project-level orchestration for create/load/save workflows."""
+
+from __future__ import annotations
+
+from collections.abc import Callable, Mapping, Sequence
+import copy
+from dataclasses import dataclass
+from datetime import datetime
+from enum import Enum
+import hashlib
+import logging
+from pathlib import Path
+import shutil
+from typing import Any
+from uuid import UUID
+
+from mufinder.domain.charge_states import muon_charge_state_label, muon_relaxation_charge_state
+from mufinder.domain.enums import EndReason, JobActivity, JobStatus, WorkflowStage
+from mufinder.domain.magnetic_properties import (
+    SPIN_TOLERANCE,
+    is_built_magnetic_model,
+    propagation_vector_from_structure,
+)
+from mufinder.domain.models import (
+    CalculationDefinition,
+    ComparisonTable,
+    Job,
+    MuonSite,
+    Project,
+    ProvenanceRecord,
+    Result,
+    Structure,
+    next_definition_created_at,
+    next_job_created_at,
+    normalize_default_method,
+    utc_now,
+)
+from mufinder.domain.text import plural
+from mufinder.persistence import project_codec
+from mufinder.persistence.codec import to_jsonable
+from mufinder.persistence.json_store import ProjectStore
+from mufinder.persistence.migration_save import (
+    JOURNAL_NAME,
+    JOURNAL_VERSION,
+    recover_migration_save,
+    save_migration_snapshot,
+)
+from mufinder.persistence.migrations import (
+    drop_retired_ui_state_keys,
+    migrate_project_payloads,
+    move_uep_searches_to_results,
+    stored_schema_version,
+)
+from mufinder.persistence.project_codec import normalized_xc_functional
+from mufinder.services import site_generation_service, supercell_assets
+from mufinder.services.job_paths import job_output_directory
+from mufinder.services.job_monitoring import job_status_word
+from mufinder.services.perf_trace import PerfTrace
+from mufinder.services.relaxed_structure_spins import (
+    SPINS_KEPT_SCHEMA_VERSION,
+    backfill_relaxed_structure_spins,
+)
+
+# The document aggregate, its read-only queries and the supercell records are
+# re-exported: callers import them from this module.
+from mufinder.services.project_document import (
+    ProjectDocument,
+    append_provenance,
+    active_definition as active_definition,
+    active_host_structure,
+    definition_job_ids,
+    definitions_for_stage as definitions_for_stage,
+    job_for_mapping_key as job_for_mapping_key,
+    job_row_key,
+    job_row_label,
+    stage_row_labels,
+)
+from mufinder.services.magnetic_field_results import record_host_moment_method_versions
+from mufinder.services.muon_sites_summary import relaxed_site_names
+from mufinder.services.source_candidates import (
+    charge_state_for_job,
+    eligible_quantum_source_candidates,
+)
+from mufinder.services.supercell_assets import (
+    WORKFLOW_SUPERCELL_UNIT_CELL,
+    WorkflowStructureResolution,
+    WorkflowSupercellAsset,
+    WorkflowSupercellSelection,
+)
+from mufinder.science.structure_io import load_structure_file
+from mufinder.services.uep_results import regroup_saved_uep_searches
+from mufinder.workflow.muon_site import MUON_RELAXATION_DEFINITION_CALC_TYPE
+
+_LOG = logging.getLogger(__name__)
+
+
+def _job_row_parameters(document: ProjectDocument, job: Job) -> dict[str, str]:
+    """Return the ``row_label`` and ``charge_state`` a job record carries, where they apply.
+
+    ``row_label`` names the workflow row that owns the job (see
+    :func:`~mufinder.services.project_document.job_row_label`); a Quantum
+    Corrections row is named by :func:`_quantum_row_site_name`.
+    ``charge_state`` is the muon charge state of a muon-relaxation job, set from
+    its row's charge state when the job was built. The Journal uses both to
+    tell runs apart.
+    """
+
+    parameters: dict[str, str] = {}
+    row_label = job_row_label(document, job)
+    if row_label and job.workflow_stage == WorkflowStage.QUANTUM_CORRECTIONS:
+        key = job_row_key(document, job)
+        row_label = (_quantum_row_site_name(document, key) if key else None) or row_label
+    if row_label:
+        parameters["row_label"] = row_label
+    charge_state = muon_relaxation_charge_state(job.calc_type)
+    if charge_state is not None:
+        parameters["charge_state"] = charge_state
+    return parameters
+
+
+def _completed_relaxation_results(document: ProjectDocument) -> dict[UUID, datetime | None]:
+    """Each structure a completed, converged calculation derived, with its result's time."""
+
+    created_at: dict[UUID, datetime | None] = {}
+    for result in document.results.values():
+        if not result.calculation_run_id:
+            continue
+        run = document.runs.get(result.calculation_run_id)
+        if run is None or run.status != JobStatus.COMPLETED or run.convergence_achieved is False:
+            continue
+        for structure_id in result.derived_structure_ids:
+            created_at[structure_id] = result.created_at
+    return created_at
+
+
+def _relaxed_host_names(document: ProjectDocument) -> dict[UUID, str]:
+    """Name each relaxed host by the job that relaxed it, as its row shows it.
+
+    The hosts are the pristine-relaxation structures of completed, converged
+    runs, the ones ``list_promotable_host_structures`` offers. ``relax_1`` for
+    a host from the job ``pristine_relax_relax_1``: the label of the Pristine
+    Relaxation row that binds the job
+    (:func:`~mufinder.services.project_document.stage_row_labels`), or the
+    job's own label when no row binds the job any more. Where two hosts' jobs
+    would read the same (two definitions each with a ``relax_1``), those hosts
+    are named by their job labels instead, until no two jobs share a name. A
+    host without a ``source_job_id`` naming a job of the project has no entry.
+    """
+
+    row_of_job = stage_row_labels(document, WorkflowStage.PRISTINE_RELAXATION)
+    completed = _completed_relaxation_results(document)
+    jobs: dict[UUID, Job] = {}
+    for structure in document.structures.values():
+        if structure.origin != "pristine_relaxation" or structure.id not in completed:
+            continue
+        raw_job_id = structure.properties.get("source_job_id")
+        try:
+            job = document.jobs.get(UUID(str(raw_job_id))) if raw_job_id else None
+        except ValueError:
+            job = None
+        if job is not None:
+            jobs[structure.id] = job
+    names = {
+        structure_id: row_of_job.get(str(job.id), job.label) for structure_id, job in jobs.items()
+    }
+    # A job label is the job's folder name and so unique; each pass names more
+    # hosts by it, so this ends once no name is shared by two jobs.
+    while True:
+        jobs_by_name: dict[str, set[UUID]] = {}
+        for structure_id, name in names.items():
+            jobs_by_name.setdefault(name, set()).add(jobs[structure_id].id)
+        shared = {
+            structure_id
+            for structure_id, name in names.items()
+            if len(jobs_by_name[name]) > 1 and name != jobs[structure_id].label
+        }
+        if not shared:
+            return names
+        for structure_id in shared:
+            names[structure_id] = jobs[structure_id].label
+
+
+def promotable_host_structures(document: ProjectDocument) -> list[PromotableHost]:
+    """Return structures eligible to be the active host, ordered for display.
+
+    Includes imported structures and successfully completed pristine relaxation
+    results. Excludes supercell assets and all other derived structure origins.
+    """
+    # The structures a completed, converged run derived, with their result's time.
+    result_created_at = _completed_relaxation_results(document)
+    completed_ids = set(result_created_at)
+
+    relaxed_names = _relaxed_host_names(document)
+    promotable: list[PromotableHost] = []
+    for structure in document.structures.values():
+        if supercell_assets.supercell_asset(structure) is not None:
+            continue
+        if structure.origin == "imported":
+            promotable.append(_imported_host_entry(structure))
+        elif structure.origin == "pristine_relaxation" and structure.id in completed_ids:
+            created_at = result_created_at.get(structure.id)
+            date_str = created_at.strftime("%Y-%m-%d") if created_at else ""
+            job_label = relaxed_names.get(structure.id, structure.label)
+            short_label = f"Relaxed — {job_label}"
+            label = f"{short_label} ({date_str})" if date_str else short_label
+            hint = f"Result of pristine relaxation '{job_label}'"
+            if date_str:
+                hint += f" completed {date_str}"
+            promotable.append(
+                PromotableHost(
+                    structure_id=structure.id,
+                    label=label,
+                    provenance_hint=hint,
+                    kind="relaxed",
+                    created_at=created_at,
+                    name=job_label,
+                    short_label=short_label,
+                )
+            )
+
+    def _sort_key(h: PromotableHost) -> tuple:
+        if h.created_at is None:
+            return (1, 0.0)
+        return (0, -h.created_at.timestamp())
+
+    imported = sorted(
+        [h for h in promotable if h.kind == "imported"],
+        key=lambda h: h.label.casefold(),
+    )
+    relaxed = sorted(
+        [h for h in promotable if h.kind == "relaxed"],
+        key=_sort_key,
+    )
+    return imported + relaxed
+
+
+def _imported_host_entry(structure: Structure) -> PromotableHost:
+    """The selector's entry for an imported structure: ``Original — <label>``."""
+
+    label = f"Original — {structure.label}"
+    return PromotableHost(
+        structure_id=structure.id,
+        label=label,
+        provenance_hint=(
+            f"Imported from {structure.source_file}"
+            if structure.source_file
+            else "Imported structure"
+        ),
+        kind="imported",
+        created_at=None,
+        short_label=label,
+    )
+
+
+def host_entry(document: ProjectDocument, structure_id: UUID) -> PromotableHost | None:
+    """Return structure ``structure_id`` as the Host Structure page's selector lists it.
+
+    ``None`` when the project has no such structure. A structure the selector
+    does not list (a relaxed host whose relaxation is no longer complete) is
+    named by its label. Only a relaxed host needs the whole list, to name it
+    by its relaxation's row.
+    """
+
+    structure = document.structures.get(structure_id)
+    if structure is None:
+        return None
+    if structure.origin == "imported" and supercell_assets.supercell_asset(structure) is None:
+        return _imported_host_entry(structure)
+    for entry in promotable_host_structures(document):
+        if entry.structure_id == structure_id:
+            return entry
+    return PromotableHost(
+        structure_id=structure.id,
+        label=structure.label,
+        provenance_hint="",
+        kind="imported" if structure.origin == "imported" else "relaxed",
+        created_at=None,
+        short_label=structure.label,
+    )
+
+
+def active_host_entry(document: ProjectDocument) -> PromotableHost | None:
+    """Return the active host as the selector lists it (:func:`host_entry`), ``None`` without one."""
+
+    host_id = document.project.host_structure_id
+    return host_entry(document, host_id) if host_id is not None else None
+
+
+@dataclass(frozen=True, slots=True)
+class HostWork:
+    """What the project holds for one host: counts of its sites, saved supercells and jobs.
+
+    True when any count is not zero.
+    """
+
+    sites: int = 0
+    supercells: int = 0
+    jobs: int = 0
+
+    def __bool__(self) -> bool:
+        return bool(self.sites or self.supercells or self.jobs)
+
+
+def _quantum_row_site_name(document: ProjectDocument, key: str) -> str | None:
+    """Return the name the Quantum Corrections page gives row ``key``'s site, or ``None``.
+
+    The site's :func:`~mufinder.services.muon_sites_summary.relaxed_site_name`,
+    its Muon Sites name when pinned; a source relaxed in the site's second
+    charge state adds that charge state (``"Site 1 (muonium)"``), so one site's
+    two rows read apart. ``None`` when the row's source is no longer eligible.
+    """
+
+    candidates = eligible_quantum_source_candidates(document)
+    candidate = next((item for item in candidates if item.key == key), None)
+    if candidate is None:
+        return None
+    name = relaxed_site_names(document, candidates)[key]
+    charge_state = charge_state_for_job(candidate.job)
+    if key != str(candidate.site.id) and charge_state is not None:
+        name = f"{name} ({muon_charge_state_label(charge_state)})"
+    return name
+
+
+def _project_relative_path(path: Path, project_root: Path) -> str:
+    """Return ``path`` relative to the project root, or as given when outside it."""
+
+    try:
+        return str(path.relative_to(project_root))
+    except ValueError:
+        return str(path)
+
+
+def _configure_record(
+    definition: CalculationDefinition,
+    *,
+    action: str,
+    description: str,
+    configuration: Any,
+    relative_output: object,
+    extra_parameters: Mapping[str, Any],
+) -> ProvenanceRecord:
+    """Return the ``configure_*`` record of ``definition``.
+
+    It repeats ``configuration`` (a copy: workflows edit the definition's
+    configuration in place, and the record keeps what was configured), the
+    project-relative output directory and ``extra_parameters`` (mapping values
+    copied), behind the definition's id.
+    """
+
+    return ProvenanceRecord(
+        action=action,
+        workflow_stage=definition.workflow_stage,
+        actor="user",
+        description=description,
+        parameters={
+            "calculation_definition_id": str(definition.id),
+            "configuration": copy.deepcopy(configuration),
+            "output_directory": relative_output,
+            **{
+                key: dict(value) if isinstance(value, dict) else value
+                for key, value in extra_parameters.items()
+            },
+        },
+        input_entity_ids=[*definition.input_structure_ids, *definition.input_site_ids],
+        output_entity_ids=[definition.id],
+    )
+
+
+def muon_relaxation_input_site_ids(configuration: Any) -> list[UUID]:
+    """Return the sites a muon-relaxation ``configuration`` names: each row's parseable ``site_id``.
+
+    The input sites :meth:`ProjectService.register_muon_relaxation_definition`
+    records, in row order.
+    """
+
+    snapshot = to_jsonable(configuration)
+    site_ids: list[UUID] = []
+    rows = snapshot.get("rows", []) if isinstance(snapshot, dict) else []
+    for row in rows if isinstance(rows, list) else []:
+        if not isinstance(row, dict) or not row.get("site_id"):
+            continue
+        try:
+            site_ids.append(UUID(str(row["site_id"])))
+        except ValueError:
+            continue
+    return site_ids
+
+
+def _known_input_structure(
+    document: ProjectDocument,
+    input_structure_id: UUID | None,
+    host_structure_id: UUID | None,
+) -> UUID:
+    """Resolve a definition's single input structure, falling back to the host id."""
+
+    if input_structure_id is None:
+        input_structure_id = host_structure_id
+    if input_structure_id is None or input_structure_id not in document.structures:
+        raise ValueError("input_structure_id must reference a known structure.")
+    return input_structure_id
+
+
+def _require_known_inputs(
+    document: ProjectDocument,
+    input_structure_ids: Sequence[UUID],
+    input_site_ids: Sequence[UUID],
+) -> None:
+    """Reject a multi-input definition with no structure or an unknown structure or site."""
+
+    if not input_structure_ids:
+        raise ValueError("At least one input structure is required.")
+    if any(structure_id not in document.structures for structure_id in input_structure_ids):
+        raise ValueError("input_structure_ids must reference known structures.")
+    if any(site_id not in document.sites for site_id in input_site_ids):
+        raise ValueError("input_site_ids must reference known sites.")
+
+
+#: Job states a calculation can be *continued* from:
+#: :meth:`ProjectService.prepare_job_continuation` accepts exactly these. A
+#: COMPLETED relaxation is continuable as well as an ended one — running more
+#: geometry-optimisation steps from its checkpoint is a normal outcome, not a
+#: recovery from failure. See docs/job_lifecycle.rst.
+CONTINUABLE_JOB_STATUSES = frozenset({JobStatus.COMPLETED, JobStatus.ENDED})
+
+
+@dataclass(slots=True, frozen=True)
+class PromotableHost:
+    """A structure eligible to serve as the project's active host."""
+
+    structure_id: UUID
+    label: str
+    provenance_hint: str
+    kind: str  # "imported" or "relaxed"
+    created_at: datetime | None
+    #: A relaxed host's name: its Pristine Relaxation row, or its job label.
+    name: str = ""
+    #: The entry without its date (``Relaxed — relax_1``); an imported host's whole label.
+    short_label: str = ""
+
+
+@dataclass(slots=True)
+class SiteHostMismatch:
+    """Sites whose source structure differs from the active host."""
+
+    active_host_id: UUID
+    active_host_label: str
+    offenders: list[
+        tuple[UUID, str, UUID | None, str]
+    ]  # (site_id, label, source_host_id, source_host_label)
+
+
+@dataclass(slots=True)
+class StructureHostMismatch:
+    """Structures whose provenance chain doesn't resolve to the active host."""
+
+    active_host_id: UUID
+    active_host_label: str
+    offenders: list[
+        tuple[UUID, str, UUID | None, str]
+    ]  # (struct_id, label, resolved_host_id, host_label)
+
+
+class UnsavedChanges(Enum):
+    """What a save of a project would keep that is not on disk yet."""
+
+    NONE = "none"
+    #: Only what opening the project produced: an upgrade or a tidied search from
+    #: loading. Redone next time if it cannot be written, so nothing is lost.
+    TIDYING = "tidying"
+    #: Worth keeping but not worth a question: job state waiting for its coalesced
+    #: autosave, say. Lost if it cannot be written.
+    ROUTINE = "routine"
+    #: A layout or viewer choice, which only a save keeps.
+    UI_STATE = "ui_state"
+
+
+class ProjectService:
+    """Creates, loads, and saves projects using ProjectStore.
+
+    Dirty tracking
+    --------------
+    ``save_project`` rewrites every entity JSON file on every call, which is
+    expensive on mature projects (hundreds of ``json.dumps`` + file writes per
+    dashboard flush, all on the GUI thread). To avoid that, the service keeps a
+    private content-hash cache mapping ``(entity_type, entity_id)`` to the hash
+    of the canonical serialized payload that was last written to (or loaded
+    from) disk. On the next save an entity whose payload hashes identically and
+    whose file still exists is skipped.
+
+    The cache is keyed by the resolved project root (:meth:`_resolved_root`) so
+    that a single long-lived ``ProjectService`` instance (see
+    ``MainWindow._project_service``) reused across projects never applies one
+    project's hashes to another. It is reset/reseeded on :meth:`load_project`
+    and :meth:`create_project`. This cache is purely a save-time optimization;
+    it holds no persisted state and never changes the on-disk format.
+
+    Concurrency: ``save_project`` runs on the GUI thread only, so the cache is
+    accessed single-threaded and needs no locking. It is kept private to the
+    service and is not exposed to callers.
+    """
+
+    #: Cache sentinel identifying the singleton ui-state document. It is not a
+    #: real entity directory; ``ui_state`` is written via ``write_json`` to
+    #: ``state.json`` rather than ``write_entity``.
+    _UI_STATE_ENTITY_TYPE = "ui_state"
+    _UI_STATE_ENTITY_ID = "ui_state"
+
+    def __init__(self) -> None:
+        # project_root -> what the last save, or the end of opening the project,
+        # left in memory: what ``unsaved_changes`` compares against.
+        self._settled_ui_state: dict[str, str] = {}
+        self._manifest_hashes: dict[str, str] = {}
+        # project_root -> what loading upgraded and no save has written yet: each entity
+        # key with its hash as loaded, and the schema version it was loaded from.
+        self._upgraded_entities: dict[str, dict[tuple[str, str, str], str]] = {}
+        self._upgraded_from_schema: dict[str, int] = {}
+        # (project_root, entity_type, entity_id) -> hash of the canonical
+        # serialized payload last persisted for that entity. "entity_id" is the
+        # entity UUID string for real entities, and a sentinel ("ui_state") for
+        # the singleton ui-state document.
+        self._content_hashes: dict[tuple[str, str, str], str] = {}
+
+    @staticmethod
+    def _entity_groups(
+        document: ProjectDocument,
+    ) -> list[tuple[str, list[tuple[str, Any]]]]:
+        """Return the per-type ``(entity_type, [(entity_id, entity), ...])`` groups.
+
+        This single ordered description drives both cache seeding on load and
+        the prune/write loop on save, so the two can never disagree about which
+        entities exist or which directory they live in.
+        """
+        return [
+            ("structures", [(str(s.id), s) for s in document.structures.values()]),
+            ("sites", [(str(s.id), s) for s in document.sites.values()]),
+            ("calculations", [(str(c.id), c) for c in document.calculations.values()]),
+            ("runs", [(str(r.id), r) for r in document.runs.values()]),
+            ("results", [(str(r.id), r) for r in document.results.values()]),
+            ("comparison_tables", [(str(t.id), t) for t in document.comparison_tables.values()]),
+            ("generation_runs", [(str(r.id), r) for r in document.generation_runs.values()]),
+            ("jobs", [(str(j.id), j) for j in document.jobs.values()]),
+        ]
+
+    @staticmethod
+    def _resolved_root(project_root: Path) -> str:
+        """Return a stable cache key for a project root.
+
+        Resolving guards against the same project being addressed via different
+        but equivalent paths (e.g. relative vs absolute) within one session.
+        """
+        try:
+            return str(Path(project_root).resolve())
+        except OSError:
+            return str(project_root)
+
+    @staticmethod
+    def _payload_hash(payload: dict[str, Any]) -> str:
+        """Hash the exact canonical string ``ProjectStore`` would write.
+
+        Using :meth:`ProjectStore.canonical_json` (the same helper
+        ``write_json`` uses) guarantees the hash tracks precisely the bytes on
+        disk, so the two can never drift.
+        """
+        canonical = ProjectStore.canonical_json(payload)
+        return hashlib.blake2b(canonical.encode("utf-8"), digest_size=16).hexdigest()
+
+    def _reset_content_hashes(self, project_root: Path) -> None:
+        """Drop all cached hashes for one project root.
+
+        Called when a project is (re)loaded or created so that stale hashes
+        from a previous in-memory document for the same root cannot cause a
+        genuinely-changed entity to be skipped.
+        """
+        root_key = self._resolved_root(project_root)
+        for key in [key for key in self._content_hashes if key[0] == root_key]:
+            del self._content_hashes[key]
+        self._settled_ui_state.pop(root_key, None)
+        self._manifest_hashes.pop(root_key, None)
+        self._upgraded_entities.pop(root_key, None)
+        self._upgraded_from_schema.pop(root_key, None)
+
+    def create_project(self, project_root: Path, name: str) -> ProjectDocument:
+        """Create a new project document and persist baseline files."""
+        self._reset_content_hashes(project_root)
+        project = Project(name=name, modified_at=utc_now())
+        document = ProjectDocument(project_root=project_root, project=project)
+        self.save_project(document)
+        return document
+
+    def load_project(self, project_root: Path) -> ProjectDocument:
+        """Load a project from disk into a ProjectDocument."""
+        store = ProjectStore(project_root)
+        recover_migration_save(store)
+        manifest = store.read_json(store.project_manifest_path)
+        payloads = {
+            entity_type: store.load_entities(entity_type)
+            for entity_type in (
+                "structures",
+                "sites",
+                "calculations",
+                "runs",
+                "results",
+                "comparison_tables",
+                "generation_runs",
+                "jobs",
+            )
+        }
+        ui_state = store.read_json(store.state_path) if store.state_path.exists() else {}
+        # Projects saved at an older schema are upgraded in memory; the entity
+        # files (and ui_state) a migration changed are left out of the
+        # dirty-tracking cache below so the next save writes them with the new
+        # manifest version. Retired ui_state keys are dropped at any version,
+        # and the next save writes ui_state without them.
+        stored_version = stored_schema_version(manifest)
+        migrated_keys = migrate_project_payloads(manifest, payloads, ui_state)
+        migrated_keys |= drop_retired_ui_state_keys(ui_state)
+        # A build from before schema 8 keeps the manifest's version and saves UEP
+        # searches in ``ui_state``, so they are moved into results at any version.
+        migrated_keys |= move_uep_searches_to_results(payloads, ui_state)
+
+        project = project_codec.project_from_dict(manifest)
+        # Each entity directory is named after the ``ProjectDocument`` mapping it fills.
+        entities = {
+            entity_type: {entity.id: entity for entity in map(decode, payloads[entity_type])}
+            for entity_type, decode in project_codec.ENTITY_DECODERS.items()
+        }
+        provenance = [project_codec.provenance_from_dict(p) for p in store.load_provenance()]
+        job_payloads = payloads["jobs"]
+        jobs = project_codec.jobs_in_creation_order(job_payloads, provenance)
+        # Jobs saved before ``created_at`` existed carry a backfilled value that
+        # is not on disk yet; leaving them out of the cache makes the next save
+        # write it, so later loads use the persisted value.
+        unsaved_keys = migrated_keys | {
+            ("jobs", payload["id"]) for payload in job_payloads if payload.get("created_at") is None
+        }
+
+        document = ProjectDocument(
+            project_root=project_root,
+            project=project,
+            **entities,
+            jobs=jobs,
+            provenance=provenance,
+            ui_state=ui_state,
+        )
+        # Below schema 6 relaxed structures did not keep their run's SPIN=
+        # values; they are read back from the job files and left out of the
+        # cache so the next save writes them with the new schema version.
+        if stored_version < SPINS_KEPT_SCHEMA_VERSION:
+            unsaved_keys |= {
+                ("structures", str(structure_id))
+                for structure_id in backfill_relaxed_structure_spins(
+                    document, lambda job: self._job_output_directory(document, job)
+                )
+            }
+
+        # Reset then seed the dirty-tracking cache from the payloads just loaded
+        # off disk so the first save after opening a project does not rewrite
+        # every entity. Seeding uses ``to_jsonable(entity)`` (what a save would
+        # write); a regression test asserts this round-trips to the exact
+        # loaded payload for representative entities. The ui_state seeded here
+        # is the raw on-disk value.
+        self._reset_content_hashes(project_root)
+        root_key = self._resolved_root(project_root)
+        for entity_type, entities in self._entity_groups(document):
+            for entity_id, entity in entities:
+                if (entity_type, entity_id) in unsaved_keys:
+                    continue
+                self._content_hashes[(root_key, entity_type, entity_id)] = self._payload_hash(
+                    to_jsonable(entity)
+                )
+        if (self._UI_STATE_ENTITY_TYPE, self._UI_STATE_ENTITY_ID) not in unsaved_keys:
+            self._content_hashes[
+                (root_key, self._UI_STATE_ENTITY_TYPE, self._UI_STATE_ENTITY_ID)
+            ] = self._payload_hash(to_jsonable(ui_state))
+
+        # Regrouped after the cache is seeded, from what the project holds, so a
+        # project with a retired grouping writes the new one at its next save. A
+        # regrouped search is an upgrade made by loading, as a migrated entity is.
+        for result_id in regroup_saved_uep_searches(document):
+            self._content_hashes.pop((root_key, "results", str(result_id)), None)
+            unsaved_keys.add(("results", str(result_id)))
+        # An upgrade made here is kept by the next save, even if nothing else changes:
+        # no recorded hash is what ``unsaved_changes`` reports as still to write.
+        ui_key = (root_key, self._UI_STATE_ENTITY_TYPE, self._UI_STATE_ENTITY_ID)
+        if self._content_hashes.get(ui_key) != self._payload_hash(to_jsonable(document.ui_state)):
+            self._content_hashes.pop(ui_key, None)
+        self._manifest_hashes[root_key] = self._manifest_hash(document)
+        if stored_version != stored_schema_version(manifest):
+            self._upgraded_from_schema[root_key] = stored_version
+        self._upgraded_entities[root_key] = {
+            (root_key, entity_type, entity_id): self._payload_hash(to_jsonable(entity))
+            for entity_type, entities in self._entity_groups(document)
+            for entity_id, entity in entities
+            if (entity_type, entity_id) in unsaved_keys
+        }
+
+        document.integrity_warnings = self.validate_document(document)
+        self.settle_ui_state(document)
+        return document
+
+    @staticmethod
+    def _job_output_directory(document: ProjectDocument, job: Job) -> Path | None:
+        # Deferred: ``source_candidates`` imports this module.
+        from mufinder.services.source_candidates import quantum_seed_name_for_key
+
+        return job_output_directory(
+            document,
+            job,
+            quantum_seed_name=lambda definition, key: quantum_seed_name_for_key(
+                document, definition, key
+            ),
+        )
+
+    def save_project(self, document: ProjectDocument) -> None:
+        """Persist all mutable project entities to disk."""
+        issues = self.validate_document(document)
+        if issues:
+            issue_text = "\n".join(f"- {issue}" for issue in issues)
+            raise ValueError(f"Project integrity check failed:\n{issue_text}")
+
+        trace = PerfTrace(label="save_project", logger=_LOG)
+        document.project.modified_at = utc_now()
+        store = ProjectStore(document.project_root)
+        store.initialize_layout()
+        root_key = self._resolved_root(document.project_root)
+
+        if recover_migration_save(store):
+            self._reset_content_hashes(document.project_root)
+
+        # Also protect documents passed to a fresh service, whose migration
+        # bookkeeping was populated by a different service on load.
+        if root_key in self._upgraded_from_schema or root_key not in self._manifest_hashes:
+            if (
+                store.project_manifest_path.exists()
+                and stored_schema_version(store.read_json(store.project_manifest_path))
+                < document.project.schema_version
+            ):
+                self._save_migrated_project(document, store, root_key)
+                return
+
+        # The manifest carries ``modified_at`` (bumped every save above), so it
+        # is always rewritten and deliberately not hash-tracked.
+        store.write_json(store.project_manifest_path, to_jsonable(document.project))
+
+        written = 0
+        skipped = 0
+
+        for entity_type, entities in self._entity_groups(document):
+            # Prune first so externally-orphaned files (and files for entities
+            # deleted in memory) are removed even when nothing else changed.
+            # The same listing says which files are still on disk.
+            on_disk = store.prune_entities(entity_type, {entity_id for entity_id, _ in entities})
+            for entity_id, entity in entities:
+                payload = to_jsonable(entity)
+                digest = self._payload_hash(payload)
+                cache_key = (root_key, entity_type, entity_id)
+                # Skip only when the content is unchanged AND the file still
+                # exists on disk; the existence check forces a rewrite if the
+                # file was deleted externally since the cached hash was taken.
+                if self._content_hashes.get(cache_key) == digest and entity_id in on_disk:
+                    skipped += 1
+                    continue
+                store.write_entity(entity_type, entity_id, payload)
+                self._content_hashes[cache_key] = digest
+                written += 1
+
+        # Drop cached hashes for entities that no longer exist in memory so the
+        # cache cannot grow unbounded across a long session. Their files were
+        # already removed by ``prune_entities`` above.
+        live_keys = {
+            (root_key, entity_type, entity_id)
+            for entity_type, entities in self._entity_groups(document)
+            for entity_id, _ in entities
+        }
+        for key in [
+            key
+            for key in self._content_hashes
+            if key[0] == root_key and key[1] != self._UI_STATE_ENTITY_TYPE and key not in live_keys
+        ]:
+            del self._content_hashes[key]
+
+        # ui_state gets the same hash-skip treatment as entities.
+        ui_payload = to_jsonable(document.ui_state)
+        ui_digest = self._payload_hash(ui_payload)
+        ui_key = (root_key, self._UI_STATE_ENTITY_TYPE, self._UI_STATE_ENTITY_ID)
+        if self._content_hashes.get(ui_key) == ui_digest and store.state_path.exists():
+            skipped += 1
+        else:
+            store.write_json(store.state_path, ui_payload)
+            self._content_hashes[ui_key] = ui_digest
+            written += 1
+        self._settled_ui_state[root_key] = ui_digest
+        self._manifest_hashes[root_key] = self._manifest_hash(document)
+        self._upgraded_entities.pop(root_key, None)
+        self._upgraded_from_schema.pop(root_key, None)
+
+        trace.log_summary(extra=f"entity_files_written={written} entity_files_skipped={skipped}")
+
+    def _save_migrated_project(
+        self, document: ProjectDocument, store: ProjectStore, root_key: str
+    ) -> None:
+        """Persist a migrated snapshot with one durable redo plan."""
+        writes: dict[str, dict[str, Any]] = {}
+        keep: dict[str, list[str]] = {}
+        hashes: dict[tuple[str, str, str], str] = {}
+        for entity_type, entities in self._entity_groups(document):
+            keep[entity_type] = [entity_id for entity_id, _ in entities]
+            writes[entity_type] = {}
+            for entity_id, entity in entities:
+                payload = to_jsonable(entity)
+                key = (root_key, entity_type, entity_id)
+                digest = self._payload_hash(payload)
+                hashes[key] = digest
+                if (
+                    self._content_hashes.get(key) != digest
+                    or not (store.entities_root / entity_type / f"{entity_id}.json").exists()
+                ):
+                    writes[entity_type][entity_id] = payload
+        ui_payload = to_jsonable(document.ui_state)
+        ui_digest = self._payload_hash(ui_payload)
+        ui_key = (root_key, self._UI_STATE_ENTITY_TYPE, self._UI_STATE_ENTITY_ID)
+        state_changed = (
+            self._content_hashes.get(ui_key) != ui_digest or not store.state_path.exists()
+        )
+        save_migration_snapshot(
+            store,
+            {
+                "journal_version": JOURNAL_VERSION,
+                "manifest": to_jsonable(document.project),
+                "entities": writes,
+                "keep_ids": keep,
+                "state": ui_payload if state_changed else None,
+            },
+        )
+        # Publish cache changes only after the complete snapshot is committed.
+        self._reset_content_hashes(document.project_root)
+        self._content_hashes.update(hashes)
+        self._content_hashes[ui_key] = ui_digest
+        self._settled_ui_state[root_key] = ui_digest
+        self._manifest_hashes[root_key] = self._manifest_hash(document)
+
+    def settle_ui_state(self, document: ProjectDocument) -> None:
+        """Take ``document``'s UI state as what the user has seen and not changed.
+
+        A window calls this once it has finished showing a project it opened: its
+        pages tidy some saved forms as they fill, and that is no change of the user's.
+        """
+
+        payload = to_jsonable(document.ui_state)
+        self._settled_ui_state[self._resolved_root(document.project_root)] = self._payload_hash(
+            payload
+        )
+
+    def unsaved_changes(self, document: ProjectDocument) -> UnsavedChanges:
+        """Say what a save of ``document`` would keep that is not yet on disk."""
+
+        root_key = self._resolved_root(document.project_root)
+        settled = self._settled_ui_state.get(root_key)
+        if settled is None or self._payload_hash(to_jsonable(document.ui_state)) != settled:
+            return UnsavedChanges.UI_STATE
+        if self._durable_state_unwritten(document, root_key):
+            return UnsavedChanges.ROUTINE
+        ui_key = (root_key, self._UI_STATE_ENTITY_TYPE, self._UI_STATE_ENTITY_ID)
+        if (
+            ui_key not in self._content_hashes
+            or root_key in self._upgraded_from_schema
+            or self._upgraded_entities.get(root_key)
+        ):
+            return UnsavedChanges.TIDYING
+        return UnsavedChanges.NONE
+
+    def save_tidying(self, document: ProjectDocument) -> None:
+        """Save a project whose ``unsaved_changes`` are only ``TIDYING``, if the disk allows.
+
+        A failure before a migration journal is committed is only logged: the
+        next open does the same work again. A pending journal is reported so the
+        user knows that filesystem recovery is needed before loading can finish.
+        """
+
+        try:
+            self.save_project(document)
+        except (OSError, ValueError) as exc:
+            if self._upgrade_half_written(document):
+                raise
+            _LOG.info("Left a tidied project unwritten: %s", exc)
+
+    def _upgrade_half_written(self, document: ProjectDocument) -> bool:
+        root_key = self._resolved_root(document.project_root)
+        store = ProjectStore(document.project_root)
+        if (store.project_root / JOURNAL_NAME).exists():
+            return True
+        loaded_from = self._upgraded_from_schema.get(root_key)
+        if loaded_from is None:
+            return False
+        try:
+            return (
+                stored_schema_version(store.read_json(store.project_manifest_path)) != loaded_from
+            )
+        except (OSError, ValueError):
+            return True
+
+    def _manifest_hash(self, document: ProjectDocument) -> str:
+        """Hash the manifest without ``modified_at``, which every save bumps."""
+
+        payload = to_jsonable(document.project)
+        payload.pop("modified_at", None)
+        return self._payload_hash(payload)
+
+    def _durable_state_unwritten(self, document: ProjectDocument, root_key: str) -> bool:
+        """Whether the manifest or an entity holds more than loading's upgrades left."""
+
+        if self._manifest_hashes.get(root_key) != self._manifest_hash(document):
+            return True
+        upgraded = self._upgraded_entities.get(root_key, {})
+        live_keys: set[tuple[str, str, str]] = set()
+        for entity_type, entities in self._entity_groups(document):
+            for entity_id, entity in entities:
+                key = (root_key, entity_type, entity_id)
+                live_keys.add(key)
+                digest = self._payload_hash(to_jsonable(entity))
+                if digest not in (self._content_hashes.get(key), upgraded.get(key)):
+                    return True
+        return any(
+            key[0] == root_key and key[1] != self._UI_STATE_ENTITY_TYPE and key not in live_keys
+            for key in (*self._content_hashes, *upgraded)
+        )
+
+    def append_provenance(self, document: ProjectDocument, record: ProvenanceRecord) -> None:
+        """Append a provenance record in-memory and to disk."""
+        append_provenance(document, record)
+
+    def add_structure(self, document: ProjectDocument, structure: Structure) -> None:
+        """Add a structure and update host structure if currently unset."""
+        document.structures[structure.id] = structure
+        if document.project.host_structure_id is None:
+            document.project.host_structure_id = structure.id
+
+    def add_comparison_table(self, document: ProjectDocument, table: ComparisonTable) -> None:
+        """Register one persisted comparison table in the current document."""
+        document.comparison_tables[table.id] = table
+
+    def rename_comparison_table(
+        self, document: ProjectDocument, table_id: UUID, label: str
+    ) -> ComparisonTable | None:
+        """Update the display label for one persisted comparison table."""
+        table = document.comparison_tables.get(table_id)
+        if table is None:
+            return None
+        table.label = str(label).strip() or "Comparison Table"
+        return table
+
+    def remove_comparison_table(self, document: ProjectDocument, table_id: UUID) -> None:
+        """Delete one persisted comparison table from the current document."""
+        document.comparison_tables.pop(table_id, None)
+
+    def remove_candidate_sites(
+        self, document: ProjectDocument, site_ids: Sequence[UUID]
+    ) -> list[MuonSite]:
+        """Remove generated muon sites by id and record the edit in provenance."""
+        outcome = site_generation_service.remove_candidate_sites(document, site_ids)
+        return self._record_site_change(document, outcome)
+
+    def cluster_candidate_positions(
+        self,
+        document: ProjectDocument,
+        site_ids: Sequence[UUID],
+        *,
+        anchor_fractional: Sequence[float],
+    ) -> list[MuonSite]:
+        """Move selected generated muon sites to symmetry representatives near an anchor."""
+        outcome = site_generation_service.cluster_candidate_positions(
+            document, site_ids, anchor_fractional=anchor_fractional
+        )
+        return self._record_site_change(document, outcome)
+
+    def stage_generated_sites(
+        self, document: ProjectDocument, site_ids: Sequence[UUID]
+    ) -> list[MuonSite]:
+        """Mark generated muon sites as staged for structural relaxation."""
+        outcome = site_generation_service.stage_generated_sites(document, site_ids)
+        return self._record_site_change(document, outcome)
+
+    def record_job_submission(
+        self,
+        document: ProjectDocument,
+        *,
+        jobs: Sequence[Job],
+        execution_target: str,
+    ) -> None:
+        """Append one provenance milestone for a user submission action."""
+
+        submitted_jobs = [
+            job
+            for job in jobs
+            if job.status == JobStatus.ACTIVE and job.activity != JobActivity.RETRIEVING
+        ]
+        if not submitted_jobs:
+            return
+
+        workflow_stage = (
+            submitted_jobs[0].workflow_stage
+            if len({job.workflow_stage for job in submitted_jobs}) == 1
+            else None
+        )
+        job_rows = {job.id: _job_row_parameters(document, job) for job in submitted_jobs}
+        charge_states = {job_rows[job.id].get("charge_state") for job in submitted_jobs}
+        batch_parameters: dict[str, Any] = {}
+        if len(charge_states) == 1 and None not in charge_states:
+            batch_parameters["charge_state"] = charge_states.pop()
+        self.append_provenance(
+            document,
+            ProvenanceRecord(
+                action="submit_jobs",
+                workflow_stage=workflow_stage,
+                actor="user",
+                description=f"Submitted {plural(len(submitted_jobs), 'job')} to {execution_target}",
+                parameters={
+                    "execution_target": execution_target,
+                    "job_count": len(submitted_jobs),
+                    "job_labels": [job.label for job in submitted_jobs],
+                    **batch_parameters,
+                    "jobs": [
+                        {
+                            "job_id": str(job.id),
+                            "label": job.label,
+                            **job_rows[job.id],
+                            "status": job_status_word(job),
+                            "execution_target": job.execution_target,
+                            "remote_job_id": job.remote_job_id,
+                            "remote_directory": job.remote_directory,
+                            "num_processes": job.num_processes,
+                            "submitted_at": (
+                                job.submitted_at.isoformat() if job.submitted_at else None
+                            ),
+                        }
+                        for job in submitted_jobs
+                    ],
+                },
+                output_entity_ids=[job.id for job in submitted_jobs],
+            ),
+        )
+
+    def record_job_terminal_event(
+        self,
+        document: ProjectDocument,
+        *,
+        action: str,
+        job: Job,
+        result: Result | None = None,
+        error_message: str | None = None,
+    ) -> None:
+        """Append one provenance milestone for a terminal job outcome."""
+
+        parameters: dict[str, Any] = {
+            "job_label": job.label,
+            "calc_type": job.calc_type,
+            "execution_target": job.execution_target,
+            **_job_row_parameters(document, job),
+        }
+        if result is not None:
+            data = result.data if isinstance(result.data, dict) else {}
+            total_energy = data.get("total_energy")
+            max_force = data.get("max_force")
+            warnings = data.get("warnings", [])
+            if total_energy is not None:
+                parameters["result_total_energy"] = total_energy
+            if max_force is not None:
+                parameters["result_max_force"] = max_force
+            if isinstance(warnings, list):
+                parameters["warnings_count"] = len(warnings)
+            if result.derived_structure_ids:
+                parameters["derived_structure_count"] = len(result.derived_structure_ids)
+        if error_message:
+            parameters["error_message"] = error_message
+        if job.end_reason not in {None, EndReason.UNKNOWN} and action in {
+            "job_failed",
+            "job_stopped",
+        }:
+            parameters["failure_reason"] = job.end_reason.value
+
+        output_entity_ids: list[UUID] = [job.id]
+        if result is not None:
+            output_entity_ids.append(result.id)
+            output_entity_ids.extend(result.derived_structure_ids)
+
+        descriptions = {
+            "job_completed": f"Completed calculation {job.label}",
+            "job_failed": f"Calculation {job.label} failed",
+            "job_stopped": f"Calculation {job.label} stopped",
+            "job_cancelled": f"Cancelled calculation {job.label}",
+        }
+        self.append_provenance(
+            document,
+            ProvenanceRecord(
+                action=action,
+                workflow_stage=job.workflow_stage,
+                actor="system",
+                description=descriptions.get(action, job.label),
+                parameters=parameters,
+                output_entity_ids=output_entity_ids,
+                job_id=job.id,
+            ),
+        )
+
+    def record_job_reset(
+        self,
+        document: ProjectDocument,
+        *,
+        job: Job,
+        cleaned_output_directory: bool,
+        removed_result: bool = False,
+    ) -> None:
+        """Append one provenance milestone when a job is reset for resubmission.
+
+        ``removed_result`` records that a completed job's result went with the
+        reset (an edited Quantum Corrections or Hyperfine Coupling row run
+        again).
+        """
+
+        self.append_provenance(
+            document,
+            ProvenanceRecord(
+                action="job_reset",
+                workflow_stage=job.workflow_stage,
+                actor="user",
+                description=f"Reset calculation {job.label} for resubmission",
+                parameters={
+                    "job_label": job.label,
+                    "calc_type": job.calc_type,
+                    "execution_target": job.execution_target,
+                    **_job_row_parameters(document, job),
+                    "cleaned_output_directory": cleaned_output_directory,
+                    **({"removed_result": True} if removed_result else {}),
+                },
+                output_entity_ids=[job.id],
+                job_id=job.id,
+            ),
+        )
+
+    def record_job_continuation(
+        self,
+        document: ProjectDocument,
+        *,
+        job: Job,
+        remote_directory: str | None,
+    ) -> None:
+        """Append one provenance milestone when a job is prepared for continuation.
+
+        ``remote_directory`` is the directory the continuation run will reuse
+        (see :meth:`prepare_job_continuation`); ``None`` for a local job or a
+        job that never reached a cluster.
+        """
+
+        self.append_provenance(
+            document,
+            ProvenanceRecord(
+                action="job_continuation",
+                workflow_stage=job.workflow_stage,
+                actor="user",
+                description=f"Continued calculation {job.label}",
+                parameters={
+                    "job_label": job.label,
+                    "calc_type": job.calc_type,
+                    "execution_target": job.execution_target,
+                    **_job_row_parameters(document, job),
+                    "preserved_remote_directory": remote_directory is not None,
+                    "remote_directory": remote_directory,
+                },
+                output_entity_ids=[job.id],
+                job_id=job.id,
+            ),
+        )
+
+    def record_job_dismissed(
+        self,
+        document: ProjectDocument,
+        *,
+        job: Job,
+    ) -> None:
+        """Append one provenance milestone when a terminal job is dismissed.
+
+        Dismissal hides the job from the active dashboard without deleting its
+        record, runs, results, or provenance (see :meth:`dismiss_job`). The
+        milestone lets the journal show that the row was intentionally removed
+        from view.
+        """
+
+        self.append_provenance(
+            document,
+            ProvenanceRecord(
+                action="job_dismissed",
+                workflow_stage=job.workflow_stage,
+                actor="user",
+                description=f"Dismissed calculation {job.label} from the dashboard",
+                parameters={
+                    "job_label": job.label,
+                    "calc_type": job.calc_type,
+                    "execution_target": job.execution_target,
+                    **_job_row_parameters(document, job),
+                },
+                output_entity_ids=[job.id],
+                job_id=job.id,
+            ),
+        )
+
+    def record_comparison_table_created(
+        self,
+        document: ProjectDocument,
+        *,
+        table: ComparisonTable,
+    ) -> None:
+        """Append one provenance milestone when a comparison table is created."""
+
+        self.append_provenance(
+            document,
+            ProvenanceRecord(
+                action="create_comparison_table",
+                actor="user",
+                description=f"Created comparison table '{table.label}'",
+                parameters={
+                    "table_label": table.label,
+                    "dft_structure_count": len(table.dft_structure_ids),
+                },
+                input_entity_ids=[table.experimental_structure_id]
+                if table.experimental_structure_id is not None
+                else [],
+                output_entity_ids=[table.id, *table.dft_structure_ids],
+            ),
+        )
+
+    # Workflow supercell assets and selection live in
+    # ``mufinder.services.supercell_assets``; these methods delegate to it.
+
+    def get_workflow_supercell_selection(
+        self,
+        document: ProjectDocument,
+        workflow_stage: WorkflowStage,
+    ) -> WorkflowSupercellSelection:
+        """Return ``workflow_stage``'s persisted simulation-cell selection."""
+        return supercell_assets.get_workflow_supercell_selection(document, workflow_stage)
+
+    def set_workflow_supercell_selection(
+        self,
+        document: ProjectDocument,
+        workflow_stage: WorkflowStage,
+        selection: WorkflowSupercellSelection,
+    ) -> None:
+        """Persist ``workflow_stage``'s simulation-cell selection."""
+        supercell_assets.set_workflow_supercell_selection(document, workflow_stage, selection)
+
+    def list_workflow_supercell_assets(
+        self,
+        document: ProjectDocument,
+        *,
+        host_structure_id: UUID | None,
+    ) -> list[WorkflowSupercellAsset]:
+        """Return the saved supercell assets built from ``host_structure_id``."""
+        return supercell_assets.list_workflow_supercell_assets(
+            document, host_structure_id=host_structure_id
+        )
+
+    def repaired_supercell_structure(
+        self, document: ProjectDocument, *, structure_id: UUID
+    ) -> Structure | None:
+        """Return the structure as :meth:`repair_supercell_asset_if_needed` would leave it.
+
+        A copy when the repair would change it; the project is left as it is.
+        """
+        return supercell_assets.repaired_supercell_structure(document, structure_id=structure_id)
+
+    def repair_supercell_asset_if_needed(
+        self, document: ProjectDocument, *, structure_id: UUID
+    ) -> bool:
+        """Rebuild an asset that lacks its magnetic host's spins; return whether it was rebuilt."""
+        return supercell_assets.repair_supercell_asset_if_needed(
+            document, structure_id=structure_id
+        )
+
+    def structure_atomic_spins(self, structure: Structure) -> list[float]:
+        """Return numeric per-atom spins for a structure, defaulting missing values to zero."""
+        return supercell_assets.structure_atomic_spins(structure)
+
+    def structure_propagation_vector(self, structure: Structure) -> list[float]:
+        """Return the structure propagation vector, defaulting to [0, 0, 0]."""
+        return list(propagation_vector_from_structure(structure))
+
+    def set_host_magnetic_configuration(
+        self,
+        document: ProjectDocument,
+        atomic_spins: Sequence[float],
+        propagation_vector: Sequence[float],
+    ) -> bool:
+        """Store the host's per-atom spins and propagation vector; return whether a host took them.
+
+        The spins go on the host's ``atomic_spins`` property and the vector on its
+        ``propagation_vector`` property.
+
+        When a spin or the propagation vector is non-zero, the host's ``magnetic_structure``
+        property and the project's ``magnetic_structure`` become one
+        ``{"propagation_vector", "moments"}`` record, with a moment along z for each non-zero
+        spin that carries the atom's zero-based ``atom_index`` and a label of species and
+        one-based atom number (``Co2``). When everything is zero, the host loses its
+        ``magnetic_structure`` property and the project's is cleared.
+
+        A model from the magnetic structure builder (see
+        :func:`~mufinder.domain.magnetic_properties.is_built_magnetic_model`) is never
+        replaced or cleared: the Magnetic Fields page owns it. The host's property is left
+        alone when it holds one. The project's is left alone when it holds one, or when it
+        is unset beside a host's built model (the model then in use). A project spin record
+        beside a host's built model still follows the spins, as an empty
+        ``{"propagation_vector", "moments": []}`` record when everything is zero.
+
+        Before the record changes, each stored Magnetic Fields result that records no host
+        moment method version takes the one it reads as now
+        (:func:`~mufinder.services.magnetic_field_results.record_host_moment_method_versions`).
+
+        Raises ``ValueError`` before changing anything when the propagation vector does not
+        have three components.
+        """
+        spins = [float(value) for value in atomic_spins]
+        propagation = [float(value) for value in propagation_vector]
+        if len(propagation) != 3:
+            raise ValueError(f"A propagation vector has three components, not {len(propagation)}.")
+        host = active_host_structure(document)
+        if host is None:
+            return False
+
+        # Stored fields keep the status of the spin record they were calculated from.
+        record_host_moment_method_versions(document)
+        host.properties["atomic_spins"] = spins
+        host.properties["propagation_vector"] = propagation
+        host_built = is_built_magnetic_model(host.properties.get("magnetic_structure"))
+        project_built = is_built_magnetic_model(document.project.magnetic_structure)
+        moments = [
+            {
+                "label": f"{species}{index + 1}",
+                "atom_index": index,
+                "vector": [0.0, 0.0, spin],
+                "coordinate_system": "cartesian",
+            }
+            for index, (species, spin) in enumerate(zip(host.species, spins))
+            if abs(spin) > SPIN_TOLERANCE
+        ]
+        magnetic_structure: dict[str, Any] | None = None
+        if moments or any(abs(value) > SPIN_TOLERANCE for value in propagation):
+            magnetic_structure = {"propagation_vector": list(propagation), "moments": moments}
+        if not host_built:
+            if magnetic_structure is None:
+                host.properties.pop("magnetic_structure", None)
+            else:
+                host.properties["magnetic_structure"] = magnetic_structure
+        if not host_built:
+            if not project_built:
+                document.project.magnetic_structure = magnetic_structure
+        elif isinstance(document.project.magnetic_structure, dict) and not project_built:
+            # A project spin record beside a host's built model is what Magnetic Fields
+            # reads, so it follows the spins. Clearing it would put the host's model in use
+            # in place of the spins; an empty record keeps the page on the zero spins.
+            document.project.magnetic_structure = magnetic_structure or {
+                "propagation_vector": list(propagation),
+                "moments": [],
+            }
+        return True
+
+    def create_workflow_supercell_asset(
+        self,
+        document: ProjectDocument,
+        *,
+        workflow_stage: WorkflowStage | None,
+        host_structure_id: UUID,
+        matrix: list[list[int]],
+        label: str | None = None,
+        source_asset_structure_id: UUID | None = None,
+        reuse_existing: bool = True,
+    ) -> Structure:
+        """Build and register a supercell asset, reusing a matching one by default."""
+        return supercell_assets.create_workflow_supercell_asset(
+            document,
+            workflow_stage=workflow_stage,
+            host_structure_id=host_structure_id,
+            matrix=matrix,
+            label=label,
+            source_asset_structure_id=source_asset_structure_id,
+            reuse_existing=reuse_existing,
+        )
+
+    def latest_workflow_supercell_asset(
+        self,
+        document: ProjectDocument,
+        *,
+        host_structure_id: UUID | None,
+        matrix: list[list[int]] | None = None,
+    ) -> WorkflowSupercellAsset | None:
+        """Return the last saved asset of ``host_structure_id``, of ``matrix`` when given."""
+        return supercell_assets.latest_workflow_supercell_asset(
+            document, host_structure_id=host_structure_id, matrix=matrix
+        )
+
+    def supercell_editor_seed_matrix(self, document: ProjectDocument) -> list[list[int]]:
+        """Return the matrix the Supercell Editor opens on when no cell is in use."""
+        return supercell_assets.supercell_editor_seed_matrix(document)
+
+    def workflows_selecting_supercell_asset(
+        self, document: ProjectDocument, *, asset_structure_id: UUID
+    ) -> list[WorkflowStage]:
+        """Return the workflow stages whose active selection is the asset."""
+        return supercell_assets.workflows_selecting_supercell_asset(
+            document, asset_structure_id=asset_structure_id
+        )
+
+    def workflows_with_jobs_using_supercell_asset(
+        self, document: ProjectDocument, *, asset_structure_id: UUID
+    ) -> list[WorkflowStage]:
+        """Return the workflow stages whose configured calculations use the asset."""
+        return supercell_assets.workflows_with_jobs_using_supercell_asset(
+            document, asset_structure_id=asset_structure_id
+        )
+
+    def distinct_supercell_asset_label(
+        self, document: ProjectDocument, *, host_structure_id: UUID, label: str
+    ) -> str:
+        """Return ``label``, with ``copy`` added when a saved asset of the host already has it."""
+        return supercell_assets.distinct_supercell_asset_label(
+            document, host_structure_id=host_structure_id, label=label
+        )
+
+    def supercell_asset_references(
+        self, document: ProjectDocument, *, asset_structure_id: UUID
+    ) -> list[str]:
+        """Return user-facing references to a saved supercell asset."""
+        return supercell_assets.supercell_asset_references(
+            document, asset_structure_id=asset_structure_id
+        )
+
+    def supercell_asset_is_frozen(
+        self, document: ProjectDocument, *, asset_structure_id: UUID
+    ) -> bool:
+        """Return whether the asset is frozen into a calculation definition."""
+        return supercell_assets.supercell_asset_is_frozen(
+            document, asset_structure_id=asset_structure_id
+        )
+
+    def rename_workflow_supercell_asset(
+        self,
+        document: ProjectDocument,
+        *,
+        asset_structure_id: UUID,
+        label: str,
+    ) -> Structure:
+        """Rename a saved supercell asset."""
+        return supercell_assets.rename_workflow_supercell_asset(
+            document, asset_structure_id=asset_structure_id, label=label
+        )
+
+    def update_workflow_supercell_asset_matrix(
+        self,
+        document: ProjectDocument,
+        *,
+        asset_structure_id: UUID,
+        matrix: list[list[int]],
+        label: str | None = None,
+    ) -> Structure:
+        """Regenerate an unfrozen saved supercell asset with a new matrix."""
+        return supercell_assets.update_workflow_supercell_asset_matrix(
+            document, asset_structure_id=asset_structure_id, matrix=matrix, label=label
+        )
+
+    def delete_workflow_supercell_asset(
+        self, document: ProjectDocument, *, asset_structure_id: UUID
+    ) -> Structure:
+        """Delete an unused saved supercell asset and clear stale active selections."""
+        return supercell_assets.delete_workflow_supercell_asset(
+            document, asset_structure_id=asset_structure_id
+        )
+
+    def use_workflow_supercell_asset(
+        self,
+        document: ProjectDocument,
+        *,
+        workflow_stage: WorkflowStage,
+        asset_structure_id: UUID,
+    ) -> Structure:
+        """Select a saved supercell asset for ``workflow_stage``."""
+        return supercell_assets.use_workflow_supercell_asset(
+            document, workflow_stage=workflow_stage, asset_structure_id=asset_structure_id
+        )
+
+    def clear_workflow_supercell_selection(
+        self, document: ProjectDocument, workflow_stage: WorkflowStage
+    ) -> None:
+        """Reset ``workflow_stage`` to simulate the single unit cell."""
+        supercell_assets.clear_workflow_supercell_selection(document, workflow_stage)
+
+    def resolve_workflow_structure(
+        self,
+        document: ProjectDocument,
+        workflow_stage: WorkflowStage,
+        *,
+        normalize_state: bool = False,
+    ) -> WorkflowStructureResolution:
+        """Return the structure ``workflow_stage`` simulates and its selection state."""
+        return supercell_assets.resolve_workflow_structure(
+            document, workflow_stage, normalize_state=normalize_state
+        )
+
+    def import_structure_file(
+        self,
+        document: ProjectDocument,
+        source_path: Path,
+        *,
+        label: str | None = None,
+        make_active: bool = True,
+    ) -> Structure:
+        """Load a structure from disk and register it in the project.
+
+        The input file is copied to the project's imports directory to preserve
+        provenance and portability of loaded projects.
+        """
+        loaded = load_structure_file(source_path)
+        copied_path = self._copy_import_file(document.project_root, source_path)
+        project_copy = str(copied_path.relative_to(document.project_root))
+
+        structure = Structure(
+            label=label or source_path.stem,
+            origin="imported",
+            lattice_vectors=loaded.lattice_vectors,
+            species=loaded.species,
+            fractional_positions=loaded.fractional_positions,
+            source_file=project_copy,
+            properties=loaded.properties,
+        )
+        document.structures[structure.id] = structure
+        if make_active:
+            # Stored fields keep the status of the host they were calculated on.
+            record_host_moment_method_versions(document)
+            document.project.host_structure_id = structure.id
+            document.project.magnetic_structure = loaded.properties.get("magnetic_structure")
+
+        self.append_provenance(
+            document,
+            ProvenanceRecord(
+                action="import_structure",
+                workflow_stage=WorkflowStage.MUON_GENERATION,
+                actor="user",
+                description=f"Imported structure from {source_path.name}",
+                parameters={
+                    "source_file": str(source_path),
+                    "project_copy": project_copy,
+                    "file_extension": source_path.suffix.lower(),
+                    "make_active": make_active,
+                    "has_magnetic_structure": bool(loaded.properties.get("magnetic_structure")),
+                },
+                output_entity_ids=[structure.id],
+            ),
+        )
+        return structure
+
+    def add_job(
+        self,
+        document: ProjectDocument,
+        *,
+        label: str,
+        workflow_stage: WorkflowStage,
+        calc_type: str,
+        execution_target: str = "local",
+    ) -> Job:
+        """Create an in-memory job record for the dashboard."""
+        job = self.new_job(
+            label=label,
+            workflow_stage=workflow_stage,
+            calc_type=calc_type,
+            execution_target=execution_target,
+        )
+        self.adopt_job(document, job)
+        return job
+
+    @staticmethod
+    def new_job(
+        *,
+        label: str,
+        workflow_stage: WorkflowStage,
+        calc_type: str,
+        execution_target: str = "local",
+    ) -> Job:
+        """Return a ``defined`` job that belongs to no project yet: a planned job.
+
+        A submission plans its new rows' jobs with this before its dialog is
+        accepted; :meth:`adopt_job` adds one to the project, under the same id,
+        once it is.
+        """
+
+        return Job(
+            label=label,
+            workflow_stage=workflow_stage,
+            calc_type=calc_type,
+            status=JobStatus.DEFINED,
+            execution_target=execution_target,
+            tags=[workflow_stage.value, calc_type],
+        )
+
+    @staticmethod
+    def adopt_job(document: ProjectDocument, job: Job) -> Job:
+        """Add ``job``, made by :meth:`new_job`, to ``document`` under the id it already has.
+
+        Its creation time is set then, later than every job's in the project, as
+        :meth:`add_job` sets it.
+        """
+
+        job.created_at = next_job_created_at(document.jobs.values())
+        document.jobs[job.id] = job
+        return job
+
+    def register_convergence_cutoff_definition(
+        self,
+        document: ProjectDocument,
+        *,
+        input_structure_id: UUID | None = None,
+        host_structure_id: UUID | None = None,
+        parameters: dict[str, Any],
+        output_directory: Path,
+        job_ids_by_cutoff: dict[str, str] | None = None,
+        simulation_cell_mode: str = WORKFLOW_SUPERCELL_UNIT_CELL,
+        supercell_source_workflow: str | None = None,
+        hold_record: Callable[[ProvenanceRecord], None] | None = None,
+    ) -> CalculationDefinition:
+        """Persist one convergence-cutoff configuration as a reusable definition.
+
+        This records the configured parameter snapshot as a first-class entity,
+        separate from ephemeral UI form state.
+        """
+
+        structure_id = _known_input_structure(document, input_structure_id, host_structure_id)
+        snapshot = to_jsonable(parameters)
+        return self._register_definition(
+            document,
+            stage=WorkflowStage.CONVERGENCE_CUTOFF,
+            calc_type="castep_convergence_cutoff",
+            action="configure_convergence_cutoff",
+            description=(
+                "Configured cutoff convergence with "
+                f"{plural(len(snapshot.get('sweep_values', [])), 'cutoff value')}"
+            ),
+            configuration=snapshot,
+            output_directory=output_directory,
+            extra_parameters={
+                "job_ids_by_cutoff": dict(job_ids_by_cutoff or {}),
+                "simulation_cell_mode": simulation_cell_mode,
+                "supercell_source_workflow": supercell_source_workflow,
+            },
+            input_structure_ids=[structure_id],
+            hold_record=hold_record,
+        )
+
+    def register_convergence_kpoint_definition(
+        self,
+        document: ProjectDocument,
+        *,
+        input_structure_id: UUID | None = None,
+        host_structure_id: UUID | None = None,
+        parameters: dict[str, Any],
+        output_directory: Path,
+        job_ids_by_grid: dict[str, str] | None = None,
+        simulation_cell_mode: str = WORKFLOW_SUPERCELL_UNIT_CELL,
+        supercell_source_workflow: str | None = None,
+        hold_record: Callable[[ProvenanceRecord], None] | None = None,
+    ) -> CalculationDefinition:
+        """Persist one convergence-kpoint configuration as a reusable definition."""
+
+        structure_id = _known_input_structure(document, input_structure_id, host_structure_id)
+        snapshot = to_jsonable(parameters)
+        return self._register_definition(
+            document,
+            stage=WorkflowStage.CONVERGENCE_KPOINT,
+            calc_type="castep_convergence_kpoint",
+            action="configure_convergence_kpoint",
+            description=(
+                "Configured k-point convergence with "
+                f"{plural(len(snapshot.get('sweep_values', [])), 'grid value')}"
+            ),
+            configuration=snapshot,
+            output_directory=output_directory,
+            extra_parameters={
+                "job_ids_by_grid": dict(job_ids_by_grid or {}),
+                "simulation_cell_mode": simulation_cell_mode,
+                "supercell_source_workflow": supercell_source_workflow,
+            },
+            input_structure_ids=[structure_id],
+            hold_record=hold_record,
+        )
+
+    def register_pristine_relaxation_definition(
+        self,
+        document: ProjectDocument,
+        *,
+        input_structure_id: UUID | None = None,
+        host_structure_id: UUID | None = None,
+        parameters: dict[str, Any],
+        output_directory: Path,
+        job_ids_by_label: dict[str, str] | None = None,
+        hold_record: Callable[[ProvenanceRecord], None] | None = None,
+    ) -> CalculationDefinition:
+        """Persist one pristine-relaxation configuration as a reusable definition.
+
+        ``hold_record`` takes the "Configured …" record instead of the Journal;
+        see :meth:`_register_definition`.
+        """
+
+        structure_id = _known_input_structure(document, input_structure_id, host_structure_id)
+        snapshot = to_jsonable(parameters)
+        return self._register_definition(
+            document,
+            stage=WorkflowStage.PRISTINE_RELAXATION,
+            calc_type="castep_pristine_relaxation",
+            action="configure_pristine_relaxation",
+            description=f"Configured pristine relaxation with {plural(len(snapshot.get('rows', [])), 'job row')}",
+            configuration=snapshot,
+            output_directory=output_directory,
+            extra_parameters={"job_ids_by_label": dict(job_ids_by_label or {})},
+            input_structure_ids=[structure_id],
+            hold_record=hold_record,
+        )
+
+    @staticmethod
+    def row_configure_record(definition: CalculationDefinition) -> ProvenanceRecord | None:
+        """Return the "Configured …" record a row or sweep definition's registration wrote.
+
+        Rebuilt from ``definition`` as it is now, with an empty job map, for a
+        workflow that holds the record until a submission is accepted. Covers
+        the pristine- and muon-relaxation, UEP and convergence-sweep
+        definitions; ``None`` for any other (whose held record is written as it
+        was), and for a muon-relaxation definition with no rows, whose
+        registration records nothing.
+        """
+
+        stage = definition.workflow_stage
+        configuration = definition.parameters.get("configuration", {})
+        if not isinstance(configuration, dict):
+            configuration = {}
+        rows = configuration.get("rows", [])
+        rows = rows if isinstance(rows, list) else []
+        sweep_values = configuration.get("sweep_values", [])
+        sweep_values = sweep_values if isinstance(sweep_values, list) else []
+        sweep_context = {
+            "simulation_cell_mode": definition.parameters.get("simulation_cell_mode", "unit_cell"),
+            "supercell_source_workflow": definition.parameters.get("supercell_source_workflow"),
+        }
+        records = {
+            WorkflowStage.PRISTINE_RELAXATION: (
+                "configure_pristine_relaxation",
+                f"Configured pristine relaxation with {plural(len(rows), 'job row')}",
+                {"job_ids_by_label": {}},
+            ),
+            WorkflowStage.MUON_RELAXATION: (
+                "configure_muon_relaxation",
+                f"Configured muon relaxation with {plural(len(rows), 'job row')}",
+                {"job_ids_by_label": {}},
+            ),
+            WorkflowStage.UEP: (
+                "configure_uep",
+                f"Configured UEP source workflow with {plural(len(rows), 'job row')}",
+                {"job_ids_by_label": {}},
+            ),
+            WorkflowStage.CONVERGENCE_CUTOFF: (
+                "configure_convergence_cutoff",
+                f"Configured cutoff convergence with {plural(len(sweep_values), 'cutoff value')}",
+                {"job_ids_by_cutoff": {}, **sweep_context},
+            ),
+            WorkflowStage.CONVERGENCE_KPOINT: (
+                "configure_convergence_kpoint",
+                f"Configured k-point convergence with {plural(len(sweep_values), 'grid value')}",
+                {"job_ids_by_grid": {}, **sweep_context},
+            ),
+        }
+        if stage not in records or (stage == WorkflowStage.MUON_RELAXATION and not rows):
+            return None
+        action, description, extra_parameters = records[stage]
+        return _configure_record(
+            definition,
+            action=action,
+            description=description,
+            configuration=configuration,
+            relative_output=definition.parameters.get("output_directory"),
+            extra_parameters=extra_parameters,
+        )
+
+    def register_muon_relaxation_definition(
+        self,
+        document: ProjectDocument,
+        *,
+        input_structure_id: UUID | None = None,
+        host_structure_id: UUID | None = None,
+        parameters: dict[str, Any],
+        output_directory: Path,
+        job_ids_by_label: dict[str, str] | None = None,
+        hold_record: Callable[[ProvenanceRecord], None] | None = None,
+    ) -> CalculationDefinition:
+        """Persist one muon-relaxation configuration.
+
+        The definition's input sites are the rows' parseable ``site_id`` values.
+        ``hold_record`` takes the "Configured …" record instead of the Journal;
+        see :meth:`_register_definition`.
+        """
+
+        structure_id = _known_input_structure(document, input_structure_id, host_structure_id)
+        snapshot = to_jsonable(parameters)
+        input_site_ids = muon_relaxation_input_site_ids(snapshot)
+        return self._register_definition(
+            document,
+            stage=WorkflowStage.MUON_RELAXATION,
+            calc_type=MUON_RELAXATION_DEFINITION_CALC_TYPE,
+            action="configure_muon_relaxation",
+            description=f"Configured muon relaxation with {plural(len(snapshot.get('rows', [])), 'job row')}",
+            configuration=snapshot,
+            output_directory=output_directory,
+            extra_parameters={"job_ids_by_label": dict(job_ids_by_label or {})},
+            input_structure_ids=[structure_id],
+            input_site_ids=input_site_ids,
+            record_provenance=bool(snapshot.get("rows")),
+            hold_record=hold_record,
+        )
+
+    def register_uep_definition(
+        self,
+        document: ProjectDocument,
+        *,
+        input_structure_id: UUID | None = None,
+        host_structure_id: UUID | None = None,
+        parameters: dict[str, Any],
+        output_directory: Path,
+        job_ids_by_label: dict[str, str] | None = None,
+        hold_record: Callable[[ProvenanceRecord], None] | None = None,
+    ) -> CalculationDefinition:
+        """Persist one UEP source-job configuration as a reusable definition."""
+
+        structure_id = _known_input_structure(document, input_structure_id, host_structure_id)
+        snapshot = to_jsonable(parameters)
+        return self._register_definition(
+            document,
+            stage=WorkflowStage.UEP,
+            calc_type="castep_uep_source",
+            action="configure_uep",
+            description=f"Configured UEP source workflow with {plural(len(snapshot.get('rows', [])), 'job row')}",
+            configuration=snapshot,
+            output_directory=output_directory,
+            extra_parameters={"job_ids_by_label": dict(job_ids_by_label or {})},
+            input_structure_ids=[structure_id],
+            hold_record=hold_record,
+        )
+
+    def register_quantum_phonon_definition(
+        self,
+        document: ProjectDocument,
+        *,
+        input_structure_ids: list[UUID],
+        input_site_ids: list[UUID],
+        parameters: dict[str, Any],
+        output_directory: Path,
+        job_ids_by_label: dict[str, str] | None = None,
+        hold_record: Callable[[ProvenanceRecord], None] | None = None,
+    ) -> CalculationDefinition:
+        """Persist one Quantum Corrections phonon configuration.
+
+        The configuration's phonon-job and seed-name maps are also lifted to
+        top-level definition parameters; the provenance record omits them.
+        """
+
+        _require_known_inputs(document, input_structure_ids, input_site_ids)
+        snapshot = to_jsonable(parameters)
+        lifted_maps: dict[str, Any] = {}
+        for key in ("phonon_job_ids_by_label", "job_seed_names_by_label"):
+            value = snapshot.get(key, {})
+            lifted_maps[key] = dict(value) if isinstance(value, dict) else {}
+        return self._register_definition(
+            document,
+            stage=WorkflowStage.QUANTUM_CORRECTIONS,
+            calc_type="castep_quantum_phonon_set",
+            action="configure_quantum_corrections",
+            description=f"Configured Quantum Corrections with {plural(len(input_site_ids), 'relaxed site')}",
+            configuration=snapshot,
+            output_directory=output_directory,
+            extra_parameters={"job_ids_by_label": dict(job_ids_by_label or {})},
+            definition_only_parameters=lifted_maps,
+            input_structure_ids=input_structure_ids,
+            input_site_ids=input_site_ids,
+            hold_record=hold_record,
+        )
+
+    def register_hyperfine_definition(
+        self,
+        document: ProjectDocument,
+        *,
+        input_structure_ids: list[UUID],
+        input_site_ids: list[UUID],
+        parameters: dict[str, Any],
+        output_directory: Path,
+        hold_record: Callable[[ProvenanceRecord], None] | None = None,
+    ) -> CalculationDefinition:
+        """Persist one Hyperfine Coupling configuration (one magres job per relaxed site)."""
+
+        _require_known_inputs(document, input_structure_ids, input_site_ids)
+        return self._register_definition(
+            document,
+            stage=WorkflowStage.HYPERFINE_COUPLING,
+            calc_type="castep_hyperfine_set",
+            action="configure_hyperfine_coupling",
+            description=f"Configured Hyperfine Coupling with {plural(len(input_site_ids), 'relaxed site')}",
+            configuration=to_jsonable(parameters),
+            output_directory=output_directory,
+            extra_parameters={"job_ids_by_label": {}},
+            input_structure_ids=input_structure_ids,
+            input_site_ids=input_site_ids,
+            hold_record=hold_record,
+        )
+
+    def register_nudged_elastic_band_definition(
+        self,
+        document: ProjectDocument,
+        *,
+        input_structure_ids: list[UUID],
+        input_site_ids: list[UUID],
+        parameters: dict[str, Any],
+        output_directory: Path,
+        job_ids_by_label: dict[str, str] | None = None,
+        hold_record: Callable[[ProvenanceRecord], None] | None = None,
+    ) -> CalculationDefinition:
+        """Persist one Energy Barriers NEB configuration."""
+
+        _require_known_inputs(document, input_structure_ids, input_site_ids)
+        return self._register_definition(
+            document,
+            stage=WorkflowStage.ENERGY_BARRIERS,
+            calc_type="castep_nudged_elastic_band_set",
+            action="configure_energy_barriers",
+            description=f"Configured Energy Barriers NEB with {plural(len(input_site_ids), 'relaxed site')}",
+            configuration=to_jsonable(parameters),
+            output_directory=output_directory,
+            extra_parameters={"job_ids_by_label": dict(job_ids_by_label or {})},
+            input_structure_ids=input_structure_ids,
+            input_site_ids=input_site_ids,
+            hold_record=hold_record,
+        )
+
+    def _register_definition(
+        self,
+        document: ProjectDocument,
+        *,
+        stage: WorkflowStage,
+        calc_type: str,
+        action: str,
+        description: str,
+        configuration: Any,
+        output_directory: Path,
+        extra_parameters: dict[str, Any],
+        input_structure_ids: Sequence[UUID],
+        input_site_ids: Sequence[UUID] = (),
+        definition_only_parameters: dict[str, Any] | None = None,
+        record_provenance: bool = True,
+        hold_record: Callable[[ProvenanceRecord], None] | None = None,
+    ) -> CalculationDefinition:
+        """Store one calculation definition and append its ``configure_*`` record.
+
+        The definition's parameters are ``configuration`` (the JSON snapshot of
+        the configured form), the project-relative ``output_directory``, then
+        ``extra_parameters`` and ``definition_only_parameters`` in that order.
+        The provenance record repeats every parameter except the
+        definition-only ones, behind the new definition's id; its mapping
+        values are copies, so later edits to the definition's job maps leave
+        the recorded event unchanged.
+
+        With ``hold_record`` the record goes to it instead of the Journal: a
+        workflow that creates its jobs only once a submission is accepted holds
+        the record until then (:meth:`append_provenance` writes it).
+        """
+
+        relative_output = _project_relative_path(output_directory, document.project_root)
+        definition = CalculationDefinition(
+            workflow_stage=stage,
+            calc_type=calc_type,
+            parameters={
+                "configuration": configuration,
+                "output_directory": relative_output,
+                **extra_parameters,
+                **(definition_only_parameters or {}),
+            },
+            input_structure_ids=list(input_structure_ids),
+            input_site_ids=list(input_site_ids),
+            created_at=next_definition_created_at(document.calculations.values()),
+        )
+        document.calculations[definition.id] = definition
+
+        if not record_provenance:
+            return definition
+
+        record = _configure_record(
+            definition,
+            action=action,
+            description=description,
+            configuration=configuration,
+            relative_output=relative_output,
+            extra_parameters=extra_parameters,
+        )
+        if hold_record is not None:
+            hold_record(record)
+        else:
+            self.append_provenance(document, record)
+        return definition
+
+    def set_recommended_cutoff(
+        self,
+        document: ProjectDocument,
+        cutoff_energy: float,
+        *,
+        method: str | None = None,
+        energy_threshold: float | None = None,
+        force_threshold: float | None = None,
+        stress_threshold: float | None = None,
+        cell_id: str | None = None,
+        xc_functional: str | None = None,
+    ) -> None:
+        """Persist a project-wide recommended cutoff energy for future workflows.
+
+        ``xc_functional`` is the functional the converged runs used. It is
+        recorded against the cutoff and, when given, also becomes the project
+        default functional — a converged cutoff is only meaningful alongside it.
+        ``method`` is ``manual`` for a value typed in by hand; any other value
+        records the cutoff as converged (see :func:`normalize_default_method`).
+        """
+        document.project.recommended_cutoff_energy = float(cutoff_energy)
+        document.project.recommended_cutoff_method = normalize_default_method(method)
+        document.project.recommended_cutoff_energy_threshold = (
+            float(energy_threshold) if energy_threshold is not None else None
+        )
+        document.project.recommended_cutoff_force_threshold = (
+            float(force_threshold) if force_threshold is not None else None
+        )
+        document.project.recommended_cutoff_stress_threshold = (
+            float(stress_threshold) if stress_threshold is not None else None
+        )
+        document.project.recommended_cutoff_cell_id = (
+            str(cell_id).strip() if cell_id is not None and str(cell_id).strip() else None
+        )
+        document.project.recommended_cutoff_xc_functional = normalized_xc_functional(xc_functional)
+        if document.project.recommended_cutoff_xc_functional is not None:
+            document.project.recommended_xc_functional = (
+                document.project.recommended_cutoff_xc_functional
+            )
+
+        self.append_provenance(
+            document,
+            ProvenanceRecord(
+                action="set_recommended_cutoff",
+                workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF,
+                actor="user",
+                description=f"Set project recommended cutoff to {float(cutoff_energy):.8g} eV",
+                parameters={
+                    "recommended_cutoff_energy": float(cutoff_energy),
+                    "recommended_cutoff_method": document.project.recommended_cutoff_method,
+                    "recommended_cutoff_energy_threshold": document.project.recommended_cutoff_energy_threshold,
+                    "recommended_cutoff_force_threshold": document.project.recommended_cutoff_force_threshold,
+                    "recommended_cutoff_stress_threshold": document.project.recommended_cutoff_stress_threshold,
+                    "recommended_cutoff_cell_id": document.project.recommended_cutoff_cell_id,
+                    "recommended_cutoff_xc_functional": (
+                        document.project.recommended_cutoff_xc_functional
+                    ),
+                },
+            ),
+        )
+
+    def clear_recommended_cutoff(self, document: ProjectDocument) -> None:
+        """Remove the project default cutoff energy and how it was established."""
+
+        project = document.project
+        project.recommended_cutoff_energy = None
+        project.recommended_cutoff_method = None
+        project.recommended_cutoff_energy_threshold = None
+        project.recommended_cutoff_force_threshold = None
+        project.recommended_cutoff_stress_threshold = None
+        project.recommended_cutoff_cell_id = None
+        project.recommended_cutoff_xc_functional = None
+        self.append_provenance(
+            document,
+            ProvenanceRecord(
+                action="clear_recommended_cutoff",
+                workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF,
+                actor="user",
+                description="Cleared project recommended cutoff",
+            ),
+        )
+
+    def clear_recommended_kpoint_grid(self, document: ProjectDocument) -> None:
+        """Remove the project default k-point grid and how it was established."""
+
+        project = document.project
+        project.recommended_kpoint_grid = None
+        project.recommended_kpoint_lattice = None
+        project.recommended_kpoint_method = None
+        project.recommended_kpoint_energy_threshold = None
+        project.recommended_kpoint_force_threshold = None
+        project.recommended_kpoint_stress_threshold = None
+        project.recommended_kpoint_cell_id = None
+        project.recommended_kpoint_xc_functional = None
+        self.append_provenance(
+            document,
+            ProvenanceRecord(
+                action="clear_recommended_kpoint_grid",
+                workflow_stage=WorkflowStage.CONVERGENCE_KPOINT,
+                actor="user",
+                description="Cleared project recommended k-point grid",
+            ),
+        )
+
+    def set_recommended_kpoint_grid(
+        self,
+        document: ProjectDocument,
+        kpoint_grid: tuple[int, int, int],
+        *,
+        lattice_vectors: list[list[float]] | None = None,
+        method: str | None = None,
+        energy_threshold: float | None = None,
+        force_threshold: float | None = None,
+        stress_threshold: float | None = None,
+        cell_id: str | None = None,
+        xc_functional: str | None = None,
+    ) -> None:
+        """Persist a project-wide recommended k-point grid for future workflows.
+
+        ``xc_functional`` and ``method`` are recorded as in
+        :meth:`set_recommended_cutoff`.
+        """
+
+        grid = (int(kpoint_grid[0]), int(kpoint_grid[1]), int(kpoint_grid[2]))
+        document.project.recommended_kpoint_grid = grid
+        document.project.recommended_kpoint_lattice = (
+            [[float(row[0]), float(row[1]), float(row[2])] for row in lattice_vectors]
+            if isinstance(lattice_vectors, list) and len(lattice_vectors) == 3
+            else None
+        )
+        document.project.recommended_kpoint_method = normalize_default_method(method)
+        document.project.recommended_kpoint_energy_threshold = (
+            float(energy_threshold) if energy_threshold is not None else None
+        )
+        document.project.recommended_kpoint_force_threshold = (
+            float(force_threshold) if force_threshold is not None else None
+        )
+        document.project.recommended_kpoint_stress_threshold = (
+            float(stress_threshold) if stress_threshold is not None else None
+        )
+        document.project.recommended_kpoint_cell_id = (
+            str(cell_id).strip() if cell_id is not None and str(cell_id).strip() else None
+        )
+        document.project.recommended_kpoint_xc_functional = normalized_xc_functional(xc_functional)
+        if document.project.recommended_kpoint_xc_functional is not None:
+            document.project.recommended_xc_functional = (
+                document.project.recommended_kpoint_xc_functional
+            )
+
+        self.append_provenance(
+            document,
+            ProvenanceRecord(
+                action="set_recommended_kpoint_grid",
+                workflow_stage=WorkflowStage.CONVERGENCE_KPOINT,
+                actor="user",
+                description=(
+                    f"Set project recommended k-point grid to {grid[0]}x{grid[1]}x{grid[2]}"
+                ),
+                parameters={
+                    "recommended_kpoint_grid": [grid[0], grid[1], grid[2]],
+                    "recommended_kpoint_lattice": document.project.recommended_kpoint_lattice,
+                    "recommended_kpoint_method": document.project.recommended_kpoint_method,
+                    "recommended_kpoint_energy_threshold": document.project.recommended_kpoint_energy_threshold,
+                    "recommended_kpoint_force_threshold": document.project.recommended_kpoint_force_threshold,
+                    "recommended_kpoint_stress_threshold": document.project.recommended_kpoint_stress_threshold,
+                    "recommended_kpoint_cell_id": document.project.recommended_kpoint_cell_id,
+                    "recommended_kpoint_xc_functional": (
+                        document.project.recommended_kpoint_xc_functional
+                    ),
+                },
+            ),
+        )
+
+    def set_recommended_xc_functional(
+        self,
+        document: ProjectDocument,
+        xc_functional: str | None,
+    ) -> None:
+        """Persist (or clear, with ``None``) the project default XC functional.
+
+        The functionals the cutoff and k-point defaults were converged with are
+        left untouched, so a mismatch stays visible rather than being silently
+        discarded.
+        """
+
+        functional = normalized_xc_functional(xc_functional)
+        document.project.recommended_xc_functional = functional
+        self.append_provenance(
+            document,
+            ProvenanceRecord(
+                action="set_recommended_xc_functional",
+                actor="user",
+                description=(
+                    f"Set project default XC functional to {functional}"
+                    if functional is not None
+                    else "Cleared project default XC functional"
+                ),
+                parameters={"recommended_xc_functional": functional},
+            ),
+        )
+
+    def submit_job(self, job: Job) -> None:
+        """Make a defined or ended job active as ``submitting`` and stamp submission time."""
+        self._assert_transition(job.status, JobStatus.ACTIVE)
+        job.status = JobStatus.ACTIVE
+        job.activity = JobActivity.SUBMITTING
+        job.submitted_at = utc_now()
+        job.started_at = None
+        job.completed_at = None
+        job.error_message = None
+        job.end_reason = None
+
+    def mark_job_active(
+        self, job: Job, activity: JobActivity, *, remote_job_id: str | None = None
+    ) -> None:
+        """Record what an active job is doing, or make an ended job active again.
+
+        ``activity`` is display only, so an active job may move to any
+        activity. An ended job becomes active when evidence shows it is alive
+        or has output still to be recorded; its end stamps and any dismissal
+        are cleared and its remote metadata is kept. ``started_at`` is stamped when the job starts
+        running. ``remote_job_id``, when given, replaces the scheduler job ID.
+        """
+
+        if job.status == JobStatus.DEFINED:
+            raise ValueError("A defined job becomes active only when it is submitted.")
+        if job.status != JobStatus.ACTIVE:
+            self._assert_transition(job.status, JobStatus.ACTIVE)
+            job.completed_at = None
+            job.error_message = None
+            job.end_reason = None
+            job.dismissed_at = None
+        if activity == JobActivity.RUNNING and (
+            job.status != JobStatus.ACTIVE or job.activity != JobActivity.RUNNING
+        ):
+            job.started_at = utc_now()
+        job.status = JobStatus.ACTIVE
+        job.activity = activity
+        if remote_job_id:
+            job.remote_job_id = remote_job_id
+
+    def complete_job(self, job: Job) -> None:
+        """Mark an active job as completed."""
+        self._assert_transition(job.status, JobStatus.COMPLETED)
+        job.status = JobStatus.COMPLETED
+        job.activity = None
+        job.completed_at = utc_now()
+        job.error_message = None
+        job.end_reason = None
+
+    def end_job(self, job: Job, reason: EndReason, message: str | None = None) -> None:
+        """End an active job for ``reason``, recording ``message`` as its error.
+
+        A defined job can be ended only as ``CANCELLED``. A cancellation keeps
+        any message the job already holds when none is given.
+        """
+
+        if job.status == JobStatus.DEFINED and reason != EndReason.CANCELLED:
+            raise ValueError("Only a cancellation can end a defined job.")
+        self._assert_transition(job.status, JobStatus.ENDED)
+        job.status = JobStatus.ENDED
+        job.activity = None
+        job.end_reason = reason
+        job.completed_at = utc_now()
+        if message is not None or reason != EndReason.CANCELLED:
+            job.error_message = message
+
+    def reset_failed_job(self, job: Job) -> None:
+        """Reset an ended job to defined for resubmission."""
+
+        if job.status != JobStatus.ENDED:
+            raise ValueError("Only failed, stopped, or cancelled jobs can be reset.")
+        _clear_run_state(job)
+
+    def reset_completed_job(self, job: Job) -> None:
+        """Reset a completed job to defined, to run it again with changed parameters.
+
+        Only the job's own fields change; removing its result is the caller's
+        (:meth:`~mufinder.services.job_execution_controller.JobExecutionController.reset_completed_jobs`).
+        """
+
+        if job.status != JobStatus.COMPLETED:
+            raise ValueError("Only completed jobs can be reset to run with new parameters.")
+        _clear_run_state(job)
+
+    def prepare_job_continuation(self, job: Job) -> None:
+        """Return a completed or ended job to defined for a continuation run, keeping its directory.
+
+        Accepts :data:`CONTINUABLE_JOB_STATUSES`. Every field the previous run
+        stamped is cleared, but ``remote_directory`` is **deliberately
+        preserved** — that is the whole point of the primitive. A defined job
+        carrying a non-null ``remote_directory`` is the durable marker the
+        cluster submission path uses to detect a continuation: it resubmits into
+        the existing remote directory (where CASTEP's ``.check`` file lives)
+        instead of recomputing a target, checking for an existing directory, and
+        offering to delete it.
+
+        No other code path can produce that state/field combination. The
+        writers of ``remote_directory`` are: ``JobExecutionController``, which
+        sets it while making a job active and clears it on local submission;
+        :meth:`reset_failed_job`, which clears it; and cluster checks, which
+        only touch active jobs.
+        """
+
+        if job.status not in CONTINUABLE_JOB_STATUSES:
+            raise ValueError("Only completed, failed, stopped, or cancelled jobs can be continued.")
+
+        job.status = JobStatus.DEFINED
+        job.activity = None
+        job.submitted_at = None
+        job.started_at = None
+        job.completed_at = None
+        job.remote_job_id = None
+        job.num_processes = None
+        job.error_message = None
+        job.end_reason = None
+        job.last_checked_at = None
+        job.last_status_source = None
+        job.last_status_message = None
+        job.dismissed_at = None
+
+    def dismiss_job(self, job: Job) -> None:
+        """Hide an ended job from the active dashboard without deleting it.
+
+        Dismissal is **not** a state change: the job stays ``ENDED`` and its
+        record, runs, results, and provenance all remain in the document. Only
+        ``dismissed_at`` is stamped so the dashboard can filter the row out.
+        Already-dismissed jobs are rejected so the milestone is recorded once.
+        Nothing else reads the stamp, and every change of state clears it, so a
+        job that is reset, continued or made active again is shown again.
+        """
+
+        if job.status != JobStatus.ENDED or job.dismissed_at is not None:
+            raise ValueError("Only failed, stopped, or cancelled jobs can be dismissed.")
+        job.dismissed_at = utc_now()
+
+    def generate_candidate_sites(
+        self,
+        document: ProjectDocument,
+        *,
+        method: str,
+        parameters: dict[str, Any],
+        progress_callback: Callable[[int, int], None] | None = None,
+    ) -> list[MuonSite]:
+        """Create generated muon sites from a generation request.
+
+        See :func:`mufinder.services.site_generation_service.generate_candidate_sites`.
+        """
+        outcome = site_generation_service.generate_candidate_sites(
+            document, method=method, parameters=parameters, progress_callback=progress_callback
+        )
+        return self._record_site_change(document, outcome)
+
+    def prepare_candidate_sites(
+        self, document: ProjectDocument, *, method: str, parameters: dict[str, Any]
+    ) -> site_generation_service.CandidateSiteRequest:
+        """Capture a random or element-attached request to compute on a worker thread.
+
+        See :func:`mufinder.services.site_generation_service.prepare_candidate_sites`.
+        """
+        return site_generation_service.prepare_candidate_sites(
+            document, method=method, parameters=parameters
+        )
+
+    @staticmethod
+    def compute_candidate_sites(
+        request: site_generation_service.CandidateSiteRequest,
+        *,
+        progress_callback: Callable[[int, int], None] | None = None,
+        should_cancel: Callable[[], bool] | None = None,
+    ) -> site_generation_service.SiteGenerationOutcome:
+        """Compute a prepared request's sites without touching the document; safe on a worker.
+
+        See :func:`mufinder.services.site_generation_service.compute_candidate_sites`.
+        """
+        return site_generation_service.compute_candidate_sites(
+            request, progress_callback=progress_callback, should_cancel=should_cancel
+        )
+
+    def apply_generated_sites(
+        self,
+        document: ProjectDocument,
+        request: site_generation_service.CandidateSiteRequest,
+        outcome: site_generation_service.SiteGenerationOutcome,
+    ) -> list[MuonSite]:
+        """Add a computed request's sites to ``document`` and record its provenance.
+
+        Runs on the thread that owns ``document``, once the worker has finished.
+        See :func:`mufinder.services.site_generation_service.apply_candidate_sites`.
+        """
+        site_generation_service.apply_candidate_sites(document, request, outcome)
+        return self._record_site_change(document, outcome)
+
+    def requested_site_count(
+        self, document: ProjectDocument, *, method: str, parameters: dict[str, Any]
+    ) -> int | None:
+        """Return how many sites a generation request asks for, or ``None`` when it sets none.
+
+        See :func:`mufinder.services.site_generation_service.requested_site_count`.
+        """
+        return site_generation_service.requested_site_count(
+            document, method=method, parameters=parameters
+        )
+
+    def _record_site_change(
+        self,
+        document: ProjectDocument,
+        outcome: site_generation_service.SiteGenerationOutcome,
+    ) -> list[MuonSite]:
+        """Append a generation step's provenance and return the sites it touched."""
+        for record in outcome.provenance:
+            self.append_provenance(document, record)
+        return outcome.sites
+
+    def active_host_structure(self, document: ProjectDocument) -> Structure | None:
+        """Return the current host structure, if one is selected."""
+        return active_host_structure(document)
+
+    def list_promotable_host_structures(self, document: ProjectDocument) -> list[PromotableHost]:
+        """Return structures eligible to be the active host, ordered for display.
+
+        See :func:`promotable_host_structures`.
+        """
+        return promotable_host_structures(document)
+
+    def host_structure_source(
+        self,
+        document: ProjectDocument,
+        structure: Structure | None,
+        promotable: Sequence[PromotableHost] | None = None,
+    ) -> str | None:
+        """Where a host structure came from, as the Host Structure page states it.
+
+        The project-relative source file of an imported structure
+        (``imports/CoF2.cif``); ``Pristine relaxation relax_1`` for a relaxed
+        host, named by its relaxation's row as the Pristine Relaxation page
+        shows it (by its job label when another relaxation's row has the same
+        label); otherwise the structure's label. ``None`` without a structure.
+        ``promotable``, the list ``list_promotable_host_structures`` gave for
+        the same document, saves naming the relaxations a second time.
+        """
+
+        if structure is None:
+            return None
+        if structure.source_file:
+            return str(structure.source_file)
+        if structure.origin == "pristine_relaxation":
+            names = (
+                {host.structure_id: host.name for host in promotable if host.name}
+                if promotable is not None
+                else _relaxed_host_names(document)
+            )
+            name = names.get(structure.id)
+            if name:
+                return f"Pristine relaxation {name}"
+        return structure.label
+
+    def set_active_host_structure(
+        self,
+        document: ProjectDocument,
+        structure_id: UUID,
+        *,
+        actor: str = "user",
+    ) -> Structure:
+        """Switch the project's active host to a promotable structure.
+
+        Updates host_structure_id and rebinds magnetic_structure to the new
+        host's properties (pristine-relaxation outputs typically carry no spins,
+        so the field becomes None and the user re-enters spins as needed).
+        """
+        promotable_ids = {h.structure_id for h in self.list_promotable_host_structures(document)}
+        if structure_id not in promotable_ids:
+            raise ValueError("Structure is not eligible as an active host.")
+
+        structure = document.structures[structure_id]
+        previous_id = document.project.host_structure_id
+        if previous_id == structure_id:
+            return structure
+
+        previous = document.structures.get(previous_id) if previous_id else None
+        prev_label = previous.label if previous else "(none)"
+
+        # Stored fields keep the status of the host they were calculated on.
+        record_host_moment_method_versions(document)
+        document.project.host_structure_id = structure_id
+        document.project.magnetic_structure = structure.properties.get("magnetic_structure")
+
+        self.append_provenance(
+            document,
+            ProvenanceRecord(
+                action="set_active_host_structure",
+                actor=actor,
+                description=f"Changed active host from '{prev_label}' to '{structure.label}'",
+                parameters={
+                    "previous_host_structure_id": str(previous_id) if previous_id else None,
+                    "new_host_structure_id": str(structure_id),
+                    "previous_host_structure_label": previous.label if previous else None,
+                    "new_host_structure_label": structure.label,
+                },
+                input_entity_ids=[previous_id] if previous_id else [],
+                output_entity_ids=[structure_id],
+            ),
+        )
+        return structure
+
+    def resolve_underlying_host(self, document: ProjectDocument, structure_id: UUID) -> UUID | None:
+        """Walk the parent_structure_id chain to find the host root.
+
+        Returns the id of the first ancestor (inclusive) whose origin is
+        'imported' or 'pristine_relaxation', or None if the chain is broken
+        or contains a cycle.
+        """
+        _HOST_ORIGINS = {"imported", "pristine_relaxation"}
+        visited: set[UUID] = set()
+        current_id: UUID | None = structure_id
+        while current_id is not None:
+            if current_id in visited:
+                return None
+            visited.add(current_id)
+            structure = document.structures.get(current_id)
+            if structure is None:
+                return None
+            if structure.origin in _HOST_ORIGINS:
+                return structure.id
+            current_id = structure.parent_structure_id
+        return None
+
+    def host_work(self, document: ProjectDocument, host_structure_id: UUID) -> HostWork:
+        """Return the work the project holds for ``host_structure_id``.
+
+        - Sites generated for the host: a site whose ``source_structure_id``
+          resolves to it (:meth:`resolve_underlying_host`). A site that records
+          no host belongs to none and is not counted.
+        - Saved supercells built from the host
+          (:func:`~mufinder.services.supercell_assets.list_workflow_supercell_assets`).
+        - Jobs of the project bound (through ``DEFINITION_JOB_MAPPINGS``) by a
+          definition whose input structure resolves to the host: the host
+          itself, or a supercell or other structure derived from it. A job run
+          on sites is counted through its definition's input structure.
+        """
+
+        resolved: dict[UUID, bool] = {}
+
+        def belongs(structure_id: UUID | None) -> bool:
+            if structure_id is None:
+                return False
+            if structure_id not in resolved:
+                # A saved supercell copies its host's origin, so step to the host first.
+                start: UUID | None = structure_id
+                seen: set[UUID] = set()
+                while (
+                    start is not None
+                    and start not in seen
+                    and (structure := document.structures.get(start)) is not None
+                    and supercell_assets.supercell_asset(structure) is not None
+                ):
+                    seen.add(start)
+                    start = structure.parent_structure_id
+                resolved[structure_id] = (
+                    start is not None
+                    and self.resolve_underlying_host(document, start) == host_structure_id
+                )
+            return resolved[structure_id]
+
+        sites = sum(belongs(site.source_structure_id) for site in document.sites.values())
+        supercells = len(
+            supercell_assets.list_workflow_supercell_assets(
+                document, host_structure_id=host_structure_id
+            )
+        )
+        project_jobs = {str(job_id) for job_id in document.jobs}
+        jobs: set[str] = set()
+        for definition in document.calculations.values():
+            bound = project_jobs & definition_job_ids(definition)
+            if bound and any(belongs(item) for item in definition.input_structure_ids):
+                jobs |= bound
+        return HostWork(sites=sites, supercells=supercells, jobs=len(jobs))
+
+    def host_holds_work(self, document: ProjectDocument, host_structure_id: UUID) -> bool:
+        """Return whether the project holds any work for ``host_structure_id`` (:meth:`host_work`)."""
+
+        return bool(self.host_work(document, host_structure_id))
+
+    def validate_sites_match_active_host(
+        self,
+        document: ProjectDocument,
+        site_ids: Sequence[UUID],
+    ) -> SiteHostMismatch | None:
+        """Return mismatch info if any site was generated for a different host.
+
+        Sites carry source_structure_id stamped at generation time; this check
+        ensures none of them target a structure other than the active host.
+        Returns None when all sites are consistent with the active host.
+        """
+        host = active_host_structure(document)
+        if host is None:
+            return None
+        offenders: list[tuple[UUID, str, UUID | None, str]] = []
+        for site_id in site_ids:
+            site = document.sites.get(site_id)
+            if site is None:
+                continue
+            if site.source_structure_id != host.id:
+                source = (
+                    document.structures.get(site.source_structure_id)
+                    if site.source_structure_id
+                    else None
+                )
+                source_label = source.label if source else "(unknown)"
+                offenders.append((site.id, site.label, site.source_structure_id, source_label))
+        if not offenders:
+            return None
+        return SiteHostMismatch(
+            active_host_id=host.id,
+            active_host_label=host.label,
+            offenders=offenders,
+        )
+
+    def validate_structures_match_active_host(
+        self,
+        document: ProjectDocument,
+        structure_ids: Sequence[UUID],
+    ) -> StructureHostMismatch | None:
+        """Return mismatch info if any structure's provenance chain leads to a different host.
+
+        Used for downstream workflows (quantum corrections, energy barriers, NEB) that
+        consume muoniated relaxed structures rather than pristine sites. Walks the
+        parent_structure_id chain to find the underlying host for each structure.
+        Returns None when all structures resolve to the active host.
+        """
+        host = active_host_structure(document)
+        if host is None:
+            return None
+        offenders: list[tuple[UUID, str, UUID | None, str]] = []
+        for struct_id in structure_ids:
+            structure = document.structures.get(struct_id)
+            if structure is None:
+                continue
+            resolved_host_id = self.resolve_underlying_host(document, struct_id)
+            if resolved_host_id != host.id:
+                resolved_host = (
+                    document.structures.get(resolved_host_id) if resolved_host_id else None
+                )
+                resolved_label = resolved_host.label if resolved_host else "(unknown)"
+                offenders.append((struct_id, structure.label, resolved_host_id, resolved_label))
+        if not offenders:
+            return None
+        return StructureHostMismatch(
+            active_host_id=host.id,
+            active_host_label=host.label,
+            offenders=offenders,
+        )
+
+    def _copy_import_file(self, project_root: Path, source_path: Path) -> Path:
+        """Copy imported source file into the project imports directory."""
+        store = ProjectStore(project_root)
+        store.initialize_layout()
+
+        imports_dir = project_root / "imports"
+        imports_dir.mkdir(parents=True, exist_ok=True)
+
+        candidate = imports_dir / source_path.name
+        if not candidate.exists():
+            shutil.copy2(source_path, candidate)
+            return candidate
+
+        stem = source_path.stem
+        suffix = source_path.suffix
+        counter = 1
+        while True:
+            renamed = imports_dir / f"{stem}_{counter}{suffix}"
+            if not renamed.exists():
+                shutil.copy2(source_path, renamed)
+                return renamed
+            counter += 1
+
+    def validate_document(self, document: ProjectDocument) -> list[str]:
+        """Validate cross-entity references and return detected issues."""
+        issues: list[str] = []
+
+        if (
+            document.project.host_structure_id
+            and document.project.host_structure_id not in document.structures
+        ):
+            issues.append("project.host_structure_id does not reference a known structure")
+
+        for structure in document.structures.values():
+            if (
+                structure.parent_structure_id
+                and structure.parent_structure_id not in document.structures
+            ):
+                issues.append(
+                    f"structure {structure.id} references missing parent structure {structure.parent_structure_id}"
+                )
+            asset = supercell_assets.supercell_asset(structure)
+            if asset is None:
+                continue
+            if structure.parent_structure_id is None:
+                issues.append(f"supercell asset {structure.id} is missing parent_structure_id")
+            if (
+                asset.source_asset_structure_id is not None
+                and asset.source_asset_structure_id not in document.structures
+            ):
+                issues.append(
+                    "supercell asset "
+                    f"{structure.id} references missing source asset {asset.source_asset_structure_id}"
+                )
+
+        for calc in document.calculations.values():
+            missing_structures = [
+                sid for sid in calc.input_structure_ids if sid not in document.structures
+            ]
+            if missing_structures:
+                issues.append(
+                    f"calculation {calc.id} references missing structures: {', '.join(str(s) for s in missing_structures)}"
+                )
+
+        for run in document.runs.values():
+            if run.definition_id and run.definition_id not in document.calculations:
+                issues.append(
+                    f"run {run.id} references missing calculation definition {run.definition_id}"
+                )
+            if run.job_id and run.job_id not in document.jobs:
+                issues.append(f"run {run.id} references missing job {run.job_id}")
+            if run.result_id and run.result_id not in document.results:
+                issues.append(f"run {run.id} references missing result {run.result_id}")
+
+        for result in document.results.values():
+            if result.calculation_run_id and result.calculation_run_id not in document.runs:
+                issues.append(
+                    f"result {result.id} references missing calculation run {result.calculation_run_id}"
+                )
+            missing_structures = [
+                sid for sid in result.derived_structure_ids if sid not in document.structures
+            ]
+            if missing_structures:
+                issues.append(
+                    f"result {result.id} references missing derived structures: {', '.join(str(s) for s in missing_structures)}"
+                )
+
+        for site in document.sites.values():
+            if site.source_structure_id and site.source_structure_id not in document.structures:
+                issues.append(
+                    f"site {site.id} references missing structure {site.source_structure_id}"
+                )
+            if site.relaxation_run_id and site.relaxation_run_id not in document.runs:
+                issues.append(f"site {site.id} references missing run {site.relaxation_run_id}")
+
+        for table in document.comparison_tables.values():
+            if (
+                table.experimental_structure_id is not None
+                and table.experimental_structure_id not in document.structures
+            ):
+                issues.append(
+                    "comparison table "
+                    f"{table.id} references missing experimental structure {table.experimental_structure_id}"
+                )
+            missing_structures = [
+                sid for sid in table.dft_structure_ids if sid not in document.structures
+            ]
+            if missing_structures:
+                issues.append(
+                    "comparison table "
+                    f"{table.id} references missing DFT structures: {', '.join(str(s) for s in missing_structures)}"
+                )
+
+        return issues
+
+    def _assert_transition(self, current: JobStatus, target: JobStatus) -> None:
+        allowed: dict[JobStatus, set[JobStatus]] = {
+            JobStatus.DEFINED: {JobStatus.ACTIVE, JobStatus.ENDED},
+            JobStatus.ACTIVE: {JobStatus.COMPLETED, JobStatus.ENDED},
+            JobStatus.COMPLETED: {JobStatus.DEFINED},
+            JobStatus.ENDED: {JobStatus.DEFINED, JobStatus.ACTIVE},
+        }
+        if target not in allowed[current]:
+            raise ValueError(f"Invalid job transition from {current.value} to {target.value}")
+
+
+def _clear_run_state(job: Job) -> None:
+    """Return ``job`` to ``defined``, clearing every field a run stamped, its folders included."""
+
+    job.status = JobStatus.DEFINED
+    job.activity = None
+    job.submitted_at = None
+    job.started_at = None
+    job.completed_at = None
+    job.remote_job_id = None
+    job.remote_directory = None
+    job.num_processes = None
+    job.error_message = None
+    job.end_reason = None
+    job.last_checked_at = None
+    job.last_status_source = None
+    job.last_status_message = None
+    job.dismissed_at = None

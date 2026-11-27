@@ -1,0 +1,12 @@
+{
+  "completed_at": "2026-11-01T09:20:00+00:00",
+  "convergence_achieved": null,
+  "definition_id": null,
+  "id": "7b32b803-ac70-5f93-b5db-82335e23ea80",
+  "job_id": "26597795-416c-51cf-856e-05e53e87cb6d",
+  "result_id": null,
+  "run_index": 1,
+  "started_at": "2026-11-01T09:19:00+00:00",
+  "status": "failed",
+  "warnings": []
+}

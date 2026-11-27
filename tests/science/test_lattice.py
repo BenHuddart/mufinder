@@ -1,0 +1,609 @@
+"""Tests for the shared lattice algebra in :mod:`mufinder.science.lattice`.
+
+Each migrated caller gets an equivalence test against a copy of the
+implementation it used before the helpers were consolidated: bit-for-bit where
+the old code used the same arithmetic, within a tight tolerance where it used a
+different NumPy route.
+"""
+
+from __future__ import annotations
+
+import math
+
+import numpy as np
+import pytest
+
+from mufinder.science import lattice as lattice_module
+from mufinder.science.lattice import (
+    MUON_FRACTIONAL_SNAP_TOLERANCE,
+    LatticeError,
+    cartesian_to_fractional,
+    cartesian_to_reciprocal,
+    cell_volume,
+    crystal_axis_to_cartesian,
+    deduplicate_periodic_positions,
+    fractional_to_cartesian,
+    inverse_lattice,
+    lattice_cart_to_frac,
+    lattice_frac_to_cart,
+    lattice_matrix,
+    minimum_image_cartesian_delta,
+    minimum_image_delta,
+    minimum_image_distance,
+    minimum_image_distance_matrix,
+    near_minimum_indexes,
+    nearest_image_delta,
+    nearest_image_distance,
+    nearest_image_delta_matrix,
+    nearest_image_deltas,
+    nearest_image_distance_matrix,
+    reciprocal_to_cartesian,
+    reduced_lattice,
+    shortest_translation_length,
+    vector_length,
+    wrap_fractional,
+)
+from tests.support.lattices import (
+    brute_force_shortest_translation,
+    hexagonal_lattice,
+    monoclinic_lattice,
+)
+
+_CUBIC = [[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]]
+_TRICLINIC = [[10.0, 0.0, 0.0], [0.1, 9.0, 0.0], [0.2, 0.3, 8.0]]
+_SKEWED = [[4.0, 0.0, 0.0], [3.6, 1.5, 0.0], [0.7, 0.4, 3.9]]
+_SINGULAR = [[1.0, 0.0, 0.0], [2.0, 0.0, 0.0], [0.0, 0.0, 1.0]]
+
+
+def _random_pairs(count: int = 200, seed: int = 7) -> list[tuple[list[float], list[float]]]:
+    rng = np.random.default_rng(seed)
+    points = rng.uniform(-1.5, 2.5, size=(count, 2, 3))
+    return [(pair[0].tolist(), pair[1].tolist()) for pair in points]
+
+
+# Copies of the implementations the shared helpers replaced.
+
+
+def _site_generation_frac_to_cart(fractional, lattice):
+    x = (
+        fractional[0] * lattice[0][0]
+        + fractional[1] * lattice[1][0]
+        + fractional[2] * lattice[2][0]
+    )
+    y = (
+        fractional[0] * lattice[0][1]
+        + fractional[1] * lattice[1][1]
+        + fractional[2] * lattice[2][1]
+    )
+    z = (
+        fractional[0] * lattice[0][2]
+        + fractional[1] * lattice[1][2]
+        + fractional[2] * lattice[2][2]
+    )
+    return [x, y, z]
+
+
+def _site_generation_pbc_distance(a, b, lattice):
+    delta = [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
+    delta = [d - round(d) for d in delta]
+    cart = _site_generation_frac_to_cart(delta, lattice)
+    return math.sqrt(cart[0] ** 2 + cart[1] ** 2 + cart[2] ** 2)
+
+
+def _relaxation_analysis_pbc_distance(left, right, lattice):
+    delta = np.asarray(right, dtype=float) - np.asarray(left, dtype=float)
+    delta = delta - np.round(delta)
+    return float(
+        np.linalg.norm(
+            np.asarray(_site_generation_frac_to_cart(delta.tolist(), lattice), dtype=float)
+        )
+    )
+
+
+def _structure_io_minimum_periodic_distance(a, b, lattice_vectors):
+    lattice = np.asarray(lattice_vectors, dtype=float)
+    delta = np.asarray(a, dtype=float) - np.asarray(b, dtype=float)
+    delta -= np.round(delta)
+    best = float("inf")
+    for ox in (-1.0, 0.0, 1.0):
+        for oy in (-1.0, 0.0, 1.0):
+            for oz in (-1.0, 0.0, 1.0):
+                best = min(best, float(np.linalg.norm((delta + np.array([ox, oy, oz])) @ lattice)))
+    return best
+
+
+def _magnetic_fields_fractional_distance(a, b):
+    delta = np.mod(np.asarray(a, dtype=float) - np.asarray(b, dtype=float) + 0.5, 1.0) - 0.5
+    return float(np.linalg.norm(delta))
+
+
+def _import_fold_to_host(position, matrix):
+    x, y, z = position
+    folded = (
+        x * matrix[0][0] + y * matrix[1][0] + z * matrix[2][0],
+        x * matrix[0][1] + y * matrix[1][1] + z * matrix[2][1],
+        x * matrix[0][2] + y * matrix[1][2] + z * matrix[2][2],
+    )
+    return tuple(float(value) % 1.0 for value in folded)
+
+
+# Validation
+
+
+def test_lattice_matrix_and_rows_reject_non_3x3_input_with_the_callers_error() -> None:
+    class CallerError(ValueError):
+        pass
+
+    with pytest.raises(LatticeError, match="3x3 matrix"):
+        lattice_matrix([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
+    with pytest.raises(CallerError, match="3x3 matrix"):
+        lattice_matrix([[1.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]], error=CallerError)
+    with pytest.raises(CallerError, match="3x3 matrix"):
+        lattice_frac_to_cart([0.0, 0.0, 0.0], [[1.0, 0.0, 0.0]], error=CallerError)
+
+
+def test_crystal_axis_to_cartesian_uses_unit_lattice_directions() -> None:
+    hexagonal = [[5.8, 0.0, 0.0], [-2.9, 2.9 * math.sqrt(3.0), 0.0], [0.0, 0.0, 11.2]]
+
+    assert crystal_axis_to_cartesian([2.0, 2.0, 0.0], hexagonal) == pytest.approx(
+        [1.0, math.sqrt(3.0), 0.0]
+    )
+    assert crystal_axis_to_cartesian([0.0, 0.0, -1.5], hexagonal) == pytest.approx([0.0, 0.0, -1.5])
+
+
+def test_crystal_axis_to_cartesian_rejects_bad_input_with_the_callers_error() -> None:
+    class CallerError(ValueError):
+        pass
+
+    with pytest.raises(CallerError, match="3-vector"):
+        crystal_axis_to_cartesian([1.0, 0.0], np.eye(3).tolist(), error=CallerError)
+    with pytest.raises(CallerError, match="non-zero"):
+        crystal_axis_to_cartesian(
+            [1.0, 0.0, 0.0], [[1.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 1.0]], error=CallerError
+        )
+
+
+def test_plane_heights_are_the_spacing_of_the_planes_not_the_vector_lengths() -> None:
+    assert lattice_module.lattice_plane_heights(np.diag([2.0, 3.0, 4.0])) == pytest.approx(
+        [2.0, 3.0, 4.0]
+    )
+    # A sheared cubic basis keeps every plane spacing of 2 along c and has longer vectors.
+    sheared = np.array([[2.0, 0.0, 0.0], [10.0, 2.0, 0.0], [6.0, 8.0, 2.0]])
+    heights = lattice_module.lattice_plane_heights(sheared)
+    assert heights[2] == pytest.approx(2.0)
+    assert np.all(heights <= np.linalg.norm(sheared, axis=1) + 1e-12)
+    # A point within R of the origin is within R / h in each fractional coordinate.
+    points = np.random.default_rng(336).normal(size=(500, 3))
+    points *= (5.0 / np.linalg.norm(points, axis=1))[:, None]
+    assert np.all(np.abs(points @ np.linalg.inv(sheared)) <= 5.0 / heights + 1e-12)
+
+
+def test_plane_heights_reject_a_singular_lattice_with_the_callers_error() -> None:
+    class CallerError(ValueError):
+        pass
+
+    with pytest.raises(CallerError, match="singular"):
+        lattice_module.lattice_plane_heights(
+            [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 0.0]], error=CallerError
+        )
+
+
+def test_inverse_rejects_singular_lattices() -> None:
+    with pytest.raises(LatticeError, match="singular"):
+        inverse_lattice(_SINGULAR)
+    with pytest.raises(LatticeError, match="singular"):
+        lattice_cart_to_frac([1.0, 2.0, 3.0], _SINGULAR)
+
+
+def test_broadcast_conversions_reject_points_that_are_not_3_vectors() -> None:
+    with pytest.raises(LatticeError, match="Fractional positions must be 3-vectors"):
+        fractional_to_cartesian(np.zeros((2, 4)), _CUBIC)
+    with pytest.raises(LatticeError, match="Cartesian positions must be 3-vectors"):
+        cartesian_to_fractional(np.zeros((2, 2)), _CUBIC)
+
+
+# Conversions
+
+
+def test_scalar_and_broadcast_conversions_agree_bit_for_bit() -> None:
+    rng = np.random.default_rng(3)
+    points = rng.uniform(-1.0, 2.0, size=(50, 3))
+
+    cartesian = fractional_to_cartesian(points, _TRICLINIC)
+    for point, row in zip(points.tolist(), cartesian.tolist(), strict=True):
+        assert lattice_frac_to_cart(point, _TRICLINIC) == row
+        assert lattice_frac_to_cart(point, _TRICLINIC) == _site_generation_frac_to_cart(
+            point, _TRICLINIC
+        )
+
+    fractional = cartesian_to_fractional(cartesian, _TRICLINIC)
+    for point, row in zip(cartesian.tolist(), fractional.tolist(), strict=True):
+        assert lattice_cart_to_frac(point, _TRICLINIC) == row
+    # The inverse is applied to the Cartesian row vector, so the round trip holds for any lattice.
+    assert fractional == pytest.approx(points, abs=1e-12)
+
+
+def test_cartesian_to_fractional_undoes_a_non_symmetric_lattice() -> None:
+    hexagonal = [[3.0, 0.0, 0.0], [-1.5, 2.598, 0.0], [0.0, 0.0, 5.0]]
+    cartesian = lattice_frac_to_cart([0.1, 0.2, 0.3], hexagonal)
+
+    assert lattice_cart_to_frac(cartesian, hexagonal) == pytest.approx([0.1, 0.2, 0.3], abs=1e-12)
+
+
+def test_conversions_match_the_uep_matrix_route() -> None:
+    rng = np.random.default_rng(11)
+    points = rng.uniform(-1.0, 2.0, size=(50, 3))
+    lattice = np.asarray(_SKEWED)
+
+    assert fractional_to_cartesian(points, lattice) == pytest.approx(points @ lattice, abs=1e-12)
+    cartesian = points @ lattice
+    assert cartesian_to_fractional(cartesian, lattice) == pytest.approx(
+        np.linalg.solve(lattice.T, cartesian.T).T, abs=1e-12
+    )
+
+
+def test_cell_volume_and_vector_length() -> None:
+    assert cell_volume(_CUBIC) == pytest.approx(125.0)
+    assert cell_volume(_TRICLINIC) == pytest.approx(abs(np.linalg.det(np.asarray(_TRICLINIC))))
+    for vector in ([3.0, 4.0, 0.0], [0.1, -0.2, 0.3], [1e-9, 2.0, -7.5]):
+        assert vector_length(vector) == float(sum(float(value) ** 2 for value in vector) ** 0.5)
+
+
+def test_folding_a_supercell_position_matches_the_relaxation_import_arithmetic() -> None:
+    matrix = ((2, 0, 0), (1, 3, 0), (0, -1, 2))
+    for position, _ in _random_pairs(50):
+        folded = tuple(wrap_fractional(lattice_frac_to_cart(position, matrix)))
+        assert folded == _import_fold_to_host(position, matrix)
+
+
+@pytest.mark.parametrize(
+    ("value", "snapped", "plain"),
+    [
+        (-1e-7, 0.0, 1.0 - 1e-7),
+        (-5e-6, 1.0 - 5e-6, 1.0 - 5e-6),
+        (1.0 - 1e-12, 0.0, 1.0 - 1e-12),
+        (2.25, 0.25, 0.25),
+    ],
+)
+def test_wrap_fractional_snaps_only_within_the_tolerance_below_one(value, snapped, plain) -> None:
+    (with_snap,) = wrap_fractional([value], snap_tolerance=MUON_FRACTIONAL_SNAP_TOLERANCE)
+    (without_snap,) = wrap_fractional([value])
+
+    assert MUON_FRACTIONAL_SNAP_TOLERANCE == 1e-6
+    assert with_snap == pytest.approx(snapped, abs=1e-15)
+    assert without_snap == pytest.approx(plain, abs=1e-15)
+
+
+@pytest.mark.parametrize("tolerance", [-1e-6, 1.0, float("nan")])
+def test_wrap_fractional_rejects_a_snap_tolerance_outside_the_unit_interval(tolerance) -> None:
+    with pytest.raises(LatticeError, match="snap tolerance"):
+        wrap_fractional([0.5, 0.5, 0.5], snap_tolerance=tolerance)
+
+
+# Minimum image
+
+
+def test_minimum_image_delta_folds_each_component() -> None:
+    assert minimum_image_delta([0.9, 0.1, 2.25], [0.1, 0.9, 0.0]) == pytest.approx(
+        [-0.2, 0.2, 0.25]
+    )
+    assert minimum_image_cartesian_delta([0.9, 0.0, 0.0], [0.1, 0.0, 0.0], _CUBIC) == pytest.approx(
+        [-1.0, 0.0, 0.0]
+    )
+    assert minimum_image_cartesian_delta([0.9, 0.0, 0.0], [0.1, 0.0, 0.0]) == pytest.approx(
+        [-0.2, 0.0, 0.0]
+    )
+
+
+@pytest.mark.parametrize(
+    "lattice", [_CUBIC, _TRICLINIC, _SKEWED], ids=["cubic", "triclinic", "skewed"]
+)
+def test_minimum_image_distance_matches_site_generation_bit_for_bit(lattice) -> None:
+    for a, b in _random_pairs():
+        assert minimum_image_distance(a, b, lattice) == _site_generation_pbc_distance(a, b, lattice)
+
+
+@pytest.mark.parametrize(
+    "lattice", [_CUBIC, _TRICLINIC, _SKEWED], ids=["cubic", "triclinic", "skewed"]
+)
+def test_minimum_image_distance_matches_relaxation_analysis(lattice) -> None:
+    for a, b in _random_pairs():
+        assert minimum_image_distance(a, b, lattice) == pytest.approx(
+            _relaxation_analysis_pbc_distance(b, a, lattice), rel=1e-14, abs=1e-14
+        )
+
+
+def test_fractional_minimum_image_distance_matches_magnetic_fields() -> None:
+    for a, b in _random_pairs():
+        assert minimum_image_distance(a, b) == pytest.approx(
+            _magnetic_fields_fractional_distance(a, b), abs=1e-12
+        )
+    # Exactly half a cell apart: both fold to the same length.
+    assert minimum_image_distance(
+        [0.5, 0.0, 0.0], [0.0, 0.0, 0.0]
+    ) == _magnetic_fields_fractional_distance([0.5, 0.0, 0.0], [0.0, 0.0, 0.0])
+
+
+@pytest.mark.parametrize(
+    "lattice", [_CUBIC, _TRICLINIC, _SKEWED], ids=["cubic", "triclinic", "skewed"]
+)
+def test_nearest_image_distance_matches_structure_io(lattice) -> None:
+    for a, b in _random_pairs():
+        assert nearest_image_distance(a, b, lattice) == pytest.approx(
+            _structure_io_minimum_periodic_distance(a, b, lattice), abs=1e-12
+        )
+
+
+def test_nearest_image_distance_can_beat_the_per_component_fold_in_a_skewed_cell() -> None:
+    a, b = [0.0, 0.0, 0.0], [0.45, 0.45, 0.0]
+
+    assert nearest_image_distance(a, b, _SKEWED) < minimum_image_distance(a, b, _SKEWED)
+
+
+def test_nearest_image_delta_names_the_image_the_distance_is_measured_to() -> None:
+    a, b = [0.0, 0.0, 0.0], [0.45, 0.45, 0.0]
+
+    delta = nearest_image_delta(a, b, _SKEWED)
+
+    assert delta != pytest.approx(minimum_image_delta(a, b))
+    assert np.linalg.norm(np.asarray(delta) @ np.asarray(_SKEWED)) == pytest.approx(
+        nearest_image_distance(a, b, _SKEWED)
+    )
+    shift = np.asarray(delta) - (np.asarray(a) - np.asarray(b))
+    assert shift == pytest.approx(np.round(shift))
+
+
+def test_distance_matrix_matches_the_scalar_helper() -> None:
+    rng = np.random.default_rng(5)
+    left = rng.uniform(0.0, 1.0, size=(6, 3))
+    right = rng.uniform(0.0, 1.0, size=(4, 3))
+
+    for lattice in (_TRICLINIC, None):
+        matrix = minimum_image_distance_matrix(left, right, lattice)
+        assert matrix.shape == (6, 4)
+        for i, j in np.ndindex(matrix.shape):
+            assert matrix[i, j] == pytest.approx(
+                minimum_image_distance(right[j], left[i], lattice), rel=1e-14
+            )
+
+
+@pytest.mark.parametrize(
+    "lattice", [_CUBIC, _TRICLINIC, _SKEWED], ids=["cubic", "triclinic", "skewed"]
+)
+def test_nearest_image_distance_matrix_matches_the_scalar_helper(lattice) -> None:
+    rng = np.random.default_rng(11)
+    left = rng.uniform(-1.5, 2.5, size=(7, 3))
+    right = rng.uniform(-1.5, 2.5, size=(5, 3))
+
+    matrix = nearest_image_distance_matrix(left, right, lattice)
+
+    assert matrix.shape == (7, 5)
+    for i, j in np.ndindex(matrix.shape):
+        assert matrix[i, j] == pytest.approx(
+            nearest_image_distance(right[j], left[i], lattice), rel=1e-12
+        )
+
+
+@pytest.mark.parametrize(
+    "lattice", [_CUBIC, _TRICLINIC, _SKEWED], ids=["cubic", "triclinic", "skewed"]
+)
+def test_nearest_image_delta_matrix_reaches_the_nearest_image(
+    lattice, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    rng = np.random.default_rng(5)
+    left = rng.uniform(-1.5, 2.5, size=(7, 3))
+    right = rng.uniform(-1.5, 2.5, size=(5, 3))
+    monkeypatch.setattr(lattice_module, "_NEAREST_IMAGE_BLOCK", 10)
+
+    deltas = nearest_image_delta_matrix(left, right, lattice)
+
+    assert deltas.shape == (7, 5, 3)
+    offsets = left[:, None, :] + deltas - right[None, :, :]
+    assert np.allclose(offsets, np.rint(offsets), atol=1e-12)
+    lengths = np.linalg.norm(deltas @ np.asarray(lattice), axis=-1)
+    assert np.allclose(lengths, nearest_image_distance_matrix(left, right, lattice), rtol=1e-12)
+
+
+def test_nearest_image_deltas_pair_rows_as_the_matrix_does() -> None:
+    rng = np.random.default_rng(6)
+    left = rng.uniform(-1.5, 2.5, size=(6, 3))
+    right = rng.uniform(-1.5, 2.5, size=(6, 3))
+
+    rows = nearest_image_deltas(left, right, _SKEWED)
+
+    matrix = nearest_image_delta_matrix(left, right, _SKEWED)
+    assert np.allclose(rows, matrix[np.arange(6), np.arange(6)])
+    with pytest.raises(LatticeError):
+        nearest_image_deltas(left, right[:2], _SKEWED)
+
+
+def test_nearest_image_distance_matrix_is_shorter_than_the_fold_in_a_skewed_cell() -> None:
+    a, b = [0.0, 0.0, 0.0], [0.45, 0.45, 0.0]
+
+    assert nearest_image_distance_matrix([b], [a], _SKEWED)[0, 0] == pytest.approx(
+        nearest_image_distance(a, b, _SKEWED)
+    )
+    assert nearest_image_distance_matrix([b], [a], _SKEWED)[0, 0] < minimum_image_distance(
+        a, b, _SKEWED
+    )
+
+
+def test_nearest_image_distance_matrix_measures_large_inputs_in_blocks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rng = np.random.default_rng(3)
+    left = rng.uniform(0.0, 1.0, size=(9, 3))
+    right = rng.uniform(0.0, 1.0, size=(4, 3))
+    whole = nearest_image_distance_matrix(left, right, _SKEWED)
+
+    monkeypatch.setattr(lattice_module, "_NEAREST_IMAGE_BLOCK", 5)
+    blocked = nearest_image_distance_matrix(left, right, _SKEWED)
+
+    assert blocked.tolist() == whole.tolist()
+    assert nearest_image_distance_matrix(np.empty((0, 3)), right, _SKEWED).shape == (0, 4)
+
+
+_SHEARED = [[1.0, 0.0, 0.0], [10.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+
+
+def test_reduced_lattice_is_an_integer_change_of_basis_to_short_vectors() -> None:
+    reduced, transform = reduced_lattice(_SHEARED)
+
+    assert transform.dtype.kind == "i"
+    assert abs(round(np.linalg.det(transform))) == 1
+    assert reduced == pytest.approx(transform @ np.asarray(_SHEARED))
+    assert sorted(np.linalg.norm(reduced, axis=1).tolist()) == pytest.approx([1.0, 1.0, 1.0])
+    with pytest.raises(LatticeError, match="singular"):
+        reduced_lattice(_SINGULAR)
+
+
+# A unimodular integer matrix: the same lattice in a strongly sheared basis.
+_SHEAR = np.array([[1, 3, 0], [0, 1, 0], [2, -1, 1]])
+
+_TRANSLATION_CELLS = {
+    "cubic": _CUBIC,
+    "triclinic": _TRICLINIC,
+    "skewed": _SKEWED,
+    "oblique": [[5.0, 0.0, 0.0], [4.0, 3.0, 0.0], [0.0, 0.0, 5.0]],
+    "sheared unit": _SHEARED,
+    "hexagonal": hexagonal_lattice(3.21, 5.21),
+    "monoclinic 110": monoclinic_lattice(5.0, 6.0, 7.0, 110.0),
+    "fcc primitive": [[0.0, 2.7, 2.7], [2.7, 0.0, 2.7], [2.7, 2.7, 0.0]],
+    "sheared host": [[20.0, 0.0, 0.0], [42.0, 4.0, 0.0], [0.0, 0.0, 20.0]],
+    "sheared supercell": [[20.0, 8.0, 0.0], [8.0, 4.0, 0.0], [0.0, 0.0, 12.0]],
+    "sheared hexagonal": (_SHEAR @ np.asarray(hexagonal_lattice(3.21, 5.21))).tolist(),
+    "sheared monoclinic": (_SHEAR @ np.asarray(monoclinic_lattice(5.0, 6.0, 7.0, 110.0))).tolist(),
+    "long diagonal scaling": (np.diag([1, 9, 1]) @ np.asarray(_SKEWED)).tolist(),
+}
+
+
+@pytest.mark.parametrize("lattice", _TRANSLATION_CELLS.values(), ids=_TRANSLATION_CELLS.keys())
+def test_shortest_translation_length_matches_a_wide_brute_force_search(lattice) -> None:
+    assert shortest_translation_length(lattice) == pytest.approx(
+        brute_force_shortest_translation(lattice), rel=1e-12
+    )
+
+
+def test_shortest_translation_length_finds_a_translation_beyond_the_adjacent_cells() -> None:
+    # -2 a1 + a2 = (2, 4, 0) Å; every combination with coefficients of 0 or ±1 is >= 20 Å.
+    lattice = _TRANSLATION_CELLS["sheared host"]
+
+    assert shortest_translation_length(lattice) == pytest.approx(math.sqrt(20.0))
+
+
+def test_shortest_translation_length_does_not_depend_on_the_basis() -> None:
+    rng = np.random.default_rng(11)
+    for _ in range(20):
+        shear = np.eye(3, dtype=int)
+        for _step in range(4):
+            i, j = rng.choice(3, size=2, replace=False)
+            shear[i] += int(rng.integers(-3, 4)) * shear[j]
+        sheared = shear @ np.asarray(_TRICLINIC)
+
+        assert shortest_translation_length(sheared) == pytest.approx(
+            shortest_translation_length(_TRICLINIC), rel=1e-12
+        )
+
+
+def test_shortest_translation_length_rejects_a_singular_or_malformed_lattice() -> None:
+    class _Error(ValueError):
+        pass
+
+    with pytest.raises(LatticeError, match="singular"):
+        shortest_translation_length(_SINGULAR)
+    with pytest.raises(_Error, match="3x3"):
+        shortest_translation_length([[1.0, 0.0, 0.0]], error=_Error)
+    with pytest.raises(_Error, match="finite"):
+        shortest_translation_length(
+            [[1.0, 0.0, 0.0], [math.nan, 1.0, 0.0], [0.0, 0.0, 1.0]], error=_Error
+        )
+
+
+def test_nearest_image_reaches_beyond_the_adjacent_cells_of_a_sheared_cell() -> None:
+    a, b = [0.0, 0.0, 0.0], [0.0, 0.49, 0.0]
+    # 0.49 b is (4.9, 0.49, 0) A; five cells along a bring it to (-0.1, 0.49, 0).
+    expected = math.hypot(0.1, 0.49)
+
+    delta = nearest_image_delta(a, b, _SHEARED)
+
+    assert nearest_image_distance(a, b, _SHEARED) == pytest.approx(expected)
+    assert nearest_image_distance_matrix([b], [a], _SHEARED)[0, 0] == pytest.approx(expected)
+    assert delta == pytest.approx([5.0, -0.49, 0.0])
+    shift = np.asarray(delta) - (np.asarray(a) - np.asarray(b))
+    assert shift.tolist() == np.round(shift).tolist()
+
+
+def test_near_minimum_indexes_keeps_every_near_tie() -> None:
+    distances = np.asarray([2.0, 1.0, 1.0 + 1e-12, 1.5])
+
+    assert near_minimum_indexes(distances).tolist() == [1, 2]
+
+
+# Deduplication
+
+
+def test_deduplication_tolerance_is_inclusive_at_the_exact_pair_distance() -> None:
+    first, second = [0.1, 0.2, 0.3], [0.1 + 3e-7, 0.2 - 1e-7, 0.3 + 2e-7]
+    pair_distance = minimum_image_distance(second, first, _CUBIC)
+
+    def deduplicate(tolerance: float) -> list[list[float]]:
+        return deduplicate_periodic_positions([first, second], _CUBIC, tolerance=tolerance)
+
+    # Broadcast norms can be an ulp off, so decisions this close are re-measured with the scalar helper.
+    assert deduplicate(pair_distance) == [first]
+    assert deduplicate(math.nextafter(pair_distance, 0.0)) == [first, second]
+    assert deduplicate(math.nextafter(pair_distance, 1.0)) == [first]
+    assert deduplicate_periodic_positions([], _CUBIC, tolerance=1e-5) == []
+
+
+def test_deduplication_keeps_first_occurrence_and_drops_exact_repeats() -> None:
+    positions = [[1.25, -0.5, 0.0], [0.5, 0.5, 0.5], [0.25, 0.5, 0.0], [0.5, 0.5, 0.5 + 1e-7]]
+
+    unique = deduplicate_periodic_positions(positions, _CUBIC, tolerance=1e-5)
+
+    assert unique == [[0.25, 0.5, 0.0], [0.5, 0.5, 0.5]]
+
+
+def test_deduplication_without_a_lattice_uses_fractional_distances() -> None:
+    positions = [[0.0, 0.0, 0.0], [0.9995, 0.0, 0.0], [0.002, 0.0, 0.0]]
+
+    assert deduplicate_periodic_positions(positions, None, tolerance=1e-3) == [
+        [0.0, 0.0, 0.0],
+        [0.002, 0.0, 0.0],
+    ]
+
+
+def test_reciprocal_to_cartesian_gives_the_dual_basis() -> None:
+    lattice = [[3.0, 0.0, 0.0], [-1.5, 1.5 * math.sqrt(3.0), 0.0], [0.0, 0.0, 5.0]]
+
+    a_star = reciprocal_to_cartesian((1.0, 0.0, 0.0), lattice)
+    q = reciprocal_to_cartesian((0.25, -0.5, 2.0), lattice)
+
+    assert np.allclose(np.asarray(lattice) @ a_star, (1.0, 0.0, 0.0))
+    assert np.allclose(np.asarray(lattice) @ q, (0.25, -0.5, 2.0))
+
+
+def test_cartesian_to_reciprocal_inverts_reciprocal_to_cartesian() -> None:
+    q = (0.25, -0.5, 2.0)
+
+    k = reciprocal_to_cartesian(q, _TRICLINIC)
+
+    assert cartesian_to_reciprocal(k, _TRICLINIC) == pytest.approx(q)
+
+
+def test_cartesian_to_reciprocal_rejects_a_bad_wavevector_with_the_callers_error() -> None:
+    class _Error(ValueError):
+        pass
+
+    with pytest.raises(_Error, match="3-vector"):
+        cartesian_to_reciprocal((1.0, 0.0), _CUBIC, error=_Error)
+
+
+def test_reciprocal_to_cartesian_rejects_a_singular_lattice_with_the_callers_error() -> None:
+    class _Error(ValueError):
+        pass
+
+    with pytest.raises(_Error, match="singular"):
+        reciprocal_to_cartesian(
+            (1.0, 0.0, 0.0), [[1.0, 0.0, 0.0], [2.0, 0.0, 0.0], [0.0, 0.0, 1.0]], error=_Error
+        )

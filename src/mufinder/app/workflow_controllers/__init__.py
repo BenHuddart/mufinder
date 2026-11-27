@@ -1,0 +1,107 @@
+"""Per-workflow job controllers (submit → materialize → result → refresh).
+
+This package holds a thin controller layer between the ``MainWindow`` widgets
+and the services/workflow layers. Each controller owns one workflow's job
+lifecycle and receives its inputs in three parts: the shared
+:class:`WorkflowControllerContext` of narrow callables every controller needs,
+an optional per-controller deps dataclass of workflow-specific callables
+defined in the controller's own module (e.g. :class:`ConvergenceCutoffDeps`),
+and the controller's own view widget. Controllers never import or reference
+``mufinder.app.main_window``.
+"""
+
+from mufinder.app.workflow_controllers.base import (
+    ControllerResult,
+    WorkflowControllerContext,
+    WorkflowJobController,
+    dedupe_jobs,
+    merge_controller_result,
+    all_planned_jobs,
+    job_folder,
+    owning_controller,
+    planned_job_entry,
+    validate_controller_artifacts,
+)
+from mufinder.app.workflow_controllers.analysis_workspaces import (
+    AnalysisWorkspacesController,
+    AnalysisWorkspacesDeps,
+)
+from mufinder.app.workflow_controllers.convergence_cutoff import (
+    ConvergenceCutoffController,
+    ConvergenceCutoffDeps,
+)
+from mufinder.app.workflow_controllers.convergence_kpoint import (
+    ConvergenceKpointController,
+    ConvergenceKpointDeps,
+)
+from mufinder.app.workflow_controllers.energy_barriers import (
+    EnergyBarriersController,
+    EnergyBarriersDeps,
+)
+from mufinder.app.workflow_controllers.hyperfine_coupling import (
+    HyperfineCouplingController,
+    HyperfineCouplingDeps,
+)
+from mufinder.app.workflow_controllers.imported_relaxations import (
+    ImportedRelaxationsController,
+    ImportedRelaxationsDeps,
+)
+from mufinder.app.workflow_controllers.comparison_tables import (
+    ComparisonTablesController,
+    ComparisonTablesDeps,
+)
+from mufinder.app.workflow_controllers.muon_relaxation import (
+    MuonRelaxationController,
+    MuonRelaxationDeps,
+)
+from mufinder.app.workflow_controllers.pristine_relaxation import PristineRelaxationController
+from mufinder.app.workflow_controllers.quantum_corrections import (
+    QuantumCorrectionsController,
+    QuantumCorrectionsDeps,
+)
+from mufinder.app.workflow_controllers.site_generation import (
+    SiteGenerationController,
+    SiteGenerationDeps,
+)
+from mufinder.app.workflow_controllers.sweep_convergence import SweepConvergenceController
+from mufinder.app.workflow_controllers.uep import (
+    UepController,
+    UepDeps,
+)
+
+__all__ = [
+    "AnalysisWorkspacesController",
+    "AnalysisWorkspacesDeps",
+    "ComparisonTablesController",
+    "ComparisonTablesDeps",
+    "ControllerResult",
+    "ConvergenceCutoffController",
+    "ConvergenceCutoffDeps",
+    "ConvergenceKpointController",
+    "ConvergenceKpointDeps",
+    "EnergyBarriersController",
+    "EnergyBarriersDeps",
+    "HyperfineCouplingController",
+    "HyperfineCouplingDeps",
+    "ImportedRelaxationsController",
+    "ImportedRelaxationsDeps",
+    "MuonRelaxationController",
+    "MuonRelaxationDeps",
+    "PristineRelaxationController",
+    "QuantumCorrectionsController",
+    "QuantumCorrectionsDeps",
+    "SiteGenerationController",
+    "SiteGenerationDeps",
+    "SweepConvergenceController",
+    "UepController",
+    "UepDeps",
+    "WorkflowControllerContext",
+    "WorkflowJobController",
+    "dedupe_jobs",
+    "merge_controller_result",
+    "all_planned_jobs",
+    "job_folder",
+    "owning_controller",
+    "planned_job_entry",
+    "validate_controller_artifacts",
+]

@@ -1,0 +1,134 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mufinder"
+version = "0.9.0"
+description = "MuFinder scientific desktop application"
+readme = "README.md"
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE"]
+requires-python = ">=3.12"
+dependencies = [
+  "PySide6>=6.7,<6.11",
+  "ase>=3.26",
+  "matplotlib>=3.8",
+  "pyvista>=0.43",
+  "pyvistaqt>=0.11",
+  "scipy>=1.15",
+  "spglib>=2.5",
+  "paramiko>=3.0",
+  "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+scientific-backends = [
+  "muesr",
+  'muLFC; platform_system != "Windows"',
+  "Soprano>=0.10,<0.12",
+]
+dev = [
+  "pytest>=8.2",
+  "pytest-cov>=5.0",
+  "pytest-xdist>=3,<4",
+  "pytest-timeout>=2.3,<3",
+  "pytest-split>=0.10,<1",
+  "Sphinx>=8.0",
+  "sphinx-rtd-theme>=2.0",
+  "python-semantic-release>=10.5,<11",
+  # ruff format can change its style between minor releases; the pin keeps local
+  # installs formatting exactly as CI does.
+  "ruff>=0.17,<0.18",
+]
+
+[project.urls]
+Homepage = "https://github.com/BenHuddart/mufinder"
+Documentation = "https://benhuddart.github.io/mufinder/"
+Repository = "https://github.com/BenHuddart/mufinder"
+Releases = "https://github.com/BenHuddart/mufinder/releases"
+
+[project.scripts]
+mufinder = "mufinder.main:run"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"mufinder.assets" = ["*.png", "*.ico", "*.yaml", "fonts/*.ttf", "fonts/*.txt", "shell/*.sh"]
+"mufinder.data" = ["*.ini"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+extend-exclude = ["build", "docs/_build", ".venv"]
+
+[tool.ruff.lint]
+select = ["F", "E7"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# A generous per-test timeout is a safety net: any genuinely hung test fails
+# fast with a stack dump naming the culprit, instead of stalling CI for ~49min.
+# Uses the thread method so C-level (Qt/VTK) hangs are caught, not just Python.
+addopts = "--strict-markers --cov=mufinder --cov-report=term-missing --timeout=120 --timeout-method=thread"
+markers = [
+  "unit: pure-Python or isolated tests that do not require a QApplication",
+  "gui: requires PySide6 / Qt widgets",
+  "screenshots: renders documentation screenshots; CI's docs-screenshots jobs render them instead of the test shards",
+]
+
+[tool.coverage.run]
+source = ["mufinder"]
+# sys.monitoring (Python 3.12+) measures line coverage with markedly less overhead
+# than the default C tracer: ~15% faster suite runs for identical results.
+core = "sysmon"
+
+[tool.coverage.report]
+# The one coverage gate: pytest-cov enforces it on a full run, and
+# `make coverage` enforces it on the shard data CI combines.
+fail_under = 85
+show_missing = true
+skip_covered = false
+
+[tool.semantic_release]
+allow_zero_version = true
+commit_parser = "conventional"
+tag_format = "v{version}"
+version_toml = ["pyproject.toml:project.version"]
+# Re-lock after the version bump so the release commit carries a uv.lock that
+# matches pyproject.toml; CI's `uv sync --locked` rejects a stale lock.
+build_command = """
+uv lock --upgrade-package "$PACKAGE_NAME"
+git add uv.lock
+"""
+
+[tool.semantic_release.branches.main]
+match = "^main$"
+prerelease = false
+
+[tool.semantic_release.commit_parser_options]
+ignore_merge_commits = true
+minor_tags = ["feat"]
+parse_squash_commits = true
+patch_tags = ["fix", "perf"]
+
+[tool.semantic_release.changelog]
+exclude_commit_patterns = [
+  '''chore(?:\([^)]*?\))?: .+''',
+  '''ci(?:\([^)]*?\))?: .+''',
+  '''refactor(?:\([^)]*?\))?: .+''',
+  '''style(?:\([^)]*?\))?: .+''',
+  '''test(?:\([^)]*?\))?: .+''',
+  '''build\((?!deps\): .+)''',
+  '''Initial [Cc]ommit.*''',
+]
+insertion_flag = "<!-- version list -->"
+mode = "update"
+
+[tool.semantic_release.changelog.default_templates]
+changelog_file = "CHANGELOG.md"
+output_format = "md"

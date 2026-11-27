@@ -1,0 +1,419 @@
+{
+  "uep_analysis_states": {
+    "6d0c4c1e-0000-4000-8000-000000000011": {
+      "batch_count": 3,
+      "batch_max_attempts": 5000,
+      "batch_max_steps": 300,
+      "batch_min_muon_atom": 1.0,
+      "batch_min_muon_muon": 0.8,
+      "batch_optimization_tolerance_ev": 1e-05,
+      "batch_results": [
+        {
+          "classical_energy_ev": -15.976111,
+          "classification": {
+            "eigenvalues": [
+              1.0,
+              1.0,
+              1.0
+            ],
+            "label": "minimum",
+            "near_zero_count": 0,
+            "negative_count": 0,
+            "positive_count": 3
+          },
+          "iterations": 1,
+          "message": "",
+          "optimized_fractional_position": [
+            0.0,
+            0.5,
+            0.25
+          ],
+          "optimized_position_ang": [
+            0.0,
+            2.3475,
+            0.795
+          ],
+          "start_position_ang": [
+            0.0,
+            2.3475,
+            0.795
+          ],
+          "success": true,
+          "total_energy_ev": null,
+          "zero_point_energy_ev": null
+        },
+        {
+          "classical_energy_ev": -15.976111,
+          "classification": {
+            "eigenvalues": [
+              1.0,
+              1.0,
+              1.0
+            ],
+            "label": "minimum",
+            "near_zero_count": 0,
+            "negative_count": 0,
+            "positive_count": 3
+          },
+          "iterations": 1,
+          "message": "",
+          "optimized_fractional_position": [
+            0.5,
+            0.0,
+            0.75
+          ],
+          "optimized_position_ang": [
+            2.3475,
+            0.0,
+            2.3850000000000002
+          ],
+          "start_position_ang": [
+            2.3475,
+            0.0,
+            2.3850000000000002
+          ],
+          "success": true,
+          "total_energy_ev": null,
+          "zero_point_energy_ev": null
+        },
+        {
+          "classical_energy_ev": -15.890111,
+          "classification": {
+            "eigenvalues": [
+              1.0,
+              1.0,
+              1.0
+            ],
+            "label": "minimum",
+            "near_zero_count": 0,
+            "negative_count": 0,
+            "positive_count": 3
+          },
+          "iterations": 1,
+          "message": "",
+          "optimized_fractional_position": [
+            0.5,
+            0.0,
+            0.5
+          ],
+          "optimized_position_ang": [
+            2.3475,
+            0.0,
+            1.59
+          ],
+          "start_position_ang": [
+            2.3475,
+            0.0,
+            1.59
+          ],
+          "success": true,
+          "total_energy_ev": null,
+          "zero_point_energy_ev": null
+        }
+      ],
+      "batch_selected_keys": [
+        "cluster:1"
+      ],
+      "batch_summary_data": {
+        "clustering_method": "symmetry_distance",
+        "clusters": [
+          {
+            "average_energy_ev": -15.976111,
+            "cluster_index": 1,
+            "member_indexes": [
+              0,
+              1
+            ],
+            "minimum_energy_ev": -15.976111,
+            "representative_fractional_position": [
+              0.0,
+              0.5,
+              0.25
+            ],
+            "representative_index": 0,
+            "representative_position_ang": [
+              0.0,
+              2.3475,
+              0.795
+            ],
+            "size": 2,
+            "standard_deviation_ev": 0.0
+          },
+          {
+            "average_energy_ev": -15.890111,
+            "cluster_index": 2,
+            "member_indexes": [
+              2
+            ],
+            "minimum_energy_ev": -15.890111,
+            "representative_fractional_position": [
+              0.0,
+              0.5,
+              0.0
+            ],
+            "representative_index": 2,
+            "representative_position_ang": [
+              0.0,
+              2.3475,
+              0.0
+            ],
+            "size": 1,
+            "standard_deviation_ev": 0.0
+          }
+        ],
+        "energy_tolerance_ev": 0.001,
+        "failed_count": 0,
+        "non_minimum_count": 0,
+        "symmetry_warning": null,
+        "threshold_ang": 0.25
+      },
+      "batch_summary_text": "Requested random starts: 3\nGrouping: 3 minima in 2 sites, within 0.25 \u00c5 and 1 meV.",
+      "clustering_window_state": {
+        "method": "kmeans"
+      },
+      "current_tab": 1,
+      "gw_factor": 5.0,
+      "isosurface_active_index": 0,
+      "isosurface_layers": [
+        {
+          "color": "#dc2626",
+          "key": "layer-1",
+          "label": "Isosurface 1",
+          "level_ev": 0.5,
+          "managed_muon_key": null,
+          "mesh": {
+            "faces": [
+              [
+                0,
+                1,
+                2
+              ]
+            ],
+            "level_ev": 0.5,
+            "maximum_potential_ev": 380.0,
+            "minimum_potential_ev": -16.0,
+            "vertices_ang": [
+              [
+                0.0,
+                0.0,
+                0.0
+              ],
+              [
+                1.0,
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                1.0,
+                0.0
+              ]
+            ]
+          },
+          "status_kind": "success",
+          "status_text": "Isosurface ready"
+        }
+      ],
+      "isosurface_slider_value": 12,
+      "isosurface_status_text": "Isosurface ready",
+      "isosurface_zero_minimum": true,
+      "line_points": 101,
+      "plane_sample": null,
+      "probe_output": "",
+      "probe_point": [
+        0.1,
+        0.2,
+        0.3
+      ],
+      "selected_viewer_muon_keys": [],
+      "slice_hide_atoms_in_front": false,
+      "slice_planes": [
+        {
+          "label": "Plane 1",
+          "plane": {
+            "anchor_ang": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "basis_u_ang": [
+              1.0,
+              0.0,
+              0.0
+            ],
+            "basis_v_ang": [
+              0.0,
+              1.0,
+              0.0
+            ],
+            "extent_u_ang": [
+              0.0,
+              4.695
+            ],
+            "extent_v_ang": [
+              0.0,
+              4.695
+            ],
+            "normal_ang": [
+              0.0,
+              0.0,
+              1.0
+            ],
+            "points_u": 2,
+            "points_v": 2
+          },
+          "sample": {
+            "maximum_potential_ev": 4.0,
+            "minimum_potential_ev": 1.0,
+            "potential_total_ev": [
+              [
+                1.0,
+                2.0
+              ],
+              [
+                3.0,
+                4.0
+              ]
+            ],
+            "x_coordinates_ang": [
+              [
+                0.0,
+                4.695
+              ],
+              [
+                0.0,
+                4.695
+              ]
+            ],
+            "y_coordinates_ang": [
+              [
+                0.0,
+                0.0
+              ],
+              [
+                4.695,
+                4.695
+              ]
+            ],
+            "z_coordinates_ang": [
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ]
+            ]
+          },
+          "status_kind": "success",
+          "status_text": "Slice ready"
+        }
+      ],
+      "slice_saturation_bounds": [
+        0.0,
+        3.0
+      ],
+      "slice_status_text": "Slice ready",
+      "viewer_muons": []
+    },
+    "6d0c4c1e-0000-4000-8000-000000000012": {
+      "batch_count": 2,
+      "batch_results": [
+        {
+          "classical_energy_ev": -15.976111,
+          "classification": {
+            "eigenvalues": [
+              1.0,
+              1.0,
+              1.0
+            ],
+            "label": "minimum",
+            "near_zero_count": 0,
+            "negative_count": 0,
+            "positive_count": 3
+          },
+          "iterations": 1,
+          "message": "",
+          "optimized_fractional_position": [
+            0.0,
+            0.5,
+            0.25
+          ],
+          "optimized_position_ang": [
+            0.0,
+            2.3475,
+            0.795
+          ],
+          "start_position_ang": [
+            0.0,
+            2.3475,
+            0.795
+          ],
+          "success": true,
+          "total_energy_ev": null,
+          "zero_point_energy_ev": null
+        },
+        {
+          "classical_energy_ev": -15.976111,
+          "classification": {
+            "eigenvalues": [
+              1.0,
+              1.0,
+              1.0
+            ],
+            "label": "minimum",
+            "near_zero_count": 0,
+            "negative_count": 0,
+            "positive_count": 3
+          },
+          "iterations": 1,
+          "message": "",
+          "optimized_fractional_position": [
+            0.0,
+            0.5,
+            0.75
+          ],
+          "optimized_position_ang": [
+            0.0,
+            2.3475,
+            2.3850000000000002
+          ],
+          "start_position_ang": [
+            0.0,
+            2.3475,
+            2.3850000000000002
+          ],
+          "success": true,
+          "total_energy_ev": null,
+          "zero_point_energy_ev": null
+        }
+      ],
+      "batch_summary_text": "Requested random starts: 2\nRelaxed sites available for clustering: 2",
+      "batch_zpe_completed": false,
+      "gw_factor": 5.0,
+      "potential_grid": {
+        "grid": [
+          1,
+          1,
+          1
+        ],
+        "potential_total_ev": [
+          [
+            [
+              0.0
+            ]
+          ]
+        ]
+      }
+    },
+    "6d0c4c1e-0000-4000-8000-000000000013": {
+      "batch_results": [],
+      "current_tab": 0,
+      "gw_factor": 4.0
+    },
+    "6d0c4c1e-0000-4000-8000-000000000099": {
+      "batch_results": "not a list"
+    }
+  }
+}

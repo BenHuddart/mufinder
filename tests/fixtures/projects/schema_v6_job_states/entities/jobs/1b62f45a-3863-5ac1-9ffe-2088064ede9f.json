@@ -1,0 +1,22 @@
+{
+  "calc_type": "castep_singlepoint",
+  "completed_at": "2026-11-01T09:09:00+00:00",
+  "created_at": "2026-11-01T09:08:00+00:00",
+  "dismissed_at": null,
+  "error_message": "stopped_node_failure message",
+  "execution_target": "scarf",
+  "failure_reason": "node_failure",
+  "id": "1b62f45a-3863-5ac1-9ffe-2088064ede9f",
+  "label": "stopped_node_failure",
+  "last_checked_at": null,
+  "last_status_message": null,
+  "last_status_source": null,
+  "num_processes": 4,
+  "remote_directory": "/home/user/mufinder/stopped_node_failure",
+  "remote_job_id": "1008",
+  "started_at": "2026-11-01T09:08:00+00:00",
+  "status": "stopped",
+  "submitted_at": "2026-11-01T09:08:00+00:00",
+  "tags": [],
+  "workflow_stage": "convergence_cutoff"
+}

@@ -1,0 +1,680 @@
+"""Pristine-relaxation workflow controller.
+
+Owns the submit, materialize, result and refresh cycle of the CASTEP pristine
+structural relaxation. A completed ``castep_pristine_relaxation`` job contributes
+the relaxed lattice parameters to the result payload and creates the derived
+relaxed :class:`~mufinder.domain.models.Structure` on the document.
+:meth:`PristineRelaxationController.validate_artifacts` fails a job whose geometry
+did not converge or whose ``-out.cell`` is missing, unparseable or older than the
+current run, through the
+:func:`~mufinder.app.workflow_controllers.base.relaxation_artifact_failure` checks
+it shares with the muon-relaxation controller.
+
+Definition and job lookups come from the base class (:attr:`stage` and
+:attr:`active_key` drive them). The controller has no deps dataclass: everything
+it reads is on the shared
+:class:`~mufinder.app.workflow_controllers.base.WorkflowControllerContext`, on its
+view or in the modules it imports.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Collection, Mapping, Sequence
+from dataclasses import replace
+from pathlib import Path
+from uuid import UUID
+
+from mufinder.castep_io.input_diff import JobInputTexts
+from mufinder.castep_io.output_parser import CastepResult
+from mufinder.science.kpoint_grids import lattice_parameters, supercell_lattice_vectors
+from mufinder.services.job_artifacts import ParsedJobArtifacts
+from mufinder.domain.enums import JobStatus, WorkflowStage
+from mufinder.domain.models import (
+    CalculationDefinition,
+    CalculationRun,
+    Job,
+    Result,
+)
+from mufinder.services.definition_mappings import (
+    relaxation_mapping_job_priority,
+    remove_labels_from_definition,
+    sync_equivalent_mappings,
+)
+from mufinder.services.project_document import ProjectDocument
+from mufinder.services.project_service import CONTINUABLE_JOB_STATUSES
+from mufinder.services.source_candidates import (
+    CompletedPristineJob,
+    completed_pristine_relaxation_jobs,
+)
+from mufinder.workflow import StructureBridgeError, render_job
+from mufinder.workflow.types import JobSpec
+
+from mufinder.app.adapter_common import AdapterExpansion
+from mufinder.app.relaxation_adapter import expand_pristine_relaxation_jobs
+from mufinder.app.relaxation_types import (
+    PristineRelaxationConfig,
+    PristineRelaxationRow,
+    RelaxationRunState,
+)
+from mufinder.app.relaxation_widget import PristineRelaxationWidget
+from mufinder.app.workflow_controllers.base import (
+    ControllerResult,
+    WorkflowControllerContext,
+    WorkflowJobController,
+    apply_row_parameters_to_form_state,
+    relaxation_artifact_failure,
+    upsert_job_derived_structure,
+)
+from mufinder.app.workflow_config_codecs import (
+    deserialize_pristine_relaxation_config,
+    pristine_relaxation_row_signature,
+    serialize_pristine_relaxation_config,
+)
+from mufinder.app.workflow_submission import effective_row_status
+
+
+def _source_lattice_lengths(
+    document: ProjectDocument, result: Result, row: PristineRelaxationRow
+) -> tuple[float, float, float] | None:
+    """The ``(a, b, c)`` of the structure ``row`` relaxed from, tiled to the row's cell.
+
+    The relaxed structure records its source, which stays right when another
+    structure later becomes the host. ``None`` when either structure is gone.
+    """
+
+    if not result.derived_structure_ids:
+        return None
+    relaxed = document.structures.get(result.derived_structure_ids[0])
+    if relaxed is None or relaxed.parent_structure_id is None:
+        return None
+    source = document.structures.get(relaxed.parent_structure_id)
+    if source is None:
+        return None
+    a, b, c, *_angles = lattice_parameters(
+        supercell_lattice_vectors(
+            source.lattice_vectors, row.supercell_matrix or ((1, 0, 0), (0, 1, 0), (0, 0, 1))
+        )
+    )
+    return a, b, c
+
+
+class PristineRelaxationController(WorkflowJobController):
+    """Controller for the pristine structural-relaxation workflow."""
+
+    calc_types = frozenset({"castep_pristine_relaxation"})
+    stage = WorkflowStage.PRISTINE_RELAXATION
+    active_key = "active_pristine_relaxation_definition_id"
+    no_ready_message = "Only configured pristine-relaxation rows that are ready, failed, stopped or cancelled can be submitted."
+    planned_calc_type = "castep_pristine_relaxation"
+
+    def __init__(
+        self,
+        context: WorkflowControllerContext,
+        view: PristineRelaxationWidget,
+    ) -> None:
+        super().__init__(context)
+        self._view = view
+
+    # --- configuration and completed jobs ---
+
+    def form_config(self) -> PristineRelaxationConfig | None:
+        """The rows on the page, else the rows of the saved form, else ``None``."""
+
+        document = self._context.document()
+        if document is None:
+            return None
+        for form_state in (
+            self._view.collect_state(),
+            document.ui_state.get("pristine_relaxation_form", {}),
+        ):
+            if isinstance(form_state, dict):
+                config = deserialize_pristine_relaxation_config(form_state)
+                if config is not None and config.rows:
+                    return config
+        return None
+
+    def completed_jobs(self) -> list[CompletedPristineJob]:
+        """The completed relaxations of the active definition that produced a structure."""
+
+        document = self._context.document()
+        definition = self.active_definition()
+        if document is None or definition is None:
+            return []
+        config = deserialize_pristine_relaxation_config(
+            definition.parameters.get("configuration", {})
+        )
+        if config is None:
+            return []
+        return completed_pristine_relaxation_jobs(
+            document, config.rows, self.build_states(), run_for_job=self._context.run_for_job
+        )
+
+    def _expand_jobs(
+        self, definition: CalculationDefinition, config: PristineRelaxationConfig
+    ) -> AdapterExpansion | None:
+        """Expand ``config`` on the definition's host; ``None`` when the host is gone.
+
+        A ``ValueError`` or ``StructureBridgeError`` from the expansion reaches
+        the caller.
+        """
+
+        document = self._context.document()
+        if document is None or not definition.input_structure_ids:
+            return None
+        host = document.structures.get(definition.input_structure_ids[0])
+        if host is None:
+            return None
+        return expand_pristine_relaxation_jobs(
+            host_structure=host,
+            config=config,
+            project_cutoff_energy=document.project.recommended_cutoff_energy,
+            project_kpoint_grid=document.project.recommended_kpoint_grid,
+            project_kpoint_reference_lattice=document.project.recommended_kpoint_lattice,
+            project_xc_functional=document.project.recommended_xc_functional,
+        )
+
+    # --- definition maintenance ---
+
+    def sync_mappings(self, definition: CalculationDefinition) -> None:
+        """Copy job bindings into ``definition`` from equivalent relaxation definitions.
+
+        A row carries over when its signature is unchanged; candidates rank by
+        :func:`~mufinder.services.definition_mappings.relaxation_mapping_job_priority`.
+        """
+
+        document = self._context.document()
+        if document is None:
+            return
+        sync_equivalent_mappings(
+            document,
+            self.definitions(),
+            definition,
+            deserialize=deserialize_pristine_relaxation_config,
+            signatures=lambda config: {
+                row.label: pristine_relaxation_row_signature(row) for row in config.rows
+            },
+            priority=relaxation_mapping_job_priority,
+        )
+
+    def remove_labels_from_definition(
+        self, definition: CalculationDefinition, labels: Collection[str]
+    ) -> bool:
+        document = self._context.document()
+        if document is None:
+            return False
+        return remove_labels_from_definition(
+            document,
+            definition,
+            labels,
+            deserialize=deserialize_pristine_relaxation_config,
+            serialize=serialize_pristine_relaxation_config,
+            active_key=self.active_key,
+        )
+
+    # --- submission contract ---
+    #
+    # Keys are row labels, readiness is the base default
+    # (workflow_row_state_is_ready), there is no pre_submit_check and submission
+    # is a single group.
+
+    def normalize(self, value: object) -> str:
+        return str(value)
+
+    def build_states(self) -> dict[str, RelaxationRunState]:
+        states: dict[str, RelaxationRunState] = {}
+        document = self._context.document()
+        if document is None:
+            return states
+
+        form_config = self.form_config()
+        if form_config is not None:
+            for row in form_config.rows:
+                states[row.label] = RelaxationRunState(status="ready")
+
+        definition = self.active_definition()
+        if definition is None:
+            return states
+        self.sync_mappings(definition)
+        config = deserialize_pristine_relaxation_config(
+            definition.parameters.get("configuration", {})
+        )
+        if config is None:
+            return states
+
+        if form_config is not None:
+            definition_rows_by_label = {row.label: row for row in config.rows}
+            rows_for_status = [
+                definition_row
+                for row in form_config.rows
+                if (definition_row := definition_rows_by_label.get(row.label)) is not None
+                and pristine_relaxation_row_signature(row)
+                == pristine_relaxation_row_signature(definition_row)
+            ]
+        else:
+            rows_for_status = list(config.rows)
+
+        for row in rows_for_status:
+            job = self.job_for_key(definition, row.label)
+            if job is None:
+                states[row.label] = RelaxationRunState(status="ready")
+                continue
+
+            status_value = effective_row_status(job)
+            run = self._context.run_for_job(job.id)
+            if (
+                status_value == JobStatus.COMPLETED.value
+                and run is not None
+                and run.convergence_achieved is False
+            ):
+                status_value = "not converged"
+
+            lattice_a = None
+            lattice_b = None
+            lattice_c = None
+            host_lattice_lengths = None
+            if run is not None and run.result_id is not None:
+                result = document.results.get(run.result_id)
+                if result is not None and isinstance(result.data, dict):
+                    lattice_a = result.data.get("lattice_a")
+                    lattice_b = result.data.get("lattice_b")
+                    lattice_c = result.data.get("lattice_c")
+                if result is not None:
+                    host_lattice_lengths = _source_lattice_lengths(document, result, row)
+
+            states[row.label] = RelaxationRunState(
+                status=status_value,
+                total_energy=self._context.total_energy_for_job(job.id),
+                max_force=self._context.max_force_for_job(job.id),
+                lattice_a=float(lattice_a) if isinstance(lattice_a, (int, float)) else None,
+                lattice_b=float(lattice_b) if isinstance(lattice_b, (int, float)) else None,
+                lattice_c=float(lattice_c) if isinstance(lattice_c, (int, float)) else None,
+                host_lattice_lengths=host_lattice_lengths,
+                job_id=job.id,
+                job_label=job.label,
+                geom_converged=(run.convergence_achieved if run is not None else None),
+                error_message=job.error_message,
+            )
+
+        return states
+
+    def jobs_for_keys(self, keys: list[object]) -> list[Job]:
+        document = self._context.document()
+        if document is None:
+            return []
+        definition = self.active_definition()
+        if definition is None:
+            return []
+        self.sync_mappings(definition)
+
+        selected: list[Job] = []
+        seen: set[UUID] = set()
+        for label in keys:
+            job = self.job_for_key(definition, str(label))
+            if job is None or job.id in seen:
+                continue
+            selected.append(job)
+            seen.add(job.id)
+        return selected
+
+    def describe_rows(
+        self, keys: list[object], *, also: Collection[UUID] = ()
+    ) -> tuple[CalculationDefinition, Path, list[tuple[str, JobSpec | None, Job | None]]] | None:
+        """Return the active definition, its output folder and each row's spec and job.
+
+        Every selected row counts (``also`` adds nothing). See
+        :meth:`~mufinder.app.workflow_controllers.base.WorkflowJobController.active_expansion`.
+        """
+
+        prepared = self.active_expansion(deserialize_pristine_relaxation_config, self._expand_jobs)
+        if prepared is None:
+            return None
+        definition, output_root, _config, expansion = prepared
+        spec_by_label = {str(spec.provenance.get("label", "")): spec for spec in expansion.jobs}
+        rows = [
+            (str(key), spec_by_label.get(str(key)), self.job_for_key(definition, str(key)))
+            for key in keys
+        ]
+        return definition, output_root, rows
+
+    # --- in-place row parameter mutation ---
+
+    def update_row_parameters(
+        self,
+        key: object,
+        parameter_values: Mapping[str, object],
+        added_advanced: Sequence[str] | None = None,
+    ) -> bool:
+        """Rewrite one row's CASTEP parameters inside the ACTIVE definition.
+
+        ``key`` is the row label. Returns ``False`` when there is no active
+        definition or it holds no such row.
+
+        The edit must never go through ``register_pristine_relaxation_definition``:
+        a new definition arrives with an empty ``job_ids_by_label``, which severs
+        the row→job binding, so ``materialize`` would mint a duplicate ``Job``
+        onto the row's existing directory. This mutates the very definition
+        ``materialize`` reads, leaving ``job_ids_by_label`` and every other row
+        untouched, and rewrites the row through the serialize/deserialize pair so
+        the stored shape stays canonical.
+
+        The parameters actually stored are the ones the *widget* reports after the
+        mirror, not the caller's raw mapping: the table strips implicit project
+        defaults, and :meth:`build_states` drops a row whose form signature differs
+        from its definition signature (this workflow has no active-job escape
+        hatch, so a desynced row falls back to a jobless "ready").
+        """
+
+        definition = self.active_definition()
+        if definition is None:
+            return False
+        config = deserialize_pristine_relaxation_config(
+            definition.parameters.get("configuration", {})
+        )
+        if config is None:
+            return False
+        label = str(key)
+        if not any(row.label == label for row in config.rows):
+            return False
+
+        values = dict(parameter_values)
+        advanced = (
+            tuple(str(name) for name in added_advanced) if added_advanced is not None else None
+        )
+        mirrored = self._mirror_row_parameters_into_form(label, values, advanced)
+        if mirrored is not None:
+            values, advanced = mirrored
+
+        rows = tuple(
+            replace(
+                row,
+                parameter_values=dict(values),
+                added_advanced=(advanced if advanced is not None else row.added_advanced),
+            )
+            if row.label == label
+            else row
+            for row in config.rows
+        )
+        definition.parameters["configuration"] = serialize_pristine_relaxation_config(
+            replace(config, rows=rows)
+        )
+
+        self._context.persist_ui_state(
+            failure_message="Pristine relaxation parameters were updated, but autosave failed."
+        )
+        self.refresh_view()
+        return True
+
+    def _mirror_row_parameters_into_form(
+        self,
+        label: str,
+        parameter_values: Mapping[str, object],
+        added_advanced: tuple[str, ...] | None,
+    ) -> tuple[dict[str, object], tuple[str, ...] | None] | None:
+        """Apply the edit to the widget form state and read the result back.
+
+        Returns the widget's normalized ``(parameter_values, added_advanced)`` for
+        the row, or ``None`` when the form does not hold it (in which case the
+        caller stores its own values — the row is not projected from the form
+        anyway).
+        """
+
+        updated = apply_row_parameters_to_form_state(
+            self._view.collect_state(),
+            row_matches=lambda row: str(row.get("label", "")).strip() == label,
+            parameter_values=parameter_values,
+            added_advanced=added_advanced,
+            parameter_key="params",
+        )
+        if updated is None:
+            return None
+
+        self._view.set_form_state(updated)
+        normalized = self._view.collect_state()
+        document = self._context.document()
+        if document is not None and isinstance(normalized, dict):
+            document.ui_state["pristine_relaxation_form"] = normalized
+        rows = normalized.get("rows", []) if isinstance(normalized, dict) else []
+        for row in rows:
+            if not isinstance(row, dict) or str(row.get("label", "")).strip() != label:
+                continue
+            raw_params = row.get("params", {})
+            raw_advanced = row.get("added_advanced", [])
+            return (
+                dict(raw_params) if isinstance(raw_params, dict) else {},
+                tuple(str(name) for name in raw_advanced) if isinstance(raw_advanced, list) else (),
+            )
+        return None
+
+    # --- continuation ("Continue relaxation…") ---
+
+    def row_is_continuable(self, key: object) -> bool:
+        """Return whether ``key``'s row has a job in :data:`CONTINUABLE_JOB_STATUSES`.
+
+        Resolves the row's job through :meth:`jobs_for_keys` — never from a
+        table's *displayed* status text, which reads "not converged" for a
+        completed-but-unconverged job; that row must still gate on the job's
+        real, durable status. Called live at context-menu-open time (not
+        cached), so a status change between refreshes (e.g. a run started from the
+        dashboard) is always reflected.
+        """
+
+        jobs = self.jobs_for_keys([key])
+        return bool(jobs) and jobs[0].status in CONTINUABLE_JOB_STATUSES
+
+    def row_settings(self, key: object) -> tuple[dict[str, object], tuple[str, ...]] | None:
+        """Return the ``(parameter_values, added_advanced)`` the row ``key`` stores.
+
+        The row's own settings, without the project defaults it inherits.
+        ``None`` when there is no active definition or no such row.
+        """
+
+        definition = self.active_definition()
+        if definition is None:
+            return None
+        config = deserialize_pristine_relaxation_config(
+            definition.parameters.get("configuration", {})
+        )
+        if config is None:
+            return None
+        row = next((row for row in config.rows if row.label == str(key)), None)
+        if row is None:
+            return None
+        return dict(row.parameter_values), tuple(row.added_advanced)
+
+    def render_row_inputs(
+        self,
+        key: object,
+        parameter_values: Mapping[str, object],
+        added_advanced: Sequence[str],
+    ) -> JobInputTexts | None:
+        """Render the ``.cell`` and ``.param`` one row would write with ``parameter_values``.
+
+        A pure preview of :meth:`continue_job`: the values go through the same
+        normalisation the row applies when it stores an edit, then the row's
+        ``JobSpec`` is expanded with them and rendered, without persisting
+        anything or touching the filesystem. Powers the Continue-relaxation
+        dialog's ``Parameter changes`` table. ``None`` when there is no active
+        definition, no matching row, or expansion fails.
+        """
+
+        definition = self.active_definition()
+        if definition is None:
+            return None
+        config = deserialize_pristine_relaxation_config(
+            definition.parameters.get("configuration", {})
+        )
+        if config is None:
+            return None
+        label = str(key)
+        if not any(row.label == label for row in config.rows):
+            return None
+
+        stored = self._view.row_values_to_store(label, parameter_values)
+        values = dict(parameter_values) if stored is None else stored
+        rows = tuple(
+            replace(
+                row,
+                parameter_values=values,
+                added_advanced=tuple(str(name) for name in added_advanced),
+            )
+            if row.label == label
+            else row
+            for row in config.rows
+        )
+        try:
+            expansion = self._expand_jobs(definition, replace(config, rows=rows))
+        except (ValueError, StructureBridgeError):
+            return None
+        if expansion is None:
+            return None
+        for spec in expansion.jobs:
+            if str(spec.provenance.get("label", "")) == label:
+                cell_text, param_text = render_job(spec)
+                return JobInputTexts(cell=cell_text, param=param_text)
+        return None
+
+    def continue_job(
+        self,
+        key: object,
+        parameter_values: Mapping[str, object],
+        added_advanced: Sequence[str] | None = None,
+    ) -> Job | None:
+        """Mutate the row in place, prepare its job for continuation, and re-render.
+
+        Orchestrates the controller-owned steps of the Continue-relaxation
+        accept flow: :meth:`update_row_parameters` mutates the row and mirrors
+        the edit into the widget form; ``ProjectService.prepare_job_continuation``
+        returns the row's job to ``DEFINED`` while preserving
+        ``remote_directory``; :meth:`materialize` rewrites the job's directory
+        in place from the new parameters (the existing DEFINED path: no new
+        ``Job`` is minted and ``job_ids_by_label`` is untouched);
+        ``record_job_continuation`` then appends the provenance milestone. Submission and view refresh are the caller's
+        responsibility: they need the job's original execution target and
+        cluster-connection/dialog state this controller does not have.
+
+        The job's status is checked with :meth:`row_is_continuable` *before*
+        ``update_row_parameters`` runs, so a row whose job is not continuable
+        (e.g. it started running between the menu opening and the dialog being
+        accepted) is left completely untouched rather than having its stored
+        parameters mutated with no corresponding directory rewrite. The
+        document lookup is also hoisted above ``update_row_parameters`` for the
+        same reason: a missing document must not leave the definition row
+        mutated while the job itself is never touched. Returns ``None`` in
+        either case, or when there is no active definition or no matching row.
+
+        :meth:`materialize` can itself return an empty list (a caught
+        ``ValueError``/``StructureBridgeError`` from expansion, or a missing
+        output root) without raising — in that case the job is left ``DEFINED``
+        with its remote directory preserved (so it stays recoverable and a
+        later submit re-runs materialize), but the directory on disk still
+        holds the *previous* run's ``.param``, not the just-edited values. This
+        method returns ``None`` in that case too, so the caller never submits a
+        job whose on-disk inputs disagree with the diff it just showed the user.
+        The provenance milestone is appended only *after* that check passes: a
+        continuation that was never rendered (and therefore never submitted)
+        must not leave a journal entry claiming it happened.
+        """
+
+        jobs = self.jobs_for_keys([key])
+        if not jobs or jobs[0].status not in CONTINUABLE_JOB_STATUSES:
+            return None
+        job = jobs[0]
+        document = self._context.document()
+        if document is None:
+            return None
+        if not self.update_row_parameters(key, parameter_values, added_advanced):
+            return None
+        self._context.project_service.prepare_job_continuation(job)
+        if not self.materialize([key]):
+            return None
+        self._context.project_service.record_job_continuation(
+            document, job=job, remote_directory=job.remote_directory
+        )
+        return job
+
+    # --- result contract ---
+
+    def validate_artifacts(
+        self,
+        job: Job,
+        parsed: CastepResult,
+        run: CalculationRun,
+        artifacts: ParsedJobArtifacts,
+    ) -> str | None:
+        """Fail a relaxation that did not converge or left no fresh ``-out.cell``.
+
+        See :func:`~mufinder.app.workflow_controllers.base.relaxation_artifact_failure`
+        for the checks and their messages; the carrier is read, not disk.
+        """
+
+        return relaxation_artifact_failure(
+            job, parsed, run, artifacts, seed_name=self._context.job_seed_name(job)
+        )
+
+    def build_result(
+        self,
+        job: Job,
+        parsed: CastepResult,
+        run: CalculationRun,
+        artifacts: ParsedJobArtifacts,
+    ) -> ControllerResult:
+        """Contribute the relaxed lattice parameters and derived structure.
+
+        :meth:`validate_artifacts` has already accepted the completion (the
+        ``-out.cell`` exists, parses and belongs to this run), so the carried
+        ``artifacts.relaxed_cell`` is present on this success path. The file is parsed **once** on the runner
+        worker thread; this controller consumes the carried cell rather than
+        re-reading disk.
+
+        Output files are **not** contributed here: the shared completion path
+        records every job's output files, ``{seed_name}-out.cell`` included.
+        Adding them again would duplicate entries.
+
+        The derived structure is created on first completion and **refreshed in
+        place** on every later one, so a continued job keeps a single, stable
+        structure id — see :func:`~mufinder.app.workflow_controllers.base.upsert_job_derived_structure`.
+        """
+
+        document = self._context.document()
+        if document is None:
+            return ControllerResult()
+
+        relaxed = artifacts.relaxed_cell
+        if relaxed is None or artifacts.lattice_abc is None:
+            return ControllerResult()
+        lattice_a, lattice_b, lattice_c = artifacts.lattice_abc
+
+        payload: dict[str, object] = {
+            "lattice_a": lattice_a,
+            "lattice_b": lattice_b,
+            "lattice_c": lattice_c,
+        }
+
+        definition = self.active_definition()
+        parent_structure_id = (
+            definition.input_structure_ids[0]
+            if definition is not None and definition.input_structure_ids
+            else None
+        )
+        relaxed_structure = upsert_job_derived_structure(
+            self._context.project_service,
+            document,
+            job,
+            origin="pristine_relaxation",
+            workflow_stage=WorkflowStage.PRISTINE_RELAXATION,
+            relaxed=relaxed,
+            parent_structure_id=parent_structure_id,
+        )
+
+        return ControllerResult(
+            payload=payload,
+            derived_structure_ids=[relaxed_structure.id],
+        )
+
+    # --- view contract ---
+
+    def refresh_view(self) -> None:
+        self._view.set_runtime_states(self.build_states())
+
+
+__all__ = ["PristineRelaxationController"]

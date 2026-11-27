@@ -1,0 +1,1122 @@
+CASTEP Relaxation Import
+========================
+
+This document is the design contract for importing muon structural relaxations
+that CASTEP ran outside MuFinder into a project, so that those relaxed muoniated
+structures can be used as inputs for Quantum Corrections and Energy Barriers
+calculations.
+
+How to run the importer, what it accepts, where the imported files go and how
+to remove an import are described in :doc:`/user_guide/relaxation_import`.
+
+Scope is deliberately narrow: **muon geometry optimisations only**. Runs of the
+host alone and other CASTEP tasks are listed with the reason and not imported.
+
+Status: implemented (see Phasing). A few parts of the design below are not
+yet built; they are listed under `Implementation status`_ and flagged where they
+appear.
+
+Research data boundary
+----------------------
+
+**No research data, and no reference to it, belongs in this repository.** That
+covers more than the files themselves:
+
+- no absolute or relative paths to research directories;
+- no project, sample, or material names, whether in prose, code, docstrings,
+  test identifiers, comments, ``.gitignore`` entries, or launch configurations;
+- no copied output files. A real ``.castep`` is megabytes of research results.
+
+The datasets from which this design was derived are referred to throughout as
+**dataset A** (36 relaxations, ``POSITIONS_FRAC``) and **dataset B** (79
+relaxations, ``POSITIONS_ABS``, magnetic host). Their identities and locations
+are deliberately absent and must stay absent.
+
+**Every test fixture is hand-authored and synthetic** — a minimal file written
+to a documented file shape, never a trimmed copy of a real run. This is not
+merely a compliance cost:
+
+- a synthetic ``.castep`` is a few dozen lines carrying exactly the header block
+  under test, rather than megabytes of SCF history;
+- the cases that matter most — a stale input tree, a spin-polarised run, a
+  ``HUBBARD_U`` block, a muonium run, a multi-restart output — are absent from
+  both real datasets anyway, so they must be synthesised regardless;
+- a fixture written to a documented shape fails loudly when that shape is wrong,
+  whereas a copied file quietly encodes one machine's CASTEP build.
+
+Where this document cites a concrete observation from dataset A or B — a file
+count, a parameter disagreement, a token tally — that observation is evidence
+for a design decision, reproduced as a number and never as data.
+
+Motivation
+----------
+
+Relaxed muon sites from a calculation run outside MuFinder could not otherwise
+feed Quantum Corrections (Gamma-point phonons) or Energy Barriers (transition-state
+search and NEB). Both gate their source lists on relaxations recorded in the
+project. The import exists to make such a relaxation
+indistinguishable — *to those two workflows* — from a native one, without
+pretending it was run here.
+
+**Priority ordering.** The deliverable is the relaxed muoniated structure, usable
+downstream. Recovered CASTEP parameters are informational: they let the user see
+what produced the structure, and they seed the two values downstream jobs
+inherit. Where the two goals conflict, structure availability wins. No
+degradation in parameter recovery may block an import.
+
+What a run is
+-------------
+
+A run is a ``<seed>.castep`` anywhere under the chosen folder; the search follows
+no symbolic links to directories. A project records nothing about a run from
+outside, so what it is comes only from its files:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 25 75
+
+   * - File
+     - Role
+   * - ``<seed>.castep``
+     - The run. Whether it finished and converged, its energy and the parameters
+       it used.
+   * - ``<seed>.cell``
+     - The starting structure. Fixes the supercell matrix and the initial muon
+       position.
+   * - ``<seed>-out.cell``
+     - The relaxed structure.
+   * - ``<seed>.param``
+     - Optional. Supplies parameters the output does not report.
+
+Properties that constrain the design:
+
+- **Pairing goes by name and closeness.** The other files are taken from beside
+  the ``.castep``, then from the closest directory holding that name, counted in
+  directories apart, so a tree that keeps inputs and results apart pairs up without
+  a layout being assumed. A file beside another ``.castep`` of the same seed
+  belongs to that run: ``site1/mu.castep`` must not borrow ``site2/mu.cell``.
+  Two different files equally close block the run rather than picking one, since
+  a wrong ``.cell`` would attach the wrong starting structure; byte-identical
+  copies are accepted. A file that would serve several runs serves none, a relaxed
+  cell must hold the input cell's atoms, and the review names any file read from
+  another folder.
+- **A seed carries no meaning.** Nothing is read from a seed name but the row
+  label and job directory. Whether a run holds a muon is read from its structure.
+- **No supercell matrix is recorded anywhere.** It is recovered as
+  ``L_input @ inv(L_host)``.
+- **A ``.castep`` of the same name and bytes as an earlier one is a copy**, not a
+  second calculation, and is listed once. ``<seed>_farmNNN.castep`` is one image
+  of a task farm, not a run.
+- **A run of another task is refused.** The ``.castep`` echo says what it ran.
+- **What the search cannot open is reported.** A locked folder, or one past the
+  system's path limit, may hold runs, so it is named rather than passed over, and
+  a scan that found nothing else does not claim the folder holds no outputs.
+- **A local input may be stale.** In dataset A the local
+  ``.param`` beside an input declares an LDA functional, ``basis_precision:
+  FINE`` and ``elec_energy_tol: 1E-10``, while the corresponding ``.castep``
+  reports PBE, a 900 eV cutoff, and a 3x3x3 Monkhorst-Pack grid that appears in
+  no local input file at all. The runs executed on an HPC system; the local
+  input tree is a stale sibling.
+
+.. important::
+
+   The ``.castep`` header dump is the only authoritative record of what ran.
+   Everything else is a hint.
+
+The eligibility contract
+------------------------
+
+:func:`mufinder.workflow.quantum.quantum_source_eligibility` is called by
+Quantum Corrections *and*, indirectly, by the Energy Barriers endpoint list.
+Together with its caller it forms the entire contract an imported relaxation
+must satisfy.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 20 50 30
+
+   * - Entity
+     - Required state
+     - Enforced by
+   * - ``MuonSite``
+     - ``status == "relaxed"``, ``relaxation_run_id`` set
+     - the gate
+   * - ``CalculationRun``
+     - id matches the site, ``status == COMPLETED``
+     - the gate
+   * - ``Job``
+     - ``workflow_stage == MUON_RELAXATION``, ``status == COMPLETED``
+     - the gate
+   * - ``Structure``
+     - ``origin == "muon_relaxation"``, ``properties["source_workflow_stage"]``
+       is ``"muon_relaxation"``, species contains ``H:mu``
+     - the gate
+   * - run ``job_id`` / ``result_id``, result ``derived_structure_ids[0]``
+     - present and resolvable
+     - the caller, which skips a candidate on any ``None``
+
+Nothing in either inspects *how* the job ran. An import that builds these five
+entities honestly is automatically eligible downstream, requiring **no changes
+to the quantum or energy-barrier layers**.
+
+Two requirements sit just outside the gate and are easy to miss.
+
+**Muon calc type** is not checked for eligibility, but it *is* required for the
+job's output directory to resolve to ``<base>/<prefix>/<seed>``, and therefore
+for parameter inheritance to find the files at all. It also drives the
+charge-state label. Set it regardless.
+
+**Structure parent** must point at the active host. Submitting a downstream job
+runs ``validate_structures_match_active_host``, which calls
+``resolve_underlying_host`` to walk ``parent_structure_id`` for an ancestor whose
+origin is ``"imported"`` or ``"pristine_relaxation"``. An imported structure has
+origin ``"muon_relaxation"``, so with no parent the walk returns ``None``, which
+compares unequal to the host id and raises a host-mismatch dialog. The site would
+pass every visible check and then fail at the exact moment the feature exists to
+serve. Native code sets this parent when deriving the relaxed structure; the
+importer must too.
+
+Parameter inheritance happens on disk
+-------------------------------------
+
+Downstream jobs do not read the source relaxation's parameters from the project
+document. They re-read them from disk::
+
+    kpoint_mp_grid  <-  parse_cell_file(<jobdir>/<seed>.cell)
+    cut_off_energy  <-  <jobdir>/<seed>.param
+    xc_functional   <-  <jobdir>/<seed>.param
+    spin_polarized  <-  <jobdir>/<seed>.param (and SPIN= tokens in the .cell)
+
+NEB inherits the same way, via the reactant endpoint. For dataset A a verbatim
+copy of the input files would supply **neither** value: the input ``.cell``
+carries no ``kpoint_mp_grid``, and the ``.param`` uses ``basis_precision``
+instead of ``cut_off_energy``. A phonon job seeded from it would silently fall
+back to project defaults and run at the wrong cutoff on the wrong grid —
+precisely the failure this feature exists to prevent. This constraint drives the
+on-disk layout described under "What MuFinder writes" in
+:doc:`/user_guide/relaxation_import`.
+
+Decisions
+---------
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 70
+
+   * - Decision
+     - Choice
+   * - User interface surface
+     - Imported rows merge into the main Structural Relaxations table, flagged
+       and read-only.
+   * - Seed files on disk
+     - Normalise from the ``.castep`` record; archive byte-exact originals.
+   * - Host structure
+     - Require a matching host: the import refuses until one is loaded.
+   * - Deleting a job folder
+     - Only a real folder, not a link, strictly inside this project's job folders and
+       the job's charge folder once resolved, which the import recorded writing to. A
+       saved name leading out of its place leaves that folder alone and the records go;
+       anything else is refused and nothing goes. ``job_directory_refusal`` is the
+       same last check on every route that deletes a job's folder, native jobs
+       included.
+   * - A link below ``files/``
+     - The job's folder, any folder on the way to it, or a dangling one: refused with
+       rows kept, on every route. Unlinking would leave the target's files unaccounted
+       for, and the user can remove the link and try again.
+   * - A folder two imports share
+     - Each batch's removal takes its records and keeps the files; the last one using
+       the folder deletes it. Any job that is not an import of those files refuses.
+   * - A row whose saved seed leads out of its place
+     - A native row with an absolute seed outside the project, or ``..``: the row goes
+       with its job's records and nothing on disk is touched. Nothing in the app can
+       correct a saved name, so refusing would leave the row for good. A batch does the
+       same, and its confirmation says the files stay.
+   * - A native row whose folder another job uses
+     - The row goes with its job's records and the folder stays, unoffered. A native job
+       with no saved seed resolves by its default name, and a normal submit records one
+       and writes into an existing folder of that name, so both reach an import's folder.
+       Refusing here as well would leave the row and the import each waiting on the other.
+   * - A seed that cannot name a folder
+     - A leading or trailing space or dot is refused at the scan. A saved seed names
+       the folder with exactly that name when one exists, so writing and reading agree.
+   * - Choosing the batch to remove
+     - By position in the list, with each batch named by its source folder and
+       import time, since one folder can be imported more than once. The count beside
+       it is what the removal would remove (``batch_contents``), the same number the
+       confirmation's button carries.
+   * - An imported run whose job is gone
+     - Its site, run, result and structure records go with the batch and no file is
+       touched: without the job nothing says which folder is its own. A run pointing
+       at a missing job fails the project's integrity check, so leaving it would keep
+       the project from saving, and the rest of the batch's removal would never reach
+       disk. The confirmation says its files stay.
+   * - A batch site with no run or job id, or whose job is no longer imported
+     - Left as it is and named in the confirmation with its reason
+       (``BatchContents.left``). A job that is there but no longer imported could be
+       one MuFinder ran, so it is never removed with a batch.
+   * - Names in a removal's messages
+     - Up to three for each group, in row order, with a count of the rest; every name
+       is listed under ``Details`` when a group has more.
+   * - A scan that outlives its project or host
+     - Discarded when it ends, with a ``Scan discarded`` message: another document is
+       open (reopening the same folder counts), none is, or the active host's id,
+       lattice or species changed. The scan compared the runs against the host it
+       started with. Closing the window stops a running scan at its next run or
+       piece of an output and waits for its thread; a scan that ends while the close asks whether to save is
+       shown once the close is cancelled.
+       The file step and the review are modal, so neither can change underneath.
+   * - Removing an imported row
+     - Cascade-check references, then delete row, job, run, result, structure,
+       site and files together.
+   * - Failed or unconverged runs
+     - The wizard lists all runs and pre-ticks converged ones. A run whose
+       CASTEP calculation did not complete is blocked; a completed but
+       unconverged run can be ticked and is imported as ``COMPLETED`` with
+       ``convergence_achieved`` false. Nothing is imported as ``FAILED``.
+   * - No active definition
+     - The import creates one and makes it active.
+   * - A run with no muon
+     - Listed as ``No muon in this structure.`` and not importable, decided from
+       the structure. A bare ``H`` that the host's own composition accounts for is
+       not a muon.
+   * - Row labelling
+     - ``Imported <seed>``, suffixed on collision.
+   * - Job directory
+     - Named for the seed, suffixed when that directory exists, with the copied
+       outputs named to match, so that two runs of one seed, or one folder
+       imported twice, never share files.
+
+Entity construction
+-------------------
+
+Per imported site, one five-entity chain satisfying the eligibility contract.
+
+``MuonSite``
+   ``status = "relaxed"``, ``generation_method = "imported"``,
+   ``source_structure_id`` the active host, ``initial_fractional_position``
+   taken from the **input** cell's ``H:mu`` folded to host coordinates,
+   ``initial_cartesian_position`` derived from it,
+   ``relaxed_fractional_position`` the **output** cell's ``H:mu`` folded to
+   host coordinates (the result's ``muon_final_fractional_position_host``),
+   and ``total_energy_eV`` the absolute total energy from the ``.castep`` —
+   matching what the native completion path stores.
+
+   The initial position is where the muon *started*; native completion never
+   rewrites it and copies the relaxed position beside it, so an imported site
+   means the same as every other site in the project.
+
+   Every position an imported row or site records is in the **host** frame.
+   An input cell states the muon position in the supercell frame, and job expansion
+   converts host to supercell on the way out, so storing supercell coordinates
+   would display the wrong numbers and transform them a second time if the row
+   were ever re-expanded.
+
+``Job``
+   ``MUON_RELAXATION``, ``COMPLETED``, calc type by detected charge state, tagged
+   ``imported``. ``execution_target`` stays ``"local"``;
+   a completed job is never reattached, so the value is inert.
+
+``CalculationRun``
+   ``COMPLETED``, with ``job_id`` and ``result_id`` set and
+   ``convergence_achieved`` from the geometry-optimisation success marker.
+   *Design only:* ``definition_id`` set, ``started_at`` from the ``.castep``
+   run banner, and ``completed_at`` from the file modification time; the
+   importer currently leaves ``definition_id`` and ``started_at`` unset and
+   stamps ``completed_at`` with the import time.
+
+``Result``
+   The payload is **not** only the muon-relaxation controller's contribution.
+   Native completion merges that contribution onto a standard payload, and both
+   halves are required:
+
+   .. list-table::
+      :header-rows: 1
+      :widths: 30 70
+
+      * - Source
+        - Keys
+      * - standard payload
+        - ``completed``, ``total_energy``, ``enthalpy``, ``forces``, ``stress``,
+          ``max_force``, ``max_stress``, ``num_scf_cycles``, ``wall_time``,
+          ``warnings``, ``geom_converged``
+      * - controller contribution
+        - ``lattice_a`` / ``lattice_b`` / ``lattice_c``,
+          ``muon_final_fractional_position_supercell``,
+          ``muon_final_fractional_position_host``
+      * - import marker
+        - ``imported``
+
+   ``total_energy`` in particular is what the table's Total Energy column reads
+   and what the completed-source list sorts on. Omitting it fails the
+   verification checklist below. The importer currently writes ``completed``,
+   ``total_energy`` and ``geom_converged`` from the standard half, plus the full
+   controller contribution and the import marker; the remaining standard keys
+   are not yet populated.
+
+``Structure``
+   The relaxed cell. ``origin`` **must** stay ``"muon_relaxation"`` and
+   ``properties["source_workflow_stage"]`` must stay ``"muon_relaxation"`` for
+   eligibility, so the import marker lives in ``properties["import_source"]``.
+   That holds the kind ``castep_folder``, the batch id, the seed, the run's path
+   under the folder and the CASTEP version.
+   ``parent_structure_id`` **must** be the active host id, or every downstream
+   submission fails its host check.
+
+Merging into the live table
+---------------------------
+
+The Structural Relaxations table renders the intersection of the widget's form
+state and the **active** definition's rows, matched on the key
+``{charge_prefix}:{label}`` *and* on a row signature. Three constraints follow.
+
+**Signature equality is load-bearing.** The row signature hashes the site id,
+label, initial position, charge state, supercell matrix, *normalised* parameter
+values, and the added-advanced list. Any disagreement between the form row and
+the definition row drops the row to a fallback that only accepts jobs in an
+active status — and an imported job is ``COMPLETED``, not active — so the row
+renders as "ready" with no energy. The importer must therefore store *the
+widget's normalised values*: push rows in, read the widget's state back, and
+persist what comes back. ``merge_imported_relaxation_rows`` mirrors **before** it
+appends, and builds the definition rows from what the widget returns rather than
+from the payloads it passed in; if the mirror declines the batch, the definition
+is left untouched rather than holding rows the form never received.
+
+For an imported row the widget's normalisation is coercion only — see
+`Recovered parameters on an imported row`_ — so the read-back is value-identical
+to what went in. That is what makes the two sides stable against later changes to
+project defaults and host lattice.
+
+**Label uniqueness is mandatory.** The job mapping is keyed on
+``{prefix}:{label}``, so an imported label colliding with a native one in the
+same charge state silently overwrites a mapping. De-duplicate against the active
+definition's existing labels at import time.
+
+**Mutate the active definition in place.** Every existing caller of the
+muon-relaxation definition registrar leaves the job mapping empty and relies on
+a later synchronisation pass to re-adopt bindings. That pass cannot fire for an
+import, because it only matches rows whose signatures already agree. Import
+therefore appends to the live definition's rows, job mapping, seed-name mapping
+and input site ids. Only when no active definition exists is one created.
+
+Safe without further work, **for completed imports only**: submission is already
+blocked, because the row's effective status reads ``"completed"`` and the ready
+check accepts only ready, defined, and not-generated. The dashboard
+synchronisation pass adopts only jobs in an active status, so it cannot hijack
+imported mappings.
+
+Two hazards must be gated explicitly.
+
+**Continuation.** A completed job is continuable, so "Continue relaxation" would
+appear on imported rows. It rebuilds the cell from the *initial* muon position
+and relies on a checkpoint file that an import does not have — a silent restart
+from scratch dressed as a warm start.
+
+**Failed imports.** The "already blocked" reasoning above holds only for
+``COMPLETED``. A ``FAILED`` job is visible in the Job Dashboard with Resubmit
+and Dismiss actions, and its row reads ``failed``, which the ordinary submit
+cycle accepts: running it again returns the job to ``DEFINED`` and launches a
+real local calculation in the imported directory. Worse, starting it again
+keeps only ``.cell`` and ``.param`` and recursively removes subdirectories —
+destroying the byte-exact ``.castep``, the relaxed output cell, **and the
+entire archive of original inputs**. Running again and directory cleanup must
+all be gated on the imported marker; failing that, failed runs must
+be imported in a non-resubmittable representation.
+
+Row model
+~~~~~~~~~
+
+``MuonRelaxationRow`` gains an ``imported`` flag and an import-batch id. The
+widget honours them to render a badge and to disable in-place editing, row
+removal, inclusion in a batch parameter edit, and continuation. The parameter
+dialog is opened read-only, which it already supports.
+
+**The flag must survive reconfiguration** — *implemented*. Whenever the user
+configures rows, a *new* definition is registered from the widget's current
+configuration. Unless the flag and batch id are threaded through the widget's
+internal row state, its state collection and restoration, *and* the
+configuration serialiser and deserialiser, the flag is silently dropped on the
+first reconfigure — every read-only gate dissolves while the imported entities
+and files remain.
+
+Both fields are additive with defaults, so a project saved before the import
+existed loads with every row treated as natively staged, which is correct. They
+carry a ledger entry in ``compatibility_policy``: neither may be dropped without
+a migration that first relocates the marker, because a row that loses its flag
+becomes editable and resubmittable while its imported entities and files remain.
+
+The row signature includes both fields deliberately. Signature equality gates
+whether a row renders with its real status, so a marker dropped from one side of
+the form/definition pair makes the row visibly fall back to "ready" — far better
+than rendering correctly while silently becoming editable.
+
+.. warning::
+
+   The widget's state shape is **not** the definition's configuration shape.
+   The widget names the position ``fractional_position`` where the configuration
+   says ``initial_fractional_position``, so feeding one directly to the other
+   parses without error and silently zeroes every position. The import commit
+   writes both shapes and must build each explicitly.
+
+Recovered parameters on an imported row
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+An imported row carries the parameters its run actually used, and the parameter
+dialog shows exactly those. Anything else is a fabrication: the workflow's
+current defaults are plausible values for the same material, so a default cutoff
+or tolerance displayed against a historical run reads as fact.
+
+**One resolution feeds both the row and the rendered files.**
+``resolve_recovered_parameters`` is shared by ``_param_for_seed`` and
+``row_parameter_values``. The row is what the dialog shows; the ``.param`` is
+what downstream jobs inherit. Two descriptions of the same run that disagree
+would be worse than either being wrong alone, so the mutually-exclusive
+resolution rule lives in one place rather than being restated at each call site.
+The row additionally carries ``KPOINT_MP_GRID``, which belongs to the ``.cell``,
+and omits the four keywords the import *asserts* rather than recovers
+(``TASK``, ``CHARGE``, ``FIX_ALL_CELL``, ``WRITE_CELL_STRUCTURE``) because the
+dialog already renders those as locked values.
+
+**Imported rows are exempt from default-stripping and default-layering, and this
+is a correctness requirement rather than a display preference.** Normalisation
+strips values equal to ``_implicit_params_for_row``, which folds in the *current*
+project defaults and the *current* suggested k-point grid — and it re-runs over
+every row on each ``set_form_state``, ``set_project_defaults`` and
+``set_host_lattice``. The definition row is a frozen snapshot taken at import and
+never re-registered. So if stripping applied, the day a project default came to
+equal an imported value — adopting the very cutoff a convergence run recommends
+is the obvious way — the value would vanish from the form but not the definition,
+the signature would stop matching, and the completed import would render as
+"ready" with no energy. What an imported row stores must be a pure function of
+the import.
+
+For the same reason, an imported row keeps keyword names the runtime catalog does
+not recognise instead of dropping them: catalog discovery is environment-dependent
+(see :mod:`mufinder.castep_io.schema`), so the same project can meet a thinner
+catalog on another machine. The passed-through values are inert — imported rows
+are never edited, expanded or submitted.
+
+``added_advanced`` is stored **empty** and must stay that way. The parameter
+dialog promotes any advanced keyword arriving with an active value, so a
+recovered advanced keyword renders without being listed; computing the list at
+import time would instead tie the row signature to the runtime catalog.
+
+**Imported rows must not reach job expansion or GUI validation.** Both run over
+the whole configuration and both turn one bad row into a result indistinguishable
+from "nothing to submit" — ``materialize`` swallows the ``ValueError`` into an
+empty list, and ``_build_config_or_warn`` returns ``None``, disabling the Run
+buttons for the entire table. Since a recovered value comes from third-party
+output rather than being authored against the current schema, one imported row
+could otherwise take every *native* row's submission down with it. Expansion
+filters them via ``_without_imported_rows``; validation skips them outright.
+Neither loses anything: an imported row already owns a COMPLETED job.
+
+.. note::
+
+   The dialog also suppresses its k-point pre-fill for imported rows. The
+   suggested spacing is derived from the project reference lattice and grid, not
+   from the row's own recovered grid, so pre-filling it would display a spacing
+   the run never used — in a dialog that opens read-only precisely to report what
+   the run did use.
+
+Parameter recovery
+------------------
+
+Two readers are required, both in :mod:`mufinder.castep_io`. Both are
+**implemented**:
+
+- :mod:`mufinder.castep_io.param_parser` — a ``.param`` reader (the
+  Continue relaxation comparison in :mod:`mufinder.castep_io.input_diff` reuses
+  its assignment splitting and value coercion). ``parse_param_text`` returns a
+  ``ParamFile`` the writer can render again; ``parse_param_assignments`` returns
+  a faithful ``{canonical name: value}`` view including keywords the runtime
+  schema does not recognise; ``parse_param_observations`` splits mapped from
+  unmapped. The spec-driven value coercion formerly living on ``MainWindow``
+  moved here as ``parse_param_value``, which both the importer and the existing
+  quantum-inheritance path now share.
+- :mod:`mufinder.castep_io.run_parameters` — the ``.castep`` header-dump reader,
+  covering the parameter blocks CASTEP echoes near the top of its output,
+  including the Density Mixing Parameters block.
+
+  That block is worth calling out because it is the clearest illustration of why
+  the echo is preferred over the ``.param``: CASTEP writes it only when
+  ``METALS_METHOD`` is ``DM``, and a ``.param`` need not state any of it.
+  Without reading the echo, whether a run's mixing settings survive an import
+  depends on whether the local input file happened to carry them — so two runs
+  of the same calculation can import with different parameter sets purely
+  because one ``.param`` was older than the other.
+
+  CASTEP also gates most of the block's lines on output verbosity (the
+  amplitudes need intermediate mode, the g-vectors and metric coefficient
+  expert). A value the echo did not print is a genuine absence and is left
+  absent rather than filled in from a schema default.
+
+Both were validated against real output from two CASTEP versions, and
+correctly reproduce the input-tree disagreement described above: the echo
+reports PBE with a 900 eV cutoff on a 3x3x3 grid while the stale local
+``.param`` claims LDA and ``BASIS_PRECISION: FINE``. That disagreement is now
+machine-detectable, which is what the wizard needs to surface it.
+
+Value aliases must be folded the way CASTEP folds them
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A ``.param`` may say ``task: geometryoptimisation``. CASTEP accepts that and
+normalises it to ``GEOMETRYOPTIMIZATION`` on read, but MuFinder's own
+validator only accepts the American spelling. Parsed naively, such a
+``.param`` therefore yields a value MuFinder then refuses to write, so the
+rendered ``.param`` for an imported job could not be produced at all.
+
+``param_parser`` folds enum values exactly as CASTEP does: uppercase, then a
+table of the value aliases CASTEP itself rewrites (``GEOM``, ``GEOMOPT``,
+``SPE``, ``MD`` and the rest). A value matching nothing is left untouched rather
+than coerced, so the caller still sees what the file said. The table lists only
+aliases CASTEP is known to fold — a spelling CASTEP does not fold must not be
+folded here.
+
+The echo is lossy for some keywords
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+CASTEP prints one display string for several distinct keyword values: both
+``LDA`` and ``LDA_PZ`` print *Perdew-Zunger Local Density Approximation*, and
+both ``SHF`` and ``SX`` print *Screened Hartree-Fock*. Reading the echo back
+therefore cannot always recover which value was set, and no amount of parsing
+effort will change that.
+
+Such an observation reports the most canonical value and carries the remaining
+candidates in ``ambiguous_with``, so the importer can record the ambiguity in
+provenance rather than silently asserting one reading. Under the priority
+ordering this is a cosmetic loss: no ambiguous keyword is one downstream jobs
+inherit.
+
+The header dump is not keyword-named
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Its lines are descriptive English, not CASTEP keywords::
+
+     type of calculation                            : geometry optimization
+     using functional                               : Perdew Burke Ernzerhof
+     plane wave basis set cut-off                   :   900.0000   eV
+                           MP grid size for SCF calculation is  3  3  3
+
+So a keyword spec lookup cannot be applied until a **label to keyword-and-value**
+translation table exists. That table, not the line parsing, is the substance of
+this reader. It is enumerated explicitly from CASTEP's own documentation and
+never inferred: the project rule forbids inventing keywords *or* values, so a
+label with no confident mapping is reported as unmapped rather than guessed. Its
+coverage is deliberately narrow — the keywords relaxation inputs commonly set
+plus what inheritance needs — and everything outside it is an unmapped observation.
+
+Merge order and coercion
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+Highest priority first: ``.castep``, then ``.param``, then ``.cell``, then the
+relaxed output cell. A keyword is mapped when a runtime keyword spec exists for
+it, and its value is coerced using that spec's value type. Anything unresolved is
+recorded in provenance as an unmapped observation.
+
+Every parsed value carries the file it came from. Disagreements are surfaced
+before the user commits, with the ``.castep`` value shown as the one that will be
+imported.
+
+The runtime schema is environment-dependent
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+:mod:`mufinder.castep_io.schema` builds from the full CASTEP keyword metadata
+discovered at runtime. The fallback used when no CASTEP installation is found is
+the bundled starter catalog, which is far smaller. Measured against CASTEP 26.11,
+the full catalog yields 447 ``param`` specs against the starter catalog's 47.
+
+That gap looks alarming but barely intersects this feature. Decisively, ``cut_off_energy`` and ``kpoint_mp_grid`` —
+the two values inheritance actually reads — resolve under **both** catalogs. The
+functionally critical subset is catalog-independent.
+
+**Therefore: warn, never refuse.** The feature's purpose is to make relaxed
+structures usable downstream; parsed parameters are informational alongside that.
+Blocking an import over an informational-fidelity difference would trade the
+feature's whole value against a cosmetic loss. The wizard notes the catalog in
+use and flags degraded fidelity when running on the starter catalog, pointing at
+``Setup > CASTEP`` as the remedy (see :doc:`/castep_keyword_catalog`). The
+catalog source and its CASTEP version are recorded in the import provenance
+regardless, so a completed import always names the catalog that governed its
+parse.
+
+.. note::
+
+   Keyword overrides can retype a keyword relative to CASTEP's own metadata —
+   ``charge`` is declared real by CASTEP but surfaces as an integer. Parsing must
+   go through the resolved spec, never through CASTEP's raw option type.
+
+Host structure and supercell inference
+--------------------------------------
+
+1. Infer ``S = round(L_input @ inv(L_host))`` from the **input** cell; the
+   relaxed cell equals ``S * L_host`` only when the cell was held fixed.
+2. Verify that ``S`` is integer within tolerance and that ``det(S) > 0``.
+3. Verify the atom count equals ``det(S) * N_host + 1``.
+4. Verify the composition matches: the non-muon species are exactly the host's
+   composition repeated ``det(S)`` times.
+
+Steps 3 and 4 matter because a matching lattice is not proof on its own — two
+chemically unrelated materials can share a lattice closely enough to pass the
+integer-transform test, and importing against the wrong host would attach every
+site to a structure it has nothing to do with. Atomic *positions* are
+deliberately not compared: composition and count already exclude an unrelated
+cell, and a positional test would need the host tiled and matched atom-by-atom
+for no additional protection here. Scanning without host species skips both
+checks, so a host-less scan stays possible.
+
+On failure, refuse with a readable difference report. The action refuses before
+the folder picker opens when there is no active host (see Phasing, step 6). Do
+**not** synthesise a host from an input cell: the muon-bearing supercell is not the host,
+and inferring one would guess at the primitive cell and lose the magnetic
+structure.
+
+Charge-state detection
+----------------------
+
+**Charge alone determines the charge state. Spin polarisation is orthogonal to
+it** — either charge state may have been run spin-polarised or not.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 20 40 40
+
+   * - Source
+     - Positive muon
+     - Muonium
+   * - ``.param``
+     - ``charge: +1``
+     - no ``charge`` line; CASTEP defaults to 0
+   * - ``.castep``
+     - ``net charge of system : +1.000``
+     - ``net charge of system : 0.000``
+
+One ambiguity: a ``.param`` with no charge line is neutral whether or not the cell
+holds a muon. The resolution is structural rather than parametric — a run of the
+host alone has no muon and is refused for that reason, so a cell containing
+``H:mu`` at charge 0 is muonium.
+
+Magnetic and spin-polarised hosts
+---------------------------------
+
+**A relaxation's input may carry no per-atom spins.** Verified against dataset B,
+whose host is a genuinely magnetic material with rare-earth moments of several
+Bohr magnetons: **0 of 83 input cells contain a spin token**. Such a relaxation is
+characterised by exactly two recoverable things:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 15 45 40
+
+   * - Where
+     - What
+     - Recoverable via
+   * - ``.param``
+     - ``spin_polarized : true`` — a single global flag, with no per-atom
+       moments and no total spin keyword
+     - the ``.param`` reader; also the ``.castep`` treatment line
+   * - ``.cell``
+     - ``%BLOCK HUBBARD_U`` with element, orbital and U rows
+     - the cell parser: not a known block, so it lands among the generic parsed
+       blocks
+
+**Consequence for atomic spins.** There is nothing to reconstruct from such
+inputs. The available source is the converged Mulliken moments in the
+``.castep``, which the output parser already extracts. Those are output rather
+than input spins, which is if anything the better seed for a downstream phonon
+job. Populate the structure's atomic spins from them when the run was
+spin-polarised, and record in provenance that they are Mulliken-derived rather
+than user-specified. *Not yet wired:* the structure builder supports Mulliken
+spins (``atomic_spins_source = "castep_mulliken"``), but the commit currently
+passes none.
+
+**Muonium remains a special case.** The quantum workflow raises if a muonium
+muon carries no seeded moment, because an odd-electron cell with zero net moment
+silently converges closed-shell. That seeding is driven by the charge state, so
+an imported muonium site inherits it correctly *provided* charge detection ran
+correctly — another reason charge detection must not be conflated with spin
+polarisation.
+
+.. note::
+
+   Magnetic hosts routinely use a Hubbard U. Quantum Corrections runs
+   finite-displacement phonons, which CASTEP supports with DFT+U, so an imported
+   site needs no phonon-method check; the importer should still record the
+   recovered ``HUBBARD_U`` block in provenance.
+
+Provenance
+----------
+
+An ``import_castep_relaxations`` action, plus a journal entry builder. The
+journal maps action names to builders and renders nothing for an unmapped action,
+so the builder is required rather than optional.
+
+Recorded in the provenance record: the batch id, source folder, keyword catalog
+origin, and per imported site its seed name, path under the folder, label, charge state, CASTEP
+version, inferred supercell matrix, the source file of each recovered keyword,
+every conflict found, unmapped observations, warnings and copied files; plus the
+selected runs that were skipped and why. Per-file SHA-256 digests are written to
+the manifest in ``original_inputs/`` rather than to the provenance record. The
+design's host-match verdict and application version are not recorded.
+
+*Design only:* an idempotency key (source folder, seed name, ``.castep``
+digest) so that a repeat import offers to skip or re-import as new. This is
+**not implemented**; importing the same folder again creates new entities, with
+labels de-duplicated by suffix.
+
+Layering
+--------
+
+.. list-table::
+   :header-rows: 1
+   :widths: 60 40
+
+   * - Concern
+     - Layer
+   * - ``.param`` reader, ``.castep`` header-dump reader
+     - ``castep_io``
+   * - Supercell inference, host matching
+     - ``science``
+   * - Folder scan, entity construction, file copy, provenance
+     - ``services``
+   * - Import wizard, row flags, read-only rendering, form-state mirroring
+     - ``app``
+
+**The commit necessarily splits across two layers.** The signature-equality
+discipline requires a live widget, so the round trip through the widget's state
+cannot happen in ``services``. The ``services`` layer builds the entities, files
+and provenance; the ``app`` layer mirrors the new rows through the widget and
+persists what comes back into *both* the definition and the stored form state.
+Note that the form-configuration reader prefers the live widget's state over the
+persisted copy, so writing only the persisted state is not sufficient. A
+services-only API would appear to complete an import while leaving every row
+rendering "ready".
+
+Phasing
+-------
+
+1. **Parsers** — *done*. ``param_parser`` (including the scalar-value coercion
+   moved down out of the app layer) and ``run_parameters``, the ``.castep``
+   header-dump reader, with synthetic fixtures. Independently useful: the
+   Continue relaxation comparison of the inputs on disk reuses it.
+2. **Scanner and inference** — *done*.
+   :mod:`mufinder.services.relaxation_import` turns a folder into a
+   ``RelaxationFolderScan``: seed, charge state, convergence, supercell
+   matrix, merged parameters and conflicts per run. Pure with respect to the
+   project — it mutates no document, writes no file, creates no entity — so the
+   whole detection path is testable without a project on disk and the wizard can
+   show a user what was found before anything is committed.
+
+   Two properties are load-bearing. **Nothing raises for one bad run**: a
+   directory of third-party output contains surprises, and the honest outcome is
+   a report saying which runs are importable and why the others are not. And
+   **blockers are distinct from warnings**: a blocker means the run cannot be
+   imported (no muon, an unparseable input cell, a lattice that is not an
+   integer supercell of the host), while a warning is something the user should
+   know but that does not prevent import (an undetermined charge state, a muon
+   labelled with a bare ``H``).
+
+   Supercell inference reuses ``science.supercell_matching`` through a new
+   lattice-level entry point, but with a **much tighter tolerance**. Structure
+   comparison defaults to 0.2 because an experimental and a DFT lattice
+   legitimately differ by a percent or so; a muon relaxation's input cell is
+   constructed as an exact integer supercell of its host, so the only expected residual is
+   ``.cell`` rounding, of order 1e-6. Keeping comparison's default here would
+   accept a 7% lattice mismatch as a supercell and import a run against the
+   wrong host.
+3. **Row model** — *done*. The ``imported`` flag and batch id on
+   ``MuonRelaxationRow``, threaded through the widget's per-row state, its state
+   collection and restoration, the configuration serialiser pair, and the row
+   signature. Deliberately ahead of entity construction, which writes definition
+   rows that must already carry the flag.
+4. **Entity construction and file materialisation** — *done*.
+   :mod:`mufinder.services.relaxation_import_commit` builds the five-entity chain,
+   renders the seed files, archives the originals with digests, and returns one
+   provenance record per batch with a matching journal entry. Tested against the
+   eligibility gate *and* host resolution — but not "done" on eligibility alone,
+   since a row cannot render completed with an energy until the next phase.
+
+   The commit is two steps. ``stage_relaxation_import`` is the file step: it
+   reads each run's relaxed cell, chooses its label and job folder, and copies
+   and renders the files, touching no project document, so the app runs it on
+   a worker thread. ``build_relaxation_import`` is the entity step, run on the
+   GUI thread once every copy has finished: it builds the whole batch's
+   entities before adding any to the document. The file step is all or
+   nothing. A copy or write that fails (a seed file that cannot be *rendered*
+   is only a warning), or a cancellation (checked before each file),
+   removes every file and folder the step created, children before parents, and
+   raises ``RelaxationImportFailed`` (which says whether a run's file could not
+   be read or the project could not be written) or
+   ``RelaxationImportCancelled``. Both name what the system refused to remove
+   (``left_behind``); nothing else is touched to work round a refusal, and a
+   path that existed before, such as another import's folder of the same seed,
+   is never touched. ``discard_staged_import`` removes a staged import's files
+   when it goes no further and returns what it could not remove. ``commit_relaxation_import`` runs both steps in one call.
+
+   ``resolve_recovered_parameters`` resolves mutually exclusive keywords rather
+   than merging them, for both the rendered ``.param`` and the definition row. A
+   run often declares ``BASIS_PRECISION`` while the output echo
+   reports the ``CUT_OFF_ENERGY`` CASTEP derived from it, so a merged parameter
+   set legitimately holds both — and CASTEP treats them as exclusive. The
+   resolved cutoff wins, because it is what the calculation actually used and
+   what downstream jobs inherit; the superseded keyword is reported rather than
+   dropped silently.
+
+   .. important::
+
+      The provenance record is **returned, not appended**. ``provenance.jsonl``
+      is append-only through ``ProjectService.append_provenance`` and
+      ``save_project`` never rewrites it, so a record appended straight to
+      ``document.provenance`` would live only until the project was reloaded.
+      The same applies to
+      :func:`~mufinder.services.relaxation_import_removal.remove_imported_relaxations`.
+      Callers append only *after* their document edits succeed, so a durable
+      record never describes a state the project did not reach.
+
+   Because ``services`` may not import ``app``, the definition rows this stage
+   produces are plain payload dictionaries in the persisted configuration shape.
+   Merging them into the active definition needs the widget and so belongs to
+   the next phase.
+5. **Table integration** — *done*.
+   ``ImportedRelaxationsController.merge_imported_relaxation_rows``
+   (``mufinder.app.workflow_controllers.imported_relaxations``) attaches a
+   batch's rows to the active definition and mirrors them through the widget;
+   imported rows render read-only; continuation, editing, in-table
+   removal and batch configuration are gated; and the run-again, resubmission
+   and directory-cleanup paths refuse imported jobs.
+
+   The gates key on an ``imported`` tag carried by the ``Job`` rather than on a
+   lookup through its definition row, because every guard that must respect it
+   already holds the job and may not hold the row. The guards sit inside the
+   shared cores, not only at their call sites: the reset core
+   (``JobExecutionController.reset_ended_jobs``) and the irreversible clean-up
+   of a job that starts again (``JobsController._clear_outputs_for_fresh_start``)
+   both skip an imported job, whether it runs again from its row or from the
+   dashboard's ``Resubmit…``.
+
+   Read-only rendering reuses the widget's existing lock predicates rather than
+   adding parallel checks, so an imported row locks exactly where a queued row
+   already does. The marker is applied by style and tooltip, never by editing the
+   label text: the label is read back as the row's identity, so decorating it
+   would corrupt the row key.
+6. **Wizard** — *done*. ``File > Import CASTEP Relaxations…`` picks a folder,
+   scans it on a worker thread, and opens
+   :class:`~mufinder.app.relaxation_import_dialog.RelaxationImportDialog` for review
+   before anything is committed.
+
+   The dialog is a **review** step rather than a confirmation. An import writes
+   entities and files that are then read-only, and it resolves real ambiguities
+   along the way: a stale local input tree disagreeing with the output, an
+   undetermined charge state, a muon labelled with a bare ``H``. Those
+   resolutions are defensible, but they are the user's science, so each is shown
+   before the commit rather than reported after it.
+
+   Runs that *cannot* be imported are listed rather than hidden, with the reason
+   in their Notes column, so their absence is explained instead of mysterious.
+   Converged runs are pre-ticked; everything else is offered unticked.
+
+   Scanning runs on a worker thread. A folder can hold dozens of multi-megabyte
+   outputs, and parsing them on the GUI thread would freeze the window — the
+   risk noted below. The worker reports failure as a signal rather than raising,
+   because an exception crossing a thread boundary would simply be lost.
+
+   .. warning::
+
+      **Both the thread and the worker must stay referenced until the thread
+      exits**, which ``_LIVE_SCANS`` in ``app/relaxation_import_dialog`` exists to
+      do. A ``QObject`` moved to a thread is parentless, so nothing but a Python
+      reference keeps it alive; hold only the thread and the worker is collected
+      as soon as the starter returns. The scan then never runs at all and the
+      window sits forever on a status message that never changes — no error, no
+      traceback. Qt also aborts the process if a running ``QThread`` is
+      destroyed, so the thread needs the same protection.
+
+      The starter deliberately returns nothing: the thread deletes itself once
+      finished, so a handle retained by a caller would dangle.
+
+      **One handler on ``finished`` drops the registry entry and then schedules
+      the thread's deletion**, in that order. The worker thread posts each
+      queued ``finished`` connection to the GUI thread separately, so a
+      ``deleteLater`` connected on its own ahead of the discard can run before
+      the discard is even posted. Deleting the ``QThread`` tears down the
+      connections it sends, the discard is never delivered, and the entry leaks
+      with its thread and worker — about one scan in fifty run back to back. The
+      worker's own ``deleteLater`` stays a separate connection: it runs on the
+      worker thread as it finishes and cannot overtake the discard.
+
+      Tests that drive the worker by calling ``run()`` directly exercise the
+      parsing but **not** the threading, and will not catch this. The threaded
+      cases in ``tests/app/test_relaxation_import_wizard.py`` run the real signal
+      path through an event loop for that reason.
+
+      Those tests must connect **bound slots on a main-thread QObject**, as
+      ``ImportedRelaxationsController`` does through its scan receiver. Qt picks the connection type from the receiver's
+      thread affinity, so a plain function or lambda has no receiver object and
+      is invoked directly on the worker thread — a test wired that way passes
+      while testing the opposite of what it claims. The tests assert the
+      receiving thread's identity so that mistake fails rather than hides.
+
+   The action refuses early — before the folder picker opens — when there is no
+   project or no active host structure. Every imported structure hangs off the
+   active host, so without one its downstream jobs would fail host resolution at
+   submission time.
+
+   The controller records the document object and a copy of the host's id,
+   lattice and species when the scan starts. When the scan ends (or fails) for a
+   project that is no longer open, or whose active host changed, its result is
+   discarded with one ``Scan discarded`` information message, the action is turned
+   back on if a project is open, and the status bar is cleared. Nothing is written.
+   Closing the window calls the controller's ``hold_for_close`` before it asks
+   whether to save, because that question runs an event loop in which the scan can
+   end. A scan that ends from then on is held, and ended as usual by
+   ``resume_after_cancelled_close`` when the close is cancelled. Once the close
+   goes ahead, ``stop_for_close`` asks the worker to stop and waits for its thread
+   behind a ``Stopping the folder scan…`` busy dialog
+   (``stop_relaxation_scans``): Qt aborts the process if a running ``QThread`` is
+   destroyed. The scan checks for the stop before each folder it lists and each
+   run it reads (``should_stop`` of ``scan_relaxation_folder``), and the
+   ``.castep`` parsers ask the same ``should_stop`` between pieces of the output
+   they read and search (``mufinder.castep_io.stoppable_read``: a few million
+   characters or some thousands of lines at a time), so the wait lasts as long as
+   the one folder listing or piece of a file in hand, whatever the file's size.
+   A run stopped part-way is discarded with the rest of the scan. A read that is
+   not stopped finds exactly what one read whole does. The wait has no time
+   limit, because giving up would leave the thread running.
+7. **Removal cascade** — *done*.
+   :mod:`mufinder.services.relaxation_import_removal` resolves an import batch,
+   scans for references, and deletes entities, definition rows, job bindings and
+   files as one unit, with a provenance record and journal entry.
+
+   Removal **refuses** rather than warns, because an imported relaxation owns the
+   only copy of its results: the ``.castep``, the relaxed cell and the archive of
+   originals exist nowhere else in the project. A natively-run relaxation can be
+   re-run; this cannot.
+
+   The reference scan is the substance of the phase, and each referrer has its
+   own test so a scan that stops covering one fails a test that names it. The
+   muon-relaxation definition holding the imported rows is deliberately *not*
+   treated as a referrer — it is the thing being removed from, not a dependant,
+   or removal could never proceed at all.
+
+   Two guards sit inside the removal rather than only at its call site: a plan
+   with blockers removes nothing even if constructed by hand, and a job that has
+   stopped carrying the imported tag between planning and confirmation is left
+   alone. Plan ids are resolved before the user confirms, so if something changed
+   underneath, removing nothing beats deleting a job MuFinder itself ran.
+
+   ``batch_contents`` splits a batch into the relaxations a removal takes and the
+   sites it leaves, and ``import_batches`` counts the first. A target whose job the
+   project no longer held when the plan was made is listed in
+   ``RemovalPlan.orphaned_job_ids``: its records go and it has no folder in the plan.
+   A job that is missing only at the deletion, or one planned as missing that is
+   back, is not removed.
+
+Implementation status
+---------------------
+
+The shipped importer follows this design except for the following, each flagged
+where it appears above:
+
+- unconverged runs are imported as ``COMPLETED`` (with
+  ``convergence_achieved`` false), never as ``FAILED``;
+- ``CalculationRun.definition_id`` is not set, ``started_at`` is not recovered
+  from the run banner, and ``completed_at`` is the import time;
+- only part of the standard result payload is populated;
+- Mulliken moments are not yet copied onto the imported structure, and a
+  recovered ``HUBBARD_U`` block is not recorded in provenance;
+- there is no idempotency check for repeat imports.
+
+Verification checklist
+----------------------
+
+- An imported site passes the eligibility gate and appears in both the Quantum
+  Corrections source list and the Energy Barriers endpoint list.
+- A quantum-corrections job and an NEB job generated from imported sites
+  **actually submit**: host resolution returns the active host and no mismatch
+  dialog appears. This is distinct from the eligibility check above — a site can
+  pass every visible check and still fail here.
+- A phonon job generated from an imported site inherits the run's cutoff and
+  k-point grid rather than project defaults.
+- An imported row renders with its correct status, **total energy** and final
+  fractional position.
+- An imported row's parameter dialog shows the values the *run* used —
+  its cutoff, tolerance and k-point grid — and no parameter it did not use.
+- Adopting project defaults equal to an imported row's own values (the same
+  cutoff and grid) leaves that row still rendering completed with its energy.
+  This is the regression that default-stripping would cause, and it does not
+  reproduce until the defaults happen to coincide.
+- An imported row whose recovered parameters the current schema dislikes does not
+  disable the Run buttons or block a native row from materialising.
+- Both the import and the removal appear in ``provenance.jsonl`` — not merely in
+  the in-memory journal — and survive a reload.
+- An imported row cannot be submitted, continued, edited in place, or included in
+  a batch parameter edit.
+- The imported flag survives a reconfigure: change an unrelated native row,
+  re-register the definition, and confirm imported rows are still gated.
+- An imported job cannot be resubmitted from its row, and no run-again path
+  can delete its ``.castep``, relaxed output cell, or archive. Assert the files
+  still exist afterwards. (The importer never creates ``FAILED`` jobs, but the
+  gates key on the ``imported`` tag and hold for any status.)
+- A label collision with an existing native row does not overwrite either
+  mapping.
+- Re-importing the same folder does not duplicate entities. *(Not yet
+  implemented; see Provenance.)*
+- Removal is refused while a phonon, NEB, comparison table, or relaxation
+  analysis workspace references the site.
+- Round trip: save, close and reopen the project; imported rows, their statuses
+  and their flags survive.
+
+Open risks
+----------
+
+- **Runs using a bare ``H``** rather than ``H:mu``. The scanner accepts both, but
+  the eligibility gate hard-requires ``H:mu``, so the importer must relabel and
+  record that it did.
+- **Relaxed-cell runs**, where the cell was not held fixed, break the
+  ``S * L_host`` identity. Inference uses the input cell for this reason, but such
+  runs also violate the native muon-relaxation invariant of a fixed cell. Detect
+  and warn.
+- **Multi-restart ``.castep`` files.** The existing parser reads the last run
+  segment for status, but the header dump repeats per restart. Read the *last*
+  dump.
+- **Large folders** — *addressed*. Scanning runs on a worker thread and reports
+  per-run progress to the status bar, so a folder of dozens of multi-megabyte
+  outputs neither blocks the GUI nor sits on a static message.
+
+  Measured on a 36-run folder totalling 88 MB of ``.castep``: an initial 101 s
+  fell to 14 s once ``parse_castep_output`` stopped running two permissive
+  ``IGNORECASE`` block-header patterns against every line of every file. That
+  cost was invisible while the parser only ran once per completed job; an import
+  runs it once per relaxation, which is what made it visible. The fix is a
+  substring guard in front of each regex — a speed device, not a second rule, so
+  the header match stays case-insensitive.
+
+  The commit's file copies run off the GUI thread too, behind the busy dialog
+  of ``run_blocking_call``; only the entities are built on the GUI thread,
+  once every copy has finished. For 80 runs with 5 MB ``.castep`` outputs
+  each, that GUI-thread share (building the entities, attaching the rows and
+  refreshing the pages) is about 270 ms, and it does not grow with the size
+  of the files or the speed of the disk.
+- **Catalog drift between imports.** Two imports into the same project under
+  different CASTEP versions can map different keyword sets. The recorded CASTEP
+  version per import makes this diagnosable rather than invisible.
+- **No available dataset exercises spin polarisation, muonium, or Hubbard U.**
+  Both real datasets are entirely positive-muon and non-spin-polarised with no
+  Hubbard-U block. Fixtures are synthetic in any case, so this costs nothing
+  structurally — but it does mean the magnetic-host file shapes are inferred
+  rather than observed in output. Review them against CASTEP
+  documentation before relying on them, and do not claim them verified against
+  real data.
+
+  This is itself informative rather than a gap in the samples: dataset B's host
+  *is* a magnetic material, yet its relaxations were run non-spin-polarised, with
+  the magnetism entering only through the dipolar-field step. A magnetic host
+  therefore does **not** necessarily imply a spin-polarised DFT
+  relaxation, so the common import case is the simple one.
+- **Position block variants.** Dataset A's cells use ``POSITIONS_FRAC`` and
+  dataset B's use ``POSITIONS_ABS``. Exercising both found a real defect: the
+  absolute-position branch of the cell parser converted coordinates by
+  round-tripping through ``ase.Atoms``, which resolves every symbol against the
+  periodic table and so raised on the ``H:mu`` species *label*. Every muonated
+  cell written with ``POSITIONS_ABS`` was unparseable, which affected far more
+  than this feature. The conversion is now arithmetic and label-agnostic. Both
+  variants remain exercised by the scanner tests.

@@ -1,0 +1,617 @@
+Quantum Corrections
+===================
+
+Does the muon's zero-point motion change which site it occupies, or let it
+escape? The muon is light enough that its zero-point energy (ZPE) is comparable
+to the energy differences between sites and the barriers between them. Two sites
+whose classical energies differ by less than their ZPE difference can swap order,
+and a site whose ZPE along a hop exceeds the barrier does not hold the muon.
+Gamma-point phonons of each pinned site give its ZPE, how far the muon spreads,
+and whether a harmonic estimate can be trusted. It is a follow-on workflow: its
+inputs are muon sites that MuFinder has already relaxed, not unrelaxed candidates
+from site generation. The physics behind every number, and a worked example on
+solid nitrogen, are on :doc:`/user_guide/quantum_corrections_theory`.
+
+Scientific intent
+-----------------
+
+MuFinder computes the Gamma-point phonons of each relaxed muonated supercell,
+with the muon mass applied through ``SPECIES_MASS``, and treats the three modes
+with the largest muon participation as the muon's own vibrations. Each of them
+contributes a ZPE of ``(1/2) hbar omega`` and a width, their summed
+participation gives the mode-mixing witness ``w1`` (zero when the muon modes do
+not mix with host modes), and the analysis window adds the muon–nucleus
+correlation ``w2``.
+
+These are harmonic numbers, and how far to trust them depends on the site.
+When ``w1`` is close to zero and the muon modes stand apart from the host
+modes, they describe a muon moving on its own in a near-harmonic well. When
+``w1`` is clearly negative or a muon mode is hybridised with host modes, the
+muon is entangled with the host and single-particle pictures fail; if its well
+is also strongly anharmonic, only path-integral molecular dynamics, which is
+outside MuFinder, is reliable, and the harmonic ZPE is a starting estimate (see
+:ref:`quantum-corrections-choosing` and `Scope and limitations`_). In every case
+ZPEs are most reliable as comparisons between sites or charge states computed
+with the same settings.
+
+Before you start
+----------------
+
+Quantum Corrections needs:
+
+- **Relaxed muon sites.** Run the structural relaxations under
+  ``Muon Sites > Relaxations`` and let them complete. Every site whose
+  relaxation completed successfully appears automatically on the Quantum
+  Corrections page (see `Source eligibility`_). Relaxations brought in through
+  :doc:`/user_guide/relaxation_import` are eligible too.
+- **A decision about which sites matter.** A phonon calculation is expensive
+  (roughly three displacements per atom with finite displacement), so the page
+  lists the distinct sites pinned to the ``Muon Sites`` summary by default:
+  cluster the relaxed sites under ``Muon Sites > Analysis``
+  (:doc:`/user_guide/structural_relaxation_analysis`) and choose ``Pin to Summary``. Each
+  pinned site is one row, its cluster's representative relaxation. Tick
+  ``Show every relaxed site`` to list every eligible relaxed site instead,
+  including relaxed copies of the same site.
+- **A working CASTEP setup.** Configure a local CASTEP executable or a cluster
+  under ``Setup``, and load a keyword catalog (:doc:`/castep_keyword_catalog`).
+
+Running the workflow
+--------------------
+
+Each relaxed site runs as **one CASTEP phonon job**: a fresh ``TASK : PHONON``
+run converges the ground state and then computes the Gamma-point phonons, so a
+row is submitted once.
+
+The page shows the flow as three numbered steps above one table of sites.
+
+1. **Sites.** Select ``Quantum Corrections`` in the workflow navigator. Step 1
+   says how many sites are pinned from ``Muon Sites``, and the table lists them
+   with ``Status`` = ``ready``. ``Change on Muon Sites →`` goes to the page where
+   they are pinned.
+2. **Run.** Step 2 says how many of the sites have completed.
+
+   - ``Configure…`` opens the row settings for the selected sites, or with
+     nothing selected for every site not yet run. Check the electronic settings
+     (inherited from the source relaxation, see `Configuration dialog`_) and set
+     ``Farms`` if you want task farming; sites with different farm counts keep
+     theirs unless you change it. The settings stay editable until the site's job
+     is submitted.
+   - ``Run Selected Locally`` and ``Run Selected on Cluster`` submit the selected
+     sites. With nothing selected the buttons read ``Run All Locally`` /
+     ``Run All on Cluster`` and submit every ready site. The row's ``Status``
+     then follows the job through the queue. Any execution target will do: the
+     job needs no files from an earlier run.
+
+3. **Results.** When the phonon job completes and its ``.phonon`` file parses, the
+   site's row fills in with ``ZPE``, ``dE + ZPE``, the widths and ``w1``
+   (:doc:`/user_guide/quantum_corrections_theory` explains what they mean). Check
+   the jobs dashboard for warnings, in particular the muon-mass warning (see
+   `Muon mass`_).
+
+   .. figure:: ../_generated/screenshots/n2_quantum_corrections_page.webp
+      :alt: The Quantum Corrections page with its three steps above one row, the
+            pinned alpha-N2 site with its phonon job completed: ZPE 0.576 eV,
+            widths 0.23, 0.21 and 0.21 Angstrom, and w1 -0.138.
+
+      The pinned site of :doc:`/user_guide/examples/alpha_n2` with its completed
+      phonon job.
+
+   Select a site and click ``Open Analysis`` to inspect its modes and atom-pair
+   coupling (see `Phonon analysis window`_). ``Next: Energy Barriers →`` appears
+   once a result exists: compare a site's ZPE with the barriers around it there.
+
+**Changing your mind or recovering from a failure.** While a row's phonon job
+is running its parameters are locked; ``Configure…`` then opens the row
+read-only and says why in one line. A row whose phonon job failed,
+stopped or was cancelled stays editable, farm count included, and running it
+again, from this page or with the Job Dashboard's ``Resubmit…``, rebuilds its
+inputs from the row. The job writes ``CONTINUATION : DEFAULT``, so when its
+folder holds a ``.check`` checkpoint MuFinder asks first (see
+:ref:`resubmit-continue-or-start-again`):
+
+- **Continue** keeps the job's folders, locally and on the cluster, and
+  resumes from the checkpoint with the rebuilt inputs.
+- **Start again** cleans the job directory, and the rerun is a fresh phonon
+  job. On the job's own cluster its remote folder is deleted once the previous
+  run has finished (see :doc:`/getting_started/running_jobs`).
+
+With no checkpoint the row runs again from the beginning without a question.
+Cancel an active job before running it again. A job staged but never
+submitted (its row reads ``ready``) stays editable, because submitting the row
+rewrites its input files from the stored configuration. Dismissing a job from the Job Dashboard does not change its row.
+
+**Running a completed row again with other parameters.** A completed row stays
+configurable, so it can run again with, say, another displacement or a tighter
+tolerance. ``Configure…`` opens with the row's current parameters:
+
+- Accepting the dialog unchanged asks nothing and changes nothing, not even
+  the saved project. A changed
+  farm count alone is stored without a question, because it changes how the
+  job runs, not its result.
+- Accepting other parameters first asks ``Change parameters``, naming the site
+  (or how many completed sites a selection holds) whose phonon result running
+  again replaces. ``Cancel`` is the default and keeps the row as it was.
+- Once you confirm, only the row's parameters change. Its status reads
+  ``edited``, and it keeps showing its result, ``dE + ZPE`` and ranking
+  included, as does its analysis window, until it runs again. Setting the
+  parameters back makes it ``completed`` again.
+- Running an ``edited`` row (``Run All`` includes it) starts its job again:
+  once the submission dialog is accepted, its result is removed, its folder is
+  cleared as for **Start again** above, its open analysis window closes, and
+  the new run's result appears when it completes. Cancelling the submission
+  dialog leaves the result and files as they were. If the new run fails, the
+  row reads ``failed`` with no result, like any failed row.
+- Running a ``completed`` row whose parameters are unchanged runs nothing: when
+  every selected site is such a row, a ``Nothing to run`` notice says to change
+  one of its parameters with ``Configure…`` first.
+
+A row is ``edited`` when a parameter it stores is written differently from the
+inputs its job ran with, or the run had a parameter from ``Add Parameter`` that
+the row no longer writes. A default that changed since, a keyword an older
+version wrote by itself, or a source relaxation whose files are gone, does not
+make a row ``edited``. When the ``.cell`` or ``.param`` of a completed job is
+missing, the row cannot be compared with its run and ``Configure…`` opens it
+read-only.
+
+A project holding the singlepoint jobs that older versions ran before each
+phonon job loads them as records; see
+:ref:`singlepoint records <quantum-singlepoint-records>`.
+
+The workflow page
+-----------------
+
+The figure under `Running the workflow`_ shows the page with one pinned site
+and its completed result.
+
+The table lists one of two sets of rows, named in step 1:
+
+- The sites pinned to the ``Muon Sites`` summary (the default): one row per site,
+  positive muon first, then muonium, each in the summary's energy rank. A site
+  the workflow already tracks (a configured row or one with a job) stays listed
+  even when it is not pinned, so a submitted row never drops out of the table;
+  step 1 counts such rows after the pinned ones.
+- Every eligible relaxed site, when ``Show every relaxed site`` is ticked.
+
+The choice is saved with the project. When no charge state has a pin, the
+table is empty and a notice in step 1 explains how to pin sites. The notice also
+names a charge state with eligible sites but no pin, and counts pinned sites that
+no longer resolve to an eligible relaxed site (their relaxation was started
+again or removed); re-pin the analysis to refresh them.
+
+Every site has one row. A site without a result shows ``–`` in the result columns.
+A completed result with no eligible site, for example because the relaxation was
+started again or removed, keeps a read-only row after the sites, labelled ``(no eligible
+site)``, with its ``ZPE``, widths and ``w1``. ``Open Analysis`` still opens it. It has
+no energy to rank, so it takes no part in ``dE + ZPE``, and no job action reaches it.
+
+``Site``
+   For a pinned row, the summary label: the Wyckoff label and cluster, such as
+   ``8c · cluster 1`` (``Cluster 1`` without a Wyckoff label). Otherwise the
+   relaxed site's label: double-click to rename it; the new label is also used by
+   Energy Barriers.
+``Charge``
+   The charge state of the source relaxation: ``positive muon`` or
+   ``muonium``.
+``dE (eV)``
+   The site's relaxed total energy relative to the lowest-energy eligible site
+   with the same charge state and cell composition. Energies from different
+   charge states or supercells are not comparable, so each such group has its
+   own zero. In the full list, rows are ordered by charge state, then by
+   ``dE``.
+``ZPE (eV)``
+   The total muon zero-point energy, ``½ħω`` summed over the three selected
+   muon-dominated Gamma modes.
+``dE + ZPE (eV)``
+   The ranking once zero-point energy is counted: the site's relaxed total energy
+   plus its muon ZPE, relative to the lowest such sum among the sites with a
+   result and no non-positive muon mode, with the same charge state and cell
+   composition. Until every site in the group has a result, its zero can move as
+   more results arrive, and a site with ``dE`` above 0 can read ``0.000``. A site
+   with ``(earlier)`` or ``(unconfirmed)`` beside its ``ZPE`` shows ``–`` here. See
+   `Ranking sites with zero-point energy`_.
+``Widths (Å)``
+   The muon's zero-point width ``sqrt(ħ / (2 m_μ ω))`` along each of those modes,
+   lowest frequency first.
+``w1``
+   The mode-mixing witness ``P - 3``: 0 when the muon's motion is contained in its
+   three modes, more negative as it mixes with host modes, down to -3.
+``Farms``
+   The configured farm count, ``1`` when task farming is off.
+``Status``
+   ``ready`` before the row has a job, then the phonon job's status. A row of
+   an older project whose singlepoint is still in progress shows that job's
+   status (see :ref:`singlepoint records <quantum-singlepoint-records>`). A site
+   shows its result while this reads ``completed``.
+
+A ``⚠`` beside ``ZPE`` and ``dE + ZPE`` means the result was stored with a warning,
+and the row's tooltip gives it: a selected muon mode with a non-positive frequency,
+which the total leaves out, or the wrong muon mass (see `Muon mass`_). The number is
+the stored one, but do not rank the site by it: a non-positive muon mode means the
+geometry is a saddle, not a minimum, and its total leaves that mode out. Such a site
+cannot set its group's zero: its ``dE + ZPE`` is read from the zero of the other
+sites, and can be negative. If every ranked site in a group has such a mode, the zero
+is the lowest of them, and the row's tooltip says so. A wrong muon mass is flagged but
+keeps its place in the ranking.
+
+``ZPE`` reads ``(earlier)`` when the phonon job read an earlier relaxation of the site
+than the one it now points at, for example after ``Continue relaxation…``. The sum
+would add a new energy to a ZPE from another geometry, so the row shows ``–`` under
+``dE + ZPE`` and takes no part in the ranking until its phonon job runs
+again. The Journal's comparison and the project survey follow the same ranking.
+MuFinder records the run each phonon job's inputs were written from. A job
+without that record is settled by its timestamps only where they prove the answer: a
+relaxation that finished before the job was created is the one it read, and one that
+finished after its last submission cannot be. Otherwise ``ZPE`` reads
+``(unconfirmed)``, and the row is left out in the same way, because nothing shows that
+the two numbers belong together.
+
+Energies are shown to three decimals. Hover a column header for its definition,
+and a row for what the table has no column for:
+
+- the relaxed site, for a pinned row;
+- ``Displacements``, ``3 x atom count`` for the relaxed defect cell: an approximate
+  count of the finite-displacement calculations the phonon job needs, and
+  therefore a guide to choosing ``Farms``;
+- the source job, the muon relaxation the row was built from;
+- the frequencies of the three muon modes in ascending order. Every Gamma-point
+  mode is listed in the analysis window's ``Phonon Modes`` tab.
+
+Right-click selected rows to run, cancel, inspect a failure, or configure them;
+a row whose job failed, stopped or was cancelled runs again from the same menu
+or step 2's run buttons. There is no ``Remove``: rows are
+derived from completed relaxations. ``Open Analysis`` in step 3 acts on one
+selected row with a result.
+
+Ranking sites with zero-point energy
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``dE + ZPE`` uses the muon's three modes, not every mode of the cell, so it assumes
+that the host's own ZPE changes little between sites. In GdRu₂Si₂
+(:doc:`/user_guide/examples/gdru2si2`) the host part differs by 3 meV between the
+two sites: site 2 is +0.353 eV above site 1 with the muon's modes and +0.350 eV
+with all 123. Compare sites computed with the same settings.
+
+Configuration dialog
+--------------------
+
+The row configuration dialog follows the shared workflow layout: the common
+rows ``Basis Precision`` / ``Cutoff Energy``, ``SCF Energy Tolerance``, and
+``K-Point MP Grid`` come first, followed by the Quantum Corrections rows:
+
+.. figure:: ../_generated/screenshots/n2_quantum_configuration_dialog.webp
+   :alt: The Quantum Corrections configuration dialog for an alpha-N2 row:
+         one farm, the locked PHONON task, the inherited 1200 eV cutoff,
+         2 x 2 x 2 k-point grid and PBE functional, and an SCF energy
+         tolerance of 1e-10 eV.
+
+   The configuration of the α-N₂ row of :doc:`/user_guide/examples/alpha_n2`,
+   inheriting its relaxation's settings, with the SCF tolerance tightened to
+   ``1e-10`` eV.
+
+- ``Farms`` — the ``NUM_FARMS`` value; ``1`` disables task farming.
+
+The ``Task`` row is shown locked at ``PHONON``. There is no phonon-method
+choice: every row runs finite displacement (see `CASTEP phonon methods`_).
+Further CASTEP parameters supported for this workflow (for example
+``NONSCF_EIGENVALUE_TOL``) can be added with ``Add Parameter``, which lists
+them by group and searches their names, CASTEP keywords, descriptions and
+groups; ``PHONON_METHOD`` is not among them.
+
+**Rows configured by an older version.** A row an older version configured
+for ``DFPT`` or ``LINEARRESPONSE`` still loads. Submitting it writes
+``PHONON_METHOD : FINITEDISPLACEMENT``, also over a job of the row that an
+older version wrote but never ran, and a one-line notice names the row and the
+method it was configured with before the submission goes ahead. A row whose
+job already has finite displacement in its ``.param`` is not announced again.
+A completed job keeps its result, whichever method produced it.
+
+**Defaults.** When the source relaxation's input files are still on disk, each
+row inherits that relaxation's ``CUT_OFF_ENERGY``, ``KPOINT_MP_GRID``,
+``XC_FUNCTIONAL``, and spin treatment (``SPIN_POLARIZED``), so the phonon
+calculation stays comparable with the relaxation that produced the geometry.
+The functional and cutoff come from the source ``.param`` and the grid from the
+source ``.cell``, so a later change of project default does not affect them.
+The spin treatment is taken as CASTEP ran it: the ``.param`` file's
+``SPIN_POLARIZED`` (either spelling) when present, otherwise on when the run's
+net ``SPIN`` or any per-atom ``SPIN=`` token in its ``.cell`` is non-zero. When
+the source ``.param`` cannot be read, a muonium source still defaults to
+spin-polarised, matching how its relaxation was written.
+``SCF Energy Tolerance`` defaults to ``1e-9 eV``, tighter than for other
+workflows, because phonon forces need a well-converged ground state. Values you
+set in the dialog override the inherited defaults for that row only.
+
+**Several rows at once.** With more than one row selected, values that differ
+between rows are marked as mixed and are left untouched unless you edit them.
+
+**When the dialog is editable.**
+
+.. list-table::
+   :header-rows: 1
+
+   * - Row state
+     - What you can change
+   * - ``ready`` (no job, or a job not yet submitted)
+     - Everything.
+   * - ``failed``, ``stopped`` or ``cancelled``
+     - Everything. The next run, from the row or the Job Dashboard, rebuilds
+       the job's inputs from the row.
+   * - ``completed`` or ``edited``
+     - Everything. Changing a completed row's parameters asks first, and
+       running it again replaces its result (see `Running the workflow`_).
+   * - Anything else, for any selected row
+     - Nothing; the dialog opens read-only as ``Inspect Quantum Corrections
+       Parameters`` so the stored inputs stay traceable to the submitted job.
+       One line says why: cancel an active job to edit it. A completed row
+       whose job's input files are missing also opens read-only.
+
+What MuFinder writes
+--------------------
+
+Each row's phonon job is written to its own seed directory under
+``files/quantum_corrections/<seed>/`` in the project. The seed is
+``quantum_<site label>``; for a site relaxed in both charge states, the charge
+state the site was not first relaxed in adds its prefix, as in
+``quantum_O1_muonium``:
+
+- ``TASK : PHONON``, ``PHONON_METHOD : FINITEDISPLACEMENT`` and
+  ``CONTINUATION : DEFAULT`` (a new run when the directory holds no ``.check``
+  file, a continuation of it otherwise);
+- ``PHONON_KPOINT_MP_GRID 1 1 1`` (Gamma only, always);
+- ``NONSCF_EIGENVALUE_TOL`` = the smaller of ``ELEC_ENERGY_TOL`` and
+  ``1e-9 eV``;
+- ``NUM_FARMS`` when ``Farms`` is greater than 1;
+- ``SPECIES_MASS`` and ``SPECIES_GAMMA`` for ``H:mu``. The mass is the CODATA
+  muon mass, 0.1134289257 amu, and the gyromagnetic ratio is the CODATA value, twice the muon magnetic moment over ħ, ≈ 8.516155 × 10⁸ rad s⁻¹ T⁻¹
+  (γ\ :sub:`μ` / 2π ≈ 135.53881 MHz T⁻¹), both taken from ``scipy.constants``;
+- ``CHARGE`` (``1`` for a positive muon, ``0`` for muonium).
+
+A spin-polarised job writes the relaxed structure's per-atom ``SPIN=`` values,
+which are the source relaxation's, so a magnetic host starts from the moments
+it was relaxed with. For a muonium source the job also defaults to
+``SPIN_POLARIZED : TRUE`` and seeds a spin of +1 on the muon, as the muon
+relaxation does.
+
+Source eligibility
+------------------
+
+A relaxed site is listed only when all of these hold (a pinned site is listed
+when the relaxation that represents its cluster passes the same checks, in the
+pin's charge state):
+
+- the relaxation is the one the site records, or a relaxation of the site in
+  the other charge state from its row in ``Muon Sites -> Relaxations``, so a
+  site relaxed as both a positive muon and muonium is listed once per charge
+  state;
+- that run, and the job that produced it, completed successfully;
+- the job is a muon relaxation from ``Muon Sites -> Relaxations``, or a
+  relaxation brought in through :doc:`/user_guide/relaxation_import`;
+- the run produced a parsed relaxed structure;
+- the relaxed structure contains an ``H:mu`` atom.
+
+UEP candidates, generated sites, failed relaxations, pristine relaxations, and
+manual sites without a structural relaxation are excluded because their ionic
+coordinates have not been relaxed for a phonon calculation.
+
+CASTEP phonon methods
+---------------------
+
+MuFinder runs every Quantum Corrections phonon job at Gamma only
+(``PHONON_KPOINT_MP_GRID 1 1 1``) by finite displacement, which, unlike
+CASTEP's DFPT, works with ultrasoft pseudopotentials, DFT+U, meta-GGA and
+hybrid functionals, non-collinear magnetism, spin-orbit coupling and the newer
+dispersion corrections.
+
+.. _quantum-corrections-muon-mass:
+
+Muon mass
+---------
+
+The phonon job writes the muon ``SPECIES_MASS`` and ``SPECIES_GAMMA`` blocks
+into its own ``.cell`` file, and a fresh CASTEP run reads them from there.
+Without them CASTEP would give ``H:mu`` the default hydrogen mass, roughly 8.9
+times the muon mass; because a harmonic frequency scales as the inverse square
+root of the mass, the frequencies and the muon ZPE would come out about a
+factor of three too low.
+
+A run can still end up with another mass: when the row's settings override
+``SPECIES_MASS``, or when it continued from a checkpoint written without the
+muon mass (CASTEP restores species masses from the checkpoint on a
+continuation). CASTEP records the mass it actually used in the ``.phonon``
+header, so MuFinder compares it against the muon mass on every parsed phonon
+run. A mass within 1 % of the muon mass is accepted: rounded values such as
+0.1138 amu, common in runs prepared by hand, shift the frequencies by less than
+0.2 %. A larger mismatch is raised as a job warning, stored with the result,
+and shown as a banner in the analysis window. It cannot be repaired after the fact:
+run the row again from the beginning. When the row's settings override
+``SPECIES_MASS``, correct the muon's mass in its ``Configure…``. A completed row
+runs again only once its parameters differ from its run, so when the mass came
+from a continuation, change another parameter as well. Running the row again
+then replaces the result (see `Running the workflow`_).
+
+Task farming and execution targets
+----------------------------------
+
+When ``Farms`` is greater than one, MuFinder writes ``NUM_FARMS`` into the
+phonon ``.param`` file. CASTEP sets up the farms before the ground state, runs
+the ground state once and shares it, and spreads the displacement calculations
+over the farms. ``Displacements`` in the row's tooltip is a guide to a sensible
+value.
+With task farming active MuFinder reads ``<seed>_farm001.castep`` as the
+primary output.
+
+A phonon job is a self-contained CASTEP run, so it can be submitted locally or
+to any configured cluster, from the Quantum Corrections page or the Job
+Dashboard. A job run again in a directory that still holds its ``.check``
+file can continue from that checkpoint; see `Running the workflow`_ for the
+question MuFinder asks first.
+
+Outputs and interpretation
+--------------------------
+
+Each completed phonon job saves a result with:
+
+- the source relaxed site and the relaxation job it came from;
+- the path of the CASTEP ``.phonon`` file and whether it is Gamma-only;
+- every Gamma-point eigenvalue in ``cm-1``;
+- the three selected modes: index, frequency, muon participation, ZPE, and the
+  muon's zero-point width along the mode, ``Δx = sqrt(ħ / (2 m_μ ω))`` in Å
+  with ``ω = 2π c ν``;
+- the total muon ZPE of those modes in eV;
+- the ``w1`` witness;
+- warnings, when the muon mass is wrong or a selected mode has a non-positive
+  frequency.
+
+The quantities are defined as follows (``e`` is the normalized phonon
+eigenvector written in the ``.phonon`` file):
+
+- **Muon participation** of mode *n*: ``|e_mu,n|^2``, the squared norm of the
+  muon's three eigenvector components.
+- **Selected modes**: the three Gamma modes with the largest muon participation,
+  listed in order of frequency.
+- **Muon ZPE**: ``sum (1/2) h c nu_n`` over the selected modes, with ``nu_n``
+  in ``cm-1``. A selected mode with a non-positive frequency contributes zero
+  and raises a warning: an imaginary muon mode means the relaxed geometry is not
+  a true minimum, and the ZPE should not be trusted.
+- **w1**: ``P - 3``, where ``P`` is the summed participation of the three
+  selected modes, following M. Gomilšek et al., *Commun. Phys.* **6**, 142
+  (2023), doi:10.1038/s42005-023-01260-7. It is ``0`` when the muon's motion is
+  fully contained in the three modes, and becomes more negative as muon motion
+  mixes with host modes, down to ``-3``. A stored result that does not record
+  the witness definition (``w1_definition``) is shown with ``w1`` recomputed
+  from its stored mode participations.
+- **Zero-point width** of a selected mode: ``Δx = sqrt(ħ / (2 m_μ ω))``, the
+  root-mean-square ground-state displacement of a harmonic oscillator with the
+  muon mass at that mode's frequency. A mode with a muon ZPE of 0.17 eV
+  (about 2742 ``cm-1``) has a width of about 0.23 Å; a non-positive frequency
+  has width zero.
+
+The ZPE is a harmonic, Gamma-point estimate for a local defect, not a full
+anharmonic many-body treatment; compare it between sites computed with the
+same settings rather than reading it as an absolute value.
+
+Each completed phonon job adds a ``Zero-point energy calculated`` entry to the
+:doc:`/user_guide/journal`.
+
+.. _quantum-corrections-analysis-window:
+
+Phonon analysis window
+----------------------
+
+``Open Analysis`` opens a window for the selected site's completed phonon job,
+titled with the site and charge state, such as ``8g · site 1, positive muon``. It
+reparses the stored ``.phonon`` file, so the analysis is tied to the archived
+CASTEP output rather than to table state. If CASTEP used the wrong muon mass, a
+warning banner appears above the tabs. The window has two tabs, ``Phonon Modes``
+and ``Muon Coupling``; it opens on ``Phonon Modes`` and computes ``Muon Coupling``
+the first time it is shown. Each muon mode's width ``Δx`` is in the page's
+``Widths (Å)`` column.
+
+.. figure:: ../_generated/screenshots/n2_phonon_modes.webp
+   :alt: The Phonon Modes tab of the phonon analysis window for the alpha-N2
+         site, scrolled to the highest modes: the N2 stretches up to
+         2428.7 cm-1, and the three muon modes at 2749.6, 3246.4 and
+         3301.1 cm-1 with their participation highlighted, beside the
+         supercell with the muon's mode vector.
+
+   The ``Phonon Modes`` tab for the α-N₂ site of :doc:`/user_guide/examples/alpha_n2`,
+   with the longitudinal muon mode selected.
+
+``Phonon Modes``
+   Opens with one line, ``Muon ZPE along the principal axes of its well``: the
+   muon's zero-point energy along each of the three principal axes of its well, in
+   meV, lowest first, each with its axis in the host crystal's axes as Energy
+   Barriers names hop directions (``249 meV along [1 -1 0]``). They are the values
+   with every other atom held fixed, which the tooltip says; the theory is in
+   :ref:`quantum-corrections-principal-zpe`. The axes are those of the site's
+   relaxed cell, and an axis has no sense, so ``[1 -1 0]`` is also ``[-1 1 0]``.
+   When the phonon run's muon cannot be matched to the relaxed cell's, or the
+   project has no host, the axes are the phonon run's own, named in its cell's axes,
+   and the tooltip says so. A run whose muon rows of the eigenvectors are not
+   complete gives ``–`` and why; its tabs still open.
+   Two equal values read as one, ``twice, in the plane normal to`` the third axis.
+   An axis along which the muon's curvature is not positive reads ``–`` with
+   ``(curvature not positive)``. When the row's ``ZPE`` reads ``(earlier)`` or
+   ``(unconfirmed)``, the line carries the same mark and its tooltip says why.
+   MuFinder reports these numbers and compares them with nothing.
+
+   Below it the tab lists every Gamma-point mode with its frequency, muon
+   participation, and the muon's displacement direction (the participation of the three selected
+   muon-dominated modes is highlighted), next to a 3D structure viewer (see
+   :doc:`/user_guide/structure_viewer`). Selecting a mode updates the viewer. ``Amplitude (Å)`` (default ``1.00``) sets the largest displayed atomic
+   displacement. ``Play animation`` oscillates the structure about equilibrium
+   with the period set by ``Cycle time (s)``; ``Reset`` returns to the
+   equilibrium phase; ``Show vectors`` (off by default) overlays the
+   full-amplitude mode vectors as fixed reference arrows.
+
+``Muon Coupling``
+   Lists the atoms nearest the muon, closest first: each atom's one-based CASTEP
+   index, species, distance from the muon in Å (to the nearest periodic image)
+   and ``|c|``. Atoms within 0.001 Å of each other in distance go in index order.
+   ``Atoms shown`` (default 12) sets how many are listed, up to every atom in the
+   cell. The list is ordered by distance at first, and a farther atom can have a
+   larger ``|c|`` than a nearer one, including an atom beyond the end of the list.
+
+   Clicking a column header sorts the list by that column, and clicking it again
+   reverses the order; an arrow in the header marks the sorted column. Numbers
+   sort by value and species alphabetically. ``|c|`` sorts largest first on its
+   first click, the other columns smallest first. Sorting only reorders the
+   listed atoms: ``Atoms shown`` still picks the nearest ones, and the sort stays
+   while the count changes, for as long as the window is open. Numbers sort by
+   their full value, so two rows that show the same rounded ``|c|`` can still
+   differ in a later digit and keep that order. Atoms with exactly equal values,
+   or in the same 0.001 Å distance shell, stay in index order either way. The
+   selected atom stays selected; if it leaves the list, the first row is
+   selected.
+
+   ``|c| = -w2`` is the size of the pairwise witness
+   ``w2 = -|Tr C_ab| / sqrt(Tr C_aa Tr C_bb)``. It lies between ``0`` and ``1``;
+   values closer to ``1`` mean the two atoms' zero-point motions are more strongly
+   correlated. It complements the result table's ``w1``. ``w2`` is the harmonic
+   (phonon-covariance) estimate of the positional entanglement witness
+   ``w2 = -|c|`` of Gomilšek *et al.*, where ``c`` is the Pearson correlation of
+   the muon and nuclear displacements.
+
+   Selecting a row shows that atom's zero-point displacement covariance tensor
+   ``C_ab`` (Å²) and normalized correlation tensor ``rho_ab`` with the muon, to
+   three significant figures, built from the stable Gamma-point modes at zero
+   temperature (modes with imaginary frequencies are left out). The nearest atom
+   is selected first. ``Other pair…`` opens a window that shows ``|c|`` and the
+   two tensors for any two atoms, picked as ``Atom A`` and ``Atom B``.
+
+   .. figure:: ../_generated/screenshots/n2_muon_coupling.webp
+      :alt: The Muon Coupling tab listing the twelve nitrogens nearest the muon,
+            from atom 57 at 1.268 Å with |c| 0.310 and atom 1 at 1.288 Å with |c|
+            0.298, with the covariance tensor in square angstrom and the
+            correlation tensor of atom 57.
+
+      The nearest atoms of the α-N₂ site's muon, with the nearest selected.
+
+The ``?`` button in the ``Muon Coupling`` tab shows the equations used.
+
+Scope and limitations
+---------------------
+
+- Phonons are computed at Gamma only, in the harmonic approximation.
+- The widths are those of the harmonic muon modes, the harmonic weakly-bound
+  limit only for modes the muon alone moves in. MuFinder does not generate or
+  import DFT line scans, so the anharmonic single-particle approximations of
+  Gomilšek *et al.* are not available (see
+  :doc:`/user_guide/quantum_corrections_theory`).
+- Path-integral molecular dynamics (PIMD) is out of scope for MuFinder.
+
+References
+----------
+
+- CASTEP documentation, *Running phonon calculations*:
+  https://castep-docs.github.io/castep-docs/documentation/Phonons/Castep_Phonons/Running-phonon-calculations/
+- M. Gomilšek, F. L. Pratt, S. P. Cottrell, S. J. Clark, and T. Lancaster,
+  *Many-body quantum muon effects and quadrupolar coupling in solids*,
+  Commun. Phys. **6**, 142 (2023), DOI: ``10.1038/s42005-023-01260-7``.
+
+For developers
+--------------
+
+The check behind `Source eligibility`_ is
+:func:`mufinder.workflow.quantum.quantum_source_eligibility`, and the mass check
+is :func:`~mufinder.science.quantum_phonons.muon_mass_warning`. Package layers
+and the shared workflow infrastructure are described in :doc:`/architecture`.

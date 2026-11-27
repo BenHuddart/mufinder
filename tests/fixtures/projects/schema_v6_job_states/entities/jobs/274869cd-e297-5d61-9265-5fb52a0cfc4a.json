@@ -1,0 +1,22 @@
+{
+  "calc_type": "castep_singlepoint",
+  "completed_at": "2026-11-01T09:06:00+00:00",
+  "created_at": "2026-11-01T09:05:00+00:00",
+  "dismissed_at": null,
+  "error_message": null,
+  "execution_target": "local",
+  "failure_reason": null,
+  "id": "274869cd-e297-5d61-9265-5fb52a0cfc4a",
+  "label": "completed",
+  "last_checked_at": null,
+  "last_status_message": null,
+  "last_status_source": null,
+  "num_processes": 4,
+  "remote_directory": null,
+  "remote_job_id": null,
+  "started_at": "2026-11-01T09:05:00+00:00",
+  "status": "completed",
+  "submitted_at": "2026-11-01T09:05:00+00:00",
+  "tags": [],
+  "workflow_stage": "convergence_cutoff"
+}

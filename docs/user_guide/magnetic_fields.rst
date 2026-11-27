@@ -1,0 +1,1743 @@
+Magnetic Fields
+===============
+
+The ``Magnetic Fields`` workflow builds magnetic structures and calculates
+local fields at candidate muon stopping sites. Use it to define the magnetic
+order of the host, pick a muon site, and read off the dipolar, Lorentz,
+contact and demagnetizing fields there. The physics behind the numbers, with
+worked examples, is on :doc:`/user_guide/magnetic_fields_theory`.
+
+Before you start
+----------------
+
+- Load a host structure. Without one, the editing and calculation buttons on
+  the page are disabled.
+- For a muon site beyond a custom position, finish a UEP batch search or
+  structural-relaxation clustering first, because those results supply the
+  sites you choose from (see `Choose the muon site`_).
+- The calculations need the optional ``muesr`` and ``muLFC`` backends (see
+  `Dependency handling`_).
+- ``Calculate Dipolar Field`` stays disabled until the magnetic structure has
+  at least one enabled component and a muon site is chosen.
+
+Calculate a field
+-----------------
+
+.. figure:: ../_generated/screenshots/fe_magnetic_fields_page.webp
+   :alt: The Magnetic Fields page for bcc iron at the octahedral site, with the
+         six equivalent sites' fields and the dipolar, Lorentz, contact and
+         demagnetizing terms of the selected one.
+
+   bcc iron (:doc:`/user_guide/examples/fe`) at the octahedral site
+   ``(1/2, 0, 0)`` with every equivalent site, a contact field of -1.11 T and a
+   ``Sphere`` demagnetizing field. The selected result is broken down into its
+   field terms.
+
+A typical pass through the page is:
+
+1. In the ``Magnetic Structure`` card, click ``Edit Magnetic Structure…`` to
+   open the ``Magnetic Structure Builder`` and define the magnetic model (see
+   `Define the magnetic structure`_). Optionally enter a ``Hyperfine
+   coupling`` in ``Å⁻³``, ``T/μB``, or ``MHz/μB`` for the contact term, or
+   compute it on the :doc:`/user_guide/hyperfine_coupling` page and hand it
+   over from there.
+2. In the ``Muon Site`` card, click ``Select Muon Site…`` (see `Choose the
+   muon site`_). Tick ``Include equivalent sites`` to calculate all
+   symmetry-equivalent positions of that site.
+3. In the ``Calculation`` card, choose a ``Demagnetizing field`` shape (see
+   `Set the demagnetizing field`_) and review ``Calculation Settings…`` (see
+   `Set the calculation parameters`_).
+4. Click ``Calculate Dipolar Field``. Results appear in the table below
+   (``Site``, ``Bx (T)``, ``By (T)``, ``Bz (T)``, ``|B| (T)``, ``Result``).
+   While it runs, the status line names the number of sites, and a
+   calculation that takes more than a moment shows a busy dialog whose
+   ``Cancel`` stops the calculation at its next stage, frees the memory it
+   was using, and keeps the results shown before. The tensor and
+   nuclear-relaxation calculations below have the same ``Cancel``, which
+   keeps their earlier results too.
+5. Read the result:
+
+   - A commensurate result row also lists its field terms (see
+     :ref:`Field Terms <magnetic-fields-field-terms>`): select the row to see
+     them under the table. An order with ``q ≠ 0`` gives one row per translation
+     of the site with a distinct phase, up to period 12 (see :ref:`What a
+     commensurate result lists <magnetic-fields-translations>`).
+   - An incommensurate result row lists the mean and RMS magnitude of each
+     field term over the sampled phases, with its convergence checks: select
+     the row to see them under the table. Click ``Open Distribution Plot`` to
+     view the field-magnitude histogram. ``Export Data…`` in that window
+     saves it as a ``.dat`` or ``.txt`` file; a name typed without one of
+     those extensions gets the extension of the chosen file type. The file
+     is whitespace-separated columns under a header whose lines all start
+     with ``#``, so ``numpy.loadtxt`` reads the numbers directly. The header
+     gives the project's name (never its folder), the jobs the muon site
+     comes from (the UEP job of a UEP site, or the representative relaxation
+     of a relaxation cluster; ``none`` for a custom site), the time the file
+     was written, the number of distributions, each site's position and
+     calculation settings, then a ``# Columns:`` line (``B_T``, one ``p_``
+     column per site and ``p_sum`` when there are several) and a
+     ``# Units:`` line beneath it (``T``, and ``-`` for the dimensionless
+     probabilities).
+
+     The plot shows the histogram saved with the result. A result without
+     one has its sampled fields binned into 10 to 80 bins (twice the square
+     root of the sample count) over the range of the samples, so a
+     distribution of a single field value shows as a narrow spike. When
+     those samples include a field that is not finite, the plot says
+     ``Distribution unavailable`` with the reason, and ``Export Data…`` is
+     unavailable.
+
+   .. figure:: ../_generated/screenshots/mnsi_distribution_breakdown.webp
+      :alt: The Magnetic Fields page with the MnSi helix distribution at site
+            II selected: a mean |B| of 0.154144 T, every term mean 0, RMS
+            magnitudes of 0.0811718 T dipolar including Lorentz,
+            0.194286 T contact and 0.159397 T in total, and three passing
+            convergence checks.
+
+      The distribution of the helix in :doc:`/user_guide/examples/mnsi` at
+      site II. Every term averages to zero over the phase of the helix; the
+      RMS column shows that the contact term is the largest.
+
+6. Optionally run ``Dipolar Tensor…`` or ``Nuclear Relaxation…`` from the
+   same ``Calculation`` card (see `Calculate a dipolar tensor`_ and `Calculate
+   nuclear relaxation`_).
+7. To see the signal these fields give, click ``Polarisation →``. It opens the
+   :doc:`polarisation` page with this page's field result ticked, to simulate
+   the muon polarisation and its spectrum.
+
+``Calculate Dipolar Field`` sends the selected magnetic structure and muon site
+to the magnetic-field calculation helpers. Commensurate magnetic structures,
+those whose wavevectors have a period of 12 or less and give at most 512 sets of
+phases, produce finite vector field results. Incommensurate structures, including a
+fraction of longer period such as ``q = (0.22, 0, 0)`` and more sets of phases than
+that, produce sampled field-distribution summaries, or the finite field list of their commensurate
+approximant when that option is on. ``muesr``/``muLFC`` environment errors are
+reported in the page status area rather than during application startup.
+
+A calculation that gives new values adds a ``Magnetic field calculated`` entry to
+the :doc:`/user_guide/journal`.
+
+Define the magnetic structure
+-----------------------------
+
+MuFinder stores a magnetic structure as a set of components, each a Fourier
+term with a propagation vector, that apply to chosen atoms (the formalism is on
+:doc:`/user_guide/magnetic_fields_theory`). You build the model in the
+``Magnetic Structure Builder``, then accept it with ``Use Structure``.
+
+Until a model is accepted, the page starts from the host's own magnetic data:
+the spins and propagation vector set on :doc:`/user_guide/host_structure`,
+one component along z per atom with a non-zero spin, or the moments of an
+imported ``.mcif`` file (see `Import a structure from an MCIF file`_). Once a
+model is accepted, this page owns it: later
+spin or propagation-vector edits on ``Host Structure`` change only the host's
+spins and propagation vector, and leave the accepted model as it is.
+
+The ``Magnetic Structure`` card on the page reports how many components the
+accepted model has and how many of them are disabled, and lists every enabled
+component with its ``Type``, the atoms it applies to (``Apply to``), its ``q``
+as a basis combination and r.l.u. vector, and its ``Moment``, using the same
+descriptions as the builder table. The list shows up to eight rows and scrolls
+beyond that.
+
+.. figure:: ../_generated/screenshots/cof2_magnetic_structure_builder.webp
+   :alt: The Magnetic Structure Builder with two collinear q = 0 components on
+         the two Co of CoF2, with moments of +2.64 and -2.64 muB along c.
+
+   The collinear antiferromagnet of :doc:`/user_guide/examples/cof2` as one
+   component per Co sublattice.
+
+Import a structure from an MCIF file
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+To start from a magnetic CIF, import the ``.mcif`` file as the host structure
+(see :doc:`/user_guide/host_structure` for the import itself), then open the
+builder. MuFinder imports magnetic metadata from ``.mcif`` files before any
+field or spectral calculation is attempted:
+
+- the magnetic symmetry operations and centerings are applied to the listed
+  sites, so the host holds every atom of the magnetic cell and every image of a
+  magnetic site carries its moment, reversed where the operation includes time
+  reversal (see :doc:`/user_guide/host_structure`);
+- atom labels from ``_atom_site_label`` are preserved so magnetic-site labels
+  can be mapped back to concrete unit-cell atom indices; each generated atom
+  keeps the label of the site it was generated from;
+- propagation vectors are read from both legacy scalar tags such as
+  ``_cell_wave_vector_x/y/z`` and MCIF triplet entries such as
+  ``_magnetic_propagation_vector_kxkykz``;
+- multiple imported propagation vectors are mapped onto the model's first three
+  propagation-vector basis rows;
+- atom-site moments are read from dotted and underscored
+  ``_atom_site_moment`` dialects, including fraction and uncertainty notation
+  in numeric fields, and converted to Cartesian vectors in μB:
+  ``crystalaxis`` components lie along the unit lattice directions,
+  ``m = Σ m_i a_i/|a_i|``, and ``cartn`` components are already Cartesian;
+- moment labels are matched by exact atom label first, then by a unique
+  ``label_...`` atom-label expansion.
+
+When an MCIF-derived host is converted into a MuFinder magnetic model, each
+atom with a moment becomes an atom-targeted component, whose metadata records
+the coordinate system the file gave its components in. For finite propagation
+vectors MuFinder stores a complex Fourier coefficient
+``S(q) = m exp(2 pi i q.r_i)`` for atom ``i`` so that the model's evaluation
+formula (see :doc:`/user_guide/magnetic_fields_theory`) reconstructs the real
+MCIF unit-cell moment ``m`` at ``cell_offset=(0, 0, 0)``. MuFinder does not
+import or simulate spectra from MCIF files.
+
+Build components in the builder
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. figure:: ../_generated/screenshots/mnsi_magnetic_structure_builder.webp
+   :alt: The Magnetic Structure Builder showing a left-handed helix component on
+         the Mn atoms of MnSi, a checklist with every step ticked, the q-basis
+         table and a 2 x 2 x 2 spin preview.
+
+   The helix of :doc:`/user_guide/examples/mnsi`, a 0.385 μB Mn moment turning
+   about q = (0.0147, 0.0147, 0.0147), previewed over ``2 x 2 x 2`` cells. Its
+   checklist is complete, and the structure type is ``incommensurate``.
+
+The ``Magnetic Structure Builder`` owns the component table, atom selection, a
+checklist and the live structure viewer, whose control row holds the ``Preview
+cells`` boxes. The component table lists ``Enabled``, ``Component``, ``Type``,
+``Apply to``, ``q`` and ``Moment`` for each component, top to bottom in the
+order the model stores them. The ``q`` column gives each distinct wavevector a
+component uses as its q-basis combination and its value in reciprocal lattice
+units, for example ``q1 = (0.25, 0, 0)`` or ``q1 − q2 = (0.25, -0.25, 0)``; a
+q = 0 term shows the vector alone.
+
+To build a structure:
+
+1. Click ``Edit Magnetic Structure…`` on the page.
+2. Add components from the ``Add`` menu:
+
+   - ``Single moment or modulation…`` creates a new propagation-vector component
+     using a preset for collinear, spin-density-wave, helix, cycloid, or conical
+     textures; its q comes from a typed vector or from the stored basis rows
+     (see `Set the propagation vectors`_).
+   - ``Helix, cycloid or SDW from a preset…`` builds a helix, conical, cycloid or
+     spin-density-wave component from a propagation direction and the crystal
+     axes (see `Use the preset helper`_).
+   - ``Multi-q texture…`` creates one grouped multi-q texture assignment,
+     currently supporting square and hexagonal skyrmion lattices as well as
+     custom Fourier texture terms (see `Add a multi-q texture`_).
+   - ``From host spins`` converts a host's scalar spin metadata into the
+     propagation-vector model, one component per atom, whose ``Type`` is
+     ``Moment``. When the builder already holds components it first asks for
+     confirmation, because the conversion replaces them.
+
+   Components can be applied to all atoms, to atoms of a species, to a
+   symmetry-equivalent atom group, or to atoms selected in the builder preview.
+   The add-component dialog presents these choices as adaptive radio-button
+   cards and disables unavailable options.
+
+3. Adjust the table:
+
+   - ``Edit…`` reopens the selected component in the same preset-aware dialog
+     so its label, target, q vector, phase, and texture parameters can be
+     changed, including its :ref:`per-atom phases
+     <magnetic-fields-per-atom-phases>`. Double-clicking the ``Component`` cell
+     renames a component in place.
+   - ``Duplicate`` inserts a copy of each selected component directly below its
+     original. A copy keeps the original's target, Fourier terms, phases,
+     enabled state and texture settings, shares its q-basis slots, and gets a
+     ``(copy)`` label suffix; the copies are selected afterwards.
+   - ``Remove`` deletes the selected components after a confirmation whose
+     default answer keeps them; ``Delete`` and ``Backspace`` do the same.
+   - ``Move Up`` and ``Move Down`` move the selected components one row,
+     keeping their relative order and stopping at either end of the table.
+     Order changes only how the builder lists components; the summed moments
+     and fields do not depend on it.
+   - Untick the ``Enabled`` checkbox to switch a component off without deleting
+     it. A disabled component keeps its row, shown in muted text, and is saved
+     with the model, but it is left out of the preview, the structure type, the
+     magnetic-ion defaults of the dipolar tensor dialog and every field
+     calculation. Editing a component keeps its enabled state. When every
+     component is disabled the preview and structure type are empty.
+
+4. Check the preview:
+
+   - Selecting no rows previews the full magnetic structure. Selecting one or
+     more rows previews only those components; when every selected component is
+     disabled the preview shows no moments and says so.
+   - The ``Preview cells`` boxes ``a``, ``b`` and ``c`` in the viewer's control
+     row evaluate the magnetic moments outside the unit cell so longer-wavelength propagation vectors can be
+     inspected. Pressing ``Enter`` in a repeat box applies the value and keeps
+     the builder open; Enter never presses ``Use Structure``.
+
+5. Work through the checklist (see `Follow the builder checklist`_), then click
+   ``Use Structure``.
+
+Follow the builder checklist
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A ``Checklist`` panel above the component table ticks off the steps of
+building a structure from the current model and preview; it is guidance only,
+and nothing about it is saved. Each step is marked done (✓), still to do (○)
+or a problem (⚠), with a one-line reason:
+
+- ``Add components or build them from host spins`` is done once the model has
+  an enabled component and no enabled component has zero moment. It is a problem when every
+  component is disabled, or when an enabled component has zero moment, which
+  it names;
+- ``Set the propagation-vector basis`` is done when every row an enabled
+  component uses holds a non-zero vector, or when every enabled component has
+  q = 0 and no row is needed. A used row that holds no vector is a problem;
+- ``Check the preview supercell`` compares the ``Preview cells`` repeats
+  with the magnetic period along a, b and c, taken over every finite-q term of
+  the enabled components. It is done when the preview shows at least one whole
+  magnetic cell, or the largest preview (12 repeats) along an axis whose
+  period is longer. It is a problem when a wavevector is incommensurate along
+  an axis that the preview does not repeat, because the modulation cannot be
+  seen; a repeat of two or more along every such axis completes the step;
+- ``Use the structure`` is done when every other step is, and otherwise points
+  at the flagged or unfinished steps.
+
+Set the propagation vectors
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Every Fourier term stores its wavevector as a combination of the model's three
+q-basis rows, ``q = l q1 + m q2 + n q3``. The ``Propagation-Vector Basis``
+panel under the component table appears when an enabled component uses one of
+those rows, and shows them:
+
+- ``Row`` names the row, ``q1`` to ``q3``;
+- ``q (r.l.u.)`` is the stored vector ``h, k, l``;
+- ``Used by`` lists, in table order, every component with a term that
+  references the row, marking disabled components ``(disabled)``, or says
+  ``Unused``.
+
+Selecting components in the component table shows the rows they use in bold,
+with the row name in the accent colour, so a grouped texture's mapping onto the
+stored basis can be read directly.
+
+When no enabled component uses a row, one line stands in for the panel: ``No
+components yet`` for an empty builder, ``All components have q = 0`` when no
+component uses a row, and ``All enabled components have q = 0`` when only a
+disabled component does. A vector for a first component is entered in the
+dialog that adds it, so nothing has to be typed into the basis beforehand.
+
+.. figure:: ../_generated/screenshots/mnsi_q_basis.webp
+   :alt: The Propagation-Vector Basis panel with row q1 holding 0.0147, 0.0147,
+         0.0147 in bold and used by the MnSi helix, and q2 and q3 unused.
+
+   The panel with the helix of :doc:`/user_guide/examples/mnsi` selected: it
+   uses ``q1`` only, and ``q2`` and ``q3`` are unused.
+
+To choose a component's q, use ``Single moment or modulation…`` in the ``Add``
+menu (or ``Edit…``). The add-component dialog shows the same rows, read-only, in its own
+``Propagation-Vector Basis`` group, and its ``q from`` choice sets how the
+component's q is stored:
+
+- ``Enter a vector (r.l.u.)`` takes the typed ``q (r.l.u.)`` vector and
+  assigns a row automatically: the vector reuses a row that already holds it,
+  and otherwise fills a row that no other component uses. When every row is in
+  use by other components, the builder refuses the new wavevector with a
+  ``No q-basis slot available`` warning;
+- ``qN = (h, k, l)``, offered for each row that holds a non-zero vector, stores
+  the component on that row;
+- ``Combination of basis rows`` shows ``Basis coefficients`` for ``q1``,
+  ``q2`` and ``q3`` (rows without a vector stay disabled) and stores the
+  component as that combination, for example ``q1 − q2``.
+
+.. figure:: ../_generated/screenshots/mnsi_q_picker.webp
+   :alt: The component dialog for a left-handed helix, with q from set to q1 =
+         (0.0147, 0.0147, 0.0147) and the q fields shown read-only.
+
+   ``Edit…`` on the helix reopens it on the row it is stored as: ``q from``
+   reads ``q1 = (0.0147, 0.0147, 0.0147)``, and the component follows the row if
+   the row is edited.
+
+While a row or combination is chosen, the ``q (r.l.u.)`` fields show the
+resulting vector read-only and a line beneath them gives the expression, such
+as ``q = q1 − q2 = (-0.5, 0, 0.25)``. A combination with no coefficient, one
+that uses a row without a vector, or one that sums to q = 0 is refused when
+the dialog is accepted. A component stored on rows follows them when a row is
+edited. ``Edit…`` reopens a component on the row or combination it is stored
+as; a component whose only q is zero reopens on vector entry.
+
+To change a stored row directly while the panel is shown, double-click its
+``q (r.l.u.)`` cell. The
+entry is three numbers separated by commas or spaces, optionally in brackets.
+Components keep their basis coefficients, so every component that uses the row
+changes wavevector with it, and the ``q`` column, preview and structure type
+update at once. An edit is refused with a warning, and the row keeps its
+vector, when:
+
+- the entry is not three numbers;
+- the row is used by a texture. A texture's moment directions are built from
+  its q vectors, so the cell is read-only; edit the texture instead;
+- the row is used by a helix, cycloid or conical component and the edit would
+  turn any of that component's wavevectors. Those moment planes and cone axes
+  are built around the q direction, so only the wavelength can change here: a
+  component on a single row accepts any positive multiple of that row, and a
+  component that combines rows, such as ``q1 + q2``, refuses any change to
+  either of them;
+- the row is used by a component and the new vector is zero;
+- another row already holds the same vector.
+
+An unused row accepts any vector. The edited basis is saved with the model when
+the builder's ``Use Structure`` button is pressed.
+
+.. _magnetic-fields-per-atom-phases:
+
+Set per-atom phases
+~~~~~~~~~~~~~~~~~~~
+
+A component's ``Phase (turns)`` shifts every atom it applies to. A per-atom
+phase is an extra phase in turns for one atom alone, added to the component's
+phase and to the :math:`\mathbf{q} \cdot \mathbf{r}` phase of the atom's
+position, so a sublattice phase needs one component rather than one per atom.
+Half a turn reverses an atom's moment in a q = 0 component.
+
+The ``Per-atom phases`` row of the add-component dialog shows the phases set on
+the atoms the component applies to, or ``None``. ``Per-Atom Phases…`` opens a
+table of those atoms: number, species, fractional position and an editable
+``Extra phase (turns)`` cell, blank for 0. A phase must lie between -10 and 10
+turns; any other entry is refused with a warning that names the atom when
+``OK`` is clicked. ``Clear Phases`` blanks every cell after a confirmation.
+``Cancel`` leaves the phases as they were.
+
+The table lists only the atoms the current ``Apply Component To`` choice
+selects, and the component keeps only their phases. While the dialog is open,
+the phase of an atom the target drops is remembered and comes back if the
+target covers it again.
+
+.. figure:: ../_generated/screenshots/cof2_atom_phases.webp
+   :alt: The Per-Atom Phases dialog for a component on both Co atoms of CoF2,
+         with an extra phase of 0.5 turns on the body-centre Co, atom 2.
+
+   The CoF₂ antiferromagnet as one q = 0 component on both Co: half a turn on
+   the body-centre Co reverses its moment.
+
+Use the preset helper
+~~~~~~~~~~~~~~~~~~~~~
+
+``Helix, cycloid or SDW from a preset…`` in the ``Add`` menu opens the ``Add
+Magnetic Preset`` dialog, which builds one
+ordinary component from crystal-axis choices; the component can be edited like
+any other afterwards. In the dialog, set:
+
+1. ``Structure``: ``Helix``, ``Conical``, ``Cycloid`` or ``Spin-density wave``.
+2. ``Propagation``: ``Along a*``, ``Along b*`` or ``Along c*`` with a
+   wavevector (default ``Along c*`` with δ = 0.25 r.l.u.), ``Enter a vector
+   (r.l.u.)`` with a typed ``q (r.l.u.)`` for any other direction, or a stored
+   basis row ``qN``, on which the component is then stored. The unit beside the
+   wavevector is ``r.l.u.`` (the default, ``Wavevector δ (r.l.u.)``) or ``Å⁻¹``
+   (``Wavevector k (Å⁻¹)``), the signed length of the wavevector along the
+   chosen axis, :math:`2\pi` included. It is converted through the lattice,
+   :math:`q_i = \mathbf{k} \cdot \mathbf{a}_i / 2\pi`, and the summary line
+   shows the resulting q in r.l.u. δ lies between -4 and 4 r.l.u., and k
+   between the same wavevectors in Å⁻¹, :math:`\pm 4 |\mathbf{a}^*|` along
+   ``a*`` (likewise ``b*`` and ``c*``), so switching the unit converts the typed
+   value and q stays the same.
+3. A reference crystal axis, ``a``, ``b`` or ``c``. It defaults to the axis
+   most nearly perpendicular to q, preferring a, then b, then c, and resets to
+   that default when the ``Propagation`` choice changes, but not when only δ
+   changes. A typed q follows the default until an axis is chosen, and then
+   keeps that axis; if q ends up parallel to it, the summary line says so. For a helix and a conical structure the rotation plane is
+   perpendicular to q and the moment at zero phase lies along the reference
+   axis projected into that plane; a conical structure's cone axis is q. For a
+   cycloid the rotation plane holds q and the reference axis. For a
+   spin-density wave the moment is modulated along the reference axis.
+4. ``Handedness`` (not for a spin-density wave) and, for a conical structure,
+   ``Cone angle (degrees)``, both with the same meaning as in the
+   add-component dialog.
+5. ``Moment`` in ``μB``, ``Apply to`` (all atoms, an element, a
+   symmetry-equivalent site or the preview selection) and a ``Label`` that
+   follows the choices, such as ``Helix along c*``, until it is typed over.
+
+.. figure:: ../_generated/screenshots/mnsi_preset_helper.webp
+   :alt: The Add Magnetic Preset dialog set to a left-handed helix with the
+         typed vector q = (0.0147, 0.0147, 0.0147), with the moment at zero phase
+         along crystal axis a, 0.385 μB, applied to the species Mn.
+
+   The helix of :doc:`/user_guide/examples/mnsi`. Its q has no crystal-axis
+   choice, so it is entered with ``Enter a vector (r.l.u.)``.
+
+A summary line describes the structure the choices give. Only a conical
+structure reads the cone angle, so a hidden, invalid cone angle never blocks
+another structure. A reference axis parallel to q, a zero wavevector or a
+non-positive moment is reported there and refused when the dialog is accepted.
+A new q, along an axis or typed, is stored like a typed vector in the add-component dialog, and the
+moments come from the same helix, cycloid, conical and spin-density-wave
+builders.
+
+Add a multi-q texture
+~~~~~~~~~~~~~~~~~~~~~
+
+To add a skyrmion lattice or another multi-q texture, choose ``Multi-q
+texture…`` in the builder's ``Add`` menu. The ``Add Magnetic Texture`` dialog starts from an abstract spin
+texture before applying it to selected atoms:
+
+1. Enter a ``Label`` and the ``Amplitude`` in the ``Texture`` group.
+2. Choose the ``Texture Type`` (``Hexagonal skyrmion``, ``Square skyrmion`` or
+   ``Custom Fourier texture``), set the ``Propagation Basis`` and, for a
+   skyrmion, the ``Skyrmion Parameters`` (for example Bloch or Neel). A custom
+   texture takes its terms from the ``Custom Fourier Terms`` table, where
+   ``Add Fourier Term`` adds a row.
+3. Optionally normalise and prune the texture (see `Normalise a texture`_).
+4. Choose what the texture applies to in ``Apply Texture To`` (``All atoms``,
+   ``Element``, ``Equivalent site`` or ``Current selection``).
+5. Check the ``Spin Texture Preview`` and accept the dialog.
+
+The dialog's 2D preview shows the abstract texture in reduced phase
+coordinates as a repeated quiver plot: arrow direction shows the in-plane
+moment component and arrow colour shows the out-of-plane moment component,
+making skyrmion cores and helicity visible before the texture is applied to
+atoms. If the texture has no out-of-plane component, the colour scale falls
+back to moment magnitude. The main builder's 3D viewer then previews the
+accepted texture on the actual host structure and selected supercell. The
+preview canvas can be switched between light and dark modes without changing
+the rest of the MuFinder interface; each canvas keeps its own colours in either
+theme, and the structure-viewer backgrounds and axis triads follow the active
+application palette (see :doc:`/user_guide/structure_viewer`).
+
+Tick ``Show |m| map`` in the preview header to replace the arrows with a colour
+map of the moment magnitude over one magnetic cell, with a colour bar in μB.
+The map is sampled on the u–v plane of the ``Grid`` in the ``Magnitude and
+Pruning`` group, the grid the ``|m|`` statistics in the diagnostics use (with
+``w`` above 1 the statistics also cover the other planes), so it shows where a
+texture needs normalising and how flat a normalised texture is. Its axes are
+fractions of the magnetic cell vectors ``a₁`` and ``a₂`` (see below).
+
+Check the topological charge
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The diagnostics under the preview report the ``Topological charge per magnetic
+cell``: ±1 for a skyrmion lattice, 0 for a helix or a modulated ferromagnet.
+The magnetic cell is spanned by the real-space vectors ``a₁`` and ``a₂`` dual
+to the first two propagation vectors (``qᵢ · aⱼ = δᵢⱼ``). MuFinder samples the
+moment direction :math:`\hat{\mathbf{n}} = \mathbf{m}/|\mathbf{m}|` on a
+64 × 64 grid over that cell and sums the signed solid angle of every grid
+triangle,
+
+.. math::
+
+   \tan\frac{\Omega}{2} =
+   \frac{\hat{\mathbf{n}}_1\cdot(\hat{\mathbf{n}}_2\times\hat{\mathbf{n}}_3)}
+   {1 + \hat{\mathbf{n}}_1\cdot\hat{\mathbf{n}}_2
+      + \hat{\mathbf{n}}_2\cdot\hat{\mathbf{n}}_3
+      + \hat{\mathbf{n}}_3\cdot\hat{\mathbf{n}}_1},
+   \qquad Q = \frac{1}{4\pi}\sum\Omega,
+
+which gives the right integer once the grid resolves the texture: more than
+twice as many points along each cell vector as the highest Fourier frequency
+along it, so that no term aliases, and neighbouring samples less than 90° apart.
+Until both hold, the grid is doubled up to 256 × 256; beyond that the charge is
+reported as undefined.
+
+The sign is read looking down the normal of the texture plane oriented towards
++z (towards +y, then +x, when the plane contains z). A skyrmion whose core
+points along −z in a +z background has :math:`Q = -1`, so the hexagonal preset
+gives −1 with the default core direction (0, 0, −1) and +1 with the core along
++z; the helicity and the Bloch or Néel type do not change it. For the square
+preset the background decides which way the cores point: a ``Background``
+opposite the core direction gives the same sign as the hexagonal preset, one
+along the core direction gives the opposite sign, and a background large enough
+to stop the moments winding gives 0.
+
+A custom texture may use a third propagation vector that lies in the plane of
+the first two, such as ``k3 = −(k1 + k2)``; its terms are rewritten on ``k1``
+and ``k2``. The charge is reported as undefined when ``|m|`` vanishes somewhere
+in the cell, as it does for the square preset with zero background and for a
+pure spin-density wave; when the texture uses a third propagation vector out of
+that plane or is not periodic on the magnetic cell; and when even the finest
+grid is too coarse.
+
+The accepted texture appears as one component row so that editing, preview
+selection, and atom targeting remain intuitive; ``Edit…`` reopens it in the
+texture dialog.
+
+How a texture is defined
+^^^^^^^^^^^^^^^^^^^^^^^^
+
+The texture builder follows the same formalism used internally by the
+component builder. A texture is a sum of complex Fourier terms:
+
+.. math::
+
+   \mathbf{m}(\mathbf{r}) =
+   \Re\left[\sum_j \mathbf{S}_j
+   \exp\left(-2\pi i\,\mathbf{q}_j\cdot\mathbf{r}\right)\right].
+
+Each texture term stores ``q=(l,m,n)`` in a local propagation basis:
+
+.. math::
+
+   \mathbf{q}_j = l_j\mathbf{k}_1 + m_j\mathbf{k}_2 + n_j\mathbf{k}_3.
+
+When the texture is accepted, MuFinder maps those local basis vectors onto the
+magnetic model's three stored propagation-vector rows. This mapping is
+transactional: a square skyrmion reserves two independent rows together, while a
+hexagonal skyrmion reserves the two independent rows needed for
+``(1,0,0)``, ``(0,1,0)``, and ``(-1,-1,0)``.
+
+The square skyrmion preset builds two helical terms with local wavevectors
+``(1,0,0)`` and ``(0,1,0)``. The second physical q vector is generated by
+rotating ``q1`` by 90 degrees in Cartesian reciprocal space about the supplied
+core direction. The hexagonal preset builds three helical terms with local
+wavevectors ``(1,0,0)``, ``(0,1,0)``, and ``(-1,-1,0)``; the second physical q
+vector is generated by a 120 degree rotation. Bloch textures use in-plane
+directions proportional to ``core x q``. Néel textures use directions
+proportional to ``q``. The Fourier coefficients are always Cartesian moment
+vectors in Bohr magnetons.
+
+Normalise a texture
+^^^^^^^^^^^^^^^^^^^
+
+Linear multi-q superpositions can produce large spatial variations in ``|m|``.
+The ``Magnitude and Pruning`` group of the texture dialog therefore offers
+opt-in magnitude normalization: tick ``Normalize moment magnitude``, then set
+``Grid``, ``Threshold`` and, optionally, ``Pruning`` (``No pruning``,
+``Coefficient threshold`` or ``Keep strongest N``, with ``Prune threshold`` or
+``Keep N``). Normalization is never applied automatically; the accepted
+coefficients are exactly the coefficients shown by the dialog diagnostics. The
+information button in this group summarises the Fourier-modulation algorithm,
+practical threshold choices, and the main caveats for near-zero moment
+textures.
+
+MuFinder samples the texture on a regular reduced-coordinate grid, estimates
+``1 / |m|``, Fourier transforms that correction, and convolves it with the
+original texture terms:
+
+.. math::
+
+   (\mathbf{S}_j,\mathbf{q}_j) \mapsto
+   (\mathbf{S}_j f_\mathbf{G},\,\mathbf{q}_j+\mathbf{G}).
+
+The result is an approximate constant-magnitude texture scaled to the amplitude
+entered in the dialog. It usually contains more Fourier terms than the analytic
+preset, so the dialog reports term counts and sampled ``|m|`` statistics before
+and after normalization. Optional pruning can then keep terms above a
+coefficient threshold or keep only the strongest ``N`` terms.
+
+.. _magnetic-fields-muon-site:
+
+Choose the muon site
+--------------------
+
+The ``Muon Site`` card shows a compact summary of the selected muon site. To
+choose or edit it, click ``Select Muon Site…``, pick a ``Source`` in the
+``Select Muon Site`` dialog and choose a row in the ``Site`` table (columns
+``Site``, ``Source``, ``Cluster``, ``fx``, ``fy``, ``fz``), then click ``OK``.
+The selected site is normalized into one internal option containing a label,
+source, fractional coordinate, optional Cartesian coordinate, and optional
+distorted-structure reference. The available sources are:
+
+- ``UEP sites (unrelaxed estimate)``, using each site of a UEP batch search, at
+  its lowest-energy start as the optimizer found it, as ``UEP site <n>`` with its
+  group in the ``Group`` column, and the sites generated from them with the ``UEP
+  clusters`` method. The start's position is read in one cell, whatever supercell the
+  job ran on, and wrapped into it: the structure the search was configured on, or the
+  host when that structure is not one host cell. A supercell job and a unit-cell job so
+  give the same field for the same image. Results already calculated keep their numbers
+  until they are calculated again.
+  A stored site whose generation method is ``uep_batch_cluster`` is not
+  listed; it stays in the project and in the other workflows (see
+  :doc:`/compatibility_policy`);
+- ``Structural relaxation clustering``, using representative relaxed muon
+  endpoints. By default this lists the clusters pinned to the ``Muon Sites``
+  summary (:doc:`/user_guide/structural_relaxation_analysis`), in the summary's charge-state
+  and energy order, with the ``Cluster`` column showing the summary label
+  (``8c · cluster 1``). A live cluster matches a pin by its workspace and
+  representative relaxation job, so re-clustering the analysis without
+  re-pinning never relabels a different site. Tick ``Show every relaxed site`` to list every analysis
+  workspace's clusters instead; the choice is saved with the project. With no
+  pin, a notice and a ``Go to Muon Sites →`` button (which closes the dialog
+  and opens that page) explain how to pin sites;
+- ``Custom fractional position``, a fractional coordinate (``fx``, ``fy``,
+  ``fz``) in the active host cell.
+
+.. figure:: ../_generated/screenshots/magnetic_muon_site_dialog.webp
+   :alt: The Select Muon Site dialog listing pinned structural-relaxation
+         clusters of CoF2, the 4c positive-muon cluster selected and the
+         displacement correction ticked.
+
+   Pinned CoF₂ sites in ``Select Muon Site``, with the distortion correction
+   available for the selected representative.
+
+For a host with no relaxation or UEP results, as in a literature example,
+choose ``Custom fractional position`` and type the site's ``fx``, ``fy`` and
+``fz``.
+
+.. figure:: ../_generated/screenshots/fe_select_muon_site.webp
+   :alt: The Select Muon Site dialog with the custom fractional position source
+         and the octahedral site of bcc iron, fx 0.5, fy 0, fz 0.
+
+   The octahedral interstitial site of bcc iron as a custom position.
+
+A muon site must be at least 0.5 Å from every host atom, counting every
+periodic image: the dipolar and contact sums diverge as the muon approaches an
+ion. ``OK`` refuses a closer site with a message naming the nearest atom and
+its distance, for example ``Custom site is 0.15 Å from O (atom 2)``. A saved
+site that breaks the rule still loads and is shown in the ``Muon Site`` card
+with the same reason; the calculation buttons stay disabled, with the reason
+in their tooltips, until another site is chosen. The field and dipolar-tensor
+calculations apply the same rule, so a script that calls them with such a site
+gets the same error. A field that still comes out as NaN or infinity is never
+shown as a number: the results status names the site whose field is not
+finite and the table stays empty.
+
+Until a site is chosen, the page uses the lowest-energy pinned site (positive
+muon first), else the first structural-relaxation cluster, else the first UEP
+cluster. A project with none of these has no site: the ``Muon Site`` card
+reads ``Choose a muon site.``, and ``Calculate Dipolar Field``,
+``Dipolar Tensor…`` and ``Nuclear Relaxation…`` stay disabled, their
+tooltips saying a site is needed. With no site chosen, the dialog
+opens on ``Structural relaxation clustering`` when that source lists a site
+(a pinned site, or any cluster with ``Show every relaxed site`` ticked), and on
+UEP sites otherwise.
+
+UEP sites are estimates
+~~~~~~~~~~~~~~~~~~~~~~~
+
+UEP sites are the one exception to the rule that downstream workflows use
+relaxed sites (see :doc:`/project_specification`). A UEP minimum is unrelaxed,
+and the relaxed muon site can sit some distance from it, so a field computed
+there is a quick estimate made before any relaxation has run. While the UEP
+source is chosen, the dialog shows a one-line note saying so, and the site
+summary on the page repeats it. Fields computed at a UEP site are marked as
+estimates wherever they are shown: the ``Result`` column reads, for example,
+``field, unrelaxed estimate``, the results status line says the site is
+unrelaxed, the distribution plot title ends in ``(unrelaxed estimate)``, its
+``Export Data…`` file carries an ``# Estimate:`` header line, and the
+project survey's local-field markers read ``≈`` before the magnitude.
+Dipolar tensors and nuclear relaxation computed at a UEP site are marked the
+same way in their dialogs: the results show a note that they were computed at
+an unrelaxed UEP site, each tensor's title ends in ``(unrelaxed estimate)``,
+and the status line after a calculation says the results are estimates. The
+marker comes from the source saved with the result (see `Save results and
+workspaces`_), so it survives a reload, and a tensor or nuclear-relaxation
+result keeps its marker after another muon site is chosen.
+
+Correct for the relaxed structure
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Structural-relaxation cluster representatives can expose a distorted relaxed
+structure. When that structure is available, the dialog enables the ``Correct
+the dipolar field for muon-induced displacements`` option; it is disabled and
+cleared for every other site. The choice is stored with the selected site, the
+site summary on the page notes it, and saved workspaces restore it. When it is
+ticked, ``Calculate Dipolar Field`` applies the correction described in
+:ref:`Apply muon-induced distortion corrections
+<magnetic-fields-distortion-corrections>`. The ``Nuclear Relaxation…`` dialog
+has its own distortion option for the same relaxed structure (see `Calculate
+nuclear relaxation`_).
+
+.. _magnetic-fields-calculation-settings:
+
+Set the calculation parameters
+------------------------------
+
+Click ``Calculation Settings…`` in the ``Calculation`` card to open the
+``Calculation Settings`` dialog. Under ``Numerical Parameters`` it sets:
+
+- ``Cells along`` ``a``, ``b``, and ``c``: the number of unit-cell repeats
+  included in the ``muesr`` lattice summation, defaulting to
+  ``100 x 100 x 100``;
+- ``Lookup angles per q`` (default 32,768), which sets the angular lookup
+  resolution for each incommensurate Fourier component;
+- ``Distribution samples`` (default 200,000), which caps or targets the number
+  of sampled fields used for the final incommensurate distribution;
+- ``Sampling method``, the incommensurate phase-space sampling method, with
+  ``Auto`` (default), ``Grid``, and ``Monte Carlo`` options;
+- ``Histogram bins`` (default 512), the number of bins used when summarising
+  field magnitudes.
+
+A note under these settings explains the convergence checks (see
+:ref:`Convergence Checks <magnetic-fields-convergence-checks>`). The
+``Commensurate Approximants`` group holds:
+
+- ``Report finite fields for near-commensurate q`` (default off), which lists
+  the finite fields of a commensurate approximant instead of sampling a
+  distribution when the structure has one (see :ref:`Commensurate Approximants
+  <magnetic-fields-commensurate-approximants>`);
+- ``Tolerance`` (default 0.001 r.l.u.), the largest change of any wavevector
+  component when it is replaced by a fraction;
+- ``Longest period`` (default 12, at most 64), the largest denominator allowed
+  for each wavevector component.
+
+The ``Contact Field`` group sets the shell of magnetic ions whose moments make
+up the contact field when a ``Hyperfine coupling`` is set (see
+:ref:`Choose the contact shell <magnetic-fields-contact-shell>`):
+
+- ``Contact neighbours (nnn)`` (default 2, from 1 to 64), the number of
+  nearest magnetic ions in the shell;
+- ``Contact radius (Å)`` (default 10 Å, from 0.1 Å to 100 Å), the distance
+  from the muon inside which an ion may join the shell.
+
+When a hyperfine coupling is set and the shell of the selected site (or of any
+of its equivalent sites, when ``Include equivalent sites`` is ticked)
+splits ions that tie for its last place and whose moments are not all equal, a
+warning under the two values names the tied ions and the ``nnn`` that includes
+them all. It follows the values as you change them (a typed value once it is
+finished), and ``OK`` still accepts them. It checks the shell of the lattice
+sum for the model's own wavevectors; a tie in a relaxed supercell, or in the
+shell of a commensurate approximant, is reported on the result.
+
+The settings summary on the ``Calculation`` card names the approximant
+tolerance and period when the option is on, and the contact shell when a
+hyperfine coupling is set. Each commensurate result records the contact
+coupling and shell it used.
+
+.. figure:: ../_generated/screenshots/mnsi_calculation_settings.webp
+   :alt: The Calculation Settings dialog with 100 x 100 x 100 cells, 32768 lookup
+         angles per q, 200000 distribution samples, Auto sampling, 512 histogram
+         bins, the approximant option ticked with tolerance 0.001 r.l.u. and
+         longest period 64, and a contact shell of 3 neighbours within 10 Å.
+
+   The settings of the helix in :doc:`/user_guide/examples/mnsi`, whose q lies
+   0.0009 r.l.u. from 1/64, so a period of 64 is needed for its approximant.
+   Its contact shell is the three Mn that tie nearest the muon; the default of
+   2 neighbours would split them, and the dialog would warn under the values.
+
+With the option on and an approximant found, ``Calculate Dipolar Field`` lists
+the finite fields of the approximant, one row per translation of its magnetic
+supercell with a distinct phase and labelled with that translation, each with
+the full term breakdown of a commensurate result.
+
+.. figure:: ../_generated/screenshots/mnsi_approximant_fields.webp
+   :alt: The Magnetic Fields page listing 64 fields of the commensurate
+         approximant q = (1/64, 1/64, 1/64) of the MnSi helix at site II, the
+         first row's field of 0.116387 T and its dipolar (incl. Lorentz), contact,
+         demagnetizing and applied terms.
+
+   The 64 fields of the approximant of the helix in
+   :doc:`/user_guide/examples/mnsi` at site II, labelled ``site 1 + (n, 0, 0)``
+   by the translation along ``a``. The table scrolls; the first row is
+   selected and its terms are listed below it.
+
+The sampling method affects only incommensurate field distributions. It does not
+simulate muon spectra or time-dependent polarisation functions.
+
+.. _magnetic-fields-contact-shell:
+
+Choose the contact shell
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+The contact field is :math:`(2\mu_0/3)\,\mu_B A` times the
+:math:`1/r^3`-weighted mean moment of the ``Contact neighbours (nnn)`` nearest
+magnetic ions closer than the ``Contact radius``, ``muesr``'s contact rule (see
+:ref:`The Contact Term <magnetic-fields-contact-term>`). If fewer ions lie
+inside the radius, the shell holds only those. Choose the shell to match the
+muon's bonding: a muon bonded to one magnetic ion needs one neighbour, and a
+muon among four equidistant ions needs four. In a uniform ferromagnet every
+moment is the same, so the contact field equals the coupling times the moment
+whatever the shell.
+
+Take whole sets of equidistant ions. When the shell's last places split ions
+that tie within 10\ :sup:`-3` Å of each other and whose moments are not all equal, the
+lattice sum keeps an arbitrary subset of them, which changes with ``Cells
+along``, and the contact field changes with it. MuFinder warns of such a shell
+in ``Calculation Settings`` and, after a calculation, under the term breakdown
+of each result row it affects, for example::
+
+   Contact shell: Contact neighbours (nnn) = 2 keeps 2 of the 4 magnetic ions
+   that tie at 1.603 Å from the muon (2 × Fe 1, 2 × Mn 2), whose moments are
+   not all equal, so the contact field depends on which of them the lattice
+   sum keeps; nnn = 4 includes them all.
+
+Ions are named by species and atom number in the host structure, an ion
+repeated once for each of its periodic images in the tie. The warning does not
+stop the calculation. Set ``Contact neighbours (nnn)`` to the number it names,
+or to the number of ions before the tie, to remove it.
+
+When the model needs more than one lattice sum (components at different
+wavevectors, or a distribution, which samples each component on its own), the
+shell is taken once over every magnetic ion and each component is averaged over
+it, so every path gives the same contact field for the same order.
+
+Set the demagnetizing field
+---------------------------
+
+The ``Demagnetizing field`` row at the top of the ``Calculation`` card offers
+quick choices for the common limiting cases and an ``Advanced shape`` option,
+configured through the ``Advanced…`` button, for shape-specific tensors:
+
+``None``
+   No demagnetizing-field correction is added.
+
+``Sphere``
+   Uses the isotropic tensor ``diag(1/3, 1/3, 1/3)``.
+
+``Infinite plate``
+   Uses the exact plate limit with demagnetizing factor 1 along the plate normal
+   and 0 along the in-plane directions. This quick choice uses the crystal
+   ``c`` axis as the plate normal.
+
+``Advanced shape``
+   ``Advanced…`` opens the ``Advanced Demagnetizing Field`` window. Choose a
+   ``Shape`` and its ``Parameters``, set the ``Orientation`` (see
+   `Orient the sample`_), then click ``Use Shape``. The advanced shapes are
+   ellipsoids (``Semi-axis a``, ``Semi-axis b``, ``Semi-axis c``), finite
+   rectangular prisms (``Length a``, ``Length b``, ``Length c``) and a
+   ``Plate from photo``, a plate whose outline is traced from a photograph
+   (see `Outline a plate in a photograph`_). The window reports the tensor
+   used by the calculation and renders the sample with a PyVista preview, with
+   arrows along the crystal axes ``a``, ``b`` and ``c`` and the magnetisation
+   direction ``M``. The tensor follows every edit; the preview redraws once
+   the edits pause. Lengths are in arbitrary units, since only their ratios
+   matter.
+
+.. figure:: ../_generated/screenshots/fe_demagnetizing_shapes.webp
+   :alt: The Calculation card for bcc iron with the Infinite plate shape chosen,
+         a demagnetizing field of -2.17 T and a total of -3.49 T at the first
+         site.
+
+   An ``Infinite plate`` for bcc iron at the octahedral site: the plate normal
+   is the ``c`` axis, along the moment, so the demagnetizing term is
+   :math:`-\mu_0 M = -2.1737` T instead of the sphere's -0.7246 T.
+
+The ellipsoid factors are exact. For semi-axes :math:`a`, :math:`b` and
+:math:`c` along the sample axes,
+
+.. math::
+
+   N_a = \frac{abc}{3}\,R_D(b^2, c^2, a^2),
+
+and cyclically for :math:`N_b` and :math:`N_c` (J. A. Osborn, Phys. Rev.
+**67**, 351 (1945), DOI: ``10.1103/PhysRev.67.351``), where :math:`R_D` is
+Carlson's symmetric elliptic integral of the second kind (B. C. Carlson, Numer.
+Algorithms **10**, 13 (1995), DOI: ``10.1007/BF02198293``). The three factors
+sum to one, a sphere gives :math:`\tfrac{1}{3}` along every axis, and spheroids
+reproduce the prolate and oblate closed forms.
+
+The rectangular-prism factors are exact too: MuFinder uses Aharoni's closed
+form for the magnetometric factors of a rectangular prism (A. Aharoni, J. Appl.
+Phys. **83**, 3432 (1998), DOI: ``10.1063/1.367113``). They sum to one, a cube
+gives :math:`\tfrac{1}{3}` along every edge, and the tensor of a prism has no
+off-diagonal elements along its edges.
+
+Outline a plate in a photograph
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Real crystals are rarely ellipsoids or prisms. A plate-like crystal is often
+photographed, and its size and thickness measured, so MuFinder can take its
+outline from the photo:
+
+1. In the ``Advanced Demagnetizing Field`` window, choose ``Plate from photo``
+   as the ``Shape`` and click ``From photo…``. The button reads ``Edit
+   outline…`` once the plate has an outline.
+2. In the ``Plate from Photo`` window, click ``Choose…`` and pick a photo of
+   the sample taken along its normal, on a plain background. PNG, JPEG, TIFF
+   and BMP files are read; a photo larger than 1024 pixels is scaled down
+   first.
+3. MuFinder splits the photo into sample and background at the Otsu threshold
+   (N. Otsu, IEEE Trans. Syst. Man Cybern. **9**, 62 (1979), DOI:
+   ``10.1109/TSMC.1979.4310076``) and takes as the sample the class covering
+   most of the centre of the photo, so a dark crystal on a light card and a
+   light crystal on a dark one both work. The outline is drawn over the photo,
+   and the line under the fields gives its size in pixels.
+4. If the outline is wrong, drag ``Threshold``; the outline is redrawn once
+   the drag pauses. ``Auto`` returns it to the Otsu level. ``Invert`` swaps sample and background. ``Fill holes``, on by default,
+   counts background enclosed by the sample, such as a reflection, as sample.
+5. Enter the ``Width (along a)`` and ``Height (along b)`` of the outline's
+   bounding box and the ``Thickness (along c)``. Choosing a photo sets the
+   height from the width and the outline's aspect ratio; ``Match photo`` does
+   so again after the width changes.
+   The line under the fields warns when the outline is fewer than 8 voxels
+   across, and says when the plate cannot be calculated, in which case ``Use
+   Outline`` stays disabled (see `How the Fourier method works`_).
+6. Click ``Use Outline``, then ``Use Shape``.
+
+The photo's ``x`` axis is the sample ``a`` axis, its ``y`` axis, up the photo,
+the ``b`` axis, and the plate normal the ``c`` axis, so ``Orientation`` places
+the plate in the crystal as for any shape: set ``Normal (h k l)`` to the face
+of the plate. An outline that is empty or covers the whole photo is reported
+under the fields, and ``Use Outline`` stays disabled until the threshold or
+``Invert`` finds the sample.
+
+.. figure:: ../_generated/screenshots/fe_plate_photo_outline.webp
+   :alt: The Plate from Photo window with a dark hexagonal platelet outlined in
+         red on a light background, at the automatic threshold 128.8, width 5,
+         height 3.5408 and thickness 0.1.
+
+   A synthetic photo of a hexagonal platelet. The glare spot is enclosed by
+   the sample, so ``Fill holes`` keeps it inside the outline.
+
+.. figure:: ../_generated/screenshots/fe_photographed_plate.webp
+   :alt: The Advanced Demagnetizing Field window with Plate from photo chosen,
+         the tensor of the platelet with N along c of 0.92618 and its trace 1,
+         and the voxelised platelet in the preview.
+
+   The same platelet as a ``Plate from photo`` of bcc iron, aligned with the
+   crystal axes. The line under the tensor gives its trace, the number of
+   voxels and the FFT box. The window calculates off the main thread and shows a
+   busy dialog with a ``Cancel`` button if this takes noticeably long.
+   ``Cancel`` stops the calculation at its next stage, within a second or two,
+   and frees the memory it was using.
+
+MuFinder saves the outline with the project, at up to 256 pixels along its
+longer side, with the photo's path and the segmentation settings. The tensor
+needs only the saved outline, so a project still calculates after the photo
+moves; ``Edit outline…`` then shows the saved outline instead of the photo,
+and choosing the photo again re-enables the threshold controls. An
+incommensurate distribution records the sample it was calculated with, naming
+the outline by its size and SHA-256 digest rather than storing another copy.
+
+Orient the sample
+~~~~~~~~~~~~~~~~~
+
+A real crystal is cut or grown with a face on some :math:`(hkl)` plane and an
+edge along some :math:`[uvw]` direction, so the principal axes of its shape are
+not, in general, the Cartesian axes of the host lattice. The ``Orientation``
+group of the ``Advanced Demagnetizing Field`` window sets them:
+
+``Aligned with crystal axes``
+   The sample axes ``a``, ``b`` and ``c`` lie along Cartesian ``x``, ``y``
+   and ``z`` of the host lattice vectors, and the tensor is diagonal. The
+   ``Normal (h k l)`` and ``In-plane axis [u v w]`` rows are greyed out, since
+   this choice ignores them; they keep their values for when you switch back.
+
+``Crystal directions``
+   The sample ``c`` axis is normal to the plane in ``Normal (h k l)``, taken
+   through the reciprocal lattice as :math:`h\mathbf{a}^* + k\mathbf{b}^* +
+   l\mathbf{c}^*`. The sample ``a`` axis lies along ``In-plane axis [u v w]``,
+   :math:`u\mathbf{a} + v\mathbf{b} + w\mathbf{c}`, and ``b`` completes a
+   right-handed set. Indices may be negative or fractional.
+
+With crystal directions the tensor in the crystal frame is
+:math:`R\,\mathrm{diag}(N_a, N_b, N_c)\,R^\mathsf{T}`, where the columns of the
+rotation :math:`R` are the sample axes, so it has off-diagonal elements and the
+demagnetizing field is no longer parallel to the magnetisation. The preview
+shows the shape rotated against the crystal axes.
+
+When ``[u v w]`` is not perpendicular to the normal, MuFinder keeps the normal
+exactly and uses the component of ``[u v w]`` in the plane as the ``a`` axis;
+the hint under the fields reports the angle between the two directions. A
+direction parallel to the normal, a zero index triplet or a blank index is
+reported there instead, and ``Use Shape`` stays disabled until it is fixed.
+Orienting by crystal directions needs a host structure. Without one the
+``Orientation`` group cannot be changed: a new sample stays aligned, and a sample
+already oriented by crystal directions keeps them.
+
+A sample whose rotation was saved without crystal directions, for example one
+set up through the Python API, opens with ``Saved rotation`` selected, which
+keeps that rotation; the summary under the ``Demagnetizing field`` row then ends
+in ``rotated sample axes``. Choosing either of the other options replaces it.
+
+The orientation is saved with the project as the Miller indices, so it follows
+the host lattice. The summary under the ``Demagnetizing field`` row lists them,
+for example ``Ellipsoid a=4, b=4, c=0.5; normal (1 1 0), in-plane [0 0 1]``.
+
+.. figure:: ../_generated/screenshots/fe_oriented_demagnetizing_sample.webp
+   :alt: The Advanced Demagnetizing Field window for bcc iron with an oblate
+         ellipsoid of semi-axes 4, 4 and 0.5, normal (1 1 0) and in-plane axis
+         [0 0 1], and a tensor with off-diagonal elements 0.37315.
+
+   A disc of bcc iron cut with its faces on :math:`(110)` and its ``a`` axis
+   along :math:`[001]`. The disc's large factor :math:`N_c = 0.8309` acts
+   along :math:`[110]`, so the tensor has
+   :math:`N_{xx} = N_{yy} = (N_b + N_c)/2 = 0.4577` and
+   :math:`N_{xy} = (N_c - N_b)/2 = 0.3732`; along the moment, :math:`[001]`,
+   it is the small in-plane factor 0.0846.
+
+Use a measured bulk magnetisation
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+By default MuFinder takes the bulk magnetisation from the magnetic model (see
+`How the demagnetizing field is calculated`_). To use a measured value instead,
+for example from magnetometry on the same sample under the same conditions:
+
+1. Tick ``Measured bulk magnetisation`` in the row below the ``Demagnetizing
+   field`` row.
+2. Enter the three Cartesian components, ``x``, ``y`` and ``z`` in the frame of
+   the host lattice vectors, in Bohr magnetons per formula unit (μB/f.u.). The
+   formula unit is the reduced formula of the host's non-muon atoms, which the
+   row names, for example ``μB per Fe2O3``; the cell holds :math:`Z` of them,
+   the greatest common divisor of its element counts.
+
+.. figure:: ../_generated/screenshots/fe_measured_magnetisation.webp
+   :alt: The Calculation card for bcc iron with a measured bulk magnetisation of
+         2 muB per Fe along z ticked, a sphere, and a demagnetizing field of
+         -0.659 T.
+
+   A measured magnetisation of 2.0 μB per Fe along ``z`` (an illustrative
+   value for a sample short of saturation) replaces the model's 2.2 μB, so the
+   sphere's demagnetizing term is -0.6587 T.
+
+MuFinder then uses
+
+.. math::
+
+   \mathbf{M}_\mathrm{meas} = \frac{Z\,\mathbf{m}_\mathrm{f.u.}\,\mu_B}{V_\mathrm{cell}},
+
+so a supercell of the host gives the same field as its primitive cell. A
+magnetisation quoted per magnetic ion becomes μB/f.u. by multiplying by the
+number of magnetic ions in the formula unit. An empty component counts as zero,
+and a component that is not a finite decimal number stops the calculation with
+an error. The measured value replaces the model value on the commensurate,
+commensurate-approximant and incommensurate paths alike, and has no effect when
+the demagnetizing field is ``None``. Unticking the box returns to the model value
+and keeps the entered components. An incommensurate distribution records the
+value it used with its calculation parameters, or none when it used the model
+value.
+
+Applied field
+~~~~~~~~~~~~~
+
+The ``Applied field`` row of the Calculation card takes an external field in
+tesla, as three Cartesian components ``x``, ``y`` and ``z`` in the frame of the
+host lattice vectors. MuFinder adds it to the field at every muon site, so a
+result in an applied field is the internal field plus the applied one, and the
+breakdown lists it as its ``Applied`` row. The field is saved with the form; an
+empty component counts as zero, and a component that is not a finite decimal
+number stops the calculation with an error. Changing a component clears the
+shown results, like the other calculation settings.
+
+The applied field does not change the magnetic model: the moments stay as the
+model sets them, so the row describes a field small enough not to reorient
+them, such as the longitudinal or transverse field of a μSR measurement.
+
+How the demagnetizing field is calculated
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+MuFinder follows the ``muesr`` convention
+(`muesr basic theory <https://muesr.readthedocs.io/en/latest/Intro.html>`_),
+which splits the dipolar field of the whole sample into three terms:
+
+.. math::
+
+   \mathbf{B}_\mathrm{dip}' =
+   \mathbf{B}_\mathrm{dip} + \mathbf{B}_\mathrm{Lor} + \mathbf{B}_\mathrm{demag}.
+
+``Dipolar`` is the explicit sum over the ions inside the Lorentz sphere around
+the muon. The ions outside it are treated as a magnetised continuum, whose field
+at the muon comes from two surfaces:
+
+- the surface of the Lorentz sphere gives the ``Lorentz`` field,
+  :math:`\mathbf{B}_\mathrm{Lor} = \mu_0 \mathbf{M}_\mathrm{Lor} / 3`. ``muesr``
+  takes :math:`\mathbf{M}_\mathrm{Lor}` as the sum of the moments inside the
+  sphere divided by its volume. For order modulated at ``q != 0`` the continuum
+  also gives a field along ``q``, which MuFinder adds to the ``Lorentz`` term
+  (see :ref:`magnetic-fields-continuum`);
+- the surface of the sample gives the ``Demagnetizing`` field,
+
+  .. math::
+
+     \mathbf{B}_\mathrm{demag} = -\mu_0 N \mathbf{M}_\mathrm{meas},
+
+  where :math:`\mathbf{M}_\mathrm{meas}` is the bulk magnetisation of the sample
+  (S. J. Blundell, Contemp. Phys. **40**, 175 (1999), DOI:
+  ``10.1080/001075199181521``).
+
+``muesr`` leaves :math:`\mathbf{M}_\mathrm{meas}` to the user, because it
+depends on the sample and the experiment. By default MuFinder takes it from the
+magnetic model: it is the moment per unit cell of the uniform part of the order,
+the Fourier components whose wavevector is a reciprocal lattice vector, divided
+by the cell volume. Every other component averages to zero over the sample, so
+an antiferromagnet or a helix has no demagnetizing field, whatever Lorentz field
+the finite sphere leaves. This assumes the sample is a single magnetic domain,
+or is saturated by an applied field. A multidomain ferromagnet in zero field has
+a smaller bulk magnetisation, and the model value overestimates its
+demagnetizing field.
+
+For a sphere, :math:`N = \tfrac{1}{3}`, so a single-domain sample's Lorentz and
+demagnetizing fields cancel up to the difference between
+:math:`\mathbf{M}_\mathrm{Lor}` and :math:`\mathbf{M}_\mathrm{meas}`. That
+difference comes from counting the ions inside a finite sphere and shrinks as the
+sphere grows; it is under 0.1 % of the Lorentz field in the
+:doc:`worked examples </user_guide/magnetic_fields_theory>`. For an infinite
+plate magnetised along its normal, :math:`N = 1` and the two terms sum to about
+:math:`-2\mu_0 \mathbf{M}_\mathrm{meas} / 3`.
+
+This correction is a field-level contribution only. It does not simulate spectra
+or time-dependent polarisation. The bulk magnetisation does not depend on the
+muon site or on the magnetic phase, so the demagnetizing field is the same for
+every site of a commensurate calculation and for every sampled phase point of an
+incommensurate distribution; it is added before applied fields and histograms
+are formed.
+
+.. _demagnetizing-fourier-method:
+
+How the Fourier method works
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A plate from a photo, or a voxel grid given through the Python API (see
+:doc:`/api/using_mufinder`), has no closed-form tensor. MuFinder computes it in
+Fourier space (M. Beleggia and M. De Graef, J. Magn. Magn. Mater. **263**, L1
+(2003), DOI: ``10.1016/S0304-8853(03)00238-5``). The shape function
+:math:`D(\mathbf{r})`, 1 in the sample and 0 outside, is laid on a voxel grid
+whose voxels may have a different edge along each axis, so a thin plate can be
+a few voxels thick. Its fast Fourier transform is the shape amplitude
+:math:`D(\mathbf{k})`, the local tensor is
+
+.. math::
+
+   N_{ij}(\mathbf{k}) = D(\mathbf{k})\,\frac{k_i k_j}{k^2},
+
+with :math:`D(0)/3` on the diagonal at :math:`\mathbf{k} = 0`, and the
+calculation uses its average over the sample, the magnetometric tensor
+
+.. math::
+
+   \langle N_{ij} \rangle = \frac{1}{V\,V_\mathrm{box}}
+   \sum_{\mathbf{k}} |D(\mathbf{k})|^2\,\frac{k_i k_j}{k^2},
+
+where :math:`V` is the sample volume and :math:`V_\mathrm{box}` that of the
+FFT box. By Parseval's theorem the trace of :math:`\langle N \rangle` is 1,
+and the window reports it as ``Tr N``.
+
+Like the closed forms, the result is an average over the sample. Inside a
+shape that is not an ellipsoid the local tensor varies from point to point,
+most near edges and corners, so the field at a muon near a surface differs
+from the averaged value.
+
+The resolution is fixed, so a calculation has no numerical settings:
+
+Padding
+   The FFT treats the box as periodic, so the sample sits in a lattice of its
+   own images. The box spans 4 times the longest sample edge for a plate from a
+   photo, and 2.5 times for a voxel grid, whose FFT holds the whole box in memory.
+   It spans that along every axis, not along each axis separately: a thin plate
+   padded only through its thickness would sit in a stack of plates one
+   thickness apart and behave like bulk.
+Voxels of a plate from a photo
+   256 voxels span the sample's longest edge, thickness included, and the other
+   edges take the same voxel edge, rounded and at least 1 voxel, so the voxels
+   are close to cubes. The layers of a plate are identical, so its shape
+   amplitude is the outline's times that of a column of layers, and the sum
+   takes one 2-D FFT and a loop along :math:`k_z`. It is the same number as the
+   FFT of the whole box, to rounding, in a fraction of the time and memory.
+
+The trace is a check on the calculation: a tensor whose ``Tr N`` differs from 1
+by more than 1 % is refused rather than used.
+
+These plates, against their closed forms, show what to expect. The thinnest are
+limited by their single flat layer, and curved outlines by the steps along their
+edge:
+
+.. list-table::
+   :header-rows: 1
+
+   * - Thickness / longest in-plane edge
+     - Square plate, largest error in a factor
+     - Circular plate, largest error in a factor
+   * - 1/10000
+     - 0.00019
+     - 0.00017
+   * - 1/1000
+     - 0.00052
+     - 0.00038
+   * - 1/50
+     - 0.00000
+     - 0.00016
+   * - 1/10
+     - 0.00006
+     - 0.00002
+   * - 1/2
+     - 0.00018
+     - 0.00007
+   * - 1
+     - 0.00000
+     - 0.00011
+   * - 3/2
+     - 0.00014
+     - 0.00021
+   * - 10
+     - 0.00001
+     - 0.00030
+
+An outline a few voxels across is coarser, since 256 voxels along the longest
+edge leave few across a narrow side. Over rectangles 1 x b, from b to b/20 thick,
+the largest error in a factor is:
+
+.. list-table::
+   :header-rows: 1
+
+   * - Voxels across b
+     - 1
+     - 2
+     - 3
+     - 4
+     - 5
+     - 6
+     - 7
+     - 8
+     - 9
+     - 10
+     - 13
+     - 26
+   * - Largest error
+     - 0.055
+     - 0.033
+     - 0.022
+     - 0.017
+     - 0.013
+     - 0.011
+     - 0.009
+     - 0.008
+     - 0.007
+     - 0.006
+     - 0.003
+     - 0.001
+
+The window warns when the narrow side of the outline's bounding box is below 8
+voxels, where the largest error passes about 0.01. There is no step there: a
+rectangle 8 voxels across is not warned about and can be off by 0.008, against
+0.009 at 7. A ``Rectangular prism`` has a closed form and is exact for a
+rectangular sample.
+
+The warning reads only the bounding box, so it cannot see a slender shape inside
+a wide box. Measured on slivers at 30 and 45 degrees and on rings, the largest
+error in a factor is about 0.07 for a feature about 1 voxel wide, 0.04 at 2 to 3
+voxels, and 0.02 at 5 to 7. A photo of such a sample gets no warning.
+
+A plate's longest edge can be at most 10000 times its thickness. By then an
+``Infinite plate`` is within 0.0007 of a square plate's factor along the normal,
+and the refusal gives the figure, rounded up, for the plate in hand. The quick ``Infinite
+plate`` has its normal along ``c``, so for a plate oriented otherwise choose a
+``Rectangular prism``, which keeps the orientation. The limit on the time taken
+also refuses a needle or rod whose length is more than about 2000 times its
+width. On a desktop computer a plate typically takes about 0.3 s, one at the
+thickness limit about 10 s, and the largest box allowed, a rod near that length,
+about 25 s and 2 GB. A ``Voxel grid`` from the Python API takes the FFT of the whole box, which
+holds at most 268 million voxels and about 4 GB; a larger box, or an allocation
+that fails, is refused.
+
+.. _magnetic-fields-distortion-corrections:
+
+Apply muon-induced distortion corrections
+-----------------------------------------
+
+A muon displaces the host ions around it, so the dipolar and contact fields at
+the relaxed site differ from the fields computed for the pristine host. To
+correct for it:
+
+1. Choose a site from ``Structural relaxation clustering`` whose representative
+   relaxed structure is available (see `Correct for the relaxed structure`_).
+2. Tick ``Correct the local field for muon-induced displacements`` in the
+   ``Select Muon Site`` dialog.
+3. Optionally tick ``Include equivalent sites`` on the page.
+4. Click ``Calculate Dipolar Field``. Corrected rows read ``field
+   (distortion-corrected)`` in the ``Result`` column, and the vector total
+   includes the correction. The ``Distortion correction`` term appears in the
+   breakdown beside the other field terms.
+
+.. figure:: ../_generated/screenshots/cof2_magnetic_fields_page.webp
+   :alt: The Magnetic Fields page for the CoF2 antiferromagnet at the relaxed 4c
+         site: a distortion-corrected field along c, with dipolar and distortion
+         correction terms in the breakdown.
+
+   A distortion-corrected field at the CoF₂ 4c site; the relaxed structure is
+   synthetic (see :doc:`/user_guide/examples/cof2`).
+
+The correction applies to commensurate fields, to every translated row of a
+commensurate approximant and to every phase sample of an incommensurate
+distribution. A distribution has no separate distortion term: its correction is
+included in the ``Dipolar`` and ``Contact`` terms of the breakdown, and its row
+reads ``distribution mean (distortion-corrected)`` in the ``Result`` column, also
+after the project is reopened. Dipolar
+tensors always use the pristine host. The Lorentz and demagnetizing terms depend
+on the bulk magnetisation, so they keep their pristine values.
+
+MuFinder corrects the converged pristine lattice sum with the finite-cell change
+from the ion displacements in the representative relaxed supercell:
+
+.. math::
+
+   \mathbf{B}_\mathrm{dip,corrected} =
+   \mathbf{B}_\mathrm{dip}(\mathrm{pristine}) +
+   \sum_{i \in \mathrm{cell}}
+   \left[\mathbf{B}_i(\mathbf{r}_i + \mathbf{u}_i) - \mathbf{B}_i(\mathbf{r}_i)\right],
+
+where :math:`\mathbf{r}_i` runs from the muon to the pristine site of host ion
+:math:`i`, :math:`\mathbf{u}_i` is that ion's displacement relative to the
+muon, and :math:`\mathbf{B}_i` is the point-dipole field of the moment the
+magnetic model assigns to the pristine site. Every ion of the relaxed
+supercell enters the sum; ions with no moment contribute nothing.
+
+For an order that is not commensurate with the relaxed supercell, each Fourier
+component :math:`c` with coefficients :math:`\mathbf{F}_c` and propagation
+vector :math:`\mathbf{q}_c` gives a complex change
+
+.. math::
+
+   \Delta\mathbf{B}_c = \sum_{i \in \mathrm{cell}}
+   \left[\mathsf{D}(\mathbf{r}_i + \mathbf{u}_i) - \mathsf{D}(\mathbf{r}_i)\right]
+   \mathbf{F}_{c,i}\, e^{-2\pi i\, \mathbf{q}_c \cdot \mathbf{L}_i},
+
+where :math:`\mathsf{D}` is the point-dipole tensor and :math:`\mathbf{L}_i` the
+lattice translation of ion :math:`i`'s pristine site, so that each ion carries the
+moment :math:`\operatorname{Re}[\mathbf{F}\,e^{-2\pi i\,\mathbf{q}\cdot\mathbf{L}}]`
+of its pristine site. Shifting the component's order by a phase
+:math:`\theta_c` turns, as a phase sample of a distribution does, changes the
+field by :math:`\operatorname{Re}[e^{-2\pi i \theta_c}\,\Delta\mathbf{B}_c]`.
+MuFinder adds that change at the phase each lookup angle of the distribution
+samples, so the convergence checks run on the corrected distribution. A
+commensurate row at :math:`\mathbf{r} + \mathbf{T}`, whether of an exact
+wavevector or of an approximant, takes the phase
+:math:`\theta_c = \mathbf{q}_c \cdot \mathbf{T}`.
+
+When a ``Hyperfine coupling`` :math:`A` is set, the contact term is corrected
+too. The correction is the contact field (see :ref:`Choose the contact
+shell <magnetic-fields-contact-shell>`) with the shell chosen from the displaced
+positions minus the contact field with the shell chosen from the pristine
+sites, both by the same ``Contact neighbours`` and ``Contact radius`` as the
+lattice sum. This is a rough correction: it tracks which ions
+are in the shell and their distances through the weights, but a real hyperfine
+coupling changes with the muon-ion distance in a way a single coupling cannot
+describe. A coupling calculated for the relaxed structure, for example by DFT,
+supersedes it. The relaxed supercell must hold the whole contact shell: when the
+shell reaches past the largest sphere about the muon that the supercell holds,
+the calculation stops and asks for a larger relaxed supercell, a smaller
+``Contact radius`` or fewer ``Contact neighbours``. A shell that runs out of
+ions inside the radius reaches to the radius itself, so a smaller radius brings
+it inside the supercell. When the displaced shell splits ions that tie for its
+last place and whose moments are not all equal, the correction keeps the first of them
+and the result warns, as for the lattice sum, with the warning prefixed ``In
+the relaxed supercell``.
+
+MuFinder pairs the relaxed supercell with the pristine host before it sums
+anything, and reports the first check that fails:
+
+- the relaxed lattice must be an integer supercell of the host lattice with a
+  positive determinant, so the correction cell is finite;
+- the relaxed structure must hold exactly one muon marker and, for every
+  element, the host-atom count of that supercell of the pristine host;
+- the selected site must lie within 0.5 Å of the relaxed muon after lattice
+  translations, so the correction belongs to the site being calculated;
+- every displaced ion is paired with the nearest pristine site of its
+  element, and no two ions may share a pristine site.
+
+The supercell is recentred on the muon and expressed in the pristine host
+frame. Ion vectors start at the relaxed muon and pristine vectors at the
+selected site, so a rigid drift of the relaxed cell cancels.
+
+With ``Include equivalent sites``, each symmetry-equivalent site receives the
+correction carried to it by the host symmetry operation that maps the
+representative onto it: the displacement pattern is rotated with the
+operation, and the moments are evaluated at the mapped pristine sites. The
+magnetic order is not part of the host symmetry, so equivalent sites can
+receive different corrections.
+
+.. _magnetic-fields-dipolar-tensors:
+
+Calculate a dipolar tensor
+--------------------------
+
+The ``Dipolar Tensor…`` action opens a compact tensor workflow without adding
+more controls to the main Magnetic Fields tab. A dipolar tensor calculation
+requires a muon position and a set of magnetic-ion positions; it does not require
+a particular magnetic structure or moment direction. MuFinder therefore reuses
+the selected muon site from the Magnetic Fields page and lets you choose which
+host atoms should be treated as magnetic ions.
+
+1. Select a muon site on the page (see `Choose the muon site`_).
+2. Click ``Dipolar Tensor…``.
+3. In the ``Magnetic Ions`` group choose the magnetic ions: ``Atoms with
+   assigned moments``, ``All atoms``, ``Element``, ``Equivalent site`` or
+   ``Atom indices`` (counted from 1 in the host's atom order, like the
+   magnetic-structure builder and the ``Equivalent site`` labels). When the
+   magnetic-structure builder already contains
+   enabled components with non-zero moments, the dialog defaults to the atoms
+   targeted by those components. If no atoms currently have assigned moments,
+   MuFinder does not guess: the ``Calculate`` button stays disabled until you
+   explicitly select magnetic ions.
+4. Optionally tick ``Include equivalent muon sites``.
+5. Click ``Calculate``.
+6. Read the ``Most Recent Result`` group and choose the ``Units``: ``T/μB``,
+   ``MHz/μB``, or ``Å⁻³``, matching the hyperfine-coupling unit choices.
+
+.. figure:: ../_generated/screenshots/dipolar_tensor_dialog.webp
+   :alt: The Dipolar Tensor dialog with atom 1, the corner Co of CoF2,
+         and its diagonal dipolar tensor at the 4c site in T per muB.
+
+   The corner-sublattice tensor at the CoF₂ 4c site.
+
+The result is shown inside the tensor dialog rather than the field results
+table. Each selected or symmetry-equivalent muon site receives one ``3 x 3``
+tensor. The dialog keeps the most recent tensor result for the current Magnetic
+Fields workspace, and saved workspaces restore that latest result when reopened.
+
+``muesr`` returns the lattice sum
+:math:`\sum (3\hat{\mathbf{r}}\hat{\mathbf{r}} - 1)/r^3` in ``Å⁻³``; MuFinder
+multiplies it by :math:`\mu_0 \mu_B / (4\pi\,\text{Å}^3) = 0.9274` T/μB, so the
+tensor applied to a moment in μB gives the dipolar field in tesla. The ``Å⁻³``
+display uses the hyperfine-coupling convention,
+:math:`\mathbf{B} = (2\mu_0/3)\,\mu_B A\,\mathbf{m}`, so it shows the contact
+coupling that would give the same field rather than ``muesr``'s raw lattice sum.
+
+Only tensor-relevant numerical settings are shown in this workflow. The tensor
+dialog reports the lattice-summation supercell used for the calculation, but it
+does not expose incommensurate phase sampling, histogram bins, demagnetizing
+field shape, or hyperfine coupling because those settings do not affect a
+dipolar tensor. This keeps tensor coupling analysis separate from finite
+dipolar-field and incommensurate field-distribution calculations while still
+sharing the same host structure and muon-site selection.
+
+Calculate nuclear relaxation
+----------------------------
+
+The ``Nuclear Relaxation…`` action estimates static nuclear dipolar
+linewidths for the selected muon site. It is available whenever a host
+structure and muon site are selected, and does not require an electronic
+magnetic model. MuFinder sums the second moment of the nuclear dipolar field
+at the muon (J. H. Van Vleck, Phys. Rev. **74**, 1168 (1948), DOI:
+``10.1103/PhysRev.74.1168``) over the natural-abundance isotopes of each
+element, from bundled isotope data.
+
+1. Select a muon site on the page, then click ``Nuclear Relaxation…``.
+2. In the ``Mode`` group choose the ``Field regime`` (``Zero field`` or
+   ``Transverse field``) and the ``Sample`` (``Polycrystal`` or ``Single
+   crystal``). The four supported modes are zero-field single crystal,
+   zero-field polycrystal, transverse-field single crystal and
+   transverse-field polycrystal.
+3. For a single crystal, enter the ``Crystal-axis direction`` as ``x``, ``y``
+   and ``z`` components (default ``0, 0, 1``). They are normalized before
+   calculation. In TF this direction is the applied-field axis. In ZF it is the
+   initial muon-polarisation axis. Polycrystal modes use analytical
+   orientational averages and ignore the direction inputs.
+4. Optionally untick elements under ``Elements`` to leave their nuclei out of
+   the sum. Every element of the host is ticked by default;
+   ``Calculate`` refuses to run with none ticked. The choice is saved with the
+   other options.
+5. For a ZF mode, optionally tick ``Include ZF quadrupolar correction``. The
+   quadrupolar correction is available only for ZF modes.
+6. If the selected site comes from a structural-relaxation cluster and the
+   representative relaxed structure is still available, optionally tick
+   ``Apply muon-induced distortion correction``. It is available when the
+   selected relaxation-cluster site has a derived distorted structure.
+7. Click ``Calculate``.
+
+.. figure:: ../_generated/screenshots/nuclear_relaxation_dialog.webp
+   :alt: The Nuclear Relaxation dialog with a zero-field polycrystal result at
+         the CoF2 4c site, the distortion correction applied, and its Co and F
+         contributions.
+
+   A zero-field polycrystal width at the distortion-corrected CoF₂ 4c site.
+
+The ``Results`` group reports :math:`\sigma` in :math:`\mu\mathrm{s}^{-1}`,
+:math:`\sigma^2` and :math:`M_2` in :math:`\mu\mathrm{s}^{-2}`, equivalent
+field width :math:`\Delta B` in Tesla, the explicit sum radius in Å to one
+decimal at most (the row's tooltip says it is the largest of the elements'), the number
+of nuclei in that sum, the elements included (``All`` when none was left out), and
+element-resolved :math:`\sigma^2` contributions. For ZF
+single-crystal calculations it also reports the perpendicular and parallel
+widths :math:`\sigma_\perp^2` and :math:`\sigma_\parallel^2`.
+
+All ZF widths use the Kubo-Toyabe per-component convention: :math:`\sigma^2`
+is the variance :math:`\Delta^2 = \gamma_\mu^2 \langle B_i^2 \rangle` of a
+single Cartesian field component, the quantity that enters the Kubo-Toyabe
+polarisation function. In this convention the transverse single-crystal width
+is :math:`\sigma_\perp^2 = \gamma_\mu^2 \langle B_x^2 + B_y^2 \rangle / 2` and
+the longitudinal width is
+:math:`\sigma_\parallel^2 = \gamma_\mu^2 \langle B_z^2 \rangle`, with
+:math:`z` along the initial muon polarisation. The orientational (powder)
+average of both single-crystal widths therefore equals the ZF polycrystal
+width of R. S. Hayano *et al.*, Phys. Rev. B **20**, 850 (1979), DOI:
+``10.1103/PhysRevB.20.850``, so single-crystal and
+polycrystal results share one normalization.
+
+The sum over nuclei has no radius or tolerance to set. MuFinder sums every
+nucleus within :math:`R` of the muon explicitly, with the cells to visit found
+from the plane spacings of a reduced basis, so the choice of basis does not matter,
+however skewed the cell. Each element has its own :math:`R`: 20 Å, or five mean
+spacings of that element's nuclei when they are sparser than that allows, as for
+one nucleus in a 16 Å cell or a dilute dopant, and at least twice the distance to
+the nearest of them, for a muon in the vacuum of a slab. ``Explicit sum radius``
+reports the largest. The nuclei beyond :math:`R` are a uniform
+continuum of density :math:`n_w = \sum_\text{cell} w / V`, with
+:math:`w = \sum_\text{isotopes} c\,\gamma^2 I(I+1)` per nucleus for abundance
+:math:`c`, so their share of the sum has an exact integral:
+
+.. math::
+
+   \sum_{r > R} \frac{w}{r^6} \approx \int_R^\infty \frac{n_w}{r^6}\, 4\pi r^2\, \mathrm{d}r
+   = \frac{4\pi n_w}{3 R^3}.
+
+This tail is isotropic. It adds to the single-crystal widths along every
+direction exactly what it adds to the polycrystal width of the same regime. The
+sum with its tail matches a direct sum to 100 Å to about 0.001 % in
+:math:`\sigma` for the Fe, MnSi and CoF₂ hosts of the worked examples and for a
+sheared copper cell, and to about 0.05 % for one copper nucleus in a 16 Å cell.
+
+The tail assumes nuclei in every direction, which a slab does not have. For a
+muon at or inside a realistic surface this does not matter: in a six-layer copper
+slab, a muon between the middle layers or 1.5 Å above the surface is within
+0.004 % in :math:`\sigma`. Far out in the vacuum the single-crystal widths are
+off by up to 2 %, on very small widths: in a two-layer copper slab, 15 Å above the
+surface, +1.7 % along (0, 0, 1) and −2.0 % along (1, 1, 1).
+
+With the distortion correction ticked, MuFinder pairs the relaxed supercell
+with the active host exactly as for the dipolar field, with the same checks (see
+:ref:`Apply muon-induced distortion corrections
+<magnetic-fields-distortion-corrections>`), places the displaced and pristine
+ions around a muon at the centre of the correction cell, and adds the local
+finite-cell correction to the pristine lattice sum:
+
+.. math::
+
+   \sigma^2_\mathrm{corrected} =
+   \sigma^2_\mathrm{undistorted} +
+   \sigma^2_\mathrm{distorted,sc} -
+   \sigma^2_\mathrm{pristine,sc}.
+
+The isotope table is bundled as MuFinder package data for reproducibility.
+Natural abundances are used; isotope-enrichment editing and field-dependent TF
+quadrupolar linewidth models are not part of this workflow.
+
+Save results and workspaces
+---------------------------
+
+.. figure:: ../_generated/screenshots/fe_magnetic_workspaces.webp
+   :alt: The project navigator listing two saved Magnetic Fields workspaces,
+         Octahedral site and Tetrahedral site, with the octahedral workspace's
+         restored field results.
+
+   Two workspaces of bcc iron (:doc:`/user_guide/examples/fe`), one per
+   candidate site, under ``Magnetic Fields`` in the navigator. The page shows
+   the octahedral workspace with its restored results.
+
+To keep a magnetic structure and its settings for later:
+
+1. Click the save button in the page header (tooltip ``Save this magnetic-field
+   workspace``). It stores the current magnetic structure and form settings as
+   a named magnetic-field workspace.
+2. Find the workspace in the project navigator, listed under ``Magnetic Fields``.
+3. To rename it, edit its page title.
+4. To delete it, use the delete button on its own page, or right-click its
+   navigator row and choose ``Delete Workspace…``.
+
+The latest field, dipolar-tensor and nuclear-relaxation results of the Magnetic
+Fields page and of each saved workspace are saved with the project and restored
+when you reopen it. The calculations run inside MuFinder, so the results belong
+to no calculation run. Each of the page and every workspace keeps one latest
+result of each kind. A new calculation replaces the previous result of that
+kind; changing a setting that invalidates the field results, or clearing a
+dialog's results, removes it. Saving a workspace copies the page's results to
+the workspace, and deleting a workspace deletes its results. The page's form
+settings stay in the project's UI state and do not repeat the results.
+
+Every result also remembers which source supplied its muon site (UEP
+sites, relaxation clustering or a custom position). A UEP source
+marks the result as an unrelaxed estimate (see `UEP sites are estimates`_). A
+result saved without a source takes the source of the form's selected site,
+except dipolar-tensor and nuclear-relaxation results: those are kept when a
+different muon site is chosen, so the selected site says nothing about where
+they were computed, and a record without a source has none and is not marked as
+an estimate.
+
+.. _older-method-results:
+
+Results from an older method
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A correction to a calculation can change what the same inputs give, so every
+result records the version of the method that calculated it. A stored result
+from an older version, or with no version recorded, shows one line: ``Calculated
+with an older method. Calculate to update.`` The line appears beside the results
+status on the Magnetic Fields page and in the results of the ``Dipolar Tensor``
+and ``Nuclear Relaxation`` dialogs.
+
+The line means the numbers shown may differ from what the same inputs give now.
+A correction marks only the results it touches. The tensor of a ``Plate from
+photo`` has its own version, which a field result records when it used such a
+plate, so a field result calculated with any other sample is not marked by a
+change to it. A field result from before that version was recorded reads the
+sample saved with it: a ``Plate from photo``, or a voxel grid saved with another
+padding or with smoothing, is older, and anything else is not. Dipolar tensor and
+nuclear relaxation results do not use the sample.
+The list of translations of an order with ``q ≠ 0`` has its own version too. A
+commensurate result for such an order that lists only the field at
+:math:`\mathbf{T} = 0` is older, and so is the single row of a wavevector of period
+13 or more, which MuFinder samples as a distribution. A distribution is older when its
+structure has a component at ``q ≠ 0`` with a period up to the
+``commensurate_max_period`` recorded in its calculation parameters (64 when none is
+recorded), which it held at :math:`\mathbf{T} = 0`; the page reads that from the
+structure it keeps, since choosing another structure clears the results. A result at ``q = 0``, any other distribution and
+the list of an approximant are not marked by that correction.
+Distributions also record the correction that gives reciprocal-equivalent
+wavevectors their shared signed phase. A saved distribution with a long-period
+pair such as ``(q, 0, 0)`` and ``(1 − q, 0, 0)`` is marked older when it lacks
+that correction, including when both components depend on another phase axis.
+Other distributions and commensurate lists retain their method status.
+Field and tensor results also record the rule that places a moment typed on the
+Host Structure page. A stored result that records none is older when the spins the
+page reads hold a moment with no atom number of its own whose label names an atom
+other than its place in the list of moments: on a host of ``F`` then ``Co`` with
+spins 0 and 3, the moment labelled ``Co2`` is first in that list, so such a result
+was calculated with it on the F atom. A dipolar tensor is older in that case only
+when it summed over ``Atoms with assigned moments``. A host whose magnetic atoms
+come first, an MCIF import, a structure built in the builder and a workspace's own
+structure are not marked by that correction, and nuclear relaxation does not use
+the moments. A spin edit on the Host Structure page, switching or loading the active
+host, pinning a workspace and changing the tensor selection without calculating
+keep the mark as it was; results calculated after a spin edit are not marked.
+MuFinder never rewrites or recalculates them on its own, so they stay exactly as
+calculated, and saving, reopening or saving a workspace keeps them and the line.
+The calculation's ``Calculate`` button replaces them with new numbers and clears
+the line. Each of the three results has its own line and its own ``Calculate``.
+
+The mark follows older field values wherever they go. The distribution plot
+title ends in ``(older method)``, its ``Export Data…`` file carries an ``# Older
+method:`` header line, and the project survey's local-field marker ends in
+``(older)``, for example ``≈1.06 T (older)``. A simulation that used older fields
+says so on the Polarisation page and in its export until it is run again, even
+after those fields are recalculated (see :doc:`polarisation`).
+
+For developers: the muon-site source is stored as ``site_source`` (``uep_clustering``,
+``relaxation_clustering`` or ``custom``), and the method version as
+``calculation_version``. The results are ``Result`` records of type ``magnetic_field``,
+``magnetic_dipolar_tensor`` and ``nuclear_relaxation`` whose ``data["owner"]``
+is ``magnetic_fields`` for the page or the workspace id for a saved workspace.
+A ``magnetic_field`` record holds ``kind`` (``commensurate`` or
+``distribution``) and one ``results`` entry per site: a commensurate entry
+stores ``site_label``, ``muon_position``, ``total_T``, ``magnitude_T`` and its
+field terms (the correction is stored as ``distortion_T`` beside the uncorrected
+``dipolar_T``), and ``calculation_parameters`` with the ``contact_coupling`` in
+``Å⁻³``, ``nnn`` and ``rcont`` of the contact shell it used, and
+``contact_shell_warnings``, the tie warnings of its site, when there are any;
+a distribution entry stores ``fields_T``, or for a grid with exact phase sets
+``fields_T_factors`` (see :ref:`Multi-q Incommensurate Sampling
+<magnetic-fields-incommensurate-sampling>`), the histogram,
+``calculation_parameters`` (with ``contact_shell_warnings`` as for a
+commensurate entry), its ``convergence`` checks, ``terms`` (each of
+``dipolar``, ``lorentz``, ``contact``, ``demag`` and ``applied`` with its
+``mean_T`` and ``rms_T``), ``total_rms_T``, and the constant ``applied_T`` and
+``demag_T`` vectors; the finite field
+list of a commensurate approximant is stored as ``commensurate`` entries, one per
+translation as for any commensurate result. Such a result with ``q ≠ 0``, and every
+distribution, records ``translation_method_version``. Every field result and
+every tensor row records ``host_moment_method_version``. A
+``magnetic_dipolar_tensor`` record holds ``results`` and a
+``nuclear_relaxation`` record holds ``result``. The form state saves the
+measured magnetisation as ``use_measured_magnetization`` and
+``measured_magnetization``, the applied field as ``applied_field_T``, and the
+contact shell as ``contact_nnn`` and ``contact_rcont``. A ``nuclear_relaxation``
+result keeps its explicit sum radius as ``convergence_radius_a``. See :doc:`/compatibility_policy` for the persisted
+names.
+
+Dependency handling
+-------------------
+
+``muesr`` and ``muLFC`` are optional scientific backends for periodic local-field
+calculations. MuFinder imports these engines only when a calculation requires
+them, so an environment without those packages raises a clear dependency error in
+the Magnetic Fields workflow rather than failing during application startup. The
+packaged desktop builds install these optional backends when they are available
+for the target platform. On Windows, MuFinder follows the older project build
+strategy and installs ``muLFC`` from the upstream Git source because PyPI does
+not currently publish a Windows wheel or source distribution for that backend.
+MuFinder keeps the released ``muesr`` working on every Python version it
+supports.
+
+Current scope
+-------------
+
+The implemented workflow covers the propagation-vector data model, the
+magnetic-structure builder and multi-q texture dialogs, commensurate local
+fields with optional muon-induced distortion corrections, incommensurate field
+distributions with convergence checks, finite field lists of commensurate
+approximants, dipolar tensors, demagnetizing corrections, applied fields, and
+nuclear dipolar linewidths. The :doc:`polarisation` page simulates the muon
+polarisation and its spectrum from these results; the library also provides the
+reference relaxation functions (see :doc:`/api/using_mufinder`). Distortion
+corrections apply to commensurate fields, commensurate approximants and
+incommensurate field distributions; dipolar tensors always use the pristine
+host.
+
+.. toctree::
+   :hidden:
+
+   magnetic_fields_theory

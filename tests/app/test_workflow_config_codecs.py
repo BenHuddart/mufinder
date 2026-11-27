@@ -1,0 +1,611 @@
+"""Characterisation tests for the workflow configuration codecs.
+
+Each codec stores a workflow's configuration in
+``CalculationDefinition.parameters["configuration"]``. The expected payloads
+below pin the stored shape exactly, and each config survives a trip through
+the JSON persistence codec unchanged.
+"""
+
+from __future__ import annotations
+
+from dataclasses import replace
+import json
+from pathlib import Path
+import shutil
+from uuid import UUID, uuid4
+
+import pytest
+
+from mufinder.app.convergence_types import ConvergenceConfig
+from mufinder.app.relaxation_types import (
+    MuonRelaxationConfig,
+    MuonRelaxationRow,
+    PristineRelaxationConfig,
+    PristineRelaxationRow,
+)
+from mufinder.app.uep_types import UepConfig, UepSourceRow
+from mufinder.app.workflow_config_codecs import (
+    batch_row_payload,
+    deserialize_convergence_config,
+    deserialize_muon_relaxation_config,
+    deserialize_pristine_relaxation_config,
+    normalized_parameter_values,
+    pristine_relaxation_row_signature,
+    deserialize_uep_config,
+    muon_relaxation_row_key,
+    muon_relaxation_row_signature,
+    normalized_supercell_matrix,
+    num_farms_from_extras,
+    row_settings_payload,
+    serialize_convergence_config,
+    serialize_muon_relaxation_config,
+    serialize_pristine_relaxation_config,
+    serialize_uep_config,
+    source_row_parameter_values,
+    store_workflow_row_configuration,
+    uep_row_signature,
+    workflow_row_configuration,
+    workflow_row_configuration_exists,
+)
+from mufinder.castep_io.types import ValueWithUnit
+from mufinder.domain.enums import WorkflowStage
+from mufinder.domain.models import CalculationDefinition
+from mufinder.persistence.codec import to_jsonable
+from mufinder.services.project_service import ProjectService
+
+_MATRIX = ((2, 0, 0), (0, 2, 0), (0, 0, 1))
+_MATRIX_PAYLOAD = [[2, 0, 0], [0, 2, 0], [0, 0, 1]]
+_SITE_ID = UUID("6f1c2d3e-4a5b-4c6d-8e7f-0123456789ab")
+_BATCH_ID = UUID("0a1b2c3d-4e5f-4a6b-9c7d-8e9fa0b1c2d3")
+
+
+def _params() -> dict[str, object]:
+    return {
+        "cut_off_energy": ValueWithUnit(value=500.0, unit="eV"),
+        "kpoint_mp_grid": (4, 4, 4),
+        "xc_functional": "PBE",
+    }
+
+
+def _through_json(payload: dict[str, object]) -> object:
+    return json.loads(json.dumps(to_jsonable(payload)))
+
+
+def _uep_config() -> UepConfig:
+    return UepConfig(
+        name_prefix="uep_source",
+        rows=(
+            UepSourceRow(
+                label="uep_a",
+                supercell_matrix=_MATRIX,
+                parameter_values=_params(),
+                added_advanced=("spin_polarized",),
+            ),
+            UepSourceRow(label="uep_b"),
+        ),
+    )
+
+
+def _pristine_config() -> PristineRelaxationConfig:
+    return PristineRelaxationConfig(
+        name_prefix="relax",
+        rows=(
+            PristineRelaxationRow(
+                label="cell_a",
+                fix_all_cell=True,
+                supercell_matrix=_MATRIX,
+                parameter_values=_params(),
+                added_advanced=("geom_method",),
+            ),
+            PristineRelaxationRow(label="cell_b"),
+        ),
+    )
+
+
+def _muon_config() -> MuonRelaxationConfig:
+    return MuonRelaxationConfig(
+        rows=(
+            MuonRelaxationRow(
+                site_id=_SITE_ID,
+                label="site_1",
+                initial_fractional_position=(0.25, 0.5, 0.75),
+                charge_state="muonium",
+                supercell_matrix=_MATRIX,
+                parameter_values=_params(),
+                added_advanced=("spin",),
+                imported=True,
+                import_batch_id=_BATCH_ID,
+            ),
+            MuonRelaxationRow(
+                site_id=_SITE_ID,
+                label="site_2",
+                initial_fractional_position=(0.0, 0.0, 0.5),
+            ),
+        )
+    )
+
+
+def _convergence_config() -> ConvergenceConfig:
+    return ConvergenceConfig(
+        sweep_parameter="kpoint_mp_grid",
+        sweep_values=((2, 2, 2), (4, 4, 4)),
+        shared_params=_params(),
+        overrides={frozenset({(4, 4, 4)}): {"xc_functional": "LDA"}},
+        name_prefix="kp_sweep",
+    )
+
+
+def _cutoff_config() -> ConvergenceConfig:
+    return ConvergenceConfig(
+        sweep_values=(300.0, 400.0),
+        shared_params={"xc_functional": "PBE"},
+        overrides={frozenset({400.0}): {"xc_functional": "LDA"}},
+        name_prefix="cutoff_convergence",
+    )
+
+
+def test_uep_config_stored_shape_and_round_trip() -> None:
+    payload = serialize_uep_config(_uep_config())
+
+    assert payload == {
+        "name_prefix": "uep",
+        "rows": [
+            {
+                "label": "uep_a",
+                "supercell_matrix": _MATRIX_PAYLOAD,
+                "parameter_values": _params(),
+                "added_advanced": ["spin_polarized"],
+            },
+            {
+                "label": "uep_b",
+                "supercell_matrix": None,
+                "parameter_values": {},
+                "added_advanced": [],
+            },
+        ],
+    }
+    expected = UepConfig(name_prefix="uep", rows=_uep_config().rows)
+    assert deserialize_uep_config(payload) == expected
+    assert deserialize_uep_config(_through_json(payload)) == expected
+
+
+def test_pristine_relaxation_config_stored_shape_and_round_trip() -> None:
+    payload = serialize_pristine_relaxation_config(_pristine_config())
+
+    assert payload == {
+        "name_prefix": "relax",
+        "rows": [
+            {
+                "label": "cell_a",
+                "fix_all_cell": True,
+                "supercell_matrix": _MATRIX_PAYLOAD,
+                "parameter_values": _params(),
+                "added_advanced": ["geom_method"],
+            },
+            {
+                "label": "cell_b",
+                "fix_all_cell": False,
+                "supercell_matrix": None,
+                "parameter_values": {},
+                "added_advanced": [],
+            },
+        ],
+    }
+    assert deserialize_pristine_relaxation_config(payload) == _pristine_config()
+    assert deserialize_pristine_relaxation_config(_through_json(payload)) == _pristine_config()
+
+
+def test_muon_relaxation_config_stored_shape_and_round_trip() -> None:
+    payload = serialize_muon_relaxation_config(_muon_config())
+
+    assert payload == {
+        "rows": [
+            {
+                "site_id": str(_SITE_ID),
+                "label": "site_1",
+                "initial_fractional_position": [0.25, 0.5, 0.75],
+                "charge_state": "muonium",
+                "supercell_matrix": _MATRIX_PAYLOAD,
+                "parameter_values": _params(),
+                "added_advanced": ["spin"],
+                "imported": True,
+                "import_batch_id": str(_BATCH_ID),
+            },
+            {
+                "site_id": str(_SITE_ID),
+                "label": "site_2",
+                "initial_fractional_position": [0.0, 0.0, 0.5],
+                "charge_state": "positive_muon",
+                "supercell_matrix": None,
+                "parameter_values": {},
+                "added_advanced": [],
+                "imported": False,
+                "import_batch_id": None,
+            },
+        ]
+    }
+    assert deserialize_muon_relaxation_config(payload) == _muon_config()
+    assert deserialize_muon_relaxation_config(_through_json(payload)) == _muon_config()
+
+
+@pytest.mark.parametrize(
+    ("config", "expected_payload"),
+    [
+        (
+            _convergence_config(),
+            {
+                "name_prefix": "kp_sweep",
+                "sweep_parameter": "kpoint_mp_grid",
+                "sweep_values": [[2, 2, 2], [4, 4, 4]],
+                "shared_params": _params(),
+                "overrides": [{"cutoffs": [[4, 4, 4]], "params": {"xc_functional": "LDA"}}],
+            },
+        ),
+        (
+            _cutoff_config(),
+            {
+                "name_prefix": "cutoff_convergence",
+                "sweep_parameter": "cut_off_energy",
+                "sweep_values": [300.0, 400.0],
+                "shared_params": {"xc_functional": "PBE"},
+                "overrides": [{"cutoffs": [400.0], "params": {"xc_functional": "LDA"}}],
+            },
+        ),
+    ],
+    ids=["kpoint", "cutoff"],
+)
+def test_convergence_config_stored_shape_and_round_trip(
+    config: ConvergenceConfig,
+    expected_payload: dict[str, object],
+) -> None:
+    payload = serialize_convergence_config(config)
+
+    assert payload == expected_payload
+    assert deserialize_convergence_config(payload) == config
+    assert deserialize_convergence_config(_through_json(payload)) == config
+
+
+def test_deserialize_skips_unreadable_rows_and_matrices() -> None:
+    payload = {
+        "name_prefix": "  ",
+        "rows": [
+            "not a row",
+            {"label": "   "},
+            {"label": "tuple_matrix", "supercell_matrix": ((2, 0, 0), (0, 2, 0), (0, 0, 2))},
+            {"label": "bad_matrix", "supercell_matrix": [[1, 0], [0, 1], [0, 0]]},
+            {"label": "legacy", "params": {"xc_functional": "PBE"}, "added_advanced": "spin"},
+        ],
+    }
+
+    config = deserialize_pristine_relaxation_config(payload)
+
+    assert config == PristineRelaxationConfig(
+        name_prefix="pristine_relax",
+        rows=(
+            PristineRelaxationRow(label="tuple_matrix"),
+            PristineRelaxationRow(label="bad_matrix"),
+            PristineRelaxationRow(label="legacy", parameter_values={"xc_functional": "PBE"}),
+        ),
+    )
+    assert deserialize_uep_config({"rows": "nope"}) is None
+    assert deserialize_muon_relaxation_config([]) is None
+
+
+def test_muon_deserialize_skips_rows_without_site_or_position() -> None:
+    payload = {
+        "rows": [
+            {"site_id": "not-a-uuid", "label": "a", "initial_fractional_position": [0, 0, 0]},
+            {"site_id": str(_SITE_ID), "label": "b", "initial_fractional_position": [0, 0]},
+            {
+                "site_id": str(_SITE_ID),
+                "label": "c",
+                "fractional_position": [0.1, 0.2, 0.3],
+                "params": {"xc_functional": "PBE"},
+                "import_batch_id": "not-a-uuid",
+            },
+        ]
+    }
+
+    config = deserialize_muon_relaxation_config(payload)
+
+    # ``params`` is not read for muon rows, and an unreadable batch id is dropped.
+    assert config == MuonRelaxationConfig(
+        rows=(
+            MuonRelaxationRow(
+                site_id=_SITE_ID, label="c", initial_fractional_position=(0.1, 0.2, 0.3)
+            ),
+        )
+    )
+
+
+def test_convergence_deserialize_rejects_unreadable_sweeps() -> None:
+    assert deserialize_convergence_config({"sweep_parameter": "smearing_width"}) is None
+    assert (
+        deserialize_convergence_config(
+            {"sweep_parameter": "kpoint_mp_grid", "sweep_values": [[1, 2]]}
+        )
+        is None
+    )
+    assert deserialize_convergence_config({"sweep_values": [300.0], "shared_params": []}) is None
+
+    # Schema 2 stores a sweep only in ``sweep_values``; the schema 1 key is
+    # migrated on load and no longer read.
+    assert deserialize_convergence_config({"cutoff_energies": [300.0]}) == ConvergenceConfig(
+        name_prefix="cutoff_convergence"
+    )
+
+    config = deserialize_convergence_config(
+        {
+            "sweep_values": [300.0],
+            "overrides": [
+                {"cutoffs": ["x"], "params": {}},
+                {"sweep_values": [300.0], "params": {"task": "X"}},
+            ],
+        }
+    )
+
+    assert config == ConvergenceConfig(
+        sweep_values=(300.0,),
+        overrides={frozenset({300.0}): {"task": "X"}},
+        name_prefix="cutoff_convergence",
+    )
+
+
+def test_convergence_configs_of_a_schema_1_project_read_after_migration(tmp_path: Path) -> None:
+    fixture = Path(__file__).parents[1] / "fixtures" / "projects" / "schema_v1_cutoff_sweep"
+    root = tmp_path / "schema_v1.mufinder"
+    shutil.copytree(fixture, root)
+
+    calculations = ProjectService().load_project(root).calculations
+    cutoff = calculations[UUID("2a16e0b8-9427-4964-8009-503aa12bd7c1")]
+    kpoint = calculations[UUID("382dc08c-6750-40f1-9967-8758b292d57e")]
+
+    assert deserialize_convergence_config(cutoff.parameters["configuration"]) == ConvergenceConfig(
+        sweep_values=(300.0, 400.0, 500.0),
+        shared_params={"xc_functional": "PBE"},
+        overrides={frozenset({500.0}): {"max_scf_cycles": 120}},
+        name_prefix="cutoff",
+    )
+    assert deserialize_convergence_config(kpoint.parameters["configuration"]) == ConvergenceConfig(
+        sweep_parameter="kpoint_mp_grid",
+        sweep_values=((2, 2, 2), (4, 4, 4)),
+        shared_params={"xc_functional": "PBE"},
+        name_prefix="kpoint",
+    )
+
+
+def test_normalized_supercell_matrix() -> None:
+    assert normalized_supercell_matrix(None) is None
+    assert normalized_supercell_matrix(((2.0, 0, 0), (0, 2, 0), (0, 0, 1))) == _MATRIX  # type: ignore[arg-type]
+    with pytest.raises(ValueError):
+        normalized_supercell_matrix(((1, 0), (0, 1), (0, 0)))  # type: ignore[arg-type]
+
+
+def test_uep_config_reads_the_legacy_prefix_as_uep() -> None:
+    config = deserialize_uep_config({"name_prefix": "uep_source", "rows": []})
+
+    assert config is not None
+    assert config.name_prefix == "uep"
+
+
+def _definition_with_rows(row_settings: object) -> CalculationDefinition:
+    return CalculationDefinition(
+        workflow_stage=WorkflowStage.QUANTUM_CORRECTIONS,
+        calc_type="castep_quantum_phonon_set",
+        parameters={"configuration": {"row_settings": row_settings}},
+    )
+
+
+def test_workflow_row_configuration_restores_values_and_splits_extras() -> None:
+    definition = _definition_with_rows(
+        {
+            "site": {
+                "parameter_values": {"cut_off_energy": {"value": 500.0, "unit": "eV"}},
+                "added_advanced": ["spin_polarized", 3],
+                "num_farms": 4,
+                "pseudopotential_family": "ultrasoft",
+            },
+            "legacy": {"params": {"xc_functional": "PBE"}},
+        }
+    )
+
+    params, advanced, extras = workflow_row_configuration(definition, "site")
+
+    assert params == {"cut_off_energy": ValueWithUnit(500.0, "eV")}
+    assert advanced == ("spin_polarized",)
+    assert extras == {"num_farms": 4, "pseudopotential_family": "ultrasoft"}
+    assert workflow_row_configuration(definition, "legacy")[0] == {"xc_functional": "PBE"}
+    assert workflow_row_configuration(definition, "missing") == ({}, (), {})
+    assert workflow_row_configuration(None, "site") == ({}, (), {})
+    assert workflow_row_configuration(_definition_with_rows([]), "site") == ({}, (), {})
+
+
+def test_workflow_row_configuration_exists_ignores_blank_extras() -> None:
+    definition = _definition_with_rows(
+        {"blank": {"pseudopotential_family": " "}, "farmed": {"num_farms": 2}}
+    )
+
+    assert workflow_row_configuration_exists(definition, "blank") is False
+    assert workflow_row_configuration_exists(definition, "farmed") is True
+    assert workflow_row_configuration_exists(definition, "missing") is False
+
+
+@pytest.mark.parametrize(("raw", "expected"), [(3, 3), ("2", 2), (0, 1), ("lots", 1), (None, 1)])
+def test_num_farms_from_extras_is_at_least_one(raw: object, expected: int) -> None:
+    assert num_farms_from_extras({"num_farms": raw}) == expected
+    assert num_farms_from_extras({}) == 1
+
+
+def test_row_settings_payload_drops_task_and_sorts_advanced() -> None:
+    payload = row_settings_payload(
+        {"task": "SINGLEPOINT", "cut_off_energy": ValueWithUnit(500.0, "eV")},
+        ("spin_polarized", "basis_precision", "spin_polarized"),
+        {"num_farms": 2},
+    )
+
+    assert payload == {
+        "parameter_values": {"cut_off_energy": to_jsonable(ValueWithUnit(500.0, "eV"))},
+        "added_advanced": ["basis_precision", "spin_polarized"],
+        "num_farms": 2,
+    }
+    assert row_settings_payload({"task": "SINGLEPOINT"}, (), {}) is None
+
+
+def test_batch_row_payload_keeps_a_rows_own_untouched_mixed_values() -> None:
+    definition = _definition_with_rows(
+        {
+            "explicit": {
+                "parameter_values": {"max_scf_cycles": 80, "xc_functional": "LDA"},
+                "added_advanced": ["nextra_bands"],
+            },
+            # "derived" has no stored value for max_scf_cycles: it takes
+            # it from its source defaults and must keep doing so.
+            "derived": {"parameter_values": {"xc_functional": "LDA"}, "added_advanced": []},
+        }
+    )
+    payload = {
+        "parameter_values": {"xc_functional": "PBE"},
+        "added_advanced": ["nextra_bands"],
+        "num_farms": 2,
+    }
+    untouched = {"max_scf_cycles", "nextra_bands"}
+
+    explicit = batch_row_payload(definition, "explicit", payload, untouched)
+    derived = batch_row_payload(definition, "derived", payload, untouched)
+
+    assert explicit == {
+        "parameter_values": {"xc_functional": "PBE", "max_scf_cycles": 80},
+        "added_advanced": ["nextra_bands"],
+        "num_farms": 2,
+    }
+    assert derived == {
+        "parameter_values": {"xc_functional": "PBE"},
+        "added_advanced": [],
+        "num_farms": 2,
+    }
+    # With nothing untouched the dialog's payload is stored as it is.
+    assert batch_row_payload(definition, "explicit", payload, set()) is payload
+    # A row with nothing of its own and an empty dialog stores nothing.
+    assert batch_row_payload(definition, "missing", None, {"xc_functional"}) is None
+
+
+def test_store_workflow_row_configuration_adds_and_removes_rows() -> None:
+    definition = CalculationDefinition(
+        workflow_stage=WorkflowStage.ENERGY_BARRIERS,
+        calc_type="castep_nudged_elastic_band_set",
+        parameters={"configuration": "unreadable"},
+    )
+
+    store_workflow_row_configuration(definition, "path", {"num_farms": 3})
+    assert definition.parameters["configuration"] == {"row_settings": {"path": {"num_farms": 3}}}
+
+    store_workflow_row_configuration(definition, "path", None)
+    assert definition.parameters["configuration"] == {}
+
+
+def test_source_row_parameter_values_layers_the_row_over_its_source() -> None:
+    definition = _definition_with_rows([])
+    store_workflow_row_configuration(
+        definition,
+        "site",
+        {
+            "parameter_values": {
+                "max_scf_cycles": 80,
+                "xc_functional": "PBE0",
+                "phonon_method": "DFPT",
+            }
+        },
+    )
+    inherited = {"max_scf_cycles": 60, "spin_polarized": True, "task": "GEOMETRYOPTIMIZATION"}
+
+    values = source_row_parameter_values(
+        definition,
+        "site",
+        inherited,
+        dropped=("task", "phonon_method"),
+        defaults={"elec_energy_tol": 1e-9, "spin_polarized": False},
+    )
+
+    assert values == {
+        "max_scf_cycles": 80,
+        "xc_functional": "PBE0",
+        "spin_polarized": True,
+        "elec_energy_tol": 1e-9,
+    }
+    assert inherited["task"] == "GEOMETRYOPTIMIZATION"
+    assert source_row_parameter_values(None, "site", {}) == {}
+
+
+def test_pristine_row_signature_tells_rows_apart_by_their_stored_settings() -> None:
+    row = PristineRelaxationRow(label="a", parameter_values={"geom_max_iter": 100})
+
+    assert pristine_relaxation_row_signature(row) == pristine_relaxation_row_signature(
+        replace(row, label="b")
+    )
+    for changed in (
+        replace(row, fix_all_cell=not row.fix_all_cell),
+        replace(row, supercell_matrix=((2, 0, 0), (0, 2, 0), (0, 0, 2))),
+        replace(row, parameter_values={"geom_max_iter": 200}),
+        replace(row, added_advanced=("fix_com",)),
+    ):
+        assert pristine_relaxation_row_signature(changed) != pristine_relaxation_row_signature(row)
+    # Values compare in their stored form, so a tuple equals the list it reloads as.
+    assert normalized_parameter_values({"grid": (1, 2, 3)}) == normalized_parameter_values(
+        {"grid": [1, 2, 3]}
+    )
+
+
+def test_uep_row_signature_tells_rows_apart_by_their_stored_settings() -> None:
+    row = UepSourceRow(label="a", parameter_values={"cut_off_energy": 500.0})
+
+    assert uep_row_signature(row) == uep_row_signature(replace(row, label="b"))
+    for changed in (
+        replace(row, supercell_matrix=((2, 0, 0), (0, 2, 0), (0, 0, 2))),
+        replace(row, parameter_values={"cut_off_energy": 600.0}),
+        replace(row, added_advanced=("spin_polarized",)),
+    ):
+        assert uep_row_signature(changed) != uep_row_signature(row)
+
+
+def test_muon_row_key_names_the_charge_state_and_label() -> None:
+    row = MuonRelaxationRow(
+        site_id=uuid4(),
+        label="Site 1",
+        initial_fractional_position=(0.1, 0.2, 0.3),
+        charge_state="muonium",
+    )
+
+    assert muon_relaxation_row_key(row) == "muonium:Site 1"
+    assert muon_relaxation_row_key(replace(row, charge_state="positive_muon")) == (
+        "positivemuon:Site 1"
+    )
+
+
+def test_muon_row_signature_tells_rows_apart_by_their_stored_settings() -> None:
+    row = MuonRelaxationRow(
+        site_id=uuid4(),
+        label="Site 1",
+        initial_fractional_position=(0.1, 0.2, 0.3),
+        charge_state="positive_muon",
+        parameter_values={"geom_max_iter": 100},
+    )
+
+    assert muon_relaxation_row_signature(row) == muon_relaxation_row_signature(
+        replace(
+            row,
+            initial_fractional_position=(0.1, 0.2, 0.3),
+            parameter_values={"geom_max_iter": 100},
+        )
+    )
+    for changed in (
+        replace(row, site_id=uuid4()),
+        replace(row, label="Site 2"),
+        replace(row, initial_fractional_position=(0.1, 0.2, 0.4)),
+        replace(row, charge_state="muonium"),
+        replace(row, supercell_matrix=((2, 0, 0), (0, 2, 0), (0, 0, 2))),
+        replace(row, parameter_values={"geom_max_iter": 200}),
+        replace(row, added_advanced=("fix_com",)),
+        replace(row, imported=True),
+        replace(row, import_batch_id=uuid4()),
+    ):
+        assert muon_relaxation_row_signature(changed) != muon_relaxation_row_signature(row)

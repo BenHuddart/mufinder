@@ -1,0 +1,846 @@
+{
+ "barriers-alpha": {
+  "files": [
+   "entities/calculations/<id>.json",
+   "entities/jobs/<id>.json",
+   "entities/jobs/<id>.json",
+   "entities/jobs/<id>.json",
+   "entities/jobs/<id>.json",
+   "entities/results/<id>.json",
+   "entities/results/<id>.json",
+   "entities/runs/<id>.json",
+   "entities/runs/<id>.json",
+   "entities/runs/<id>.json",
+   "entities/runs/<id>.json",
+   "entities/sites/<id>.json",
+   "entities/sites/<id>.json",
+   "entities/structures/<id>.json",
+   "entities/structures/<id>.json",
+   "entities/structures/<id>.json",
+   "files/energy_barriers_neb/barrier_siteA_to_siteB_path1_neb/barrier_siteA_to_siteB_path1_neb.cell",
+   "files/energy_barriers_neb/barrier_siteA_to_siteB_path1_neb/barrier_siteA_to_siteB_path1_neb.param",
+   "files/energy_barriers_neb/barrier_siteA_to_siteB_path2_neb/barrier_siteA_to_siteB_path2_neb.cell",
+   "files/energy_barriers_neb/barrier_siteA_to_siteB_path2_neb/barrier_siteA_to_siteB_path2_neb.param",
+   "project.json",
+   "provenance.jsonl",
+   "state.json"
+  ],
+  "inputs": {
+   "files/energy_barriers_neb/barrier_siteA_to_siteB_path1_neb/barrier_siteA_to_siteB_path1_neb.cell": "%BLOCK LATTICE_CART\nang\n5 0 0\n0 5 0\n0 0 5\n%ENDBLOCK LATTICE_CART\n\n%BLOCK POSITIONS_FRAC\nSi 0 0 0 SPIN=1\nSi 0.52 0.5 0.5 SPIN=-1\nH:mu 0.25 0.25 0.25\n%ENDBLOCK POSITIONS_FRAC\n\n%BLOCK POSITIONS_FRAC_PRODUCT\nSi 0 0 0 SPIN=1\nSi 0.52 0.5 0.5 SPIN=-1\nH:mu 0.75 0.25 0.25\n%ENDBLOCK POSITIONS_FRAC_PRODUCT\n\n%BLOCK POSITIONS_FRAC_INTERMEDIATE\nSi 0.000256903611167 0.000128613934924 0.000128613934924 SPIN=1\nSi 0.520224789254 0.502840983878 0.502840983878 SPIN=-1\nH:mu 0.499996615105 0.247030402187 0.247030402187\n%ENDBLOCK POSITIONS_FRAC_INTERMEDIATE\n\nFIX_COM : FALSE\n",
+   "files/energy_barriers_neb/barrier_siteA_to_siteB_path1_neb/barrier_siteA_to_siteB_path1_neb.param": "TASK : TRANSITIONSTATESEARCH\nSPIN_POLARIZED : TRUE\nTSSEARCH_METHOD : NEB\nTSSEARCH_MAX_PATH_POINTS : 11\nTSSEARCH_NEB_CLIMBING : TRUE\n",
+   "files/energy_barriers_neb/barrier_siteA_to_siteB_path2_neb/barrier_siteA_to_siteB_path2_neb.cell": "%BLOCK LATTICE_CART\nang\n5 0 0\n0 5 0\n0 0 5\n%ENDBLOCK LATTICE_CART\n\n%BLOCK POSITIONS_FRAC\nSi 0 0 0 SPIN=1\nSi 0.52 0.5 0.5 SPIN=-1\nH:mu 0.25 0.25 0.25\n%ENDBLOCK POSITIONS_FRAC\n\n%BLOCK POSITIONS_FRAC_PRODUCT\nSi 0 0 0 SPIN=1\nSi 0.52 0.5 0.5 SPIN=-1\nH:mu 0.75 0.25 0.25\n%ENDBLOCK POSITIONS_FRAC_PRODUCT\n\n%BLOCK POSITIONS_FRAC_INTERMEDIATE\nSi 0.000256903611167 0.000128613934924 0.000128613934924 SPIN=1\nSi 0.520224789254 0.502840983878 0.502840983878 SPIN=-1\nH:mu 0.499996615105 0.247030402187 0.247030402187\n%ENDBLOCK POSITIONS_FRAC_INTERMEDIATE\n\nFIX_COM : FALSE\n",
+   "files/energy_barriers_neb/barrier_siteA_to_siteB_path2_neb/barrier_siteA_to_siteB_path2_neb.param": "TASK : TRANSITIONSTATESEARCH\nSPIN_POLARIZED : TRUE\nTSSEARCH_METHOD : NEB\nTSSEARCH_MAX_PATH_POINTS : 11\nTSSEARCH_NEB_CLIMBING : TRUE\n"
+  },
+  "jobs": [
+   [
+    "barrier_siteA_to_siteB_path1_neb",
+    "active"
+   ],
+   [
+    "barrier_siteA_to_siteB_path2_neb",
+    "active"
+   ],
+   [
+    "mu-siteA",
+    "completed"
+   ],
+   [
+    "mu-siteB",
+    "completed"
+   ]
+  ],
+  "journal": [
+   "job_reset"
+  ],
+  "sent": [
+   [
+    "barrier_siteA_to_siteB_path1_neb",
+    "barrier_siteA_to_siteB_path1_neb",
+    "/remote/work/barrier_siteA_to_siteB_path1_neb"
+   ],
+   [
+    "barrier_siteA_to_siteB_path2_neb",
+    "barrier_siteA_to_siteB_path2_neb",
+    "/remote/work/barrier_siteA_to_siteB_path2_neb"
+   ]
+  ]
+ },
+ "barriers-local": {
+  "files": [
+   "entities/calculations/<id>.json",
+   "entities/jobs/<id>.json",
+   "entities/jobs/<id>.json",
+   "entities/jobs/<id>.json",
+   "entities/jobs/<id>.json",
+   "entities/results/<id>.json",
+   "entities/results/<id>.json",
+   "entities/runs/<id>.json",
+   "entities/runs/<id>.json",
+   "entities/sites/<id>.json",
+   "entities/sites/<id>.json",
+   "entities/structures/<id>.json",
+   "entities/structures/<id>.json",
+   "entities/structures/<id>.json",
+   "files/energy_barriers_neb/barrier_siteA_to_siteB_path1_neb/barrier_siteA_to_siteB_path1_neb.cell",
+   "files/energy_barriers_neb/barrier_siteA_to_siteB_path1_neb/barrier_siteA_to_siteB_path1_neb.param",
+   "files/energy_barriers_neb/barrier_siteA_to_siteB_path2_neb/barrier_siteA_to_siteB_path2_neb.cell",
+   "files/energy_barriers_neb/barrier_siteA_to_siteB_path2_neb/barrier_siteA_to_siteB_path2_neb.param",
+   "project.json",
+   "provenance.jsonl",
+   "state.json"
+  ],
+  "inputs": {
+   "files/energy_barriers_neb/barrier_siteA_to_siteB_path1_neb/barrier_siteA_to_siteB_path1_neb.cell": "%BLOCK LATTICE_CART\nang\n5 0 0\n0 5 0\n0 0 5\n%ENDBLOCK LATTICE_CART\n\n%BLOCK POSITIONS_FRAC\nSi 0 0 0 SPIN=1\nSi 0.52 0.5 0.5 SPIN=-1\nH:mu 0.25 0.25 0.25\n%ENDBLOCK POSITIONS_FRAC\n\n%BLOCK POSITIONS_FRAC_PRODUCT\nSi 0 0 0 SPIN=1\nSi 0.52 0.5 0.5 SPIN=-1\nH:mu 0.75 0.25 0.25\n%ENDBLOCK POSITIONS_FRAC_PRODUCT\n\n%BLOCK POSITIONS_FRAC_INTERMEDIATE\nSi 0.000256903611167 0.000128613934924 0.000128613934924 SPIN=1\nSi 0.520224789254 0.502840983878 0.502840983878 SPIN=-1\nH:mu 0.499996615105 0.247030402187 0.247030402187\n%ENDBLOCK POSITIONS_FRAC_INTERMEDIATE\n\nFIX_COM : FALSE\n",
+   "files/energy_barriers_neb/barrier_siteA_to_siteB_path1_neb/barrier_siteA_to_siteB_path1_neb.param": "TASK : TRANSITIONSTATESEARCH\nSPIN_POLARIZED : TRUE\nTSSEARCH_METHOD : NEB\nTSSEARCH_MAX_PATH_POINTS : 11\nTSSEARCH_NEB_CLIMBING : TRUE\n",
+   "files/energy_barriers_neb/barrier_siteA_to_siteB_path2_neb/barrier_siteA_to_siteB_path2_neb.cell": "%BLOCK LATTICE_CART\nang\n5 0 0\n0 5 0\n0 0 5\n%ENDBLOCK LATTICE_CART\n\n%BLOCK POSITIONS_FRAC\nSi 0 0 0 SPIN=1\nSi 0.52 0.5 0.5 SPIN=-1\nH:mu 0.25 0.25 0.25\n%ENDBLOCK POSITIONS_FRAC\n\n%BLOCK POSITIONS_FRAC_PRODUCT\nSi 0 0 0 SPIN=1\nSi 0.52 0.5 0.5 SPIN=-1\nH:mu 0.75 0.25 0.25\n%ENDBLOCK POSITIONS_FRAC_PRODUCT\n\n%BLOCK POSITIONS_FRAC_INTERMEDIATE\nSi 0.000256903611167 0.000128613934924 0.000128613934924 SPIN=1\nSi 0.520224789254 0.502840983878 0.502840983878 SPIN=-1\nH:mu 0.499996615105 0.247030402187 0.247030402187\n%ENDBLOCK POSITIONS_FRAC_INTERMEDIATE\n\nFIX_COM : FALSE\n",
+   "files/energy_barriers_neb/barrier_siteA_to_siteB_path2_neb/barrier_siteA_to_siteB_path2_neb.param": "TASK : TRANSITIONSTATESEARCH\nSPIN_POLARIZED : TRUE\nTSSEARCH_METHOD : NEB\nTSSEARCH_MAX_PATH_POINTS : 11\nTSSEARCH_NEB_CLIMBING : TRUE\n"
+  },
+  "jobs": [
+   [
+    "barrier_siteA_to_siteB_path1_neb",
+    "defined"
+   ],
+   [
+    "barrier_siteA_to_siteB_path2_neb",
+    "defined"
+   ],
+   [
+    "mu-siteA",
+    "completed"
+   ],
+   [
+    "mu-siteB",
+    "completed"
+   ]
+  ],
+  "journal": [
+   "job_reset"
+  ],
+  "sent": []
+ },
+ "cutoff-alpha": {
+  "files": [
+   "entities/calculations/<id>.json",
+   "entities/jobs/<id>.json",
+   "entities/jobs/<id>.json",
+   "entities/runs/<id>.json",
+   "entities/runs/<id>.json",
+   "entities/structures/<id>.json",
+   "files/convergence_cutoff/cutoff_convergence_ecut_300/cutoff_convergence_ecut_300.cell",
+   "files/convergence_cutoff/cutoff_convergence_ecut_300/cutoff_convergence_ecut_300.param",
+   "files/convergence_cutoff/cutoff_convergence_ecut_360/cutoff_convergence_ecut_360.cell",
+   "files/convergence_cutoff/cutoff_convergence_ecut_360/cutoff_convergence_ecut_360.param",
+   "project.json",
+   "provenance.jsonl",
+   "state.json"
+  ],
+  "inputs": {
+   "files/convergence_cutoff/cutoff_convergence_ecut_300/cutoff_convergence_ecut_300.cell": "%BLOCK LATTICE_CART\nang\n5 0 0\n0 5 0\n0 0 5\n%ENDBLOCK LATTICE_CART\n\n%BLOCK POSITIONS_FRAC\nSi 0 0 0\nSi 0.5 0.5 0.5\n%ENDBLOCK POSITIONS_FRAC\n\nSYMMETRY_GENERATE\n",
+   "files/convergence_cutoff/cutoff_convergence_ecut_300/cutoff_convergence_ecut_300.param": "TASK : SINGLEPOINT\nXC_FUNCTIONAL : LDA\nCUT_OFF_ENERGY : 300 eV\nSPIN_POLARIZED : FALSE\nELEC_ENERGY_TOL : 1e-06 eV\nMAX_SCF_CYCLES : 100\nCALCULATE_STRESS : FALSE\nMETALS_METHOD : DM\n",
+   "files/convergence_cutoff/cutoff_convergence_ecut_360/cutoff_convergence_ecut_360.cell": "%BLOCK LATTICE_CART\nang\n5 0 0\n0 5 0\n0 0 5\n%ENDBLOCK LATTICE_CART\n\n%BLOCK POSITIONS_FRAC\nSi 0 0 0\nSi 0.5 0.5 0.5\n%ENDBLOCK POSITIONS_FRAC\n\nSYMMETRY_GENERATE\n",
+   "files/convergence_cutoff/cutoff_convergence_ecut_360/cutoff_convergence_ecut_360.param": "TASK : SINGLEPOINT\nXC_FUNCTIONAL : LDA\nCUT_OFF_ENERGY : 360 eV\nSPIN_POLARIZED : FALSE\nELEC_ENERGY_TOL : 1e-06 eV\nMAX_SCF_CYCLES : 100\nCALCULATE_STRESS : FALSE\nMETALS_METHOD : DM\n"
+  },
+  "jobs": [
+   [
+    "cutoff_convergence_ecut_300",
+    "active"
+   ],
+   [
+    "cutoff_convergence_ecut_360",
+    "active"
+   ]
+  ],
+  "journal": [
+   "configure_convergence_cutoff",
+   "job_reset"
+  ],
+  "sent": [
+   [
+    "cutoff_convergence_ecut_300",
+    "cutoff_convergence_ecut_300",
+    "/remote/work/cutoff_convergence_ecut_300"
+   ],
+   [
+    "cutoff_convergence_ecut_360",
+    "cutoff_convergence_ecut_360",
+    "/remote/work/cutoff_convergence_ecut_360"
+   ]
+  ]
+ },
+ "cutoff-local": {
+  "files": [
+   "entities/calculations/<id>.json",
+   "entities/jobs/<id>.json",
+   "entities/jobs/<id>.json",
+   "entities/structures/<id>.json",
+   "files/convergence_cutoff/cutoff_convergence_ecut_300/cutoff_convergence_ecut_300.cell",
+   "files/convergence_cutoff/cutoff_convergence_ecut_300/cutoff_convergence_ecut_300.param",
+   "files/convergence_cutoff/cutoff_convergence_ecut_360/cutoff_convergence_ecut_360.cell",
+   "files/convergence_cutoff/cutoff_convergence_ecut_360/cutoff_convergence_ecut_360.param",
+   "project.json",
+   "provenance.jsonl",
+   "state.json"
+  ],
+  "inputs": {
+   "files/convergence_cutoff/cutoff_convergence_ecut_300/cutoff_convergence_ecut_300.cell": "%BLOCK LATTICE_CART\nang\n5 0 0\n0 5 0\n0 0 5\n%ENDBLOCK LATTICE_CART\n\n%BLOCK POSITIONS_FRAC\nSi 0 0 0\nSi 0.5 0.5 0.5\n%ENDBLOCK POSITIONS_FRAC\n\nSYMMETRY_GENERATE\n",
+   "files/convergence_cutoff/cutoff_convergence_ecut_300/cutoff_convergence_ecut_300.param": "TASK : SINGLEPOINT\nXC_FUNCTIONAL : LDA\nCUT_OFF_ENERGY : 300 eV\nSPIN_POLARIZED : FALSE\nELEC_ENERGY_TOL : 1e-06 eV\nMAX_SCF_CYCLES : 100\nCALCULATE_STRESS : FALSE\nMETALS_METHOD : DM\n",
+   "files/convergence_cutoff/cutoff_convergence_ecut_360/cutoff_convergence_ecut_360.cell": "%BLOCK LATTICE_CART\nang\n5 0 0\n0 5 0\n0 0 5\n%ENDBLOCK LATTICE_CART\n\n%BLOCK POSITIONS_FRAC\nSi 0 0 0\nSi 0.5 0.5 0.5\n%ENDBLOCK POSITIONS_FRAC\n\nSYMMETRY_GENERATE\n",
+   "files/convergence_cutoff/cutoff_convergence_ecut_360/cutoff_convergence_ecut_360.param": "TASK : SINGLEPOINT\nXC_FUNCTIONAL : LDA\nCUT_OFF_ENERGY : 360 eV\nSPIN_POLARIZED : FALSE\nELEC_ENERGY_TOL : 1e-06 eV\nMAX_SCF_CYCLES : 100\nCALCULATE_STRESS : FALSE\nMETALS_METHOD : DM\n"
+  },
+  "jobs": [
+   [
+    "cutoff_convergence_ecut_300",
+    "defined"
+   ],
+   [
+    "cutoff_convergence_ecut_360",
+    "defined"
+   ]
+  ],
+  "journal": [
+   "configure_convergence_cutoff",
+   "job_reset"
+  ],
+  "sent": []
+ },
+ "hyperfine-alpha": {
+  "files": [
+   "entities/calculations/<id>.json",
+   "entities/calculations/<id>.json",
+   "entities/jobs/<id>.json",
+   "entities/jobs/<id>.json",
+   "entities/jobs/<id>.json",
+   "entities/jobs/<id>.json",
+   "entities/results/<id>.json",
+   "entities/results/<id>.json",
+   "entities/runs/<id>.json",
+   "entities/runs/<id>.json",
+   "entities/runs/<id>.json",
+   "entities/runs/<id>.json",
+   "entities/sites/<id>.json",
+   "entities/sites/<id>.json",
+   "entities/structures/<id>.json",
+   "entities/structures/<id>.json",
+   "files/hyperfine_coupling/hyperfine_siteA/hyperfine_siteA.cell",
+   "files/hyperfine_coupling/hyperfine_siteA/hyperfine_siteA.param",
+   "files/hyperfine_coupling/hyperfine_siteB/hyperfine_siteB.cell",
+   "files/hyperfine_coupling/hyperfine_siteB/hyperfine_siteB.param",
+   "project.json",
+   "provenance.jsonl",
+   "state.json"
+  ],
+  "inputs": {
+   "files/hyperfine_coupling/hyperfine_siteA/hyperfine_siteA.cell": "%BLOCK LATTICE_CART\nang\n5 0 0\n0 5 0\n0 0 5\n%ENDBLOCK LATTICE_CART\n\n%BLOCK POSITIONS_FRAC\nSi 0 0 0\nH:mu 0.25 0.25 0.25\n%ENDBLOCK POSITIONS_FRAC\n\n%BLOCK SPECIES_MASS\nAMU\nH:mu 0.1134289257\n%ENDBLOCK SPECIES_MASS\n\n%BLOCK SPECIES_GAMMA\nradsectesla\nH:mu 851615456.598\n%ENDBLOCK SPECIES_GAMMA\n",
+   "files/hyperfine_coupling/hyperfine_siteA/hyperfine_siteA.param": "TASK : MAGRES\nWRITE_FORMATTED_DENSITY : TRUE\nSPIN_POLARIZED : TRUE\nELEC_ENERGY_TOL : 1e-09 eV\nCHARGE : 1\nMAGRES_TASK : HYPERFINE\n",
+   "files/hyperfine_coupling/hyperfine_siteB/hyperfine_siteB.cell": "%BLOCK LATTICE_CART\nang\n5 0 0\n0 5 0\n0 0 5\n%ENDBLOCK LATTICE_CART\n\n%BLOCK POSITIONS_FRAC\nSi 0 0 0\nH:mu 0.25 0.25 0.25\n%ENDBLOCK POSITIONS_FRAC\n\n%BLOCK SPECIES_MASS\nAMU\nH:mu 0.1134289257\n%ENDBLOCK SPECIES_MASS\n\n%BLOCK SPECIES_GAMMA\nradsectesla\nH:mu 851615456.598\n%ENDBLOCK SPECIES_GAMMA\n",
+   "files/hyperfine_coupling/hyperfine_siteB/hyperfine_siteB.param": "TASK : MAGRES\nWRITE_FORMATTED_DENSITY : TRUE\nSPIN_POLARIZED : TRUE\nELEC_ENERGY_TOL : 1e-09 eV\nCHARGE : 1\nMAGRES_TASK : HYPERFINE\n"
+  },
+  "jobs": [
+   [
+    "hyperfine_siteA",
+    "active"
+   ],
+   [
+    "hyperfine_siteB",
+    "active"
+   ],
+   [
+    "mu-site",
+    "completed"
+   ],
+   [
+    "mu-site",
+    "completed"
+   ]
+  ],
+  "journal": [
+   "configure_quantum_corrections",
+   "configure_hyperfine_coupling",
+   "job_reset"
+  ],
+  "sent": [
+   [
+    "hyperfine_siteA",
+    "hyperfine_siteA",
+    "/remote/work/hyperfine_siteA"
+   ],
+   [
+    "hyperfine_siteB",
+    "hyperfine_siteB",
+    "/remote/work/hyperfine_siteB"
+   ]
+  ]
+ },
+ "hyperfine-local": {
+  "files": [
+   "entities/calculations/<id>.json",
+   "entities/calculations/<id>.json",
+   "entities/jobs/<id>.json",
+   "entities/jobs/<id>.json",
+   "entities/jobs/<id>.json",
+   "entities/jobs/<id>.json",
+   "entities/results/<id>.json",
+   "entities/results/<id>.json",
+   "entities/runs/<id>.json",
+   "entities/runs/<id>.json",
+   "entities/sites/<id>.json",
+   "entities/sites/<id>.json",
+   "entities/structures/<id>.json",
+   "entities/structures/<id>.json",
+   "files/hyperfine_coupling/hyperfine_siteA/hyperfine_siteA.cell",
+   "files/hyperfine_coupling/hyperfine_siteA/hyperfine_siteA.param",
+   "files/hyperfine_coupling/hyperfine_siteB/hyperfine_siteB.cell",
+   "files/hyperfine_coupling/hyperfine_siteB/hyperfine_siteB.param",
+   "project.json",
+   "provenance.jsonl",
+   "state.json"
+  ],
+  "inputs": {
+   "files/hyperfine_coupling/hyperfine_siteA/hyperfine_siteA.cell": "%BLOCK LATTICE_CART\nang\n5 0 0\n0 5 0\n0 0 5\n%ENDBLOCK LATTICE_CART\n\n%BLOCK POSITIONS_FRAC\nSi 0 0 0\nH:mu 0.25 0.25 0.25\n%ENDBLOCK POSITIONS_FRAC\n\n%BLOCK SPECIES_MASS\nAMU\nH:mu 0.1134289257\n%ENDBLOCK SPECIES_MASS\n\n%BLOCK SPECIES_GAMMA\nradsectesla\nH:mu 851615456.598\n%ENDBLOCK SPECIES_GAMMA\n",
+   "files/hyperfine_coupling/hyperfine_siteA/hyperfine_siteA.param": "TASK : MAGRES\nWRITE_FORMATTED_DENSITY : TRUE\nSPIN_POLARIZED : TRUE\nELEC_ENERGY_TOL : 1e-09 eV\nCHARGE : 1\nMAGRES_TASK : HYPERFINE\n",
+   "files/hyperfine_coupling/hyperfine_siteB/hyperfine_siteB.cell": "%BLOCK LATTICE_CART\nang\n5 0 0\n0 5 0\n0 0 5\n%ENDBLOCK LATTICE_CART\n\n%BLOCK POSITIONS_FRAC\nSi 0 0 0\nH:mu 0.25 0.25 0.25\n%ENDBLOCK POSITIONS_FRAC\n\n%BLOCK SPECIES_MASS\nAMU\nH:mu 0.1134289257\n%ENDBLOCK SPECIES_MASS\n\n%BLOCK SPECIES_GAMMA\nradsectesla\nH:mu 851615456.598\n%ENDBLOCK SPECIES_GAMMA\n",
+   "files/hyperfine_coupling/hyperfine_siteB/hyperfine_siteB.param": "TASK : MAGRES\nWRITE_FORMATTED_DENSITY : TRUE\nSPIN_POLARIZED : TRUE\nELEC_ENERGY_TOL : 1e-09 eV\nCHARGE : 1\nMAGRES_TASK : HYPERFINE\n"
+  },
+  "jobs": [
+   [
+    "hyperfine_siteA",
+    "defined"
+   ],
+   [
+    "hyperfine_siteB",
+    "defined"
+   ],
+   [
+    "mu-site",
+    "completed"
+   ],
+   [
+    "mu-site",
+    "completed"
+   ]
+  ],
+  "journal": [
+   "configure_quantum_corrections",
+   "configure_hyperfine_coupling",
+   "job_reset"
+  ],
+  "sent": []
+ },
+ "hyperfine-renamed-alpha": {
+  "files": [
+   "entities/calculations/<id>.json",
+   "entities/calculations/<id>.json",
+   "entities/jobs/<id>.json",
+   "entities/jobs/<id>.json",
+   "entities/jobs/<id>.json",
+   "entities/results/<id>.json",
+   "entities/results/<id>.json",
+   "entities/runs/<id>.json",
+   "entities/runs/<id>.json",
+   "entities/sites/<id>.json",
+   "entities/sites/<id>.json",
+   "entities/structures/<id>.json",
+   "entities/structures/<id>.json",
+   "files/hyperfine_coupling/hyperfine_siteA/hyperfine_siteA.cell",
+   "files/hyperfine_coupling/hyperfine_siteA/hyperfine_siteA.param",
+   "files/hyperfine_coupling/hyperfine_stale/hyperfine_stale.cell",
+   "files/hyperfine_coupling/hyperfine_stale/hyperfine_stale.param",
+   "project.json",
+   "provenance.jsonl",
+   "state.json"
+  ],
+  "inputs": {
+   "files/hyperfine_coupling/hyperfine_siteA/hyperfine_siteA.cell": "%BLOCK LATTICE_CART\nang\n5 0 0\n0 5 0\n0 0 5\n%ENDBLOCK LATTICE_CART\n\n%BLOCK POSITIONS_FRAC\nSi 0 0 0\nH:mu 0.25 0.25 0.25\n%ENDBLOCK POSITIONS_FRAC\n\n%BLOCK SPECIES_MASS\nAMU\nH:mu 0.1134289257\n%ENDBLOCK SPECIES_MASS\n\n%BLOCK SPECIES_GAMMA\nradsectesla\nH:mu 851615456.598\n%ENDBLOCK SPECIES_GAMMA\n",
+   "files/hyperfine_coupling/hyperfine_siteA/hyperfine_siteA.param": "TASK : MAGRES\nWRITE_FORMATTED_DENSITY : TRUE\nSPIN_POLARIZED : TRUE\nELEC_ENERGY_TOL : 1e-09 eV\nCHARGE : 1\nMAGRES_TASK : HYPERFINE\n",
+   "files/hyperfine_coupling/hyperfine_stale/hyperfine_stale.cell": "%BLOCK LATTICE_CART\nang\n5 0 0\n0 5 0\n0 0 5\n%ENDBLOCK LATTICE_CART\n\n%BLOCK POSITIONS_FRAC\nSi 0 0 0\nH:mu 0.25 0.25 0.25\n%ENDBLOCK POSITIONS_FRAC\n\n%BLOCK SPECIES_MASS\nAMU\nH:mu 0.1134289257\n%ENDBLOCK SPECIES_MASS\n\n%BLOCK SPECIES_GAMMA\nradsectesla\nH:mu 851615456.598\n%ENDBLOCK SPECIES_GAMMA\n",
+   "files/hyperfine_coupling/hyperfine_stale/hyperfine_stale.param": "TASK : MAGRES\nWRITE_FORMATTED_DENSITY : TRUE\nSPIN_POLARIZED : TRUE\nELEC_ENERGY_TOL : 1e-09 eV\nCHARGE : 1\nMAGRES_TASK : HYPERFINE\n"
+  },
+  "jobs": [
+   [
+    "hyperfine_siteA",
+    "active"
+   ],
+   [
+    "mu-site",
+    "completed"
+   ],
+   [
+    "mu-site",
+    "completed"
+   ]
+  ],
+  "journal": [
+   "configure_quantum_corrections",
+   "configure_hyperfine_coupling"
+  ],
+  "local_seeds": [],
+  "sent": [
+   [
+    "hyperfine_siteA",
+    "hyperfine_siteA",
+    "/remote/work/hyperfine_siteA"
+   ]
+  ]
+ },
+ "hyperfine-renamed-local": {
+  "files": [
+   "entities/calculations/<id>.json",
+   "entities/calculations/<id>.json",
+   "entities/jobs/<id>.json",
+   "entities/jobs/<id>.json",
+   "entities/jobs/<id>.json",
+   "entities/results/<id>.json",
+   "entities/results/<id>.json",
+   "entities/runs/<id>.json",
+   "entities/runs/<id>.json",
+   "entities/sites/<id>.json",
+   "entities/sites/<id>.json",
+   "entities/structures/<id>.json",
+   "entities/structures/<id>.json",
+   "files/hyperfine_coupling/hyperfine_siteA/hyperfine_siteA.cell",
+   "files/hyperfine_coupling/hyperfine_siteA/hyperfine_siteA.param",
+   "files/hyperfine_coupling/hyperfine_stale/hyperfine_stale.cell",
+   "files/hyperfine_coupling/hyperfine_stale/hyperfine_stale.param",
+   "project.json",
+   "provenance.jsonl",
+   "state.json"
+  ],
+  "inputs": {
+   "files/hyperfine_coupling/hyperfine_siteA/hyperfine_siteA.cell": "%BLOCK LATTICE_CART\nang\n5 0 0\n0 5 0\n0 0 5\n%ENDBLOCK LATTICE_CART\n\n%BLOCK POSITIONS_FRAC\nSi 0 0 0\nH:mu 0.25 0.25 0.25\n%ENDBLOCK POSITIONS_FRAC\n\n%BLOCK SPECIES_MASS\nAMU\nH:mu 0.1134289257\n%ENDBLOCK SPECIES_MASS\n\n%BLOCK SPECIES_GAMMA\nradsectesla\nH:mu 851615456.598\n%ENDBLOCK SPECIES_GAMMA\n",
+   "files/hyperfine_coupling/hyperfine_siteA/hyperfine_siteA.param": "TASK : MAGRES\nWRITE_FORMATTED_DENSITY : TRUE\nSPIN_POLARIZED : TRUE\nELEC_ENERGY_TOL : 1e-09 eV\nCHARGE : 1\nMAGRES_TASK : HYPERFINE\n",
+   "files/hyperfine_coupling/hyperfine_stale/hyperfine_stale.cell": "%BLOCK LATTICE_CART\nang\n5 0 0\n0 5 0\n0 0 5\n%ENDBLOCK LATTICE_CART\n\n%BLOCK POSITIONS_FRAC\nSi 0 0 0\nH:mu 0.25 0.25 0.25\n%ENDBLOCK POSITIONS_FRAC\n\n%BLOCK SPECIES_MASS\nAMU\nH:mu 0.1134289257\n%ENDBLOCK SPECIES_MASS\n\n%BLOCK SPECIES_GAMMA\nradsectesla\nH:mu 851615456.598\n%ENDBLOCK SPECIES_GAMMA\n",
+   "files/hyperfine_coupling/hyperfine_stale/hyperfine_stale.param": "TASK : MAGRES\nWRITE_FORMATTED_DENSITY : TRUE\nSPIN_POLARIZED : TRUE\nELEC_ENERGY_TOL : 1e-09 eV\nCHARGE : 1\nMAGRES_TASK : HYPERFINE\n"
+  },
+  "jobs": [
+   [
+    "hyperfine_siteA",
+    "defined"
+   ],
+   [
+    "mu-site",
+    "completed"
+   ],
+   [
+    "mu-site",
+    "completed"
+   ]
+  ],
+  "journal": [
+   "configure_quantum_corrections",
+   "configure_hyperfine_coupling"
+  ],
+  "local_seeds": [
+   "hyperfine_siteA"
+  ],
+  "sent": []
+ },
+ "kpoint-alpha": {
+  "files": [
+   "entities/calculations/<id>.json",
+   "entities/jobs/<id>.json",
+   "entities/jobs/<id>.json",
+   "entities/runs/<id>.json",
+   "entities/runs/<id>.json",
+   "entities/structures/<id>.json",
+   "files/convergence_kpoint/kpoint_convergence_kgrid_2x2x2/kpoint_convergence_kgrid_2x2x2.cell",
+   "files/convergence_kpoint/kpoint_convergence_kgrid_2x2x2/kpoint_convergence_kgrid_2x2x2.param",
+   "files/convergence_kpoint/kpoint_convergence_kgrid_3x3x3/kpoint_convergence_kgrid_3x3x3.cell",
+   "files/convergence_kpoint/kpoint_convergence_kgrid_3x3x3/kpoint_convergence_kgrid_3x3x3.param",
+   "project.json",
+   "provenance.jsonl",
+   "state.json"
+  ],
+  "inputs": {
+   "files/convergence_kpoint/kpoint_convergence_kgrid_2x2x2/kpoint_convergence_kgrid_2x2x2.cell": "%BLOCK LATTICE_CART\nang\n5 0 0\n0 5 0\n0 0 5\n%ENDBLOCK LATTICE_CART\n\n%BLOCK POSITIONS_FRAC\nSi 0 0 0\nSi 0.5 0.5 0.5\n%ENDBLOCK POSITIONS_FRAC\n\nSYMMETRY_GENERATE\n\nKPOINT_MP_GRID 2 2 2\n",
+   "files/convergence_kpoint/kpoint_convergence_kgrid_2x2x2/kpoint_convergence_kgrid_2x2x2.param": "TASK : SINGLEPOINT\nXC_FUNCTIONAL : LDA\nBASIS_PRECISION : FINE\nELEC_ENERGY_TOL : 1e-06 eV\nMAX_SCF_CYCLES : 100\nCALCULATE_STRESS : FALSE\n",
+   "files/convergence_kpoint/kpoint_convergence_kgrid_3x3x3/kpoint_convergence_kgrid_3x3x3.cell": "%BLOCK LATTICE_CART\nang\n5 0 0\n0 5 0\n0 0 5\n%ENDBLOCK LATTICE_CART\n\n%BLOCK POSITIONS_FRAC\nSi 0 0 0\nSi 0.5 0.5 0.5\n%ENDBLOCK POSITIONS_FRAC\n\nSYMMETRY_GENERATE\n\nKPOINT_MP_GRID 3 3 3\n",
+   "files/convergence_kpoint/kpoint_convergence_kgrid_3x3x3/kpoint_convergence_kgrid_3x3x3.param": "TASK : SINGLEPOINT\nXC_FUNCTIONAL : LDA\nBASIS_PRECISION : FINE\nELEC_ENERGY_TOL : 1e-06 eV\nMAX_SCF_CYCLES : 100\nCALCULATE_STRESS : FALSE\n"
+  },
+  "jobs": [
+   [
+    "kpoint_convergence_kgrid_2x2x2",
+    "active"
+   ],
+   [
+    "kpoint_convergence_kgrid_3x3x3",
+    "active"
+   ]
+  ],
+  "journal": [
+   "configure_convergence_kpoint",
+   "job_reset"
+  ],
+  "sent": [
+   [
+    "kpoint_convergence_kgrid_2x2x2",
+    "kpoint_convergence_kgrid_2x2x2",
+    "/remote/work/kpoint_convergence_kgrid_2x2x2"
+   ],
+   [
+    "kpoint_convergence_kgrid_3x3x3",
+    "kpoint_convergence_kgrid_3x3x3",
+    "/remote/work/kpoint_convergence_kgrid_3x3x3"
+   ]
+  ]
+ },
+ "kpoint-local": {
+  "files": [
+   "entities/calculations/<id>.json",
+   "entities/jobs/<id>.json",
+   "entities/jobs/<id>.json",
+   "entities/structures/<id>.json",
+   "files/convergence_kpoint/kpoint_convergence_kgrid_2x2x2/kpoint_convergence_kgrid_2x2x2.cell",
+   "files/convergence_kpoint/kpoint_convergence_kgrid_2x2x2/kpoint_convergence_kgrid_2x2x2.param",
+   "files/convergence_kpoint/kpoint_convergence_kgrid_3x3x3/kpoint_convergence_kgrid_3x3x3.cell",
+   "files/convergence_kpoint/kpoint_convergence_kgrid_3x3x3/kpoint_convergence_kgrid_3x3x3.param",
+   "project.json",
+   "provenance.jsonl",
+   "state.json"
+  ],
+  "inputs": {
+   "files/convergence_kpoint/kpoint_convergence_kgrid_2x2x2/kpoint_convergence_kgrid_2x2x2.cell": "%BLOCK LATTICE_CART\nang\n5 0 0\n0 5 0\n0 0 5\n%ENDBLOCK LATTICE_CART\n\n%BLOCK POSITIONS_FRAC\nSi 0 0 0\nSi 0.5 0.5 0.5\n%ENDBLOCK POSITIONS_FRAC\n\nSYMMETRY_GENERATE\n\nKPOINT_MP_GRID 2 2 2\n",
+   "files/convergence_kpoint/kpoint_convergence_kgrid_2x2x2/kpoint_convergence_kgrid_2x2x2.param": "TASK : SINGLEPOINT\nXC_FUNCTIONAL : LDA\nBASIS_PRECISION : FINE\nELEC_ENERGY_TOL : 1e-06 eV\nMAX_SCF_CYCLES : 100\nCALCULATE_STRESS : FALSE\n",
+   "files/convergence_kpoint/kpoint_convergence_kgrid_3x3x3/kpoint_convergence_kgrid_3x3x3.cell": "%BLOCK LATTICE_CART\nang\n5 0 0\n0 5 0\n0 0 5\n%ENDBLOCK LATTICE_CART\n\n%BLOCK POSITIONS_FRAC\nSi 0 0 0\nSi 0.5 0.5 0.5\n%ENDBLOCK POSITIONS_FRAC\n\nSYMMETRY_GENERATE\n\nKPOINT_MP_GRID 3 3 3\n",
+   "files/convergence_kpoint/kpoint_convergence_kgrid_3x3x3/kpoint_convergence_kgrid_3x3x3.param": "TASK : SINGLEPOINT\nXC_FUNCTIONAL : LDA\nBASIS_PRECISION : FINE\nELEC_ENERGY_TOL : 1e-06 eV\nMAX_SCF_CYCLES : 100\nCALCULATE_STRESS : FALSE\n"
+  },
+  "jobs": [
+   [
+    "kpoint_convergence_kgrid_2x2x2",
+    "defined"
+   ],
+   [
+    "kpoint_convergence_kgrid_3x3x3",
+    "defined"
+   ]
+  ],
+  "journal": [
+   "configure_convergence_kpoint",
+   "job_reset"
+  ],
+  "sent": []
+ },
+ "muon-alpha": {
+  "files": [
+   "entities/calculations/<id>.json",
+   "entities/jobs/<id>.json",
+   "entities/jobs/<id>.json",
+   "entities/runs/<id>.json",
+   "entities/runs/<id>.json",
+   "entities/sites/<id>.json",
+   "entities/sites/<id>.json",
+   "entities/structures/<id>.json",
+   "files/muon_relaxation/positivemuon/positivemuon_Site_1/positivemuon_Site_1.cell",
+   "files/muon_relaxation/positivemuon/positivemuon_Site_1/positivemuon_Site_1.param",
+   "files/muon_relaxation/positivemuon/positivemuon_Site_2/positivemuon_Site_2.cell",
+   "files/muon_relaxation/positivemuon/positivemuon_Site_2/positivemuon_Site_2.param",
+   "project.json",
+   "provenance.jsonl",
+   "state.json"
+  ],
+  "inputs": {
+   "files/muon_relaxation/positivemuon/positivemuon_Site_1/positivemuon_Site_1.cell": "%BLOCK LATTICE_CART\nang\n4 0 0\n0 4 0\n0 0 4\n%ENDBLOCK LATTICE_CART\n\n%BLOCK POSITIONS_FRAC\nSi 0 0 0\nH:mu 0.1 0.2 0.3\n%ENDBLOCK POSITIONS_FRAC\n\n%BLOCK SPECIES_MASS\nAMU\nH:mu 0.1134289257\n%ENDBLOCK SPECIES_MASS\n\nFIX_ALL_CELL : TRUE\n",
+   "files/muon_relaxation/positivemuon/positivemuon_Site_1/positivemuon_Site_1.param": "TASK : GEOMETRYOPTIMIZATION\nWRITE_CELL_STRUCTURE : TRUE\nCONTINUATION : DEFAULT\nGEOM_MAX_ITER : 120\nCHARGE : 1\n",
+   "files/muon_relaxation/positivemuon/positivemuon_Site_2/positivemuon_Site_2.cell": "%BLOCK LATTICE_CART\nang\n4 0 0\n0 4 0\n0 0 4\n%ENDBLOCK LATTICE_CART\n\n%BLOCK POSITIONS_FRAC\nSi 0 0 0\nH:mu 0.2 0.2 0.3\n%ENDBLOCK POSITIONS_FRAC\n\n%BLOCK SPECIES_MASS\nAMU\nH:mu 0.1134289257\n%ENDBLOCK SPECIES_MASS\n\nFIX_ALL_CELL : TRUE\n",
+   "files/muon_relaxation/positivemuon/positivemuon_Site_2/positivemuon_Site_2.param": "TASK : GEOMETRYOPTIMIZATION\nWRITE_CELL_STRUCTURE : TRUE\nCONTINUATION : DEFAULT\nGEOM_MAX_ITER : 120\nCHARGE : 1\n"
+  },
+  "jobs": [
+   [
+    "Site 1",
+    "active"
+   ],
+   [
+    "Site 2",
+    "active"
+   ]
+  ],
+  "journal": [
+   "configure_muon_relaxation"
+  ],
+  "sent": [
+   [
+    "Site 1",
+    "positivemuon_Site_1",
+    "/remote/work/positivemuon_Site_1"
+   ],
+   [
+    "Site 2",
+    "positivemuon_Site_2",
+    "/remote/work/positivemuon_Site_2"
+   ]
+  ]
+ },
+ "muon-local": {
+  "files": [
+   "entities/calculations/<id>.json",
+   "entities/jobs/<id>.json",
+   "entities/jobs/<id>.json",
+   "entities/sites/<id>.json",
+   "entities/sites/<id>.json",
+   "entities/structures/<id>.json",
+   "files/muon_relaxation/positivemuon/positivemuon_Site_1/positivemuon_Site_1.cell",
+   "files/muon_relaxation/positivemuon/positivemuon_Site_1/positivemuon_Site_1.param",
+   "files/muon_relaxation/positivemuon/positivemuon_Site_2/positivemuon_Site_2.cell",
+   "files/muon_relaxation/positivemuon/positivemuon_Site_2/positivemuon_Site_2.param",
+   "project.json",
+   "provenance.jsonl",
+   "state.json"
+  ],
+  "inputs": {
+   "files/muon_relaxation/positivemuon/positivemuon_Site_1/positivemuon_Site_1.cell": "%BLOCK LATTICE_CART\nang\n4 0 0\n0 4 0\n0 0 4\n%ENDBLOCK LATTICE_CART\n\n%BLOCK POSITIONS_FRAC\nSi 0 0 0\nH:mu 0.1 0.2 0.3\n%ENDBLOCK POSITIONS_FRAC\n\n%BLOCK SPECIES_MASS\nAMU\nH:mu 0.1134289257\n%ENDBLOCK SPECIES_MASS\n\nFIX_ALL_CELL : TRUE\n",
+   "files/muon_relaxation/positivemuon/positivemuon_Site_1/positivemuon_Site_1.param": "TASK : GEOMETRYOPTIMIZATION\nWRITE_CELL_STRUCTURE : TRUE\nCONTINUATION : DEFAULT\nGEOM_MAX_ITER : 120\nCHARGE : 1\n",
+   "files/muon_relaxation/positivemuon/positivemuon_Site_2/positivemuon_Site_2.cell": "%BLOCK LATTICE_CART\nang\n4 0 0\n0 4 0\n0 0 4\n%ENDBLOCK LATTICE_CART\n\n%BLOCK POSITIONS_FRAC\nSi 0 0 0\nH:mu 0.2 0.2 0.3\n%ENDBLOCK POSITIONS_FRAC\n\n%BLOCK SPECIES_MASS\nAMU\nH:mu 0.1134289257\n%ENDBLOCK SPECIES_MASS\n\nFIX_ALL_CELL : TRUE\n",
+   "files/muon_relaxation/positivemuon/positivemuon_Site_2/positivemuon_Site_2.param": "TASK : GEOMETRYOPTIMIZATION\nWRITE_CELL_STRUCTURE : TRUE\nCONTINUATION : DEFAULT\nGEOM_MAX_ITER : 120\nCHARGE : 1\n"
+  },
+  "jobs": [
+   [
+    "Site 1",
+    "defined"
+   ],
+   [
+    "Site 2",
+    "defined"
+   ]
+  ],
+  "journal": [
+   "configure_muon_relaxation"
+  ],
+  "sent": []
+ },
+ "pristine-local": {
+  "files": [
+   "entities/calculations/<id>.json",
+   "entities/jobs/<id>.json",
+   "entities/jobs/<id>.json",
+   "entities/structures/<id>.json",
+   "files/pristine_relaxation/pristine_relax_relax_1/pristine_relax_relax_1.cell",
+   "files/pristine_relaxation/pristine_relax_relax_1/pristine_relax_relax_1.param",
+   "files/pristine_relaxation/pristine_relax_relax_2/pristine_relax_relax_2.cell",
+   "files/pristine_relaxation/pristine_relax_relax_2/pristine_relax_relax_2.param",
+   "project.json",
+   "provenance.jsonl",
+   "state.json"
+  ],
+  "inputs": {
+   "files/pristine_relaxation/pristine_relax_relax_1/pristine_relax_relax_1.cell": "%BLOCK LATTICE_CART\nang\n5 0 0\n0 5 0\n0 0 5\n%ENDBLOCK LATTICE_CART\n\n%BLOCK POSITIONS_FRAC\nSi 0 0 0\nSi 0.5 0.5 0.5\n%ENDBLOCK POSITIONS_FRAC\n\nSYMMETRY_GENERATE\n\nFIX_ALL_CELL : FALSE\n",
+   "files/pristine_relaxation/pristine_relax_relax_1/pristine_relax_relax_1.param": "TASK : GEOMETRYOPTIMIZATION\nWRITE_CELL_STRUCTURE : TRUE\nCONTINUATION : DEFAULT\nGEOM_MAX_ITER : 300\n",
+   "files/pristine_relaxation/pristine_relax_relax_2/pristine_relax_relax_2.cell": "%BLOCK LATTICE_CART\nang\n5 0 0\n0 5 0\n0 0 5\n%ENDBLOCK LATTICE_CART\n\n%BLOCK POSITIONS_FRAC\nSi 0 0 0\nSi 0.5 0.5 0.5\n%ENDBLOCK POSITIONS_FRAC\n\nSYMMETRY_GENERATE\n\nFIX_ALL_CELL : FALSE\n",
+   "files/pristine_relaxation/pristine_relax_relax_2/pristine_relax_relax_2.param": "TASK : GEOMETRYOPTIMIZATION\nWRITE_CELL_STRUCTURE : TRUE\nCONTINUATION : DEFAULT\nGEOM_MAX_ITER : 300\n"
+  },
+  "jobs": [
+   [
+    "pristine_relax_relax_1",
+    "defined"
+   ],
+   [
+    "pristine_relax_relax_2",
+    "defined"
+   ]
+  ],
+  "journal": [
+   "configure_pristine_relaxation"
+  ],
+  "sent": []
+ },
+ "quantum-alpha": {
+  "files": [
+   "entities/calculations/<id>.json",
+   "entities/jobs/<id>.json",
+   "entities/jobs/<id>.json",
+   "entities/jobs/<id>.json",
+   "entities/jobs/<id>.json",
+   "entities/results/<id>.json",
+   "entities/results/<id>.json",
+   "entities/runs/<id>.json",
+   "entities/runs/<id>.json",
+   "entities/runs/<id>.json",
+   "entities/runs/<id>.json",
+   "entities/sites/<id>.json",
+   "entities/sites/<id>.json",
+   "entities/structures/<id>.json",
+   "entities/structures/<id>.json",
+   "files/quantum_corrections/quantum_siteA/quantum_siteA.cell",
+   "files/quantum_corrections/quantum_siteA/quantum_siteA.param",
+   "files/quantum_corrections/quantum_siteB/quantum_siteB.cell",
+   "files/quantum_corrections/quantum_siteB/quantum_siteB.param",
+   "project.json",
+   "provenance.jsonl",
+   "state.json"
+  ],
+  "inputs": {
+   "files/quantum_corrections/quantum_siteA/quantum_siteA.cell": "%BLOCK LATTICE_CART\nang\n5 0 0\n0 5 0\n0 0 5\n%ENDBLOCK LATTICE_CART\n\n%BLOCK POSITIONS_FRAC\nSi 0 0 0\nH:mu 0.25 0.25 0.25\n%ENDBLOCK POSITIONS_FRAC\n\n%BLOCK SPECIES_MASS\nAMU\nH:mu 0.1134289257\n%ENDBLOCK SPECIES_MASS\n\n%BLOCK SPECIES_GAMMA\nradsectesla\nH:mu 851615456.598\n%ENDBLOCK SPECIES_GAMMA\n\nPHONON_KPOINT_MP_GRID 1 1 1\n",
+   "files/quantum_corrections/quantum_siteA/quantum_siteA.param": "TASK : PHONON\nCONTINUATION : DEFAULT\nELEC_ENERGY_TOL : 1e-09 eV\nCHARGE : 1\nNONSCF_EIGENVALUE_TOL : 1e-09 eV\nPHONON_METHOD : FINITEDISPLACEMENT\n",
+   "files/quantum_corrections/quantum_siteB/quantum_siteB.cell": "%BLOCK LATTICE_CART\nang\n5 0 0\n0 5 0\n0 0 5\n%ENDBLOCK LATTICE_CART\n\n%BLOCK POSITIONS_FRAC\nSi 0 0 0\nH:mu 0.25 0.25 0.25\n%ENDBLOCK POSITIONS_FRAC\n\n%BLOCK SPECIES_MASS\nAMU\nH:mu 0.1134289257\n%ENDBLOCK SPECIES_MASS\n\n%BLOCK SPECIES_GAMMA\nradsectesla\nH:mu 851615456.598\n%ENDBLOCK SPECIES_GAMMA\n\nPHONON_KPOINT_MP_GRID 1 1 1\n",
+   "files/quantum_corrections/quantum_siteB/quantum_siteB.param": "TASK : PHONON\nCONTINUATION : DEFAULT\nELEC_ENERGY_TOL : 1e-09 eV\nCHARGE : 1\nNONSCF_EIGENVALUE_TOL : 1e-09 eV\nPHONON_METHOD : FINITEDISPLACEMENT\n"
+  },
+  "jobs": [
+   [
+    "mu-site",
+    "completed"
+   ],
+   [
+    "mu-site",
+    "completed"
+   ],
+   [
+    "quantum_phonon_siteA",
+    "active"
+   ],
+   [
+    "quantum_phonon_siteB",
+    "active"
+   ]
+  ],
+  "journal": [
+   "configure_quantum_corrections"
+  ],
+  "sent": [
+   [
+    "quantum_phonon_siteA",
+    "quantum_siteA",
+    "/remote/work/quantum_siteA"
+   ],
+   [
+    "quantum_phonon_siteB",
+    "quantum_siteB",
+    "/remote/work/quantum_siteB"
+   ]
+  ]
+ },
+ "quantum-local": {
+  "files": [
+   "entities/calculations/<id>.json",
+   "entities/jobs/<id>.json",
+   "entities/jobs/<id>.json",
+   "entities/jobs/<id>.json",
+   "entities/jobs/<id>.json",
+   "entities/results/<id>.json",
+   "entities/results/<id>.json",
+   "entities/runs/<id>.json",
+   "entities/runs/<id>.json",
+   "entities/sites/<id>.json",
+   "entities/sites/<id>.json",
+   "entities/structures/<id>.json",
+   "entities/structures/<id>.json",
+   "files/quantum_corrections/quantum_siteA/quantum_siteA.cell",
+   "files/quantum_corrections/quantum_siteA/quantum_siteA.param",
+   "files/quantum_corrections/quantum_siteB/quantum_siteB.cell",
+   "files/quantum_corrections/quantum_siteB/quantum_siteB.param",
+   "project.json",
+   "provenance.jsonl",
+   "state.json"
+  ],
+  "inputs": {
+   "files/quantum_corrections/quantum_siteA/quantum_siteA.cell": "%BLOCK LATTICE_CART\nang\n5 0 0\n0 5 0\n0 0 5\n%ENDBLOCK LATTICE_CART\n\n%BLOCK POSITIONS_FRAC\nSi 0 0 0\nH:mu 0.25 0.25 0.25\n%ENDBLOCK POSITIONS_FRAC\n\n%BLOCK SPECIES_MASS\nAMU\nH:mu 0.1134289257\n%ENDBLOCK SPECIES_MASS\n\n%BLOCK SPECIES_GAMMA\nradsectesla\nH:mu 851615456.598\n%ENDBLOCK SPECIES_GAMMA\n\nPHONON_KPOINT_MP_GRID 1 1 1\n",
+   "files/quantum_corrections/quantum_siteA/quantum_siteA.param": "TASK : PHONON\nCONTINUATION : DEFAULT\nELEC_ENERGY_TOL : 1e-09 eV\nCHARGE : 1\nNONSCF_EIGENVALUE_TOL : 1e-09 eV\nPHONON_METHOD : FINITEDISPLACEMENT\n",
+   "files/quantum_corrections/quantum_siteB/quantum_siteB.cell": "%BLOCK LATTICE_CART\nang\n5 0 0\n0 5 0\n0 0 5\n%ENDBLOCK LATTICE_CART\n\n%BLOCK POSITIONS_FRAC\nSi 0 0 0\nH:mu 0.25 0.25 0.25\n%ENDBLOCK POSITIONS_FRAC\n\n%BLOCK SPECIES_MASS\nAMU\nH:mu 0.1134289257\n%ENDBLOCK SPECIES_MASS\n\n%BLOCK SPECIES_GAMMA\nradsectesla\nH:mu 851615456.598\n%ENDBLOCK SPECIES_GAMMA\n\nPHONON_KPOINT_MP_GRID 1 1 1\n",
+   "files/quantum_corrections/quantum_siteB/quantum_siteB.param": "TASK : PHONON\nCONTINUATION : DEFAULT\nELEC_ENERGY_TOL : 1e-09 eV\nCHARGE : 1\nNONSCF_EIGENVALUE_TOL : 1e-09 eV\nPHONON_METHOD : FINITEDISPLACEMENT\n"
+  },
+  "jobs": [
+   [
+    "mu-site",
+    "completed"
+   ],
+   [
+    "mu-site",
+    "completed"
+   ],
+   [
+    "quantum_phonon_siteA",
+    "defined"
+   ],
+   [
+    "quantum_phonon_siteB",
+    "defined"
+   ]
+  ],
+  "journal": [
+   "configure_quantum_corrections"
+  ],
+  "sent": []
+ },
+ "uep-alpha": {
+  "files": [
+   "entities/calculations/<id>.json",
+   "entities/jobs/<id>.json",
+   "entities/jobs/<id>.json",
+   "entities/runs/<id>.json",
+   "entities/runs/<id>.json",
+   "entities/structures/<id>.json",
+   "files/uep/uep_source_01/uep_source_01.cell",
+   "files/uep/uep_source_01/uep_source_01.param",
+   "files/uep/uep_source_02/uep_source_02.cell",
+   "files/uep/uep_source_02/uep_source_02.param",
+   "project.json",
+   "provenance.jsonl",
+   "state.json"
+  ],
+  "inputs": {
+   "files/uep/uep_source_01/uep_source_01.cell": "%BLOCK LATTICE_CART\nang\n5 0 0\n0 5 0\n0 0 5\n%ENDBLOCK LATTICE_CART\n\n%BLOCK POSITIONS_FRAC\nSi 0 0 0\nSi 0.5 0.5 0.5\n%ENDBLOCK POSITIONS_FRAC\n\nSYMMETRY_GENERATE\n",
+   "files/uep/uep_source_01/uep_source_01.param": "TASK : SINGLEPOINT\nWRITE_FORMATTED_DENSITY : TRUE\n",
+   "files/uep/uep_source_02/uep_source_02.cell": "%BLOCK LATTICE_CART\nang\n5 0 0\n0 5 0\n0 0 5\n%ENDBLOCK LATTICE_CART\n\n%BLOCK POSITIONS_FRAC\nSi 0 0 0\nSi 0.5 0.5 0.5\n%ENDBLOCK POSITIONS_FRAC\n\nSYMMETRY_GENERATE\n",
+   "files/uep/uep_source_02/uep_source_02.param": "TASK : SINGLEPOINT\nWRITE_FORMATTED_DENSITY : TRUE\n"
+  },
+  "jobs": [
+   [
+    "uep_source_01",
+    "active"
+   ],
+   [
+    "uep_source_02",
+    "active"
+   ]
+  ],
+  "journal": [
+   "configure_uep",
+   "job_reset"
+  ],
+  "sent": [
+   [
+    "uep_source_01",
+    "uep_source_01",
+    "/remote/work/uep_source_01"
+   ],
+   [
+    "uep_source_02",
+    "uep_source_02",
+    "/remote/work/uep_source_02"
+   ]
+  ]
+ },
+ "uep-local": {
+  "files": [
+   "entities/calculations/<id>.json",
+   "entities/jobs/<id>.json",
+   "entities/jobs/<id>.json",
+   "entities/structures/<id>.json",
+   "files/uep/uep_source_01/uep_source_01.cell",
+   "files/uep/uep_source_01/uep_source_01.param",
+   "files/uep/uep_source_02/uep_source_02.cell",
+   "files/uep/uep_source_02/uep_source_02.param",
+   "project.json",
+   "provenance.jsonl",
+   "state.json"
+  ],
+  "inputs": {
+   "files/uep/uep_source_01/uep_source_01.cell": "%BLOCK LATTICE_CART\nang\n5 0 0\n0 5 0\n0 0 5\n%ENDBLOCK LATTICE_CART\n\n%BLOCK POSITIONS_FRAC\nSi 0 0 0\nSi 0.5 0.5 0.5\n%ENDBLOCK POSITIONS_FRAC\n\nSYMMETRY_GENERATE\n",
+   "files/uep/uep_source_01/uep_source_01.param": "TASK : SINGLEPOINT\nWRITE_FORMATTED_DENSITY : TRUE\n",
+   "files/uep/uep_source_02/uep_source_02.cell": "%BLOCK LATTICE_CART\nang\n5 0 0\n0 5 0\n0 0 5\n%ENDBLOCK LATTICE_CART\n\n%BLOCK POSITIONS_FRAC\nSi 0 0 0\nSi 0.5 0.5 0.5\n%ENDBLOCK POSITIONS_FRAC\n\nSYMMETRY_GENERATE\n",
+   "files/uep/uep_source_02/uep_source_02.param": "TASK : SINGLEPOINT\nWRITE_FORMATTED_DENSITY : TRUE\n"
+  },
+  "jobs": [
+   [
+    "uep_source_01",
+    "defined"
+   ],
+   [
+    "uep_source_02",
+    "defined"
+   ]
+  ],
+  "journal": [
+   "configure_uep",
+   "job_reset"
+  ],
+  "sent": []
+ }
+}

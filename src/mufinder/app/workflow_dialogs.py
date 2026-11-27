@@ -1,0 +1,447 @@
+"""Workflow-specific configuration and inspection dialogs."""
+
+from __future__ import annotations
+
+from collections.abc import Callable, Hashable, Iterable, Mapping, Sequence
+from dataclasses import dataclass, field
+from typing import Generic, TypeVar
+
+from PySide6.QtWidgets import (
+    QDialog,
+    QLabel,
+    QHBoxLayout,
+    QSpinBox,
+    QWidget,
+)
+
+from mufinder.app.param_dialog import ParameterDialog, WorkflowTableRow
+from mufinder.app.workflow_parameters import (
+    kpoint_exclusive_hint,
+    merge_batch_advanced,
+    merge_batch_values,
+    mixed_parameter_names,
+    shared_parameter_values,
+)
+from mufinder.castep_io.schema import KeywordSpec
+from mufinder.domain.text import plural
+from mufinder.science.energy_barriers import neb_farm_distribution
+
+#: Row key of a workflow table: a row id, a cutoff energy or a k-point grid.
+RowKeyT = TypeVar("RowKeyT", bound=Hashable)
+
+#: A source table's Configure dialog.
+DialogT = TypeVar("DialogT", bound=ParameterDialog)
+
+
+@dataclass(frozen=True)
+class RowParameterRequest(Generic[RowKeyT]):
+    """What a workflow widget asks of the row parameter dialog.
+
+    ``row_values`` and ``row_advanced`` hold, for every targeted row, its
+    effective parameters and its shown advanced names; ``values`` is the dialog
+    seed (the parameters the rows share, plus any widget-specific pre-fill).
+    ``subject`` names the dialog: the title reads ``Configure <subject>``, or
+    ``Inspect <subject>`` when ``read_only`` is set.
+    """
+
+    specs: Sequence[KeywordSpec]
+    workflow_stage: str
+    subject: str
+    values: Mapping[str, object]
+    row_values: Mapping[RowKeyT, Mapping[str, object]]
+    row_advanced: Mapping[RowKeyT, Iterable[str]]
+    sanitize: Callable[[Mapping[str, object]], dict[str, object]]
+    locked_values: Mapping[str, str] = field(default_factory=dict)
+    read_only: bool = False
+    intro_text: str | None = None
+    species_options: Sequence[str] = ()
+
+
+@dataclass(frozen=True)
+class RowParameterResult(Generic[RowKeyT]):
+    """The accepted dialog, resolved for every targeted row.
+
+    ``values`` and ``advanced_names`` are what the dialog returned, sanitised.
+    ``row_values`` and ``row_advanced`` apply them to each row: a parameter that
+    differed between the rows and was left untouched keeps each row's own value
+    and advanced-name visibility.
+    """
+
+    values: dict[str, object]
+    advanced_names: frozenset[str]
+    row_values: dict[RowKeyT, dict[str, object]]
+    row_advanced: dict[RowKeyT, set[str]]
+
+
+def run_row_parameter_dialog(
+    request: RowParameterRequest[RowKeyT],
+    *,
+    parent: QWidget | None = None,
+) -> RowParameterResult[RowKeyT] | None:
+    """Open the parameter dialog for one or more workflow rows.
+
+    Returns ``None`` when there are no rows, when the dialog is cancelled, and
+    when it opened read-only to inspect locked rows.
+    """
+
+    if not request.row_values:
+        return None
+    seed_advanced: set[str] = set()
+    for names in request.row_advanced.values():
+        seed_advanced.update(names)
+    dialog = ParameterDialog(
+        specs=list(request.specs),
+        workflow_stage=request.workflow_stage,
+        locked_values=dict(request.locked_values),
+        intro_text=request.intro_text,
+        read_only=request.read_only,
+        species_options=request.species_options,
+        values=dict(request.values),
+        preferred_exclusive=kpoint_exclusive_hint(request.row_values.values()),
+        advanced_names=seed_advanced,
+        mixed_names=mixed_parameter_names(request.row_values.values()),
+        parent=parent,
+    )
+    try:
+        dialog.setWindowTitle(
+            f"{'Inspect' if request.read_only else 'Configure'} {request.subject}"
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted or request.read_only:
+            return None
+        values = request.sanitize(dialog.collect_values())
+        advanced = frozenset(dialog.advanced_names())
+        untouched = dialog.untouched_mixed_names()
+    finally:
+        # The dialog is a child of ``parent``; without this every open would
+        # stay alive under it, editors and all.
+        dialog.deleteLater()
+    return RowParameterResult(
+        values=values,
+        advanced_names=advanced,
+        row_values={
+            key: merge_batch_values(values, row_values, untouched)
+            for key, row_values in request.row_values.items()
+        },
+        row_advanced={
+            key: merge_batch_advanced(advanced, request.row_advanced.get(key, ()), untouched)
+            for key in request.row_values
+        },
+    )
+
+
+@dataclass(frozen=True)
+class SourceConfigureRequest:
+    """What a source table's Configure dialog opens with.
+
+    ``keys`` are the targeted source rows and ``row_values`` their effective
+    parameters, in the same order; ``advanced_names`` is every advanced name
+    any of them shows. The dialog opens on the values the rows share and marks
+    the rest as mixed. ``num_farms`` is the farm count every row agrees on, else
+    1.
+    """
+
+    keys: tuple[str, ...]
+    row_values: tuple[Mapping[str, object], ...]
+    advanced_names: frozenset[str]
+    title: str
+    intro_text: str
+    read_only: bool
+    num_farms: int
+    species_options: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class SourceConfigureResult:
+    """An accepted source Configure dialog: what to store for every targeted row.
+
+    ``untouched_mixed`` names the mixed parameters the user left alone, which
+    each row keeps from its own stored configuration. ``extras`` holds the
+    workflow's own controls (the farm count), read before the dialog is deleted.
+    ``opening_values`` are the values the dialog showed when it opened, defaults
+    it filled in included, so a caller can tell a value the user set from one
+    the dialog supplied.
+    """
+
+    values: dict[str, object]
+    advanced_names: frozenset[str]
+    untouched_mixed: frozenset[str]
+    extras: dict[str, object] = field(default_factory=dict)
+    opening_values: dict[str, object] = field(default_factory=dict)
+
+
+def run_source_configure_dialog(
+    build: Callable[..., DialogT],
+    request: SourceConfigureRequest,
+    *,
+    extras: Callable[[DialogT], Mapping[str, object]] | None = None,
+) -> SourceConfigureResult | None:
+    """Build a source Configure dialog seeded from ``request``, run it, and delete it.
+
+    ``build`` makes the workflow's dialog; it receives the seed as the
+    ``values``, ``preferred_exclusive``, ``advanced_names`` and ``mixed_names``
+    keyword arguments, so the rows are built once. ``extras`` reads the
+    workflow's own controls from an accepted dialog into the result.
+
+    Returns ``None`` when the dialog is cancelled, and when it opened read-only
+    to inspect rows that can no longer change.
+    """
+
+    dialog = build(
+        values=shared_parameter_values(request.row_values),
+        preferred_exclusive=kpoint_exclusive_hint(request.row_values),
+        advanced_names=tuple(sorted(request.advanced_names)),
+        mixed_names=mixed_parameter_names(request.row_values),
+    )
+    try:
+        dialog.setWindowTitle(request.title)
+        opening_values = dict(dialog.collect_values())
+        if dialog.exec() != QDialog.DialogCode.Accepted or request.read_only:
+            return None
+        return SourceConfigureResult(
+            values=dict(dialog.collect_values()),
+            advanced_names=frozenset(dialog.advanced_names()),
+            untouched_mixed=frozenset(dialog.untouched_mixed_names()),
+            extras={} if extras is None else dict(extras(dialog)),
+            opening_values=opening_values,
+        )
+    finally:
+        # The dialog is a child of the window; without this every open would
+        # stay alive under it, editors and all.
+        dialog.deleteLater()
+
+
+class QuantumCorrectionsConfigDialog(ParameterDialog):
+    """Parameter dialog for Quantum Corrections rows: task locked to PHONON, plus a farm count."""
+
+    def __init__(
+        self,
+        *,
+        specs: list[KeywordSpec],
+        num_farms: int = 1,
+        intro_text: str | None = None,
+        read_only: bool = False,
+        species_options: Sequence[str] = (),
+        values: dict[str, object] | None = None,
+        preferred_exclusive: str | None = None,
+        advanced_names: Iterable[str] | None = None,
+        mixed_names: Iterable[str] | None = None,
+        parent=None,
+    ) -> None:
+        super().__init__(
+            specs=specs,
+            workflow_stage="quantum_corrections",
+            locked_values={"task": "PHONON"},
+            intro_text=intro_text,
+            read_only=read_only,
+            species_options=species_options,
+            values=values,
+            preferred_exclusive=preferred_exclusive,
+            advanced_names=advanced_names,
+            mixed_names=mixed_names,
+            parent=parent,
+        )
+        self._num_farms_spin = QSpinBox(self)
+        self._num_farms_spin.setRange(1, 9999)
+        self._num_farms_spin.setValue(max(1, int(num_farms)))
+        self._num_farms_spin.setEnabled(not read_only)
+        self._num_farms_edited = False
+        self._num_farms_spin.valueChanged.connect(self._mark_num_farms_edited)
+        # Typing the value already shown changes nothing, but it is still a choice.
+        self._num_farms_spin.lineEdit().textEdited.connect(self._mark_num_farms_edited)
+
+        farms_row = QHBoxLayout()
+        farms_row.addWidget(QLabel("Farms", self))
+        farms_row.addWidget(self._num_farms_spin)
+        farms_row.addWidget(QLabel("A value of 1 disables task farming.", self), 1)
+
+        root = self.layout()
+        assert root is not None
+        root.insertLayout(2, farms_row)
+
+    def num_farms(self) -> int:
+        return max(1, int(self._num_farms_spin.value()))
+
+    def num_farms_edited(self) -> bool:
+        """Return whether the user changed the farm count since the dialog opened."""
+
+        return self._num_farms_edited
+
+    def _mark_num_farms_edited(self) -> None:
+        self._num_farms_edited = True
+
+
+class HyperfineCouplingConfigDialog(ParameterDialog):
+    """Parameter dialog for Hyperfine Coupling rows: one magres job each, task locked to MAGRES."""
+
+    def __init__(
+        self,
+        *,
+        specs: list[KeywordSpec],
+        intro_text: str | None = None,
+        read_only: bool = False,
+        species_options: Sequence[str] = (),
+        values: dict[str, object] | None = None,
+        preferred_exclusive: str | None = None,
+        advanced_names: Iterable[str] | None = None,
+        mixed_names: Iterable[str] | None = None,
+        parent=None,
+    ) -> None:
+        super().__init__(
+            specs=specs,
+            workflow_stage="hyperfine_coupling",
+            locked_values={"task": "MAGRES"},
+            intro_text=intro_text,
+            read_only=read_only,
+            species_options=species_options,
+            values=values,
+            preferred_exclusive=preferred_exclusive,
+            advanced_names=advanced_names,
+            mixed_names=mixed_names,
+            parent=parent,
+        )
+
+
+class NudgedElasticBandConfigDialog(ParameterDialog):
+    """NEB parameter dialog with a CASTEP task-farm control.
+
+    Task farming splits the band's images across independent CASTEP farms, so a
+    sweep costs ``ceil(images / farms)`` SCFs instead of ``images``. The farm
+    count is a per-path setting rather than a submission-time one because it is
+    written into the job's ``.param`` as ``NUM_FARMS`` when the job directory is
+    materialized, before any runtime is chosen.
+
+    The hint below the spin box is derived live from the dialog's *current*
+    image count, so an unbalanced pairing (11 images over 5 farms wastes a
+    quarter of the allocation) is visible before the job is ever submitted.
+    """
+
+    def __init__(
+        self,
+        *,
+        specs: list[KeywordSpec],
+        num_farms: int = 1,
+        intro_text: str | None = None,
+        read_only: bool = False,
+        num_farms_editable: bool = True,
+        species_options: Sequence[str] = (),
+        values: dict[str, object] | None = None,
+        preferred_exclusive: str | None = None,
+        advanced_names: Iterable[str] | None = None,
+        mixed_names: Iterable[str] | None = None,
+        parent=None,
+    ) -> None:
+        super().__init__(
+            specs=specs,
+            workflow_stage="energy_barriers",
+            locked_values={
+                "task": "TRANSITIONSTATESEARCH",
+                "tssearch_method": "NEB",
+                "tssearch_neb_climbing": "TRUE",
+            },
+            intro_text=intro_text,
+            read_only=read_only,
+            species_options=species_options,
+            values=values,
+            preferred_exclusive=preferred_exclusive,
+            advanced_names=advanced_names,
+            mixed_names=mixed_names,
+            parent=parent,
+        )
+        self._num_farms_spin.setValue(max(1, int(num_farms)))
+        self._num_farms_spin.setEnabled(bool(num_farms_editable and not read_only))
+        self._num_farms_spin.valueChanged.connect(lambda *_: self._refresh_farm_hint())
+        self._refresh_farm_hint()
+
+    def _build_workflow_rows(self) -> tuple[WorkflowTableRow, ...]:
+        images_note = QLabel(
+            "Intermediate images only: the finished band holds two more, the reactant and "
+            "the product. An even count is rounded up to the next odd one, because climbing "
+            "image is locked on.",
+            self._table_widget,
+        )
+        images_note.setWordWrap(True)
+        images_note.setObjectName("hintText")
+
+        farms_label = QLabel("Task farms", self._table_widget)
+        farms_value = QWidget(self._table_widget)
+        self._num_farms_spin = QSpinBox(farms_value)
+        # CASTEP rejects NUM_FARMS outside 1..999 (parameters_validate).
+        self._num_farms_spin.setRange(1, 999)
+        self._num_farms_spin.setAccessibleName("Task farms")
+        farms_label.setBuddy(self._num_farms_spin)
+        self._farm_hint = QLabel("", farms_value)
+        self._farm_hint.setWordWrap(True)
+        farms_layout = QHBoxLayout(farms_value)
+        farms_layout.setContentsMargins(0, 0, 0, 0)
+        farms_layout.addWidget(self._num_farms_spin)
+        farms_layout.addWidget(self._farm_hint, 1)
+
+        return (
+            WorkflowTableRow(
+                after="tssearch_max_path_points",
+                label=QLabel("", self._table_widget),
+                value=images_note,
+            ),
+            WorkflowTableRow(
+                after="tssearch_force_tol",
+                label=farms_label,
+                value=farms_value,
+                search_text="task farms num_farms",
+                focus=self._num_farms_spin,
+            ),
+        )
+
+    def num_farms(self) -> int:
+        """Return the selected farm count (1 when farming is disabled)."""
+
+        return max(1, int(self._num_farms_spin.value()))
+
+    def _compute_blocked_names(self) -> set[str]:
+        # NUM_FARMS has a dedicated control, and its value is *also* read back
+        # from the row's extras to decide which output filenames a finished job
+        # wrote and whether the requested MPI ranks can serve it. A second,
+        # keyword-row copy reachable through "Add Parameter" would win in the
+        # rendered .param while those checks kept using the spin box value --
+        # CASTEP running one farm count while MuFinder assumed another. Block it
+        # so the control is the only source.
+        blocked = super()._compute_blocked_names()
+        blocked.add("num_farms")
+        return blocked
+
+    def _on_editor_changed(self) -> None:
+        super()._on_editor_changed()
+        self._refresh_farm_hint()
+
+    def set_values(self, values, *, preferred_exclusive=None) -> None:
+        # Seeding values rebuilds rows rather than firing editor signals, so the
+        # hint would otherwise keep describing the previous image count.
+        super().set_values(values, preferred_exclusive=preferred_exclusive)
+        self._refresh_farm_hint()
+
+    def _current_image_count(self) -> int | None:
+        raw = self.collect_values().get("tssearch_max_path_points")
+        try:
+            return max(0, int(raw))
+        except (TypeError, ValueError):
+            return None
+
+    def _refresh_farm_hint(self) -> None:
+        hint = self._farm_hint
+        farms = self.num_farms()
+        if farms <= 1:
+            hint.setText("Task farming disabled: every image runs on the full set of MPI ranks.")
+            return
+        images = self._current_image_count()
+        if images is None:
+            hint.setText(f"Needs at least {farms} MPI ranks, ideally a multiple of {farms}.")
+            return
+        distribution = neb_farm_distribution(images=images, farms=farms)
+        split = "/".join(str(count) for count in distribution.steady_counts)
+        text = (
+            f"{images} images over {farms} farms → {split} per farm "
+            f"({distribution.efficiency:.0%} balance). "
+            f"Needs at least {farms} MPI ranks, ideally a multiple of {farms}."
+        )
+        if distribution.idle_farms:
+            text += f" {plural(distribution.idle_farms, 'farm')} would sit idle."
+        hint.setText(text)

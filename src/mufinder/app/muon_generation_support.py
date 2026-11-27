@@ -1,0 +1,202 @@
+"""Main-window helpers for the muon site generation page.
+
+``MuonGenerationThread`` computes candidate sites off the Qt main thread,
+and ``MuonChargeStateDialog`` asks which charge states the relaxation jobs
+created from the selected sites should use.
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import TYPE_CHECKING
+
+from PySide6.QtCore import QThread, Signal
+from PySide6.QtWidgets import (
+    QButtonGroup,
+    QDialog,
+    QDialogButtonBox,
+    QLabel,
+    QRadioButton,
+    QVBoxLayout,
+    QWidget,
+)
+
+from mufinder.app.theme import style_section_subtitle, style_section_title
+from mufinder.domain.charge_states import MUONIUM_CHARGE_STATE, POSITIVE_MUON_CHARGE_STATE
+from mufinder.domain.text import plain_error
+from mufinder.science.site_generation import SiteGenerationError
+from mufinder.services.site_generation_service import SiteGenerationCancelled
+
+if TYPE_CHECKING:
+    from mufinder.services.project_service import ProjectService
+    from mufinder.services.site_generation_service import CandidateSiteRequest
+
+_LOG = logging.getLogger(__name__)
+
+
+class MuonChargeStateDialog(QDialog):
+    """Choose which muon charge state tabs receive generated positions."""
+
+    POSITIVE_ONLY = "positive"
+    MUONIUM_ONLY = "muonium"
+    BOTH = "both"
+
+    def __init__(self, *, site_count: int, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("muonChargeStateDialog")
+        self.setWindowTitle("Create Muon Relaxation Jobs")
+        self.resize(480, 280)
+
+        self._button_group = QButtonGroup(self)
+        self._button_group.setExclusive(True)
+        self._positive = QRadioButton("Positive muon", self)
+        self._positive.setProperty("chargeStateOption", "true")
+        self._positive.setChecked(True)
+        self._muonium = QRadioButton("Muonium", self)
+        self._muonium.setProperty("chargeStateOption", "true")
+        self._both = QRadioButton("Both charge states", self)
+        self._both.setProperty("chargeStateOption", "true")
+        for index, button in enumerate((self._positive, self._muonium, self._both)):
+            self._button_group.addButton(button, index)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(18, 18, 18, 14)
+        layout.setSpacing(10)
+
+        title = QLabel("Choose Charge State", self)
+        style_section_title(title)
+        layout.addWidget(title)
+
+        noun = "position" if site_count == 1 else "positions"
+        subtitle = QLabel(
+            f"Create relaxation jobs for {site_count} selected initial muon {noun}.",
+            self,
+        )
+        subtitle.setWordWrap(True)
+        style_section_subtitle(subtitle)
+        layout.addWidget(subtitle)
+
+        card = QWidget(self)
+        card.setObjectName("muonChargeStateCard")
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(12, 12, 12, 12)
+        card_layout.setSpacing(8)
+        card_layout.addWidget(self._positive)
+        card_layout.addWidget(self._muonium)
+        card_layout.addWidget(self._both)
+        layout.addWidget(card)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
+            self,
+        )
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("Create Jobs")
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def selected_charge_states(self) -> tuple[str, ...]:
+        if self._both.isChecked():
+            return (POSITIVE_MUON_CHARGE_STATE, MUONIUM_CHARGE_STATE)
+        if self._muonium.isChecked():
+            return (MUONIUM_CHARGE_STATE,)
+        return (POSITIVE_MUON_CHARGE_STATE,)
+
+
+def _unexpected_error_reason(exc: Exception) -> str:
+    """Return the first line of ``exc``'s plain reason, or ``""`` when it has none worth showing.
+
+    A ``KeyError``'s text is only the missing key's repr, which tells the user nothing.
+    """
+
+    if isinstance(exc, KeyError):
+        return ""
+    lines = plain_error(exc).strip().splitlines()
+    return lines[0].rstrip(" .") if lines else ""
+
+
+class MuonGenerationThread(QThread):
+    """Compute a prepared site-generation request away from the Qt main thread.
+
+    The thread never reads or changes the project document: it computes the
+    sites of a :class:`CandidateSiteRequest` captured on the GUI thread, and
+    ``generated`` hands the outcome back for the site-generation controller to
+    apply there.
+    :meth:`cancel` stops the computation at its next progress report;
+    ``cancelled`` then follows instead of ``generated`` or ``failed``, and the
+    result is discarded.
+    ``failed`` carries the message of a run the request's constraints stopped;
+    ``failed_unexpectedly`` carries the plain reason (no exception class) of
+    any other error, whose traceback goes to the log. Exactly one of the four
+    outcome signals is emitted per run.
+    """
+
+    generated = Signal(object)
+    failed = Signal(str)
+    failed_unexpectedly = Signal(str)
+    cancelled = Signal()
+    progress_changed = Signal(int, int)
+
+    def __init__(
+        self,
+        service: ProjectService,
+        request: CandidateSiteRequest,
+        *,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._service = service
+        self._request = request
+        # Kept apart from requestInterruption(), which reads False again once
+        # the thread has finished, while its queued result may still arrive.
+        self._cancel_requested = False
+
+    @property
+    def request(self) -> CandidateSiteRequest:
+        return self._request
+
+    @property
+    def method(self) -> str:
+        return self._request.method
+
+    @property
+    def parameters(self) -> dict:
+        return dict(self._request.parameters)
+
+    @property
+    def cancel_requested(self) -> bool:
+        """Whether :meth:`cancel` was called; a cancelled run's result is discarded."""
+
+        return self._cancel_requested
+
+    def cancel(self) -> None:
+        """Ask the computation to stop; its result is discarded."""
+
+        self._cancel_requested = True
+        self.requestInterruption()
+
+    def run(self) -> None:
+        try:
+            outcome = self._service.compute_candidate_sites(
+                self._request,
+                progress_callback=self.progress_changed.emit,
+                should_cancel=self.isInterruptionRequested,
+            )
+        except SiteGenerationCancelled:
+            self.cancelled.emit()
+            return
+        except (SiteGenerationError, ValueError) as exc:
+            if self.isInterruptionRequested():
+                self.cancelled.emit()
+            else:
+                self.failed.emit(str(exc))
+            return
+        except Exception as exc:  # noqa: BLE001 - reported on the GUI thread, never raised across threads
+            if self.isInterruptionRequested():
+                _LOG.debug("Cancelled muon site generation stopped with an error", exc_info=True)
+                self.cancelled.emit()
+            else:
+                _LOG.exception("Muon site generation failed")
+                self.failed_unexpectedly.emit(_unexpected_error_reason(exc))
+            return
+        self.generated.emit(outcome)

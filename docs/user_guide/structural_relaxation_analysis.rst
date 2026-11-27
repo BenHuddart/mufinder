@@ -1,0 +1,612 @@
+Structural Relaxation Analysis
+==============================
+
+This page covers the stage that takes completed muon relaxations to a short list
+of candidate muon stopping sites. After the relaxations have run under ``Muon
+Sites -> Relaxations``, an analysis workspace in ``Muon Sites -> Analysis`` groups
+their final muon positions into distinct sites, assigns each site a Wyckoff
+position, and pins the result to the ``Muon Sites`` summary, which later workflows
+read. A fixed-cell relaxation from :doc:`/user_guide/pristine_relaxation` can be
+the reference for `Displacement analysis`_. Two sections apply to pristine and muon
+relaxations alike: :ref:`export-relaxed-structures` and :ref:`continue-relaxation`.
+
+Analysis workspaces
+-------------------
+
+An analysis workspace collects completed muon geometry optimisation results and
+treats their final muon positions as an analysis set. A workspace is for either
+positive muon or muonium calculations, and only takes relaxations from that
+charge state.
+
+Before you start
+~~~~~~~~~~~~~~~~
+
+An analysis workspace needs:
+
+- **Completed, converged muon relaxations.** Generate sites and run their
+  relaxations first (:doc:`/user_guide/site_generation`). The workspace takes
+  the host structure that is active when you create it.
+- **One charge state per workspace.** Rows from the ``Positive muon`` and
+  ``Muonium`` tabs cannot be mixed; create one workspace for each.
+- **One calculation per workspace, ideally.** Total energies are only
+  comparable between relaxations in the same supercell with the same cutoff,
+  k-points, functional, Hubbard U and spin treatment. Selecting or adding relaxations
+  that differ in any of these asks first (``Different calculations``), with
+  ``Cancel`` the default; ``Use them anyway`` goes on.
+
+Running the workflow
+~~~~~~~~~~~~~~~~~~~~
+
+1. **Select the relaxations.** In ``Muon Sites -> Relaxations``, open the
+   charge-state tab you want and select completed, converged rows.
+2. **Create the workspace.** Click ``Create Analysis Workspace from
+   Selection``. In ``Create Analysis Workspace``, enter the ``Workspace name``
+   (default ``positive muon analysis`` or ``muonium analysis``) and accept.
+   Selecting rows from both charge states is refused. The new workspace is
+   not grouped yet. The Journal records its creation; if that record cannot
+   be written to disk, a ``Journal not updated`` message says so, and the
+   workspace is still created, opened and saved with the project.
+3. **Add more structures if needed.** The workspace opens as a tab in ``Muon
+   Sites -> Analysis`` and appears as a node under ``Analysis`` in the project
+   tree. Click ``Add Structure to Analysis`` to add further completed
+   relaxations of the same charge state, ticking ``Add`` for each. The dialog
+   reports each relaxation's energy as ``dE vs workspace min (eV)``, so a
+   negative value means that adding it would reset the workspace zero. Adding
+   relaxations never regroups the workspace (see `Clustering`_).
+4. **Group the sites.** Click ``Clustering…``, choose a ``Method`` and click
+   ``Apply Clustering`` (see `Clustering`_).
+5. **Inspect distortions (optional).** Click ``Analyse Displacements`` (see
+   `Displacement analysis`_).
+6. **Pin the result.** Click ``Pin to Summary`` to copy the distinct sites to
+   the ``Muon Sites`` summary page (see `The Muon Sites summary`_).
+7. **Export (optional).** Click ``Export CIF…`` for the host with every
+   muon position (see `Exporting to CIF`_), or ``Export Relaxed Structures``
+   for the relaxed supercells themselves (see `Exporting relaxed structures`_).
+
+An analysis made before every relaxation has finished goes stale once the full
+set is available; delete it and make a new one (see `Deleting a workspace`_).
+
+The workspace page
+~~~~~~~~~~~~~~~~~~
+
+.. figure:: ../_generated/screenshots/relaxation_analysis_workspace.webp
+   :alt: An analysis workspace with ten CoF2 positive-muon relaxations clustered
+         into 4c, 4d and 8i sites, beside a 3D preview of the host cell.
+
+   Synthetic CoF₂ relaxations clustered into the three sites of
+   :doc:`/user_guide/examples/cof2`.
+
+Each workspace is a tab on the ``Muon Sites -> Analysis`` page, and a row
+under ``Analysis`` in the project navigator. Selecting a workspace's row opens
+its tab, and switching tabs selects the matching row. A tab draws its 3D preview the first time you open it, so a project
+with many workspaces opens without waiting for previews you have not looked
+at.
+
+The header of each workspace has:
+
+``Workspace``
+   The workspace name. Edit it here; the navigator row is renamed with it.
+``Charge state``
+   ``Positive muon`` or ``Muonium``, fixed when the workspace was created.
+``Show shifted positions``
+   Display option described under `Site ordering`_.
+``Delete Analysis…``
+   Removes the workspace (see `Deleting a workspace`_).
+``Add Structure to Analysis``, ``Clustering…``, ``Analyse Displacements``, ``Pin to Summary``, ``Export CIF…``
+   The steps above.
+``Export Relaxed Structures``
+   A drop-down that saves the relaxed supercells of the selected sites (see `Exporting
+   relaxed structures`_). Select site rows in the table with Ctrl or Shift
+   click.
+
+Workspaces are saved with the project. Creating a workspace, applying a
+grouping and deleting a workspace save the project straight away; other edits
+are saved with the next project save.
+
+Clustering
+~~~~~~~~~~
+
+A workspace is grouped only when you apply a grouping. The ``Clustering…``
+button opens the ``Clustering - <workspace>`` dialog, which provides three
+methods, selected with ``Method``; it opens on ``Connected Components`` within
+0.25 Å, the method the MuFinder paper uses. Click ``Apply Clustering`` to store
+the result, with the method and its settings, on the workspace. Closing the
+dialog without applying leaves the workspace as it was.
+
+Relaxations added to a grouped workspace do not regroup it. The earlier sites
+keep their clusters, the new ones are listed without one, and a note above the
+table says the grouping is out of date, for example ``The grouping is out of
+date: it leaves out 2 relaxations added after it was applied. Choose
+'Clustering…' and 'Apply Clustering' to group every relaxation.`` The note
+stays, across saves, until a grouping is applied again. Meanwhile the clusters'
+relative energies follow the workspace's lowest energy, and ``Pin to Summary``
+pins only the grouped sites.
+
+The dialog regroups a quarter of a second after you stop editing its
+controls, so a run of edits regroups once, and ``Apply Clustering`` always
+applies what the controls show.
+
+.. figure:: ../_generated/screenshots/relaxation_clustering_dialog.webp
+   :alt: The Clustering dialog with Connected Components at 0.25 A: a graph of
+         seven, one and two linked sites, the cluster-count plot and the
+         clustered-sites table with 4c, 4d and 8i Wyckoff assignments.
+
+   Connected-components clustering of the CoF₂ positive-muon workspace.
+
+``Connected Components``
+   Two relaxed muon endpoints belong to the same cluster when they are linked
+   by a chain of endpoints whose symmetry-aware periodic distance is below the
+   ``Distance tolerance (Å)``. The dialog shows the graph of subclusters and a
+   plot of number of clusters against tolerance. Each manual tolerance
+   evaluation adds a point to the plot. ``Scan Tolerances`` evaluates a
+   regular tolerance grid in the background (the button reads ``Scanning…``
+   meanwhile) so you can choose a stable plateau in the cluster-count curve
+   deliberately.
+``Hierarchical``
+   Cuts a dendrogram at the threshold ``Hierarchical t``. Links below the cut
+   take the colour of their cluster, the colour its sites have in the structure
+   view, and links above the cut stay grey. A cluster of one site has no link
+   to colour.
+``K-means``
+   Divides the endpoints into the number of clusters you request in
+   ``Clusters k``, but never into more clusters than there are distinct sites:
+   when ``k`` is larger, the dialog says how many clusters it used. ``Apply
+   Clustering`` keeps the ``k`` you asked for, so relaxations that join later
+   can fill it, and the grouping record states the number used.
+
+The ``Wyckoff tolerance (Å)`` control sets the maximum allowed distance from
+every anchored cluster member to the Wyckoff orbit assigned to its cluster (see
+`Wyckoff assignment`_).
+
+The clustered-sites table in the dialog reports each cluster's Wyckoff
+assignment. Tooltips include the detected space group, the site-symmetry
+symbol, and the maximum and mean fitted distances used to justify the
+assignment. The structure viewer (see :doc:`/user_guide/structure_viewer`)
+gets half the width of the dialog, or more when its cluster summary table needs
+it to show the Wyckoff assignments in full; the plot takes the rest. The split follows window resizes until you drag
+the handle.
+
+The connected-components graph scales with its canvas: every node stays inside
+the plot and nodes never overlap, however small the window. Components are
+packed into rows chosen to fit the canvas's shape and the packing is redone
+when the window is resized. Nodes stop growing at about 22 pt in radius, so a
+small graph on a large window stays readable, and components with more than 2.5
+edges per node draw thinner, translucent edges so the edges of a dense
+component can still be told apart.
+
+Applying a grouping adds a ``Relaxed sites grouped`` entry to the
+:doc:`/user_guide/journal`.
+
+Site ordering
+~~~~~~~~~~~~~
+
+Within a workspace, muon sites are ordered by increasing total energy. The
+energy column is reported relative to the lowest-energy member of the
+workspace. Final muon coordinates are folded back into the host unit cell.
+A relaxation whose result does not record its host-cell position has its
+relaxed supercell position mapped into the host cell with the supercell
+matrix its row stores; without that row the relaxation is not offered.
+
+``Show shifted positions`` applies a display-only symmetry anchoring step. It
+chooses a representative site within each cluster and shows
+symmetry-equivalent positions close to that representative where possible.
+Changed coordinate cells are shown in blue. The saved relaxed structures are
+not edited by this operation.
+
+Wyckoff assignment
+~~~~~~~~~~~~~~~~~~
+
+Muon sites often relax close to high-symmetry interstitial positions. After
+clustering, MuFinder assigns each cluster the highest-symmetry unoccupied
+Wyckoff position of the host space group that is consistent with all members of
+the cluster. The clustered-sites table shows this in the cluster header, for
+example ``Cluster 1: (0.2500, 0.5000, 0.0000) 12c``. That number is the cluster's
+number in the clustering window's summary table.
+
+The assignment is a tolerance-based fit rather than a claim that the relaxed
+muon is exactly on the Wyckoff position. If no unoccupied special position
+lies within the ``Wyckoff tolerance (Å)`` of every anchored cluster member,
+MuFinder reports the assignment as unavailable rather than hiding a cluster
+outlier behind the representative site. See `Method`_ for how the position is
+fitted.
+
+.. _displacement-analysis:
+
+Displacement analysis
+~~~~~~~~~~~~~~~~~~~~~
+
+``Analyse Displacements`` opens an ``Analyse Displacements - <workspace>``
+view of how each relaxed muon site distorts the host; clustering is not
+required. Choose one relaxed muon site from the workspace (``Muon site``) and
+a comparison host structure (``Comparison host``). The comparison structure may
+be the imported host or a completed pristine relaxation, provided the pristine
+relaxation was not run as a free-cell relaxation. It starts on the most
+recently completed fixed-cell pristine relaxation, else the host: when the
+host is the experimental structure, its displacements would include the
+host's own DFT relaxation. Free-cell pristine
+relaxations are disabled in the selector because cell-shape changes make
+ion-by-ion displacement interpretation ambiguous.
+
+MuFinder creates the comparison supercell needed to match the relaxed cell,
+removes the implanted muon from the relaxed structure, and matches the host atoms
+of each element to their nearest periodic images, as the comparison table does
+(:doc:`comparison_table`). The structure view shows
+the relaxed structure with the comparison host atoms as transparent reference
+points. Distances are measured from the site the muon relaxed to in the
+relaxed supercell. The plot reports radial ion displacement relative to the
+selected muon site against ion distance from the muon, in the style of Fig. 5(b) in the
+MuFinder paper. Positive radial displacement means the matched ion moved away
+from the muon. The species legend sits to the right of the plot at the bottom,
+clear of the corner button that opens the plot in its own window.
+
+.. figure:: ../_generated/screenshots/displacement_analysis_dialog.webp
+   :alt: The Analyse Displacements dialog for a CoF2 4c site: the two nearest F
+         moved in by about half an angstrom and the two nearest Co moved out.
+
+   The F–μ–F distortion around the CoF₂ 4c site.
+
+Deleting a workspace
+~~~~~~~~~~~~~~~~~~~~
+
+Click ``Delete Analysis…`` in a workspace's header, or right-click the
+workspace's row in the project navigator and choose ``Delete Analysis…``. MuFinder
+asks for confirmation first, with ``Cancel`` as the default. If the deleted
+workspace was the one showing, the Analysis page stays open.
+
+Deleting a workspace discards only the workspace and its clustering. The
+structural relaxations it used are kept, so they can be added to a new workspace
+straight away. If the workspace's sites were pinned to the ``Muon Sites``
+summary page, that pin is removed as well, and the confirmation says so. A pin
+taken from another workspace is left alone. The deletion is saved to the
+project immediately and cannot be undone.
+
+The Muon Sites summary
+----------------------
+
+.. figure:: ../_generated/screenshots/muon_sites_summary.webp
+   :alt: The Muon Sites page with three positive-muon sites (4c, 4d, 8i) and two
+         muonium sites (8i, 4d) pinned.
+
+   Both cards populated: the CoF₂ positive-muon and muonium workspaces, pinned.
+
+The ``Muon Sites`` page (the parent node above ``Generation``, ``Relaxations``
+and ``Analysis``) summarises your headline result: the distinct,
+symmetry-inequivalent candidate stopping sites for each charge state. It has
+one card for ``Positive muon`` and one for ``Muonium``, shown side by side.
+
+To populate a card, open a clustered analysis workspace and click ``Pin to
+Summary``. MuFinder copies the workspace's distinct clustered sites into the
+card for the matching charge state, ranked by relative energy (lowest first),
+and shows each site's relative energy, representative fractional position, and
+Wyckoff label. A 3D preview renders the host structure with the pinned muon
+sites. Pinning requires that clustering has been run, that the workspace was
+built on the active host structure, and that its charge state is supported; the
+button reports if there is nothing to summarise yet or the host does not match.
+Click ``Unpin`` to clear a card. A pinned card is a snapshot, independent of the
+live workspaces, and each pinned site remembers the relaxation that represents
+its cluster.
+
+The card also states how the sites were grouped, ready to quote: ``Grouping``
+gives the clustering method with its setting (the distance tolerance for
+``Connected Components``, ``t`` for ``Hierarchical``, ``k`` for ``K-means``) and
+the Wyckoff tolerance, and ``Symmetry`` gives the host's space group, its number
+of symmetry operations and the 0.001 Å tolerance spglib detected it at, for
+example ``P4₂/mnm (16 ops), tolerance 0.001 Å``, as recorded when the grouping was
+applied. A card pinned before MuFinder
+recorded these shows neither line; pin the analysis again to add them.
+
+Quantum Corrections, Energy Barriers and the Magnetic Fields muon-site dialog
+list the pinned sites by default, labelled by Wyckoff label and cluster and
+ranked by relative energy as on the summary. Each page has a ``Show every
+relaxed site`` option that lists every eligible relaxed site instead; the
+choice is saved per workflow. Pinning or unpinning updates those pages straight
+away.
+
+You can navigate from the summary straight into the live analysis:
+
+- ``Open in Analysis →`` jumps to the workspace the card was pinned from. When
+  a card is empty, this button instead reads ``Go to Analysis →`` and takes you
+  to the Analysis tab so you can create and cluster a workspace.
+- Clicking a site row in the ranked table, or clicking a muon in the 3D
+  preview, opens the source workspace and reveals that specific cluster.
+
+MuFinder validates a pinned card against the current host structure and hides
+it if the host changes. If the source workspace or cluster no longer exists
+when you follow a link, MuFinder opens the Analysis tab and notes that the
+pinned analysis has changed.
+
+Exporting to CIF
+----------------
+
+Both the live analysis and the pinned summary can export the host structure
+together with muon positions as a CIF file. Muons are written as hydrogen atoms
+with distinct ``Mu1``, ``Mu2``, ... ``_atom_site_label`` values. The file is
+written in P1 with every atom listed explicitly, since muon sites generally
+break the host's symmetry.
+
+Every exported CIF is plain ASCII, as CIF 1.1 asks. Units in its comment lines
+are spelled out (``Angstrom``, not ``Å``). A name you typed, such as the
+analysis or project name, is written with accents and subscripts folded
+(``CoF₂ é`` as ``CoF2 e``) and any other non-ASCII character as ``?``.
+
+- In the ``Analysis`` tab, each workspace's ``Export CIF…`` button exports
+  every relaxed muon position currently in that workspace: one CIF site per
+  completed relaxation added to the workspace, whether or not clustering has
+  been applied. Use this when you want the full set of raw relaxation endpoints
+  rather than a clustered summary.
+- On the ``Muon Sites`` summary page, each card's ``Export CIF…`` button
+  exports only the pinned, distinct clustered sites (one representative per
+  cluster), matching what the card's table and 3D preview show. The file
+  starts with comment lines naming the source analysis and its ``Grouping``
+  and ``Symmetry`` lines, with spglib's symbol as written (``P4_2/mnm``), for
+  example ``# Grouping: Connected components within 0.25 Angstrom, Wyckoff
+  tolerance 0.25 Angstrom``. It stays disabled until the card is populated.
+- In the UEP analysis window, the ``Batch Search`` tab's ``Export CIF…`` button
+  exports one site per group the table lists, at the position it shows (see
+  :doc:`/user_guide/uep_workflow`).
+
+The standard ``_atom_site`` loop carries no MuFinder-specific columns, because
+an extra column can desynchronize the column count in some CIF readers (VESTA
+among them) and corrupt the whole structure. Per-site relative energy and
+Wyckoff label live in their own standalone loop below the atom list, keyed by
+``_mufinder_muon_site_label``, which a reader that does not recognise it can
+skip without touching atom parsing.
+
+If a muon site is written closer than 0.5 Å to a host atom, or exactly on one,
+MuFinder still writes the file but reports which sites and host atoms are
+affected. The file is not malformed (each atom keeps full, independent
+occupancy), but many external CIF viewers detect the overlap and render the
+pair as a single merged, fractionally-occupied site (for example "Sr1/Mu1")
+rather than two distinct atoms. Seeing this warning, or a merged site of this
+kind in another program, usually indicates that the underlying analysis needs
+another look (for example the wrong host or workspace charge state, or data
+pinned or added from a mismatched structure) rather than a genuine muon site
+landing on a host ion.
+
+.. _export-relaxed-structures:
+
+Exporting relaxed structures
+----------------------------
+
+A completed pristine or muon relaxation can be saved as the full relaxed
+supercell that CASTEP wrote to ``{seed}-out.cell``: every relaxed host atom
+plus, for a muon relaxation, the muon. Imported CASTEP relaxations export the
+same way.
+
+Both entry points offer the two formats as separate menu entries, ``CIF
+(.cif)…`` and ``CASTEP cell (.cell)…``, so the format is chosen before any
+dialog opens:
+
+- In the ``Pristine Relaxation`` table or the ``Muon Sites -> Relaxations``
+  table, right-click one row and choose ``Export Relaxed Structure`` and then
+  a format.
+- In an analysis workspace, click ``Export Relaxed Structures`` and choose a
+  format from its drop-down. With one site row selected it saves that site.
+  With several selected it saves those sites, and with none selected it saves
+  every site in the workspace. Several sites are written to a folder you
+  choose, one file per site, named after each relaxation (for example
+  ``site_1_muonium_relaxed.cif``). Replacing existing files is confirmed first.
+
+The save dialog suggests a name with the chosen extension, made from the
+relaxation and its charge state, in the folder that holds the project. A name
+typed without that extension gets it added.
+
+``CIF (.cif)``
+   Written in P1 with every atom listed. Host atoms are labelled
+   by element and count (``Fe1``, ``Fe2``, ...). The muon is a hydrogen atom
+   labelled ``Mu1``, so it stays distinct from any hydrogen in the host.
+``CASTEP cell (.cell)``
+   ``LATTICE_CART`` in Å and ``POSITIONS_FRAC``. The muon keeps its ``H:mu``
+   species label, so the file reopens in MuFinder. A spin-polarised
+   relaxation run in MuFinder writes the run's ``SPIN=`` values, so the file
+   can seed a spin-polarised CASTEP run as it is. An imported relaxation
+   gets ``SPIN=`` values from its converged Mulliken spins.
+
+Both formats start with comment lines that record the project, the structure,
+the source job and its workflow, the charge state, the final energy in eV and
+the export time. The CIF header is ASCII as above; the ``.cell`` header keeps
+names as typed. Both read back with the relaxation's lattice and fractional
+positions, in MuFinder's structure loader or in viewers such as VESTA. A CIF
+reads the muon back as hydrogen.
+
+``Export Relaxed Structure`` is greyed out until the row's job has completed.
+It is also disabled when the job completed without a relaxed structure, for
+example because its ``-out.cell`` was missing or could not be parsed. Hover
+over the disabled action to see which applies.
+
+.. _continue-relaxation:
+
+Continuing a relaxation from its checkpoint
+-------------------------------------------
+
+Every relaxation ``.param`` MuFinder generates contains ``CONTINUATION :
+DEFAULT``, so CASTEP resumes from a matching ``{seed}.check`` file whenever one
+is in the run directory. Use this to extend a relaxation that ran out of steps
+or to change its parameters and carry on.
+
+1. **Open the row menu.** In the ``Pristine Relaxation`` table or the ``Muon
+   Sites -> Relaxations`` table, right-click a row whose job is ``completed``, ``failed``, ``stopped``
+   or ``cancelled``, and choose ``Continue relaxation…``. The action is offered
+   for one row at a time.
+2. **Review the dialog.** ``Continue Relaxation`` opens with the row's
+   parameters in the shared CASTEP parameter editor, a checkpoint status line
+   (checkpoint found, not found, or could not be verified), a note that the
+   ``.cell`` is regenerated from the row's structure (this dialog does not edit
+   atomic positions), and a summary naming the execution target and the
+   directory that will be reused. ``Parameter changes`` compares the job's
+   ``.cell`` and ``.param`` on disk with the files ``Continue`` will write, and
+   updates as you edit. Each row names the file (``.cell`` or ``.param``), the
+   keyword or block, whether it is ``Added``, ``Changed`` or ``Removed``, and
+   its value: ``old → new`` for a change. A block of one short line shows that
+   line; a longer block shows its line count, or ``Contents changed`` when only
+   its lines differ. The lattice and atomic-position blocks are not listed: they
+   describe the structure, not the run's parameters. When the row could not be
+   rendered, the table reads ``Could not compare the input files.``
+3. **Accept.** Click ``Continue``. The row keeps its job, which is made
+   ready again, and MuFinder rewrites the ``.cell`` and ``.param`` into the same
+   directory, locally or on the cluster, then resubmits the job to its original
+   execution target.
+
+What a continuation keeps
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A continuation runs with the inputs its run used. Accepting the dialog without
+an edit writes the same ``.cell`` and ``.param`` again, and ``Parameter
+changes`` reads ``No parameter changes.``:
+
+- The cut-off energy (or basis precision), the k-point grid (or spacing) and
+  the exchange-correlation functional a row takes from the project's defaults
+  are kept as the run used them, even when those defaults were adopted or
+  changed since. Their editors open on the run's values. A keyword the run
+  left to CASTEP stays out of the files, although its editor shows a starting
+  value.
+- A setting the row stores itself, in its table or its ``Configure…`` dialog,
+  is written as the row holds it, so an edit made to the row since the run
+  applies.
+- Only what you change in the dialog changes on top of that: an edited value,
+  the other choice of an either-or pair such as the k-point grid and spacing
+  (which drops the first), or an advanced parameter added or removed. Resetting
+  an edited parameter returns it to the run's value. Your edits are stored on
+  the row; nothing else on the row changes.
+
+The job's ``.cell`` and ``.param`` must be readable for this. When they are
+missing or cannot be read, ``Relaxation not continued`` says so and nothing
+changes; run the row and choose ``Start again`` to rebuild the inputs from the
+row.
+
+A local job goes back through local submission. A cluster job goes back into
+its existing remote directory, with no existence prompt and nothing deleted, as
+long as the cluster selected in the submission dialog is the job's original
+cluster; choosing a different cluster uses the normal submission path, with a
+new target directory and an existence check.
+
+When the continued job completes again, its relaxed structure is refreshed in
+place, so comparison tables and other references stay valid, and a muon site's
+fields are refreshed from the same completion. A continued run that dies before
+writing a new ``-out.cell`` fails rather than reusing the previous one. Each
+continuation is recorded in the Journal.
+
+A failed, stopped or cancelled row can also be edited in place and run again
+with the table's ``Run``, or with ``Resubmit…`` on the Job Dashboard, which
+runs the same row. When the job has a checkpoint MuFinder asks whether to
+``Continue`` from it, keeping the run directory and the run's inputs as
+``Continue relaxation…`` does when nothing is edited, or ``Start again``, which
+rebuilds the inputs from the row and the project's current defaults (see
+:ref:`resubmit-continue-or-start-again`).
+``Continue relaxation…`` itself is offered on the relaxation tables and in the
+``Failed job`` dialog, not in the Job Dashboard's menus. ``Start again``
+deletes the local ``.check`` and ``.castep`` files and ``{seed}-out.cell``,
+keeping only the ``.cell`` and ``.param`` inputs, although it never clears a
+folder another job still uses.
+
+The regenerated ``.cell`` always holds the row's own structure: there is no
+mode that writes the latest relaxed geometry into it, and MuFinder does not use
+the CASTEP ``reuse`` keyword.
+
+Limitations
+-----------
+
+- ``Analyse Displacements`` cannot use a free-cell pristine relaxation as the
+  comparison host.
+- A pinned card is tied to the host structure it was built on and is hidden
+  when the active host changes.
+- Wyckoff assignment is a tolerance-based fit; it reports no assignment rather
+  than a position that one cluster member misses.
+
+Method
+------
+
+Wyckoff fitting
+~~~~~~~~~~~~~~~
+
+MuFinder first anchors the cluster members in the same non-mutating way used
+for shifted positions, then fits nearby special-position loci from the host
+symmetry operations. This includes variable-coordinate special positions, not
+only fixed high-symmetry points. Each candidate is labelled by generating its
+full symmetry orbit and asking ``spglib`` for the corresponding Wyckoff letter
+and multiplicity. Occupied host positions are rejected by checking whether the
+candidate orbit overlaps any host atom within the occupancy tolerance.
+
+The candidate special positions come from projecting the cluster onto the
+fixed-point locus of every symmetry operation and of every pair of operations,
+which is several thousand pairs for a high-symmetry cubic host. To keep the
+clustering dialog responsive, MuFinder skips pairs that cannot produce a
+solution, screens the rest in one vectorised pass, and projects exactly only
+the pairs that can land within range of the cluster. It then asks ``spglib`` to
+label candidates in rank order, so only the winning candidate is usually
+labelled. None of this changes which site is chosen. Host symmetry operations
+and per-cluster assignments are cached, so switching clustering methods reuses
+the assignments of clusters that did not change.
+
+Clustering methods
+~~~~~~~~~~~~~~~~~~
+
+``Connected Components`` builds a graph in which each relaxed muon endpoint is a
+node. Two nodes are connected when their shortest symmetry-aware periodic
+distance is below the chosen ``Distance tolerance (Å)``, and the clusters are
+the connected components of that graph. This follows the graph-style treatment
+described for relaxed sites in the MuFinder paper.
+
+``Hierarchical`` and ``K-means`` use the Soprano and pymuon-suite inspired
+feature representation of the UEP batch-search workflow: each site's energy
+and its fractional position in the asymmetric unit. The free parameters
+are the dendrogram threshold ``Hierarchical t`` and the requested number of
+clusters ``Clusters k``.
+
+Each feature is scaled to its spread over the workspace before sites are
+compared, but the spread is never taken as less than a physical scale:
+0.01 eV for the energy and 0.05 for a fractional coordinate. Plain min–max
+scaling would stretch numerical noise of 10⁻⁷ Å over the whole range and split
+one site into several. Relaxations whose features all differ by less than these
+scales (directly or through a chain of such relaxations) are one site: they are
+compared as one point, so neither method separates them whatever ``t`` or
+``k`` is, and ``K-means`` asks for at most as many clusters as there are such
+sites.
+
+Each distance is to the nearest periodic image, found with the cell's metric,
+so it is right in hexagonal and other non-orthogonal cells. Host symmetry is
+detected with spglib at a tolerance of 0.001 Å, and labelled species such as
+``Co:1`` read as their element. The symmetry-aware distances do not depend on
+the tolerance, so ``Scan Tolerances`` measures them once and reuses them at
+every grid point. Host symmetry operations are cached per host, and each site's
+symmetry-equivalent positions are compared in one vectorised pass.
+
+The graph sizes its nodes, their border rings, their numbers and its edges in
+data units. Node size follows the closest pair of nodes, and large components
+are spread so neighbouring nodes keep a consistent gap. Components are kept in
+cluster order, with gaps tied to the node size.
+
+Sources
+~~~~~~~
+
+This workflow acknowledges and follows the methods described in:
+
+* B. M. Huddart et al., "MuFinder: A program to determine and analyse muon
+  stopping sites", *Computer Physics Communications* **280**, 108488 (2022),
+  DOI ``10.1016/j.cpc.2022.108488``. The connected-components clustering
+  visualisation and radial displacement plot are based on the approaches shown
+  in that work.
+* L. Liborio, S. Sturniolo, and D. Jochym, "Computational prediction of muon
+  stopping sites using ab initio random structure searching (AIRSS)",
+  *J. Chem. Phys.* **148**, 134114 (2018), DOI ``10.1063/1.5024450``. The
+  workspace follows the AIRSS-style practice of clustering relaxed muonated
+  structures and selecting representative low-energy structures.
+* The pymuon-suite project, especially the ``pm-muairss`` clustering workflow,
+  which uses hierarchical and k-means clustering parameters
+  ``clustering_hier_t`` and ``clustering_kmeans_k``. MuFinder reuses the same
+  Soprano-inspired clustering interface conventions in this analysis view.
+* The pymuon-suite ``pm-symmetry`` workflow, which uses symmetry analysis to
+  report candidate high-symmetry Wyckoff points and whether they are occupied.
+  MuFinder follows that idea for relaxed structural clusters, while fitting the
+  nearest unoccupied Wyckoff orbit to all members of each cluster.
+
+For developers
+--------------
+
+The CIF export is implemented by
+:func:`mufinder.science.structure_io.export_structure_with_muon_sites`. The
+continuation contract (status transition and the cleared and kept fields) is
+described in
+:ref:`job-continuation-primitive` in :doc:`/job_lifecycle`; the checkpoint probe
+is :ref:`remote-checkpoint-probe`. Package layers and the shared workflow
+infrastructure are described in :doc:`/architecture`.
