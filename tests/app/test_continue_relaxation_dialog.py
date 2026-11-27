@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 
 import pytest
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QPoint, Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QComboBox, QDialog, QDialogButtonBox
 
@@ -539,6 +539,9 @@ def test_removing_a_parameter_moves_focus_to_the_new_last_row_not_to_continue(
         parameter_values={"num_dump_cycles": 10}, added_advanced=["num_dump_cycles"]
     )
     buttons = dialog.findChild(QDialogButtonBox)
+    # Short enough that the changes table, which appears with the removal, can
+    # push the row in the removed row's place out of the parameters' view.
+    dialog.resize(dialog.width(), 540)
     open_and_take_focus(dialog)
     assert not dialog._add_advanced_button.isEnabled()
     assert dialog._displayed_names()[-1] == "num_dump_cycles"
@@ -563,6 +566,10 @@ def test_removing_a_parameter_moves_focus_to_the_new_last_row_not_to_continue(
     assert "num_dump_cycles" not in dialog._rows
     assert dialog._rows[new_last].editor.isAncestorOf(focused)
     assert not buttons.isAncestorOf(focused)
+    QApplication.processEvents()
+    viewport = dialog._scroll_area.viewport()
+    top_left = focused.mapTo(viewport, QPoint(0, 0))
+    assert viewport.rect().contains(focused.rect().translated(top_left)), focused
     press_key(Qt.Key.Key_Space)
     if isinstance(focused, QComboBox):
         focused.hidePopup()

@@ -7,7 +7,7 @@ from dataclasses import dataclass
 import itertools
 from typing import Any, Iterable
 
-from PySide6.QtCore import QModelIndex, QRect, QSize, Qt, QTimer
+from PySide6.QtCore import QEvent, QModelIndex, QRect, QSize, Qt, QTimer
 from PySide6.QtGui import QFont, QShowEvent
 from PySide6.QtWidgets import (
     QAbstractButton,
@@ -1205,10 +1205,27 @@ class ParameterDialog(QDialog):
             target = add_button if self._first_tab_stop([add_button]) else self._first_control()
         target.setFocus(Qt.FocusReason.TabFocusReason)
         if self._scroll_area.isAncestorOf(target):
-            # The rebuilt rows are not laid out until the event loop runs, and
-            # focus set from code does not scroll the table, so both are done here.
+            # Focus set from code does not scroll the table, so it is scrolled here,
+            # and again once the event loop has laid out the rebuilt rows and
+            # anything a subclass changed after the rebuild (Continue Relaxation's
+            # changes table, which can shrink the table's view).
             self._table_layout.activate()
-            self._scroll_area.ensureWidgetVisible(target)
+            self._reveal_in_table(target)
+            QTimer.singleShot(0, self, lambda: self._reveal_if_focused(target))
+
+    def _reveal_if_focused(self, control: QWidget) -> None:
+        # A layout that settles can ask its parent to lay out again, so every
+        # request still waiting is handled before the table is scrolled.
+        QApplication.sendPostedEvents(None, QEvent.Type.LayoutRequest)
+        if QApplication.focusWidget() is control:
+            self._reveal_in_table(control)
+
+    def _reveal_in_table(self, control: QWidget) -> None:
+        """Scroll the table so ``control`` shows whole, even in a short view."""
+
+        spare = self._scroll_area.viewport().height() - control.height()
+        margin = max(0, min(50, spare // 2))
+        self._scroll_area.ensureWidgetVisible(control, margin, margin)
 
     def _show_help(self, spec: KeywordSpec) -> None:
         dialog = ParameterHelpDialog(spec, self)

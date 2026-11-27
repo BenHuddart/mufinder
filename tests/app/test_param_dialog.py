@@ -2311,6 +2311,8 @@ def test_a_second_space_after_a_removal_neither_accepts_nor_removes_another_row(
     ok_clicks = _count_ok_clicks(dialog)
 
     focused = _remove(dialog, "mix_alpha", how)
+    # Checked first: a Space on + Add Parameter would open its picker and wait.
+    assert _in_row(dialog, "mix_beta" if lands_on == "value" else "cut_off_energy", focused)
     press_key(Qt.Key.Key_Space)
     if isinstance(focused, QComboBox):
         focused.hidePopup()
@@ -2416,7 +2418,7 @@ def test_a_removal_before_the_dialog_opens_leaves_it_opening_on_the_task(qapp) -
     )
     task_choice = dialog._task_editor.findChild(QComboBox)
 
-    dialog._remove_advanced("mix_alpha")
+    dialog._rows["mix_alpha"].cells[4].click()
     focused = open_and_take_focus(dialog)
 
     assert "mix_alpha" not in dialog._rows
