@@ -1298,11 +1298,12 @@ def test_a_click_in_the_viewer_gives_it_focus_and_shift_click_still_adds(qapp, m
     picker = _AtomPicker()
     plotter.iren.picker = picker
 
-    def click_atom(index: int) -> None:
-        # The scene's own left press and release, as VTK reports a click on an atom.
+    def click_atom(index: int, modifiers=Qt.KeyboardModifier.NoModifier) -> None:
+        # A real click on the render widget, which the fake interactor hands to the
+        # viewer's VTK observers; the picker puts atom ``index`` under it.
         picker.target = index
-        viewer._on_pyvista_left_button_press()
-        viewer._on_pyvista_left_button_release()
+        QTest.mouseClick(plotter, Qt.MouseButton.LeftButton, modifiers, plotter.rect().center())
+        qapp.processEvents()
 
     def shift_key(event_type: QEvent.Type, modifiers_before: Qt.KeyboardModifier) -> None:
         # A key goes to whatever has focus. One event, as a real Shift key sends
@@ -1316,19 +1317,18 @@ def test_a_click_in_the_viewer_gives_it_focus_and_shift_click_still_adds(qapp, m
         widget._atom_table.setFocus(Qt.FocusReason.OtherFocusReason)
         qapp.processEvents()
 
-        QTest.mouseClick(plotter, Qt.MouseButton.LeftButton, pos=plotter.rect().center())
-        qapp.processEvents()
-        assert QApplication.focusWidget() is plotter
         click_atom(0)
+        assert QApplication.focusWidget() is plotter
         assert viewer.selected_atom_indices() == (0,)
 
-        # Shift held: the viewer, which has focus, sees the key, and a click adds the atom.
+        # Shift pressed: the viewer, which has focus, sees the key, and a Shift-click
+        # adds the atom.
         shift_key(QEvent.Type.KeyPress, Qt.KeyboardModifier.NoModifier)
         assert viewer._native_selection_modifier
-        click_atom(1)
+        click_atom(1, Qt.KeyboardModifier.ShiftModifier)
         assert viewer.selected_atom_indices() == (0, 1)
 
-        # Shift let go: a click selects the atom alone again.
+        # Shift let go: the viewer sees that too, and a click selects the atom alone.
         shift_key(QEvent.Type.KeyRelease, Qt.KeyboardModifier.ShiftModifier)
         assert not viewer._native_selection_modifier
         # A sent event leaves the application's modifier record as it came in, where
