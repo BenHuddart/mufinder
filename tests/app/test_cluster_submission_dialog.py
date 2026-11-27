@@ -811,6 +811,93 @@ def test_entering_a_listed_queue_name_applies_its_defaults(qapp) -> None:
     dialog.close()
 
 
+def _shown_psi_dialog(qapp) -> ClusterSubmissionDialog:  # noqa: ANN001
+    dialog = ClusterSubmissionDialog(job_labels=["job_a"], cluster_configs=[_psi_config()])
+    dialog.show()
+    dialog.activateWindow()
+    qapp.processEvents()
+    return dialog
+
+
+_ENTER_KEYS = [
+    pytest.param(Qt.Key.Key_Return, Qt.KeyboardModifier.NoModifier, id="return"),
+    pytest.param(Qt.Key.Key_Enter, Qt.KeyboardModifier.NoModifier, id="enter"),
+    pytest.param(Qt.Key.Key_Enter, Qt.KeyboardModifier.KeypadModifier, id="keypad-enter"),
+]
+
+
+@pytest.mark.parametrize(("key", "modifier"), _ENTER_KEYS)
+def test_enter_in_the_queue_box_commits_the_name_and_keeps_the_dialog_open(
+    qapp,
+    key: Qt.Key,
+    modifier: Qt.KeyboardModifier,
+) -> None:
+    dialog = _shown_psi_dialog(qapp)
+    line_edit = dialog._queue_combo.lineEdit()
+    line_edit.setFocus()
+    line_edit.selectAll()
+
+    QTest.keyClicks(line_edit, "debug")
+    QTest.keyClick(line_edit, key, modifier)
+    qapp.processEvents()
+
+    assert dialog.isVisible() is True
+    assert dialog.result() != dialog_module.QDialog.DialogCode.Accepted
+    assert dialog.selected_queue_name() == "debug"
+    dialog.close()
+
+
+def test_enter_on_a_listed_queue_name_refreshes_the_hint_and_keeps_the_dialog_open(
+    qapp,
+) -> None:
+    dialog = _shown_psi_dialog(qapp)
+    assert dialog._queue_hint.text() == "Maximum walltime on this queue: 1-00:00:00."
+    line_edit = dialog._queue_combo.lineEdit()
+    line_edit.setFocus()
+    line_edit.selectAll()
+
+    QTest.keyClicks(line_edit, "hourly")
+    QTest.keyClick(line_edit, Qt.Key.Key_Return)
+    qapp.processEvents()
+
+    assert dialog.isVisible() is True
+    assert dialog.selected_queue_name() == "hourly"
+    assert dialog._queue_hint.text() == "Maximum walltime on this queue: 01:00:00."
+    dialog.close()
+
+
+@pytest.mark.parametrize(("key", "modifier"), _ENTER_KEYS)
+def test_enter_on_the_ok_button_still_accepts_the_dialog(
+    qapp,
+    key: Qt.Key,
+    modifier: Qt.KeyboardModifier,
+) -> None:
+    dialog = _shown_psi_dialog(qapp)
+    ok_button = dialog._button_box.button(dialog_module.QDialogButtonBox.StandardButton.Ok)
+    ok_button.setFocus()
+
+    QTest.keyClick(ok_button, key, modifier)
+    qapp.processEvents()
+
+    assert dialog.result() == dialog_module.QDialog.DialogCode.Accepted
+    assert dialog.isVisible() is False
+    dialog.close()
+
+
+def test_enter_in_another_field_behaves_as_before(qapp) -> None:
+    dialog = _shown_psi_dialog(qapp)
+    walltime_edit = dialog._walltime_edit
+    walltime_edit.setFocus()
+
+    QTest.keyClick(walltime_edit, Qt.Key.Key_Return)
+    qapp.processEvents()
+
+    # The default button takes Enter from a plain line edit, as Qt dialogs do.
+    assert dialog.result() == dialog_module.QDialog.DialogCode.Accepted
+    assert dialog.isVisible() is False
+    dialog.close()
+
+
 def _scarf_like(username: str = "") -> ClusterConfig:
     return ClusterConfig(
         name="SCARF",

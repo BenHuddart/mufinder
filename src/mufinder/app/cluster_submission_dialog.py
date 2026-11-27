@@ -22,7 +22,8 @@ from PySide6.QtWidgets import (
     QComboBox,
 )
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QEvent, QObject, Qt
+from PySide6.QtGui import QKeyEvent
 
 from mufinder.app import workflow_table_utils
 from mufinder.app.cluster_ui_utils import resolve_cluster_credentials
@@ -114,6 +115,8 @@ class ClusterSubmissionDialog(QDialog):
         self._queue_combo.setEditable(True)
         self._queue_combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
         self._queue_combo.lineEdit().setPlaceholderText("Scheduler default")
+        # Enter commits the typed name; it must not reach the dialog's default button.
+        self._queue_combo.installEventFilter(self)
         form.addRow(self._queue_name_label, self._queue_combo)
         self._queue_hint = QLabel(form_group)
         self._queue_hint.setWordWrap(True)
@@ -434,6 +437,24 @@ class ClusterSubmissionDialog(QDialog):
             self._apply_queue_defaults()
         else:
             self._refresh_queue_hint()
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:  # noqa: N802 - Qt API naming.
+        """Keep Enter in the queue box from submitting the dialog.
+
+        The line edit has already committed the text, and the combo has reported
+        the activation, by the time the unhandled key reaches the combo itself.
+        Stopping it there leaves the dialog open with the hint refreshed.
+        """
+
+        if (
+            watched is self._queue_combo
+            and event.type() == QEvent.Type.KeyPress
+            and isinstance(event, QKeyEvent)
+            and event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
+        ):
+            self._refresh_queue_hint()
+            return True
+        return super().eventFilter(watched, event)
 
     def _apply_queue_defaults(self) -> None:
         """Fill the resource fields from the selected queue's defaults."""
