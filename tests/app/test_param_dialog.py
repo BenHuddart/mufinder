@@ -1898,7 +1898,7 @@ def _assert_tab_stops_on_the_chosen_options(
             continue
         assert radio in stops, f"Tab never stopped on {name}, which is chosen"
         if not backward:
-            after = stops[stops.index(radio) + 1]
+            after = stops[(stops.index(radio) + 1) % len(stops)]
             assert dialog._rows[name].editor.isAncestorOf(after), name
 
 
@@ -1952,6 +1952,47 @@ def test_tab_stops_on_an_option_chosen_without_the_keyboard(qapp, kind: str) -> 
 
     assert dialog._rows["cut_off_energy"].radio is not QApplication.focusWidget()
     _assert_tab_stops_on_the_chosen_options(dialog)
+    dialog.close()
+
+
+def test_tab_reaches_the_shown_option_while_the_search_hides_the_chosen_one(qapp) -> None:
+    dialog = _either_or_dialog("parameter", "basis_precision")
+    open_and_take_focus(dialog)
+    shown = dialog._rows["cut_off_energy"].radio
+    dialog._search_input.setFocus()
+
+    QTest.keyClicks(dialog._search_input, "cut_off")
+    QApplication.processEvents()
+
+    assert not dialog._rows["basis_precision"].radio.isVisible()
+    assert shown.isVisible()
+    stops = _tab_round()
+    assert shown in stops
+    for _ in range(stops.index(shown) + 1):
+        press_key(Qt.Key.Key_Tab)
+    assert press_key(Qt.Key.Key_Space) is shown
+    assert shown.isChecked()
+
+    dialog._search_input.clear()
+    _assert_tab_stops_on_the_chosen_options(dialog)
+    dialog.close()
+
+
+def test_tab_reaches_the_enabled_option_when_the_chosen_one_cannot_be_changed(qapp) -> None:
+    dialog = ParameterDialog(
+        specs=_dialog_specs(),
+        workflow_stage="convergence_kpoint",
+        values={"basis_precision": "FINE", "cut_off_energy": ValueWithUnit(500.0, "eV")},
+        preferred_exclusive="basis_precision",
+        advanced_names=["basis_precision", "cut_off_energy"],
+        editable_names={"cut_off_energy"},
+    )
+    open_and_take_focus(dialog)
+    chosen = dialog._rows["basis_precision"].radio
+    enabled = dialog._rows["cut_off_energy"].radio
+    assert chosen.isChecked() and not chosen.isEnabled()
+
+    assert enabled in _tab_round()
     dialog.close()
 
 

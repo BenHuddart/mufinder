@@ -112,9 +112,11 @@ Application shell
   ``+ Add Parameter``, anything below it, and the dialog's buttons. Rows the
   search hides are skipped, and the order is kept as parameters are added and
   removed. Of an either-or pair, such as ``Basis Precision`` and
-  ``Cutoff Energy``, only the chosen option's choice button is a stop; the
-  arrow keys move the choice. In a read-only dialog with more rows than fit, the table itself is
-  a stop, so the arrow and page keys can scroll it.
+  ``Cutoff Energy``, only the chosen option's choice button is a stop, or,
+  while the search hides the chosen option or it cannot be changed, the first
+  option shown that can; the arrow keys move the choice. In a read-only dialog
+  with more rows than fit, the table itself is a stop, so the arrow and page
+  keys can scroll it.
 - The project home reminds you what the project has found and where you left
   off: the host and its convergence defaults, the stage of the latest activity,
   the pinned muon sites beside a survey of the host cell, the later workflows'
