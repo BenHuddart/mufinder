@@ -816,6 +816,7 @@ def _psi_dialog_typing_in_the_queue_box(qapp, text: str) -> ClusterSubmissionDia
     dialog = ClusterSubmissionDialog(job_labels=["job_a"], cluster_configs=[_psi_config()])
     dialog.show()
     dialog.activateWindow()
+    QTest.qWaitForWindowActive(dialog)
     dialog._queue_combo.setFocus()
     qapp.processEvents()
     assert qapp.focusWidget() is dialog._queue_combo
