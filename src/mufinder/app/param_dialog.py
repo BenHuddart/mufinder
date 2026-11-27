@@ -491,10 +491,6 @@ class ParameterDialog(QDialog):
         self._task_control = task_control
         self._rows_deferred = False
         self._rebuild_rows(preserve_current=False)
-        # The dialog opens on the task, or on the search box when the task cannot
-        # be changed: the first control it creates. The Tab order can put a
-        # subclass's controls above the task, which would otherwise move it.
-        self._first_control().setFocus(Qt.FocusReason.OtherFocusReason)
 
     def _build_workflow_rows(self) -> tuple[WorkflowTableRow, ...]:
         """Return this dialog's rows that hold no keyword, parented to the table widget.
@@ -1032,8 +1028,8 @@ class ParameterDialog(QDialog):
         if focused_here and QApplication.focusWidget() is not focused:
             # The rebuild removed the focused control, and Qt passed focus on along
             # the Tab order, which can reach the dialog's buttons. It goes back to
-            # the dialog's first control instead.
-            self._first_control().setFocus(Qt.FocusReason.OtherFocusReason)
+            # the dialog's first control instead, passed on as Tab passes it.
+            self._first_control().setFocus(Qt.FocusReason.TabFocusReason)
 
     def _table_row_indexes(self, visible_names: list[str]) -> tuple[dict[str, int], list[int], int]:
         """Return the grid rows of the keywords and workflow rows, and the first free row."""
@@ -1075,6 +1071,13 @@ class ParameterDialog(QDialog):
         keep their own order after the last control. It runs again when the
         dialog is shown, so controls a subclass adds to the layout after the
         rows are built take their place too.
+
+        The chain starts at the first control the dialog creates, the task, which
+        it never moves: Qt opens the dialog on the first control after it, so the
+        dialog opens on the task, or on the search box when the task cannot be
+        changed. A subclass's control laid out above the task is created after
+        the buttons and stays after them, so Tab from the last button reaches it
+        before the task.
         """
 
         chain: list[QWidget] = []
@@ -1090,6 +1093,8 @@ class ParameterDialog(QDialog):
                 chain.extend(self._table_tab_stops())
             else:
                 chain.extend(_tab_stops_in_layout_item(item))
+        first_created = next(iter(_tab_stops_in(self._task_control)), self._search_input)
+        chain = chain[chain.index(first_created) :]
         for first, second in itertools.pairwise(chain):
             QWidget.setTabOrder(first, second)
 

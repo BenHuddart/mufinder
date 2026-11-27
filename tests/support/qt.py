@@ -184,6 +184,13 @@ def open_and_take_focus(window: QWidget) -> QWidget | None:
     return QApplication.focusWidget()
 
 
+def selected_text(widget: QWidget | None) -> str:
+    """The text selected in ``widget``, or nothing when it holds no selectable text."""
+
+    selected = getattr(widget, "selectedText", None)
+    return selected() if callable(selected) else ""
+
+
 def buttons_left_to_right(box: QDialogButtonBox) -> list[QAbstractButton]:
     """The shown buttons of ``box`` in the order the style lays them out on screen."""
 

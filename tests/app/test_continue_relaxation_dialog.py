@@ -19,6 +19,7 @@ from tests.support.qt import (
     buttons_left_to_right,
     open_and_take_focus,
     press_key,
+    selected_text,
 )
 
 
@@ -519,10 +520,13 @@ def test_tab_reaches_the_changes_table_between_add_parameter_and_continue(qapp) 
     dialog.close()
 
 
-def test_dialog_opens_on_its_locked_task(qapp) -> None:
+def test_dialog_opens_on_its_locked_task_with_nothing_selected(qapp) -> None:
     dialog = _make_dialog()
 
-    assert open_and_take_focus(dialog) is dialog._task_display
+    focused = open_and_take_focus(dialog)
+
+    assert focused is dialog._task_display
+    assert selected_text(focused) == ""
     dialog.close()
 
 
@@ -539,6 +543,8 @@ def test_removing_a_parameter_with_the_keyboard_does_not_leave_focus_on_continue
 
     assert "num_dump_cycles" not in dialog._rows
     assert focused is dialog._task_display
+    # Focus passes on as Tab passes it, so the task's text is selected.
+    assert selected_text(focused) == dialog._task_display.text()
     assert not buttons.isAncestorOf(focused)
     press_key(Qt.Key.Key_Space)
     assert dialog.isVisible()

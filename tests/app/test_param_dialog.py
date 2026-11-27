@@ -25,7 +25,12 @@ from mufinder.app.param_dialog import ParameterDialog
 from mufinder.castep_io.schema import KeywordSpec
 from mufinder.castep_io.types import BlockSection, ValueWithUnit
 from tests.support.keyword_catalogs import catalog_entry, refresh_from_catalog
-from tests.support.qt import buttons_left_to_right, open_and_take_focus, press_key
+from tests.support.qt import (
+    buttons_left_to_right,
+    open_and_take_focus,
+    press_key,
+    selected_text,
+)
 
 
 def _dialog_specs() -> list[KeywordSpec]:
@@ -1823,7 +1828,7 @@ def test_tab_from_a_newly_chosen_exclusive_option_reaches_its_value_after_a_rest
         ({"read_only": True}, "search"),
     ],
 )
-def test_parameter_dialog_opens_on_the_task_or_the_search_box(
+def test_parameter_dialog_opens_on_the_task_or_the_search_box_with_nothing_selected(
     qapp, options: dict[str, object], opening: str
 ) -> None:
     dialog = ParameterDialog(specs=_dialog_specs(), workflow_stage="convergence_kpoint", **options)
@@ -1832,13 +1837,17 @@ def test_parameter_dialog_opens_on_the_task_or_the_search_box(
     focused = open_and_take_focus(dialog)
 
     assert focused is (task_choice if opening == "task" else dialog._search_input)
+    assert selected_text(focused) == ""
     dialog.close()
 
 
-def test_neb_dialog_opens_on_its_locked_task(qapp) -> None:
+def test_neb_dialog_opens_on_its_locked_task_with_nothing_selected(qapp) -> None:
     dialog = _neb_dialog()
 
-    assert open_and_take_focus(dialog) is dialog._task_display
+    focused = open_and_take_focus(dialog)
+
+    assert focused is dialog._task_display
+    assert selected_text(focused) == ""
     dialog.close()
 
 
