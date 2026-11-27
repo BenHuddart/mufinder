@@ -413,9 +413,9 @@ class ParameterDialog(QDialog):
         # marker labels are kept so they can be hidden as soon as one is edited.
         self._mixed_names: set[str] = set()
         self._mixed_markers: dict[str, QLabel] = {}
-        # The table's rows just before a row is removed, and the removed row's
-        # place among them, so the rebuild can pass focus to the row in its place.
-        self._removed_row_place: tuple[list[object], int] | None = None
+        # The table's rows above a row being removed, and the removed row's name,
+        # so the rebuild can pass focus to the row in its place.
+        self._removed_row_place: tuple[list[object], str] | None = None
 
         root = QVBoxLayout(self)
 
@@ -1057,7 +1057,9 @@ class ParameterDialog(QDialog):
         self._apply_search_filter()
         self._refresh_add_button_state()
         removed_row_place, self._removed_row_place = self._removed_row_place, None
-        if removed_row_place is not None:
+        if focused_here and removed_row_place is not None:
+            # A click on a row's x leaves focus on the table's scroll area, so a
+            # removal by mouse lands here too.
             self._focus_in_place_of_removed_row(*removed_row_place)
         elif focused_here and QApplication.focusWidget() is not focused:
             # The rebuild removed the focused control, and Qt passed focus on along
@@ -1178,22 +1180,35 @@ class ParameterDialog(QDialog):
             None,
         )
 
-    def _focus_in_place_of_removed_row(self, keys: list[object], place: int) -> None:
+    def _focus_in_place_of_removed_row(self, above: list[object], name: str) -> None:
         """Give focus to the row now in the removed row's place, as Tab would reach it.
 
-        That is the next row down Tab can stop in, or, when no row below can take
-        it, the nearest row above; rows the search hides are passed over. With no
-        row left, focus goes to ``+ Add Parameter``, or, when nothing is left to
-        add, to the dialog's first control. It never goes to the dialog's buttons.
+        ``above`` holds the rows that were above the removed row ``name``. The row
+        in its place is the first row below them now, or the row itself when the
+        dialog still shows it; when no row from there down has a Tab stop, the
+        nearest row above takes focus. Rows the search hides are passed over. With
+        no row left, focus goes to ``+ Add Parameter``, or, when nothing is left
+        to add, to the dialog's first control; never to the dialog's buttons.
         """
 
-        stops = {key: self._first_tab_stop(controls) for key, controls in self._table_rows()}
-        candidates = [*keys[place + 1 :], *reversed(keys[:place])]
-        target = next((stops[key] for key in candidates if stops.get(key) is not None), None)
+        rows = self._table_rows()
+        keys = [key for key, _controls in rows]
+        if name in keys:
+            start = keys.index(name)
+        else:
+            start = max((index + 1 for index, key in enumerate(keys) if key in above), default=0)
+        stops = [self._first_tab_stop(controls) for _key, controls in rows]
+        order = [*range(start, len(rows)), *reversed(range(start))]
+        target = next((stops[index] for index in order if stops[index] is not None), None)
         if target is None:
             add_button = self._add_advanced_button
             target = add_button if self._first_tab_stop([add_button]) else self._first_control()
         target.setFocus(Qt.FocusReason.TabFocusReason)
+        if self._scroll_area.isAncestorOf(target):
+            # The rebuilt rows are not laid out until the event loop runs, and
+            # focus set from code does not scroll the table, so both are done here.
+            self._table_layout.activate()
+            self._scroll_area.ensureWidgetVisible(target)
 
     def _show_help(self, spec: KeywordSpec) -> None:
         dialog = ParameterHelpDialog(spec, self)
@@ -1428,7 +1443,7 @@ class ParameterDialog(QDialog):
         self._mark_edited(name)
         keys = [key for key, _controls in self._table_rows()]
         if name in keys:
-            self._removed_row_place = (keys, keys.index(name))
+            self._removed_row_place = (keys[: keys.index(name)], name)
         self._added_advanced.discard(name)
         self._rebuild_rows()
 

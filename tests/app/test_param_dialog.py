@@ -2346,15 +2346,111 @@ def test_enter_after_a_removal_acts_on_the_row_in_its_place_not_on_ok(
 def test_repeated_space_after_a_removal_does_not_remove_the_next_row(qapp) -> None:
     dialog = _removal_dialog()
 
-    _remove(dialog, "mix_alpha", "keyboard")
+    choice = _remove(dialog, "mix_alpha", "keyboard")
+    assert isinstance(choice, QComboBox)
     for _ in range(3):
-        focused = press_key(Qt.Key.Key_Space)
-        if isinstance(focused, QComboBox):
-            focused.hidePopup()
-            QApplication.processEvents()
+        # Space opens the drop-down in the removed row's place; it is closed again
+        # before the next press, so every press reaches that row.
+        assert QApplication.focusWidget() is choice
+        press_key(Qt.Key.Key_Space)
+        assert choice.view().isVisible()
+        choice.hidePopup()
+        QApplication.processEvents()
 
     assert list(dialog._rows) == ["xc_functional", "mix_beta", "mix_gamma"]
     assert dialog.isVisible()
+    dialog.close()
+
+
+def test_removing_a_parameter_whose_row_stays_keeps_focus_on_that_row(qapp) -> None:
+    # Spin polarisation keeps its row once added, but without its x.
+    dialog = _removal_dialog(
+        ("spin_polarized", "mix_alpha"),
+        specs=[*_dialog_specs(), _added_spec("spin_polarized"), *_ADDED_SPECS],
+    )
+
+    focused = _remove(dialog, "spin_polarized", "keyboard")
+
+    assert "spin_polarized" in dialog._rows
+    assert not dialog._rows["spin_polarized"].cells[4:]
+    _assert_focus_lands_on_the_first_stop_of(dialog, focused, "spin_polarized")
+    dialog.close()
+
+
+class _DialogWithARowBelowAlpha(ParameterDialog):
+    """A dialog with a row of its own below ``mix_alpha``, or last without it."""
+
+    def _build_workflow_rows(self):
+        from PySide6.QtWidgets import QSpinBox
+
+        from mufinder.app.param_dialog import WorkflowTableRow
+
+        self.below_alpha = QSpinBox(self._table_widget)
+        self.below_alpha.setAccessibleName("Below alpha")
+        label = QLabel("Below alpha", self._table_widget)
+        return (WorkflowTableRow("mix_alpha", label, self.below_alpha, focus=self.below_alpha),)
+
+
+@_HOW
+def test_a_row_of_the_dialogs_own_that_moves_away_does_not_take_the_removed_rows_place(
+    qapp, how: str
+) -> None:
+    dialog = _DialogWithARowBelowAlpha(
+        specs=[*_dialog_specs(), *_ADDED_SPECS],
+        workflow_stage="convergence_kpoint",
+        advanced_names=_ADDED,
+    )
+    open_and_take_focus(dialog)
+
+    focused = _remove(dialog, "mix_alpha", how)
+
+    _assert_focus_lands_on_the_first_stop_of(dialog, focused, "mix_beta")
+    dialog.close()
+
+
+def test_a_removal_before_the_dialog_opens_leaves_it_opening_on_the_task(qapp) -> None:
+    dialog = ParameterDialog(
+        specs=[*_dialog_specs(), *_ADDED_SPECS],
+        workflow_stage="convergence_kpoint",
+        advanced_names=_ADDED,
+    )
+    task_choice = dialog._task_editor.findChild(QComboBox)
+
+    dialog._remove_advanced("mix_alpha")
+    focused = open_and_take_focus(dialog)
+
+    assert "mix_alpha" not in dialog._rows
+    assert focused is task_choice
+    dialog.close()
+
+
+@pytest.mark.parametrize("removed", ["basis_precision", "mix_gamma"], ids=["top", "bottom"])
+@_HOW
+def test_the_row_that_takes_focus_after_a_removal_is_scrolled_into_view(
+    fresh_focus_tracker, how: str, removed: str
+) -> None:
+    specs = _dialog_specs()
+    xc_functional = next(spec for spec in specs if spec.name == "xc_functional")
+    copies = [replace(xc_functional, name=f"xc_copy_{index}") for index in range(20)]
+    dialog = ParameterDialog(
+        specs=[*specs, *copies, *_ADDED_SPECS],
+        workflow_stage="convergence_kpoint",
+        advanced_names=("basis_precision", "cut_off_energy", *_ADDED),
+    )
+    dialog.resize(dialog.width(), 320)
+    open_and_take_focus(dialog)
+    area = dialog._scroll_area
+    bar = area.verticalScrollBar()
+    assert bar.maximum() > 0
+    bar.setValue(0 if removed == "basis_precision" else bar.maximum())
+    QApplication.processEvents()
+
+    focused = _remove(dialog, removed, how)
+    QApplication.processEvents()
+
+    assert area.isAncestorOf(focused)
+    top_left = focused.mapTo(area.viewport(), QPoint(0, 0))
+    assert area.viewport().rect().contains(focused.rect().translated(top_left)), focused
     dialog.close()
 
 
