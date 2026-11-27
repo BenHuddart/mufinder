@@ -1094,7 +1094,8 @@ class ParameterDialog(QDialog):
             else:
                 chain.extend(_tab_stops_in_layout_item(item))
         first_created = next(iter(_tab_stops_in(self._task_control)), self._search_input)
-        chain = chain[chain.index(first_created) :]
+        if first_created in chain:
+            chain = chain[chain.index(first_created) :]
         for first, second in itertools.pairwise(chain):
             QWidget.setTabOrder(first, second)
 
