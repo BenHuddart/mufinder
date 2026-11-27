@@ -1278,10 +1278,40 @@ def test_tab_goes_round_host_structure_without_stopping_in_the_viewer(
         widget.close()
 
 
-def test_a_click_in_the_viewer_gives_it_focus_and_it_still_sees_shift(qapp, monkeypatch) -> None:
+def test_a_click_in_the_viewer_gives_it_focus_and_shift_click_still_adds(qapp, monkeypatch) -> None:
     widget = _shown_host_page_with_render_windows(qapp, monkeypatch)
     viewer = widget._viewer
     plotter = viewer._canvas.plotter
+
+    class _AtomPicker:
+        """A VTK picker that hits the drawn sphere of atom ``target``."""
+
+        target = 0
+
+        def Pick(self, *_args) -> int:  # noqa: N802 - VTK API naming.
+            return 1
+
+        def GetPickPosition(self):  # noqa: N802 - VTK API naming.
+            rows = np.flatnonzero(viewer._pyvista_atom_lookup_indices == self.target)
+            return tuple(viewer._pyvista_atom_positions[rows[0]])
+
+    picker = _AtomPicker()
+    plotter.iren.picker = picker
+
+    def click_atom(index: int) -> None:
+        # The scene's own left press and release, as VTK reports a click on an atom.
+        picker.target = index
+        viewer._on_pyvista_left_button_press()
+        viewer._on_pyvista_left_button_release()
+
+    def shift_key(event_type: QEvent.Type, modifiers_before: Qt.KeyboardModifier) -> None:
+        # A key goes to whatever has focus. One event, as a real Shift key sends
+        # (``QTest`` would add a modifier press of its own), carrying the modifiers
+        # held before it as the platform reports them: Qt flips Shift in
+        # ``modifiers()`` for the Shift key itself.
+        key = QKeyEvent(event_type, Qt.Key.Key_Shift, modifiers_before)
+        QApplication.sendEvent(QApplication.focusWidget(), key)
+
     try:
         widget._atom_table.setFocus(Qt.FocusReason.OtherFocusReason)
         qapp.processEvents()
@@ -1289,19 +1319,23 @@ def test_a_click_in_the_viewer_gives_it_focus_and_it_still_sees_shift(qapp, monk
         QTest.mouseClick(plotter, Qt.MouseButton.LeftButton, pos=plotter.rect().center())
         qapp.processEvents()
         assert QApplication.focusWidget() is plotter
+        click_atom(0)
+        assert viewer.selected_atom_indices() == (0,)
 
-        # A key goes to whatever has focus; the viewer reads Shift from the keys it
-        # gets, for Shift-click selection. One event each way, as a real Shift key
-        # sends (``QTest`` would add a modifier press of its own). Each carries the
-        # modifiers held before it, as the platform reports them; Qt flips Shift in
-        # ``modifiers()`` for the Shift key itself, so the press reads as Shift held.
-        for event_type, modifiers_before, held in (
-            (QEvent.Type.KeyPress, Qt.KeyboardModifier.NoModifier, True),
-            (QEvent.Type.KeyRelease, Qt.KeyboardModifier.ShiftModifier, False),
-        ):
-            key = QKeyEvent(event_type, Qt.Key.Key_Shift, modifiers_before)
-            QApplication.sendEvent(QApplication.focusWidget(), key)
-            assert viewer._native_selection_modifier is held
+        # Shift held: the viewer, which has focus, sees the key, and a click adds the atom.
+        shift_key(QEvent.Type.KeyPress, Qt.KeyboardModifier.NoModifier)
+        assert viewer._native_selection_modifier
+        click_atom(1)
+        assert viewer.selected_atom_indices() == (0, 1)
+
+        # Shift let go: a click selects the atom alone again.
+        shift_key(QEvent.Type.KeyRelease, Qt.KeyboardModifier.ShiftModifier)
+        assert not viewer._native_selection_modifier
+        # A sent event leaves the application's modifier record as it came in, where
+        # the platform would clear it for a real release.
+        release_keyboard_modifiers()
+        click_atom(1)
+        assert viewer.selected_atom_indices() == (1,)
     finally:
         release_keyboard_modifiers()
         widget.close()

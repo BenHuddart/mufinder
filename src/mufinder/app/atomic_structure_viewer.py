@@ -2076,7 +2076,7 @@ class AtomicStructureViewer(QWidget):
         # The canvases create their VTK interactors in _ensure_backend, on first show.
         self._canvas = _PyVistaCanvas(self)
         # Focus on a click, for the Shift key that Shift-click selection reads, but not
-        # on Tab: nothing in the scene answers the keyboard.
+        # on Tab: the scene is used with the mouse.
         self._canvas.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
         self._canvas.installEventFilter(self)
         self._triad_canvas = _PyVistaTriadCanvas(self)
