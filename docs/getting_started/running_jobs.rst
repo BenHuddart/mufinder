@@ -130,7 +130,8 @@ settings for this submission.
    cores per job, maximum runtime and memory from that queue; a hint shows the
    queue's maximum walltime, and says so when the job template sets its own
    partition. A name the profile does not list can be typed and is submitted as
-   it is. The dialog refuses a walltime above the queue's maximum and a queue
+   it is. Pressing ``Enter`` in the box keeps the typed name and does not
+   submit the dialog. The dialog refuses a walltime above the queue's maximum and a queue
    name that would need quoting. The last-used queue is remembered per project
    with the other last-used settings.
 3. Check ``Remote working directory`` and ``Username``, then set

@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
 )
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QKeyEvent
 
 from mufinder.app import workflow_table_utils
 from mufinder.app.cluster_ui_utils import resolve_cluster_credentials
@@ -434,6 +435,28 @@ class ClusterSubmissionDialog(QDialog):
             self._apply_queue_defaults()
         else:
             self._refresh_queue_hint()
+
+    def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802 - Qt API naming.
+        """Let Enter in the queue box commit the name without submitting the dialog.
+
+        The queue combo has already committed the text, and reported a listed
+        queue's activation, by the time the key it leaves unhandled reaches the
+        dialog. Enter anywhere else, or with other modifiers, goes to the
+        default button as usual.
+        """
+
+        modifiers = event.modifiers() & ~Qt.KeyboardModifier.KeypadModifier
+        focused = self.focusWidget()
+        if (
+            event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
+            and modifiers == Qt.KeyboardModifier.NoModifier
+            and focused is not None
+            and (focused is self._queue_combo or self._queue_combo.isAncestorOf(focused))
+        ):
+            self._refresh_queue_hint()
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
     def _apply_queue_defaults(self) -> None:
         """Fill the resource fields from the selected queue's defaults."""
