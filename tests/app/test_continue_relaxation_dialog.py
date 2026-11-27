@@ -4,13 +4,17 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 
+from PySide6.QtCore import Qt
+from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QDialogButtonBox
+
 from mufinder.app.continue_relaxation_dialog import ContinueRelaxationDialog, RenderJobInputs
 from mufinder.app.param_dialog import ParameterDialog
 from mufinder.app.workflow_parameters import kpoint_exclusive_hint, reorder_workflow_parameter_specs
 from mufinder.castep_io.input_diff import JobInputTexts
 from mufinder.castep_io.schema import KeywordSpec
 from mufinder.services.cluster_runner import CheckpointProbeResult
-from tests.support.qt import assert_tab_leaves_table
+from tests.support.qt import assert_tab_leaves_table, press_key
 
 
 def _continue_specs() -> list[KeywordSpec]:
@@ -487,6 +491,31 @@ def test_tab_leaves_the_changes_table(qapp) -> None:
         assert_tab_leaves_table(dialog._diff_table)
     finally:
         dialog.close()
+
+
+def test_tab_reaches_the_changes_table_between_add_parameter_and_continue(
+    fresh_focus_tracker,
+) -> None:
+    dialog = _make_dialog(parameter_values={"basis_precision": "FINE"})
+    dialog._rows["basis_precision"].editor.set_value("PRECISE")
+    dialog.show()
+    dialog.activateWindow()
+    assert QTest.qWaitForWindowActive(dialog)
+    buttons = dialog.findChild(QDialogButtonBox)
+    expected = [
+        dialog._diff_table,
+        buttons.button(QDialogButtonBox.StandardButton.Ok),
+        buttons.button(QDialogButtonBox.StandardButton.Cancel),
+    ]
+    assert dialog._add_advanced_button.isEnabled()
+    dialog._add_advanced_button.setFocus()
+
+    forward = [press_key(Qt.Key.Key_Tab) for _ in expected]
+    backward = [press_key(Qt.Key.Key_Tab, Qt.KeyboardModifier.ShiftModifier) for _ in expected]
+
+    assert forward == expected
+    assert backward == [*reversed(expected[:-1]), dialog._add_advanced_button]
+    dialog.close()
 
 
 def test_an_unedited_dialog_writes_the_kept_inputs(qapp) -> None:

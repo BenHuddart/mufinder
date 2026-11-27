@@ -260,6 +260,11 @@ catalogued keyword. When several rows are configured together, a parameter
 whose value differs between them is marked ``mixed`` and, if left alone, keeps
 each row's own value.
 
+Tab moves through a parameter dialog in reading order: the controls above the
+search box, the search box, each shown parameter's value, ``Reset`` and
+``Info`` from top to bottom, then ``+ Add Parameter``, ``OK`` and ``Cancel``.
+Rows the search hides are skipped.
+
 Rows that have not been configured use these defaults:
 
 .. list-table::

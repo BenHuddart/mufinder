@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QPushButton,
     QStyle,
+    QWidget,
 )
 
 import mufinder.app.param_dialog as param_dialog_module
@@ -23,6 +24,7 @@ from mufinder.app.param_dialog import ParameterDialog
 from mufinder.castep_io.schema import KeywordSpec
 from mufinder.castep_io.types import BlockSection, ValueWithUnit
 from tests.support.keyword_catalogs import catalog_entry, refresh_from_catalog
+from tests.support.qt import press_key
 
 
 def _dialog_specs() -> list[KeywordSpec]:
@@ -1676,4 +1678,105 @@ def test_read_only_dialog_keeps_the_stop_its_disabled_rows_need_and_covers_no_la
     assert area.viewport().grab().toImage() == pixels_before
     QTest.keyClick(area, Qt.Key.Key_PageDown)
     assert area.verticalScrollBar().value() > 0
+    dialog.close()
+
+
+def _controls_in(widget: QWidget) -> list[QWidget]:
+    """The controls Tab can stop on in ``widget``, in the order they were created."""
+
+    if widget.focusPolicy() & Qt.FocusPolicy.TabFocus:
+        return [widget] if widget.isVisible() and widget.isEnabled() else []
+    return [
+        control
+        for child in widget.children()
+        if isinstance(child, QWidget)
+        for control in _controls_in(child)
+    ]
+
+
+def _reading_order(dialog: ParameterDialog) -> list[QWidget]:
+    """What Tab should reach after the search box: each shown row, then the buttons."""
+
+    buttons = dialog.findChild(QDialogButtonBox)
+    stops: list[QWidget] = []
+    for name in dialog._displayed_names():
+        row = dialog._rows[name]
+        label, value, reset, info = row.cells[:4]
+        stops += _controls_in(label) + _controls_in(value)
+        stops += [button for button in (reset, info, *row.cells[4:]) if button.isEnabled()]
+    assert dialog._add_advanced_button.isEnabled()
+    return [
+        *stops,
+        dialog._add_advanced_button,
+        buttons.button(QDialogButtonBox.StandardButton.Ok),
+        buttons.button(QDialogButtonBox.StandardButton.Cancel),
+    ]
+
+
+def _assert_tab_follows_the_screen(dialog: ParameterDialog) -> None:
+    expected = _reading_order(dialog)
+    dialog._search_input.setFocus()
+
+    forward = [press_key(Qt.Key.Key_Tab) for _ in expected]
+    backward = [press_key(Qt.Key.Key_Tab, Qt.KeyboardModifier.ShiftModifier) for _ in expected]
+
+    assert forward == expected
+    assert backward == [*reversed(expected[:-1]), dialog._search_input]
+
+
+def test_tab_goes_from_the_search_box_to_the_first_row(fresh_focus_tracker) -> None:
+    dialog = _tall_parameter_dialog(read_only=False)
+    first_row = dialog._rows[dialog._displayed_names()[0]]
+    dialog._search_input.setFocus()
+
+    focused = press_key(Qt.Key.Key_Tab)
+
+    assert first_row.editor is not None
+    assert first_row.editor.isAncestorOf(focused)
+    dialog.close()
+
+
+def test_tab_follows_the_rows_then_add_parameter_ok_and_cancel(fresh_focus_tracker) -> None:
+    dialog = _tall_parameter_dialog(read_only=False)
+    last_row = dialog._rows[dialog._displayed_names()[-1]]
+
+    expected = _reading_order(dialog)
+
+    assert expected[-4] is last_row.cells[3]
+    _assert_tab_follows_the_screen(dialog)
+    dialog.close()
+
+
+def test_tab_follows_the_screen_after_a_parameter_is_added(fresh_focus_tracker) -> None:
+    dialog = _tall_parameter_dialog(read_only=False)
+
+    dialog.set_advanced_names({"basis_precision"})
+
+    assert "basis_precision" in dialog._displayed_names()
+    _assert_tab_follows_the_screen(dialog)
+    dialog.close()
+
+
+def test_tab_follows_the_screen_after_a_parameter_is_removed(fresh_focus_tracker) -> None:
+    dialog = _tall_parameter_dialog(read_only=False)
+    dialog.set_advanced_names({"basis_precision"})
+    remove_button = dialog._rows["basis_precision"].cells[4]
+
+    QTest.mouseClick(remove_button, Qt.MouseButton.LeftButton)
+
+    assert "basis_precision" not in dialog._rows
+    _assert_tab_follows_the_screen(dialog)
+    dialog.close()
+
+
+def test_tab_follows_the_screen_after_the_search_filters_the_rows(fresh_focus_tracker) -> None:
+    dialog = _tall_parameter_dialog(read_only=False)
+    dialog._search_input.setFocus()
+
+    QTest.keyClicks(dialog._search_input, "copy_1")
+    QApplication.processEvents()
+
+    shown = dialog._displayed_names()
+    assert 1 < len(shown) < len(dialog._rows)
+    _assert_tab_follows_the_screen(dialog)
     dialog.close()

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
+import itertools
 from typing import Any, Iterable
 
 from PySide6.QtCore import QModelIndex, QRect, QSize, Qt, QTimer
@@ -17,6 +18,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QLayoutItem,
     QLineEdit,
     QMessageBox,
     QPushButton,
@@ -258,6 +260,40 @@ class _WrappedRowDelegate(QStyledItemDelegate):
 
 
 _ROW_PADDING = 6
+
+
+def _tab_stops_in(widget: QWidget) -> list[QWidget]:
+    """The controls in ``widget`` that take Tab focus, in the order they were created.
+
+    A control is taken whole, without its inner widgets. Hidden and disabled
+    controls are kept, since Tab skips them until the search shows them again.
+    It walks ``children()``, as ``table_keyboard`` does, not ``findChildren``.
+    """
+
+    if widget.focusPolicy() & Qt.FocusPolicy.TabFocus:
+        return [widget]
+    return [
+        control
+        for child in widget.children()
+        if isinstance(child, QWidget) and not child.isWindow()
+        for control in _tab_stops_in(child)
+    ]
+
+
+def _tab_stops_in_layout_item(item: QLayoutItem) -> list[QWidget]:
+    """The controls of a layout item, in the order the layout places them."""
+
+    widget = item.widget()
+    if widget is not None:
+        return _tab_stops_in(widget)
+    layout = item.layout()
+    if layout is None:
+        return []
+    return [
+        control
+        for index in range(layout.count())
+        for control in _tab_stops_in_layout_item(layout.itemAt(index))
+    ]
 
 
 def _spec_display_key(spec: KeywordSpec) -> tuple[str, str]:
@@ -964,6 +1000,7 @@ class ParameterDialog(QDialog):
             )
 
         self._place_workflow_rows(workflow_row_indexes)
+        self._order_tab_stops()
         self._table_layout.setRowStretch(row_count, 1)
         self._apply_search_filter()
         self._refresh_add_button_state()
@@ -997,11 +1034,49 @@ class ParameterDialog(QDialog):
         for workflow_row, row_index in zip(self._workflow_rows, row_indexes, strict=True):
             self._table_layout.addWidget(workflow_row.label, row_index, 0)
             self._table_layout.addWidget(workflow_row.value, row_index, 1, 1, 4)
-            # The widgets outlive the rebuilt rows, so they would otherwise keep
-            # their place at the start of the tab order.
-            row = self._rows.get(workflow_row.after) or next(reversed(self._rows.values()), None)
-            if row is not None and workflow_row.focus is not None:
-                QWidget.setTabOrder(row.cells[-1], workflow_row.focus)
+
+    def _order_tab_stops(self) -> None:
+        """Chain Tab through the dialog in reading order, top to bottom.
+
+        The controls above the table come first, then the table's rows, then the
+        controls below it, as the dialog's layout places them. Rows are built
+        after the buttons, and workflow rows outlive a rebuild, so Qt's creation
+        order would put them out of their place on screen. The dialog's buttons
+        keep their own order after the last control. A subclass that adds
+        controls to the layout calls this once it has added them.
+        """
+
+        chain: list[QWidget] = []
+        root = self.layout()
+        for index in range(root.count()):
+            item = root.itemAt(index)
+            if isinstance(item.widget(), QDialogButtonBox):
+                break
+            if item.widget() is self._scroll_area:
+                # A reading scroll area becomes a Tab stop once its content
+                # overflows, so it keeps its place whatever its policy is now.
+                chain.append(self._scroll_area)
+                chain.extend(self._table_tab_stops())
+            else:
+                chain.extend(_tab_stops_in_layout_item(item))
+        for first, second in itertools.pairwise(chain):
+            QWidget.setTabOrder(first, second)
+
+    def _table_tab_stops(self) -> list[QWidget]:
+        """The controls of the table's rows, top to bottom, each row's left to right."""
+
+        def grid_row(widget: QWidget) -> int:
+            return self._table_layout.getItemPosition(self._table_layout.indexOf(widget))[0]
+
+        controls_by_row: dict[int, list[QWidget]] = {}
+        for row in self._rows.values():
+            controls_by_row[grid_row(row.cells[0])] = [
+                control for cell in row.cells for control in _tab_stops_in(cell)
+            ]
+        for workflow_row in self._workflow_rows:
+            if workflow_row.focus is not None:
+                controls_by_row[grid_row(workflow_row.label)] = [workflow_row.focus]
+        return [control for index in sorted(controls_by_row) for control in controls_by_row[index]]
 
     def _show_help(self, spec: KeywordSpec) -> None:
         dialog = ParameterHelpDialog(spec, self)

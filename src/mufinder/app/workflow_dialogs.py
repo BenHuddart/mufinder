@@ -257,6 +257,7 @@ class QuantumCorrectionsConfigDialog(ParameterDialog):
         root = self.layout()
         assert root is not None
         root.insertLayout(2, farms_row)
+        self._order_tab_stops()
 
     def num_farms(self) -> int:
         return max(1, int(self._num_farms_spin.value()))
