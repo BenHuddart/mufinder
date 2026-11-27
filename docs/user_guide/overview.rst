@@ -101,6 +101,8 @@ Application shell
   before it. The arrow keys move between cells. While you edit a cell, Tab
   keeps the edit and moves on to edit the next cell; Escape then stops editing
   and leaves that cell as it was.
+- The 3D structure viewer is used with the mouse and is not a Tab stop; Tab
+  reaches the boxes and buttons above it.
 - The project home reminds you what the project has found and where you left
   off: the host and its convergence defaults, the stage of the latest activity,
   the pinned muon sites beside a survey of the host cell, the later workflows'

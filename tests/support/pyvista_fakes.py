@@ -14,6 +14,7 @@ from types import SimpleNamespace
 import numpy as np
 
 import pytest
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QWidget
 
 from mufinder.app import atomic_structure_viewer as _viewer_module
@@ -94,6 +95,8 @@ class FakePlotter(QWidget):
 
     def __init__(self, parent: QWidget | None = None, **_kwargs: object) -> None:
         super().__init__(parent)
+        # The focus policy ``QtInteractor`` gives itself, so Tab-path tests mean something.
+        self.setFocusPolicy(Qt.FocusPolicy.WheelFocus)
         self.renderer = FakeRenderer()
         self.camera = SimpleNamespace(
             position=(8.0, 8.0, 8.0),
@@ -104,6 +107,13 @@ class FakePlotter(QWidget):
         self.iren = FakeInteractor()
         self.render_timer = FakeRenderTimer()
         self._actors: list[object] = []
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802 - Qt API naming.
+        # ``QtInteractor`` takes the mouse rather than passing it on to its canvas.
+        event.accept()
+
+    def mouseReleaseEvent(self, event) -> None:  # noqa: N802 - Qt API naming.
+        event.accept()
 
     def setPalette(self, _palette) -> None:
         return
