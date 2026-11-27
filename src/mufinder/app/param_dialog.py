@@ -303,6 +303,23 @@ def _tab_stops_in_layout_item(item: QLayoutItem) -> list[QWidget]:
     ]
 
 
+def _give_tab_to_the_chosen_option(button_group: QButtonGroup) -> None:
+    """Let Tab stop on the chosen option of an either-or pair and not on the others.
+
+    Qt splits Tab focus this way within an exclusive group, but only when one of
+    its options takes focus. Until then every option keeps Tab focus, so the
+    first Tab into the pair stops on whichever option comes first, chosen or not.
+    """
+
+    for button in button_group.buttons():
+        policy = button.focusPolicy()
+        button.setFocusPolicy(
+            policy | Qt.FocusPolicy.TabFocus
+            if button.isChecked()
+            else policy & ~Qt.FocusPolicy.TabFocus
+        )
+
+
 def _spec_display_key(spec: KeywordSpec) -> tuple[str, str]:
     return ((spec.label or spec.name).casefold(), spec.name)
 
@@ -1020,6 +1037,8 @@ class ParameterDialog(QDialog):
                 ),
             )
 
+        for button_group in self._exclusive_button_groups.values():
+            _give_tab_to_the_chosen_option(button_group)
         self._place_workflow_rows(workflow_row_indexes)
         self._order_tab_stops()
         self._table_layout.setRowStretch(row_count, 1)
@@ -1266,6 +1285,9 @@ class ParameterDialog(QDialog):
             return
 
         self._exclusive_selection[group_key] = name
+        button_group = self._exclusive_button_groups.get(group_key)
+        if button_group is not None:
+            _give_tab_to_the_chosen_option(button_group)
         # Choosing which member of the group is active is a choice for every row.
         self._mark_edited(name)
         for candidate in self._exclusive_groups.get(group_key, set()):

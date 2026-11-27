@@ -1820,6 +1820,158 @@ def test_tab_from_a_newly_chosen_exclusive_option_reaches_its_value_after_a_rest
     dialog.close()
 
 
+# Both options of every either-or pair hold a value, so the dialog can open on either.
+_EITHER_OR_VALUES = {
+    "basis_precision": "FINE",
+    "cut_off_energy": ValueWithUnit(500.0, "eV"),
+    "kpoint_mp_grid": (4, 4, 4),
+    "kpoint_mp_spacing": 0.05,
+}
+
+
+def _either_or_dialog(kind: str, chosen: str) -> ParameterDialog:
+    """A dialog of ``kind`` that opens with ``chosen`` as the choice of its pair."""
+
+    from mufinder.app.workflow_controllers.quantum_corrections import (
+        QuantumCorrectionsController,
+    )
+    from mufinder.app.workflow_dialogs import QuantumCorrectionsConfigDialog
+
+    if kind == "parameter":
+        values = {name: _EITHER_OR_VALUES[name] for name in ("basis_precision", "cut_off_energy")}
+        return ParameterDialog(
+            specs=_dialog_specs(),
+            workflow_stage="convergence_kpoint",
+            values=values,
+            preferred_exclusive=chosen,
+            advanced_names=list(values),
+        )
+    if kind == "energy_barriers":
+        return _neb_dialog(values=dict(_EITHER_OR_VALUES), preferred_exclusive=chosen)
+    return QuantumCorrectionsConfigDialog(
+        specs=QuantumCorrectionsController.parameter_specs(),
+        values=dict(_EITHER_OR_VALUES),
+        preferred_exclusive=chosen,
+    )
+
+
+_EITHER_OR_OPENINGS = [
+    *(("parameter", chosen) for chosen in ("basis_precision", "cut_off_energy")),
+    *(
+        (kind, chosen)
+        for kind in ("energy_barriers", "quantum_corrections")
+        for chosen in _EITHER_OR_VALUES
+    ),
+]
+
+
+def _tab_round(backward: bool = False) -> list[QWidget]:
+    """Press Tab, or Shift+Tab, until focus comes back; return each control it stopped on.
+
+    The last stop is the control it started from.
+    """
+
+    modifiers = Qt.KeyboardModifier.ShiftModifier if backward else Qt.KeyboardModifier.NoModifier
+    start = QApplication.focusWidget()
+    stops: list[QWidget] = []
+    for _ in range(200):
+        focused = press_key(Qt.Key.Key_Tab, modifiers)
+        stops.append(focused)
+        if focused is start:
+            return stops
+    raise AssertionError("Tab never came back to where it started")
+
+
+def _assert_tab_stops_on_the_chosen_options(
+    dialog: ParameterDialog, *, backward: bool = False
+) -> None:
+    """Tab round the dialog stops on the chosen option of each pair, then on its value."""
+
+    radios = {name: row.radio for name, row in dialog._rows.items() if row.radio is not None}
+    assert radios
+
+    stops = _tab_round(backward)
+
+    for name, radio in radios.items():
+        if not radio.isChecked():
+            assert radio not in stops, f"Tab stopped on {name}, which is not chosen"
+            continue
+        assert radio in stops, f"Tab never stopped on {name}, which is chosen"
+        if not backward:
+            after = stops[stops.index(radio) + 1]
+            assert dialog._rows[name].editor.isAncestorOf(after), name
+
+
+@pytest.mark.parametrize("backward", [False, True], ids=["tab", "shift_tab"])
+@pytest.mark.parametrize(("kind", "chosen"), _EITHER_OR_OPENINGS)
+def test_tab_stops_on_the_chosen_option_of_each_pair_from_the_moment_the_dialog_opens(
+    qapp, kind: str, chosen: str, backward: bool
+) -> None:
+    dialog = _either_or_dialog(kind, chosen)
+    assert dialog._rows[chosen].radio.isChecked()
+
+    open_and_take_focus(dialog)
+
+    _assert_tab_stops_on_the_chosen_options(dialog, backward=backward)
+    dialog.close()
+
+
+@pytest.mark.parametrize("while_open", [False, True], ids=["before_opening", "while_open"])
+@pytest.mark.parametrize(("kind", "chosen"), _EITHER_OR_OPENINGS)
+def test_tab_stops_on_the_chosen_option_after_new_values_change_the_choice(
+    qapp, kind: str, chosen: str, while_open: bool
+) -> None:
+    group = next(
+        group
+        for group in (
+            ("basis_precision", "cut_off_energy"),
+            ("kpoint_mp_grid", "kpoint_mp_spacing"),
+        )
+        if chosen in group
+    )
+    first = next(name for name in group if name != chosen)
+    dialog = _either_or_dialog(kind, first)
+    if while_open:
+        open_and_take_focus(dialog)
+
+    dialog.set_values(dict(_EITHER_OR_VALUES), preferred_exclusive=chosen)
+    if not while_open:
+        open_and_take_focus(dialog)
+
+    assert dialog._rows[chosen].radio.isChecked()
+    _assert_tab_stops_on_the_chosen_options(dialog)
+    dialog.close()
+
+
+@pytest.mark.parametrize("kind", ["parameter", "energy_barriers", "quantum_corrections"])
+def test_tab_stops_on_an_option_chosen_without_the_keyboard(qapp, kind: str) -> None:
+    dialog = _either_or_dialog(kind, "basis_precision")
+    open_and_take_focus(dialog)
+
+    dialog._rows["cut_off_energy"].radio.setChecked(True)
+
+    assert dialog._rows["cut_off_energy"].radio is not QApplication.focusWidget()
+    _assert_tab_stops_on_the_chosen_options(dialog)
+    dialog.close()
+
+
+@pytest.mark.parametrize("kind", ["parameter", "energy_barriers", "quantum_corrections"])
+def test_arrow_keys_still_move_the_choice_and_tab_follows_it(qapp, kind: str) -> None:
+    dialog = _either_or_dialog(kind, "cut_off_energy")
+    open_and_take_focus(dialog)
+    chosen = dialog._rows["cut_off_energy"].radio
+    other = dialog._rows["basis_precision"].radio
+    start = QApplication.focusWidget()
+    while QApplication.focusWidget() is not chosen:
+        assert press_key(Qt.Key.Key_Tab) is not start
+
+    assert press_key(Qt.Key.Key_Up) is other
+    assert other.isChecked()
+    assert dialog._rows["basis_precision"].editor.isAncestorOf(press_key(Qt.Key.Key_Tab))
+    _assert_tab_stops_on_the_chosen_options(dialog)
+    dialog.close()
+
+
 @pytest.mark.parametrize(
     ("options", "opening"),
     [
