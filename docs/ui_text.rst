@@ -71,7 +71,9 @@ Menus
   platform's usual letter.
 - Text the user chose, such as a recent project's path, has no mnemonic: write
   each ``&`` in it as ``&&`` so it shows as typed.
-- Buttons on pages and in dialogs have no mnemonics.
+- Buttons that MuFinder labels itself, on pages and in dialogs, have no
+  mnemonics. Standard dialog buttons (``OK``, ``Cancel``, ``Close``) keep
+  whatever the platform gives them.
 - ``tests/app/main_window/test_menu_bar_mnemonics.py`` checks the menu bar.
 
 Units and terms
