@@ -1840,3 +1840,28 @@ def test_neb_dialog_opens_on_its_locked_task(qapp) -> None:
 
     assert open_and_take_focus(dialog) is dialog._task_display
     dialog.close()
+
+
+@pytest.mark.parametrize("added", [("basis_precision",), ("basis_precision", "cut_off_energy")])
+def test_removing_a_parameter_with_the_keyboard_returns_focus_to_the_task(
+    qapp, added: tuple[str, ...]
+) -> None:
+    dialog = ParameterDialog(
+        specs=_dialog_specs(), workflow_stage="convergence_kpoint", advanced_names=added
+    )
+    task_choice = dialog._task_editor.findChild(QComboBox)
+    buttons = dialog.findChild(QDialogButtonBox)
+    open_and_take_focus(dialog)
+    assert dialog._add_advanced_button.isEnabled() is (len(added) == 1)
+    dialog._rows[added[-1]].cells[4].setFocus()
+
+    focused = press_key(Qt.Key.Key_Space)
+
+    assert added[-1] not in dialog._rows
+    assert focused is task_choice
+    assert not buttons.isAncestorOf(focused)
+    press_key(Qt.Key.Key_Space)
+    task_choice.hidePopup()
+    assert dialog.isVisible()
+    assert dialog.result() != QDialog.DialogCode.Accepted
+    dialog.close()

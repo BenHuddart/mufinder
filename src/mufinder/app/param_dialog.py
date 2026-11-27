@@ -12,6 +12,7 @@ from PySide6.QtGui import QFont, QShowEvent
 from PySide6.QtWidgets import (
     QAbstractButton,
     QAbstractItemView,
+    QApplication,
     QButtonGroup,
     QDialog,
     QDialogButtonBox,
@@ -487,16 +488,13 @@ class ParameterDialog(QDialog):
             self.set_advanced_names(advanced_names)
         if mixed_names is not None:
             self.set_mixed_names(mixed_names)
+        self._task_control = task_control
         self._rows_deferred = False
         self._rebuild_rows(preserve_current=False)
         # The dialog opens on the task, or on the search box when the task cannot
         # be changed: the first control it creates. The Tab order can put a
         # subclass's controls above the task, which would otherwise move it.
-        opening = next(
-            (control for control in _tab_stops_in(task_control) if control.isEnabled()),
-            self._search_input,
-        )
-        opening.setFocus(Qt.FocusReason.OtherFocusReason)
+        self._first_control().setFocus(Qt.FocusReason.OtherFocusReason)
 
     def _build_workflow_rows(self) -> tuple[WorkflowTableRow, ...]:
         """Return this dialog's rows that hold no keyword, parented to the table widget.
@@ -837,11 +835,21 @@ class ParameterDialog(QDialog):
             nested_item = nested_layout.takeAt(0)
             self._detach_layout_item(nested_item)
 
+    def _first_control(self) -> QWidget:
+        """The task control, or the search box when the task cannot be changed."""
+
+        return next(
+            (control for control in _tab_stops_in(self._task_control) if control.isEnabled()),
+            self._search_input,
+        )
+
     def _rebuild_rows(self, *, preserve_current: bool = True) -> None:
         if self._rows_deferred:
             return
         if preserve_current:
             self._capture_editor_values()
+        focused = QApplication.focusWidget()
+        focused_here = focused is not None and self.isAncestorOf(focused)
 
         previous_row_count = self._table_layout.rowCount()
         while self._table_layout.count():
@@ -1021,6 +1029,11 @@ class ParameterDialog(QDialog):
         self._table_layout.setRowStretch(row_count, 1)
         self._apply_search_filter()
         self._refresh_add_button_state()
+        if focused_here and QApplication.focusWidget() is not focused:
+            # The rebuild removed the focused control, and Qt passed focus on along
+            # the Tab order, which can reach the dialog's buttons. It goes back to
+            # the dialog's first control instead.
+            self._first_control().setFocus(Qt.FocusReason.OtherFocusReason)
 
     def _table_row_indexes(self, visible_names: list[str]) -> tuple[dict[str, int], list[int], int]:
         """Return the grid rows of the keywords and workflow rows, and the first free row."""

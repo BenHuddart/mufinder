@@ -6,7 +6,7 @@ from collections.abc import Iterable, Mapping
 
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QDialogButtonBox
+from PySide6.QtWidgets import QDialog, QDialogButtonBox
 
 from mufinder.app.continue_relaxation_dialog import ContinueRelaxationDialog, RenderJobInputs
 from mufinder.app.param_dialog import ParameterDialog
@@ -523,6 +523,26 @@ def test_dialog_opens_on_its_locked_task(qapp) -> None:
     dialog = _make_dialog()
 
     assert open_and_take_focus(dialog) is dialog._task_display
+    dialog.close()
+
+
+def test_removing_a_parameter_with_the_keyboard_does_not_leave_focus_on_continue(qapp) -> None:
+    dialog = _make_dialog(
+        parameter_values={"num_dump_cycles": 10}, added_advanced=["num_dump_cycles"]
+    )
+    buttons = dialog.findChild(QDialogButtonBox)
+    open_and_take_focus(dialog)
+    assert not dialog._add_advanced_button.isEnabled()
+    dialog._rows["num_dump_cycles"].cells[4].setFocus()
+
+    focused = press_key(Qt.Key.Key_Space)
+
+    assert "num_dump_cycles" not in dialog._rows
+    assert focused is dialog._task_display
+    assert not buttons.isAncestorOf(focused)
+    press_key(Qt.Key.Key_Space)
+    assert dialog.isVisible()
+    assert dialog.result() != QDialog.DialogCode.Accepted
     dialog.close()
 
 
