@@ -495,7 +495,7 @@ def test_tab_leaves_the_changes_table(qapp) -> None:
 
 def test_tab_reaches_the_changes_table_between_add_parameter_and_continue(qapp) -> None:
     dialog = _make_dialog(parameter_values={"basis_precision": "FINE"})
-    dialog._rows["basis_precision"].editor.set_value("PRECISE")
+    dialog.set_values({"basis_precision": "PRECISE"})
     dialog.show()
     dialog.activateWindow()
     assert QTest.qWaitForWindowActive(dialog)

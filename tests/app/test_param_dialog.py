@@ -1784,3 +1784,31 @@ def test_tab_follows_the_screen_after_the_search_filters_the_rows(qapp) -> None:
     assert 1 < len(shown) < len(dialog._rows)
     _assert_tab_follows_the_screen(dialog)
     dialog.close()
+
+
+def test_tab_from_a_newly_chosen_exclusive_option_reaches_its_value_after_a_restore(qapp) -> None:
+    dialog = ParameterDialog(
+        specs=_dialog_specs(),
+        workflow_stage="convergence_kpoint",
+        advanced_names=["basis_precision", "cut_off_energy"],
+    )
+    dialog.show()
+    dialog.activateWindow()
+    assert QTest.qWaitForWindowActive(dialog)
+    chosen = dialog._rows["basis_precision"].radio
+    other = dialog._rows["cut_off_energy"].radio
+    chosen.setFocus()
+    # Qt takes Tab focus from the option that is not chosen while its partner has focus.
+    assert not other.focusPolicy() & Qt.FocusPolicy.TabFocus
+    dialog.showMinimized()
+    QApplication.processEvents()
+    dialog.showNormal()
+    dialog.activateWindow()
+    assert QTest.qWaitForWindowActive(dialog)
+    chosen.setFocus()
+
+    assert press_key(Qt.Key.Key_Down) is other
+    focused = press_key(Qt.Key.Key_Tab)
+
+    assert dialog._rows["cut_off_energy"].editor.isAncestorOf(focused)
+    dialog.close()

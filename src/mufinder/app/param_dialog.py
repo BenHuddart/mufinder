@@ -10,6 +10,7 @@ from typing import Any, Iterable
 from PySide6.QtCore import QModelIndex, QRect, QSize, Qt, QTimer
 from PySide6.QtGui import QFont, QShowEvent
 from PySide6.QtWidgets import (
+    QAbstractButton,
     QAbstractItemView,
     QButtonGroup,
     QDialog,
@@ -267,10 +268,15 @@ def _tab_stops_in(widget: QWidget) -> list[QWidget]:
 
     A control is taken whole, without its inner widgets. Hidden and disabled
     controls are kept, since Tab skips them until the search shows them again.
+    So is a button whatever its Tab focus is now: Qt takes Tab focus from the
+    unchosen option of an exclusive pair and gives it back once it is chosen.
     It walks ``children()``, as ``table_keyboard`` does, not ``findChildren``.
     """
 
-    if widget.focusPolicy() & Qt.FocusPolicy.TabFocus:
+    policy = widget.focusPolicy()
+    if policy & Qt.FocusPolicy.TabFocus or (
+        isinstance(widget, QAbstractButton) and policy != Qt.FocusPolicy.NoFocus
+    ):
         return [widget]
     return [
         control
