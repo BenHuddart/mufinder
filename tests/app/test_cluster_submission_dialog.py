@@ -6,9 +6,9 @@ from dataclasses import replace
 import sys
 
 import pytest
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QPoint, Qt
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QLabel
+from PySide6.QtWidgets import QApplication, QFormLayout, QLabel
 
 import mufinder.app.cluster_submission_dialog as dialog_module
 import mufinder.services.keychain as keychain_module
@@ -1155,8 +1155,9 @@ def _redwood_dialog(**kwargs) -> ClusterSubmissionDialog:  # noqa: ANN003
         replace(config, node_groups=_REDWOOD_NODE_GROUPS) if config.name == "redwood" else config
         for config in _configs()
     ]
+    kwargs.setdefault("job_labels", ["job_a"])
     return ClusterSubmissionDialog(
-        job_labels=["job_a"], cluster_configs=configs, default_cluster_name="redwood", **kwargs
+        cluster_configs=configs, default_cluster_name="redwood", **kwargs
     )
 
 
@@ -1370,33 +1371,37 @@ _UNFIT_PLACEMENT = ClusterSubmissionConfig(
     processes_per_node=96,
 )
 
+_ONE_JOB = ["job_a"]
+_SIX_JOBS = [f"conv_cutoff_{300 + 50 * index}eV" for index in range(6)]
+_FORTY_JOBS = [f"relax_{'x' * 30}_{index}" for index in range(40)]
+
 _MINIMUM_SIZE_PROFILES = {
-    "short queue hint": lambda tmp_path: ClusterSubmissionDialog(
-        job_labels=["job_a"], cluster_configs=[_psi_config()]
+    "short queue hint": lambda tmp_path, jobs: ClusterSubmissionDialog(
+        job_labels=jobs, cluster_configs=[_psi_config()]
     ),
-    "long queue hint": lambda tmp_path: ClusterSubmissionDialog(
-        job_labels=["job_a"],
+    "long queue hint": lambda tmp_path, jobs: ClusterSubmissionDialog(
+        job_labels=jobs,
         cluster_configs=[_psi_config(template_script_path=_partition_template(tmp_path))],
     ),
-    "no queue hint": lambda tmp_path: ClusterSubmissionDialog(
-        job_labels=["job_a"], cluster_configs=[_psi_config(default_queue_name="general")]
+    "no queue hint": lambda tmp_path, jobs: ClusterSubmissionDialog(
+        job_labels=jobs, cluster_configs=[_psi_config(default_queue_name="general")]
     ),
-    "password": lambda tmp_path: ClusterSubmissionDialog(
-        job_labels=["job_a"], cluster_configs=_configs(), default_cluster_name="beta"
+    "password": lambda tmp_path, jobs: ClusterSubmissionDialog(
+        job_labels=jobs, cluster_configs=_configs(), default_cluster_name="beta"
     ),
-    "addqueue": lambda tmp_path: _redwood_dialog(),
-    "placement that does not fit": lambda tmp_path: _redwood_dialog(
-        initial_config=_UNFIT_PLACEMENT
+    "addqueue": lambda tmp_path, jobs: _redwood_dialog(job_labels=jobs),
+    "placement that does not fit": lambda tmp_path, jobs: _redwood_dialog(
+        job_labels=jobs, initial_config=_UNFIT_PLACEMENT
     ),
-    "farm warning": lambda tmp_path: _redwood_dialog(farm_counts={"job_a": 6}),
-    "jump host": lambda tmp_path: ClusterSubmissionDialog(
-        job_labels=["job_a"], cluster_configs=[_jump_password_config()]
+    "farm warning": lambda tmp_path, jobs: _redwood_dialog(
+        job_labels=jobs, farm_counts=dict.fromkeys(jobs, 6)
     ),
-    "40 jobs": lambda tmp_path: ClusterSubmissionDialog(
-        job_labels=[f"relax_{'x' * 30}_{index}" for index in range(40)],
-        cluster_configs=[_psi_config()],
+    "jump host": lambda tmp_path, jobs: ClusterSubmissionDialog(
+        job_labels=jobs, cluster_configs=[_jump_password_config()]
     ),
 }
+
+_JOB_COUNTS = {"1 job": _ONE_JOB, "6 jobs": _SIX_JOBS, "40 jobs": _FORTY_JOBS}
 
 
 def _shown_at_minimum_size(dialog: ClusterSubmissionDialog) -> None:
@@ -1406,17 +1411,9 @@ def _shown_at_minimum_size(dialog: ClusterSubmissionDialog) -> None:
     QApplication.processEvents()
 
 
-@pytest.mark.parametrize("profile", list(_MINIMUM_SIZE_PROFILES))
-def test_wrapped_hints_are_shown_in_full_at_minimum_size(
-    text_scale,  # noqa: ANN001
-    tmp_path,  # noqa: ANN001
-    profile: str,
-) -> None:
-    dialog = _MINIMUM_SIZE_PROFILES[profile](tmp_path)
+def _assert_laid_out_in_full(dialog: ClusterSubmissionDialog) -> None:
+    """No wrapped label is cut short, nothing in the form overlaps, no field is squeezed."""
 
-    _shown_at_minimum_size(dialog)
-
-    assert dialog.size() == dialog.minimumSize()
     labels = [
         label
         for label in dialog.findChildren(QLabel)
@@ -1426,10 +1423,44 @@ def test_wrapped_hints_are_shown_in_full_at_minimum_size(
     for label in labels:
         needed = label.heightForWidth(label.width())
         assert label.height() >= needed, (label.text(), label.height(), needed)
-        top_left = label.mapTo(dialog, label.rect().topLeft())
-        bottom_right = label.mapTo(dialog, label.rect().bottomRight())
-        assert dialog.rect().contains(top_left), label.text()
-        assert dialog.rect().contains(bottom_right), label.text()
+        assert dialog.rect().contains(label.mapTo(dialog, label.rect().topLeft())), label.text()
+        assert dialog.rect().contains(label.mapTo(dialog, label.rect().bottomRight())), label.text()
+
+    group = dialog._form.parentWidget()
+    assert group.height() >= group.minimumSizeHint().height()
+    roles = (
+        QFormLayout.ItemRole.LabelRole,
+        QFormLayout.ItemRole.FieldRole,
+        QFormLayout.ItemRole.SpanningRole,
+    )
+    placed = []
+    for row in range(dialog._form.rowCount()):
+        for role in roles:
+            item = dialog._form.itemAt(row, role)
+            widget = item.widget() if item is not None else None
+            if widget is None or not widget.isVisible() or any(w is widget for w, _ in placed):
+                continue
+            assert widget.height() >= widget.minimumSizeHint().height(), widget
+            placed.append((widget, widget.rect().translated(widget.mapTo(dialog, QPoint(0, 0)))))
+    for index, (widget, rect) in enumerate(placed):
+        for other, other_rect in placed[index + 1 :]:
+            assert not rect.intersects(other_rect), (widget, other)
+
+
+@pytest.mark.parametrize("jobs", list(_JOB_COUNTS))
+@pytest.mark.parametrize("profile", list(_MINIMUM_SIZE_PROFILES))
+def test_wrapped_hints_are_shown_in_full_at_minimum_size(
+    text_scale,  # noqa: ANN001
+    tmp_path,  # noqa: ANN001
+    profile: str,
+    jobs: str,
+) -> None:
+    dialog = _MINIMUM_SIZE_PROFILES[profile](tmp_path, _JOB_COUNTS[jobs])
+
+    _shown_at_minimum_size(dialog)
+
+    assert dialog.size() == dialog.minimumSize()
+    _assert_laid_out_in_full(dialog)
     dialog.close()
 
 

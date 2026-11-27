@@ -503,13 +503,14 @@ class ClusterSubmissionDialog(QDialog):
         self._fit_hint_heights()
 
     def _fit_hint_heights(self) -> None:
-        """Set the minimum width, and give each wrapped hint the height its lines need there.
+        """Set the minimum width, and give each wrapped label the height its lines need there.
 
         The minimum width is ``_MINIMUM_WIDTH`` at the text size in use, no
         wider than the screen, and never narrower than the form's own minimum.
         Qt counts a wrapped label at one line in the dialog's minimum height, so
         a hint that wraps onto more would be clipped with the dialog at its
-        smallest. A hint on one line, or hidden, reserves nothing. The rows
+        smallest, and a job summary that wraps would squeeze the form under it.
+        A label on one line, or hidden, reserves nothing. The rows
         shown decide the label column's width, so a change of rows refits too.
         """
 
@@ -517,7 +518,8 @@ class ClusterSubmissionDialog(QDialog):
         width = scaled_to_text(_MINIMUM_WIDTH)
         screen = self.screen()
         if screen is not None:
-            width = min(width, screen.availableGeometry().width())
+            frame = max(self.frameGeometry().width() - self.width(), 0)
+            width = min(width, screen.availableGeometry().width() - frame)
         outer = self.layout().contentsMargins()
         # A floor on the full-width button row, so Qt keeps the form's own
         # minimum wherever that is wider.
@@ -539,13 +541,14 @@ class ClusterSubmissionDialog(QDialog):
             default=0,
         )
         field_width = row_width - label_column - self._form.horizontalSpacing()
-        for hint, width in (
+        for hint, hint_width in (
+            (self._summary_label, width - outer.left() - outer.right()),
             (self._queue_hint, field_width),
             (self._placement_hint, field_width),
             (self._farm_warning, row_width),
         ):
             hint.setMinimumHeight(0)
-            needed = hint.heightForWidth(width) if hint.text() and not hint.isHidden() else 0
+            needed = hint.heightForWidth(hint_width) if hint.text() and not hint.isHidden() else 0
             hint.setMinimumHeight(needed if needed > hint.fontMetrics().lineSpacing() else 0)
 
     def _apply_initial_config(self, *, default_cluster_name: str | None) -> None:
