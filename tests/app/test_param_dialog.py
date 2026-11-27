@@ -1948,8 +1948,9 @@ def test_tab_stops_on_an_option_chosen_without_the_keyboard(qapp, kind: str) -> 
     dialog = _either_or_dialog(kind, "basis_precision")
     open_and_take_focus(dialog)
 
-    dialog._rows["cut_off_energy"].radio.setChecked(True)
+    dialog._rows["cut_off_energy"].radio.click()
 
+    assert dialog._rows["cut_off_energy"].radio.isChecked()
     assert dialog._rows["cut_off_energy"].radio is not QApplication.focusWidget()
     _assert_tab_stops_on_the_chosen_options(dialog)
     dialog.close()
@@ -1993,6 +1994,21 @@ def test_tab_reaches_the_enabled_option_when_the_chosen_one_cannot_be_changed(qa
     assert chosen.isChecked() and not chosen.isEnabled()
 
     assert enabled in _tab_round()
+    dialog.close()
+
+
+def test_tab_stops_on_the_chosen_option_after_values_load_while_the_dialog_is_disabled(
+    qapp,
+) -> None:
+    dialog = _either_or_dialog("parameter", "basis_precision")
+    open_and_take_focus(dialog)
+
+    dialog.setEnabled(False)
+    dialog.set_values(dict(_EITHER_OR_VALUES), preferred_exclusive="cut_off_energy")
+    dialog.setEnabled(True)
+    dialog._search_input.setFocus()
+
+    _assert_tab_stops_on_the_chosen_options(dialog)
     dialog.close()
 
 

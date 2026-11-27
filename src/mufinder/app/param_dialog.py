@@ -314,7 +314,9 @@ def _give_tab_to_the_chosen_option(button_group: QButtonGroup, root: QWidget) ->
     """
 
     buttons = button_group.buttons()
-    reachable = [button for button in buttons if button.isEnabled() and button.isVisibleTo(root)]
+    reachable = [
+        button for button in buttons if button.isEnabledTo(root) and button.isVisibleTo(root)
+    ]
     stop = next((button for button in reachable if button.isChecked()), None)
     if stop is None and reachable:
         stop = reachable[0]
