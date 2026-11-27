@@ -18,7 +18,7 @@ def _settings() -> QSettings:
 
 
 def _menu_texts(menu: RecentProjectsMenu) -> list[str]:
-    return [action.text() for action in menu.actions() if not action.isSeparator()]
+    return [shown_text(action.text()) for action in menu.actions() if not action.isSeparator()]
 
 
 def test_the_list_reads_the_setting_older_versions_wrote(qapp) -> None:
