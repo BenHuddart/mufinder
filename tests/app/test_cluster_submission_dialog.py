@@ -1335,3 +1335,179 @@ def test_placement_controls_have_accessible_names(qapp) -> None:
     assert dialog._placement_combo.accessibleName() == "Node placement"
     assert dialog._placement_hint.accessibleName() == "Node placement request"
     dialog.close()
+
+
+# Minimum size: every wrapped hint is shown in full.
+
+
+@pytest.fixture(params=[1.0, 1.3], ids=["designed text", "text at 130 percent"])
+def text_scale(request, qapp, monkeypatch):  # noqa: ANN001, ANN201
+    """The light theme at the designed text size and at a larger desktop text size."""
+
+    from mufinder.app import theme as theme_module
+
+    monkeypatch.setattr(theme_module, "text_scale", lambda: request.param)
+    theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)
+    yield request.param
+    monkeypatch.undo()
+    theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)
+
+
+def _partition_template(tmp_path) -> str:  # noqa: ANN001
+    template = tmp_path / "fixed.sh"
+    template.write_text(
+        "#!/bin/bash\n#SBATCH --partition=fixed\n$castep_command\n", encoding="utf-8"
+    )
+    return str(template)
+
+
+_UNFIT_PLACEMENT = ClusterSubmissionConfig(
+    cluster_name="redwood",
+    working_directory="/mnt/redwoodfs/charlie/run",
+    username="charlie",
+    num_processes=192,
+    walltime="",
+    processes_per_node=96,
+)
+
+_MINIMUM_SIZE_PROFILES = {
+    "short queue hint": lambda tmp_path: ClusterSubmissionDialog(
+        job_labels=["job_a"], cluster_configs=[_psi_config()]
+    ),
+    "long queue hint": lambda tmp_path: ClusterSubmissionDialog(
+        job_labels=["job_a"],
+        cluster_configs=[_psi_config(template_script_path=_partition_template(tmp_path))],
+    ),
+    "no queue hint": lambda tmp_path: ClusterSubmissionDialog(
+        job_labels=["job_a"], cluster_configs=[_psi_config(default_queue_name="general")]
+    ),
+    "password": lambda tmp_path: ClusterSubmissionDialog(
+        job_labels=["job_a"], cluster_configs=_configs(), default_cluster_name="beta"
+    ),
+    "addqueue": lambda tmp_path: _redwood_dialog(),
+    "placement that does not fit": lambda tmp_path: _redwood_dialog(
+        initial_config=_UNFIT_PLACEMENT
+    ),
+    "farm warning": lambda tmp_path: _redwood_dialog(farm_counts={"job_a": 6}),
+    "jump host": lambda tmp_path: ClusterSubmissionDialog(
+        job_labels=["job_a"], cluster_configs=[_jump_password_config()]
+    ),
+    "40 jobs": lambda tmp_path: ClusterSubmissionDialog(
+        job_labels=[f"relax_{'x' * 30}_{index}" for index in range(40)],
+        cluster_configs=[_psi_config()],
+    ),
+}
+
+
+def _shown_at_minimum_size(dialog: ClusterSubmissionDialog) -> None:
+    dialog.show()
+    QApplication.processEvents()
+    dialog.resize(1, 1)
+    QApplication.processEvents()
+
+
+@pytest.mark.parametrize("profile", list(_MINIMUM_SIZE_PROFILES))
+def test_wrapped_hints_are_shown_in_full_at_minimum_size(
+    text_scale,  # noqa: ANN001
+    tmp_path,  # noqa: ANN001
+    profile: str,
+) -> None:
+    dialog = _MINIMUM_SIZE_PROFILES[profile](tmp_path)
+
+    _shown_at_minimum_size(dialog)
+
+    assert dialog.size() == dialog.minimumSize()
+    labels = [
+        label
+        for label in dialog.findChildren(QLabel)
+        if label.isVisible() and label.wordWrap() and label.text()
+    ]
+    assert labels
+    for label in labels:
+        needed = label.heightForWidth(label.width())
+        assert label.height() >= needed, (label.text(), label.height(), needed)
+        top_left = label.mapTo(dialog, label.rect().topLeft())
+        bottom_right = label.mapTo(dialog, label.rect().bottomRight())
+        assert dialog.rect().contains(top_left), label.text()
+        assert dialog.rect().contains(bottom_right), label.text()
+    dialog.close()
+
+
+def test_a_hint_back_on_one_line_gives_its_height_back(qapp, tmp_path) -> None:  # noqa: ANN001
+    from mufinder.domain.cluster import ClusterQueue
+
+    plain_template = tmp_path / "plain.sh"
+    plain_template.write_text("#!/bin/bash\n$castep_command\n", encoding="utf-8")
+    config = _psi_config(template_script_path=_partition_template(tmp_path))
+    hourly = ClusterQueue(
+        name="hourly", max_walltime="01:00:00", template_script_path=str(plain_template)
+    )
+    config = replace(config, queues=(hourly, *config.queues[1:]))
+    dialog = ClusterSubmissionDialog(job_labels=["job_a"], cluster_configs=[config])
+    dialog.show()
+
+    def pick(queue: str) -> int:
+        dialog._queue_combo.setCurrentIndex(_queue_items(dialog).index(queue))
+        dialog._queue_combo.activated.emit(dialog._queue_combo.currentIndex())
+        QApplication.processEvents()
+        return dialog.layout().totalMinimumSize().height()
+
+    one_line = pick("hourly")
+    assert dialog._queue_hint.text() == "Maximum walltime on this queue: 01:00:00."
+    assert pick("daily") > one_line
+    assert "sets its own partition" in dialog._queue_hint.text()
+
+    assert pick("hourly") == one_line
+    dialog.close()
+
+
+def test_a_long_cluster_name_keeps_the_width_its_labels_need(qapp) -> None:
+    name = "National Materials Science and Engineering Computing Centre"
+    dialog = ClusterSubmissionDialog(job_labels=["job_a"], cluster_configs=[_psi_config(name=name)])
+
+    _shown_at_minimum_size(dialog)
+
+    assert dialog.width() >= dialog.layout().totalMinimumSize().width()
+    for label in dialog.findChildren(QLabel):
+        if label.isVisible() and not label.wordWrap() and label.text():
+            assert label.width() >= label.minimumSizeHint().width(), label.text()
+    dialog.close()
+
+
+def test_the_minimum_width_fits_the_screen_at_large_text(qapp, monkeypatch) -> None:  # noqa: ANN001
+    from mufinder.app import theme as theme_module
+
+    monkeypatch.setattr(theme_module, "text_scale", lambda: 2.0)
+    theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)
+    try:
+        dialog = ClusterSubmissionDialog(
+            job_labels=["job_a"], cluster_configs=[_psi_config(default_queue_name="general")]
+        )
+        dialog.show()
+        QApplication.processEvents()
+        available = dialog.screen().availableGeometry().width()
+
+        assert theme_module.scaled_to_text(dialog_module._MINIMUM_WIDTH) > available
+        assert dialog.minimumWidth() <= max(available, dialog.layout().totalMinimumSize().width())
+        dialog.close()
+    finally:
+        monkeypatch.undo()
+        theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)
+
+
+def test_a_hint_on_one_line_reserves_no_height(text_scale) -> None:  # noqa: ANN001
+    with_hint = ClusterSubmissionDialog(job_labels=["job_a"], cluster_configs=[_psi_config()])
+    without_hint = ClusterSubmissionDialog(
+        job_labels=["job_a"], cluster_configs=[_psi_config(default_queue_name="general")]
+    )
+
+    _shown_at_minimum_size(with_hint)
+    _shown_at_minimum_size(without_hint)
+
+    assert with_hint._queue_hint.isVisible()
+    assert not without_hint._queue_hint.isVisible()
+    one_line = with_hint._queue_hint.fontMetrics().lineSpacing()
+    assert with_hint._queue_hint.height() <= 2 * one_line
+    assert with_hint._queue_hint.minimumHeight() == 0
+    with_hint.close()
+    without_hint.close()

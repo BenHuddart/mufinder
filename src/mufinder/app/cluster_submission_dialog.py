@@ -29,7 +29,7 @@ from mufinder.app import workflow_table_utils
 from mufinder.app.cluster_ui_utils import resolve_cluster_credentials
 from mufinder.app.decimal_input import DecimalLineEdit
 from mufinder.app.farm_validation import check_farm_counts
-from mufinder.app.theme import style_hint_text
+from mufinder.app.theme import scaled_to_text, style_hint_text
 from mufinder.domain.cluster import PLACEHOLDER_USERNAME, ClusterConfig, ClusterSubmissionConfig
 from mufinder.domain.text import plural
 from mufinder.services.cluster_queues import (
@@ -52,6 +52,11 @@ _DEFAULT_MEM_PER_CPU_GB = 6.0
 
 #: The placement combo entry that leaves placement to the scheduler.
 _SCHEDULER_PLACEMENT_TEXT = "Scheduler decides"
+
+#: The dialog's narrowest width at the designed text size, wide enough that most
+#: hints stay on one line; a hint that still wraps there keeps the height its
+#: lines need (``_fit_hint_heights``).
+_MINIMUM_WIDTH = 480
 
 
 class ClusterSubmissionDialog(QDialog):
@@ -248,6 +253,7 @@ class ClusterSubmissionDialog(QDialog):
         )
         self._farm_blocked = verdict.blocked
         self._farm_warning.setText(verdict.blocking_message or verdict.warning_message)
+        self._fit_hint_heights()
         self._refresh_ok_button()
 
     def _refresh_ok_button(self) -> None:
@@ -315,6 +321,7 @@ class ClusterSubmissionDialog(QDialog):
                 f"Requests -n {ProcessPlacement.split(total, per_node).addqueue_argument()}"
             )
         self._placement_hint.setText(text)
+        self._fit_hint_heights()
         self._refresh_ok_button()
 
     def selected_cluster_name(self) -> str:
@@ -493,6 +500,53 @@ class ClusterSubmissionDialog(QDialog):
                 )
         self._queue_hint.setText(" ".join(notes))
         self._form.setRowVisible(self._queue_hint, bool(notes))
+        self._fit_hint_heights()
+
+    def _fit_hint_heights(self) -> None:
+        """Set the minimum width, and give each wrapped hint the height its lines need there.
+
+        The minimum width is ``_MINIMUM_WIDTH`` at the text size in use, no
+        wider than the screen, and never narrower than the form's own minimum.
+        Qt counts a wrapped label at one line in the dialog's minimum height, so
+        a hint that wraps onto more would be clipped with the dialog at its
+        smallest. A hint on one line, or hidden, reserves nothing. The rows
+        shown decide the label column's width, so a change of rows refits too.
+        """
+
+        self.ensurePolished()
+        width = scaled_to_text(_MINIMUM_WIDTH)
+        screen = self.screen()
+        if screen is not None:
+            width = min(width, screen.availableGeometry().width())
+        outer = self.layout().contentsMargins()
+        # A floor on the full-width button row, so Qt keeps the form's own
+        # minimum wherever that is wider.
+        self._button_box.setMinimumWidth(width - outer.left() - outer.right())
+        margins = (self.layout(), self._form.parentWidget(), self._form)
+        row_width = width - sum(
+            item.contentsMargins().left() + item.contentsMargins().right() for item in margins
+        )
+        labels = (
+            self._form.itemAt(row, QFormLayout.ItemRole.LabelRole)
+            for row in range(self._form.rowCount())
+        )
+        label_column = max(
+            (
+                item.widget().sizeHint().width()
+                for item in labels
+                if item is not None and item.widget() is not None and not item.widget().isHidden()
+            ),
+            default=0,
+        )
+        field_width = row_width - label_column - self._form.horizontalSpacing()
+        for hint, width in (
+            (self._queue_hint, field_width),
+            (self._placement_hint, field_width),
+            (self._farm_warning, row_width),
+        ):
+            hint.setMinimumHeight(0)
+            needed = hint.heightForWidth(width) if hint.text() and not hint.isHidden() else 0
+            hint.setMinimumHeight(needed if needed > hint.fontMetrics().lineSpacing() else 0)
 
     def _apply_initial_config(self, *, default_cluster_name: str | None) -> None:
         config = self._initial_config
@@ -585,6 +639,7 @@ class ClusterSubmissionDialog(QDialog):
         for widget in (self._jump_secret_label, self._jump_secret_edit):
             widget.setVisible(jump_visible)
             widget.setEnabled(jump_visible)
+        self._fit_hint_heights()
 
     def _has_active_connection_for_selected(self) -> bool:
         config = self.selected_cluster_config()
@@ -668,6 +723,7 @@ class ClusterSubmissionDialog(QDialog):
         # Equal placement is an addqueue argument (-n NxP); SLURM jobs never send it.
         self._form.setRowVisible(self._placement_combo, addqueue)
         self._form.setRowVisible(self._placement_hint, addqueue)
+        self._fit_hint_heights()
         if addqueue:
             self._walltime_edit.setPlaceholderText("Optional for addqueue (HH:MM:SS)")
         else:
