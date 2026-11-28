@@ -286,15 +286,17 @@ class ConvergenceExaminerDialog(QDialog):
         self._results.setFixedHeight(_RESULTS_HEIGHT)
         layout.addWidget(self._results)
         plot_frame = PlotFrame(self._canvas, title="Convergence plot", parent=self)
-        # Docked, the dialog's own minimum size bounds the plot and the layout keeps its slack.
-        plot_frame.popped_out_changed.connect(
-            lambda popped_out: self._canvas.setMinimumHeight(
-                _POP_OUT_CANVAS_MINIMUM_HEIGHT if popped_out else _CANVAS_MINIMUM_SIZE[1]
-            )
-        )
+        plot_frame.popped_out_changed.connect(self._set_canvas_minimum)
         layout.addWidget(plot_frame, 1)
 
         self._arrange_header()
+
+    def _set_canvas_minimum(self, popped_out: bool) -> None:
+        """Hold a popped-out plot at its taller minimum; docked, the dialog's minimum bounds it."""
+
+        self._canvas.setMinimumHeight(
+            _POP_OUT_CANVAS_MINIMUM_HEIGHT if popped_out else _CANVAS_MINIMUM_SIZE[1]
+        )
 
     def _show_threshold_starts(self) -> None:
         """Show each narrow threshold field from its start, so a long value keeps its point."""
