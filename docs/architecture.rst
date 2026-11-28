@@ -2673,13 +2673,18 @@ right to left is not covered.
 ``tests/app/test_keyboard_baseline.py`` builds every ``QDialog`` subclass in
 ``mufinder.app`` and opens every workflow page and the job dashboard, walks
 each with real Tab and Shift+Tab presses against rules 1 and 2, and presses
-Enter and Escape in each dialog from every stop. A new dialog class that is not
+Enter and Escape in each dialog from every stop. It also checks where Tab goes
+after a page in the main window: to the job dashboard, then the status bar,
+then the navigator, and Shift+Tab the other way round. A new dialog class that is not
 in its registry fails the test. Its ``KNOWN_EXCEPTIONS`` lists the places that
 keep a deliberate difference, each with its reason, and fails once one meets
 the baseline: Enter in the cluster submission dialog's editable queue box keeps
 the typed name instead of pressing OK, Enter in the Magnetic Structure Builder
 presses Use Structure only from a focused button, and the Geometry Progress
-dialog's criteria table is display-only and not a Tab stop.
+dialog's criteria table is display-only and not a Tab stop. The Energy Barriers
+page and a pinned Magnetic Fields workspace are built after the job dashboard,
+when first opened or pinned, so Qt puts them last in the window's Tab chain and
+Tab leaves them for the navigator first.
 
 Cross-platform appearance
 -------------------------

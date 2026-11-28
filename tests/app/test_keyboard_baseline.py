@@ -38,8 +38,9 @@ from PySide6.QtWidgets import (
 import shiboken6
 
 import mufinder.app
-from tests.support.qt import open_and_take_focus
+from tests.support.qt import open_and_take_focus, press_key
 from tests.support.keyboard import (
+    WALK_LIMIT,
     DialogKeys,
     address,
     cell_table,
@@ -53,7 +54,7 @@ from tests.support.keyboard import (
 
 # (target, rule): (the dialog attribute holding the control it is excused on, or None
 # for every control, and why it keeps its difference). The rules are "reach", "order",
-# "enter" and "escape".
+# "enter", "escape" and, for a main-window page, "exit": where Tab goes after the page.
 KNOWN_EXCEPTIONS: dict[tuple[str, str], tuple[str | None, str]] = {
     ("ClusterSubmissionDialog", "enter"): (
         "_queue_combo",
@@ -67,6 +68,16 @@ KNOWN_EXCEPTIONS: dict[tuple[str, str], tuple[str | None, str]] = {
     ("GeometryProgressDialog", "reach"): (
         "_table",
         "The criteria table is display-only and is not a Tab stop.",
+    ),
+    ("page:energy_barriers", "exit"): (
+        None,
+        "Built when first opened, after the job dashboard, so Qt puts it last in the "
+        "window's Tab chain and Tab leaves it for the navigator first.",
+    ),
+    ("page:magnetic_fields_workspace", "exit"): (
+        None,
+        "Built when pinned, after the job dashboard, so Qt puts it last in the window's "
+        "Tab chain and Tab leaves it for the navigator first.",
     ),
 }
 
@@ -598,7 +609,9 @@ def _check(target: str, faults: dict[str, list[Fault]], owner: QWidget | None = 
     stale = [
         rule
         for (name, rule) in KNOWN_EXCEPTIONS
-        if name == target and not any(excused(rule, widget) for widget, _ in faults.get(rule, ()))
+        if name == target
+        and rule in faults
+        and not any(excused(rule, widget) for widget, _ in faults[rule])
     ]
     assert not unexpected, f"{target} breaks the keyboard baseline: {unexpected}"
     assert not stale, f"{target} now meets {stale}: take it out of KNOWN_EXCEPTIONS"
@@ -716,10 +729,11 @@ def test_every_dialog_class_is_walked() -> None:
 
 def test_every_known_exception_names_a_target_and_a_rule() -> None:
     targets = set(DIALOGS) | {f"page:{route}" for route in _page_routes()}
+    targets.add("page:magnetic_fields_workspace")
 
     for target, rule in KNOWN_EXCEPTIONS:
         assert target in targets, target
-        assert rule in {"reach", "order", "enter", "escape"}, rule
+        assert rule in {"reach", "order", "enter", "escape", "exit"}, rule
 
 
 # ------------------------------------------------------------------- pages
@@ -753,14 +767,17 @@ def staged_window(project_with_host, qapp):
         window.hide()
 
 
-def _focus_first_stop(root: QWidget) -> None:
+def _focus_first_stop(root: QWidget) -> bool:
+    """Focus the first control on screen in ``root`` that takes Tab; false when none does."""
+
     from mufinder.app.table_keyboard import screen_tab_order
 
     for stop in screen_tab_order(root):
         if stop.isVisible() and stop.isEnabled() and stop.focusPolicy() & Qt.FocusPolicy.TabFocus:
             stop.setFocus(Qt.FocusReason.OtherFocusReason)
             QApplication.processEvents()
-            return
+            return True
+    return False
 
 
 @pytest.mark.parametrize("route", _page_routes())
@@ -776,6 +793,83 @@ def test_page_meets_the_keyboard_baseline(route, staged_window) -> None:
     _focus_first_stop(page)
     faults, _stops = _walk_faults(page, window)
     _check(f"page:{route}", faults)
+
+
+def _window_tab_path(window, page: QWidget, *, backward: bool = False) -> list[str]:
+    """The window's parts Tab, or Shift+Tab, passes through from ``page`` until it is back."""
+
+    modifiers = Qt.KeyboardModifier.ShiftModifier if backward else Qt.KeyboardModifier.NoModifier
+    parts = {
+        "dashboard": window._job_tray.dock,
+        "status bar": window.statusBar(),
+        "navigator": window._project_navigator,
+    }
+    path: list[str] = []
+    for _ in range(WALK_LIMIT):
+        widget = press_key(Qt.Key.Key_Tab, modifiers)
+        if widget is None:
+            return [*path, "nothing"]
+        if page.isAncestorOf(widget):
+            if path:
+                return path
+            continue
+        part = next((name for name, root in parts.items() if root.isAncestorOf(widget)), None)
+        part = part or describe(widget)
+        if not path or path[-1] != part:
+            path.append(part)
+    return [*path, f"not back within {WALK_LIMIT} presses"]
+
+
+def _exit_faults(window, page: QWidget) -> dict[str, list[Fault]]:
+    """Whether Tab leaves ``page`` for the dashboard, the status bar and the navigator, in turn.
+
+    Shift+Tab must pass them the other way round.
+    """
+
+    assert _focus_first_stop(page)
+    forward = _window_tab_path(window, page)
+    _focus_first_stop(page)
+    backward = _window_tab_path(window, page, backward=True)
+    faults: list[Fault] = []
+    if forward != ["dashboard", "status bar", "navigator"]:
+        faults.append((None, f"Tab leaves it through {forward}"))
+    if backward != ["navigator", "status bar", "dashboard"]:
+        faults.append((None, f"Shift+Tab leaves it through {backward}"))
+    return {"exit": faults}
+
+
+@pytest.mark.parametrize("route", _page_routes())
+def test_tab_leaves_every_page_for_the_dashboard_then_the_navigator(route, staged_window) -> None:
+    from tests.app.test_accessible_names import _SHOW_ROWS
+
+    window = staged_window
+    window._set_active_route(route)
+    if route in _SHOW_ROWS:
+        _SHOW_ROWS[route](window)
+    QApplication.processEvents()
+    page = window._main_stack.currentWidget()
+    if not _focus_first_stop(page):
+        # Muon Site Analysis with no analysis yet: nothing on the page takes Tab.
+        return
+
+    _check(f"page:{route}", _exit_faults(window, page))
+
+
+def test_tab_leaves_a_pinned_magnetic_fields_workspace_for_the_dashboard(
+    staged_window, monkeypatch
+) -> None:
+    from tests.app.test_main_window import _magnetic_model
+
+    window = staged_window
+    monkeypatch.setattr(QInputDialog, "getText", lambda *args, **kwargs: ("Pinned", True))
+    window._set_active_route("magnetic_fields")
+    window._magnetic_field_view.set_model(_magnetic_model("Helix"))
+    window._magnetic_field_view._pin_button.click()
+    QApplication.processEvents()
+    page = window._main_stack.currentWidget()
+    assert page in window._magnetic_field_workspace_widgets.values()
+
+    _check("page:magnetic_fields_workspace", _exit_faults(window, page))
 
 
 def test_the_job_dashboard_meets_the_keyboard_baseline(staged_window) -> None:
