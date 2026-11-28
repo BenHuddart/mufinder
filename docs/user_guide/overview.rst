@@ -108,8 +108,8 @@ Application shell
 - Tab moves through every dialog and page in screen order, panel by panel: it
   finishes one panel, such as a form column, a viewer's controls or a scrolling
   list, before the next, and inside a panel goes top to bottom, then left to
-  right along a row. Shift+Tab goes back the same way. A set of options you
-  choose one of, such as the demagnetizing field on Magnetic Fields, is one
+  right along a row. Shift+Tab goes back the same way. A set of round option
+  buttons you choose one of, such as the demagnetizing field on Magnetic Fields, is one
   stop: Tab stops on the chosen option, or, while it cannot be chosen, on the
   first option that can, and the arrow keys move the choice. In a dialog, Enter
   presses the highlighted default button and Escape cancels; Enter in the

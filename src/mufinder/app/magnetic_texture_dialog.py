@@ -603,7 +603,6 @@ class MagneticTextureDialog(AtomTargetCardsMixin, QDialog):
         self._preview_light_button = self._preview_canvas_button("Light canvas", "appearance_light")
         self._preview_dark_button = self._preview_canvas_button("Dark canvas", "appearance_dark")
         self._preview_light_button.setChecked(True)
-        keep_tab_on_chosen_option(self._preview_canvas_group)
         self._preview_canvas_group.buttonClicked.connect(self._refresh_preview_canvas_mode)
         self._magnitude_map_check = QCheckBox("Show |m| map")
         self._magnitude_map_check.setToolTip(

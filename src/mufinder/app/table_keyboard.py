@@ -52,15 +52,11 @@ def is_tab_stop(widget: QWidget) -> bool:
 
     A button counts whatever its Tab focus is now: Qt takes Tab focus from the
     unchosen options of an exclusive group and gives it back once one is chosen.
-    So does an option ``keep_tab_on_chosen_option`` keeps, which may have no focus
-    left at all while it is not chosen.
     """
 
     policy = widget.focusPolicy()
-    return (
-        bool(policy.value & Qt.FocusPolicy.TabFocus.value)
-        or (isinstance(widget, QAbstractButton) and policy != Qt.FocusPolicy.NoFocus)
-        or bool(widget.property(_CHOSEN_OPTION_PROPERTY))
+    return bool(policy.value & Qt.FocusPolicy.TabFocus.value) or (
+        isinstance(widget, QAbstractButton) and policy != Qt.FocusPolicy.NoFocus
     )
 
 
@@ -70,7 +66,9 @@ def keep_tab_on_chosen_option(options: QButtonGroup | Sequence[QAbstractButton])
     Qt keeps Tab on one option of an exclusive group only once one of them has had
     focus; until then the first Tab into the group stops on its first option, chosen
     or not. ``options`` is a ``QButtonGroup`` with all its buttons added, or radio
-    buttons that exclude each other as siblings; they are removed together. The stop
+    buttons that exclude each other as siblings; they are removed together. Each
+    option must keep click focus when unchosen, as a radio button does; a Tab-only
+    button, such as a tool button, is refused. The stop
     follows the choice, by click, key or code, and comes back to it when focus leaves
     an option that was not chosen; while the chosen option is disabled or hidden, the
     first option that is neither takes it. With nothing chosen the Tab stops are left
@@ -78,9 +76,6 @@ def keep_tab_on_chosen_option(options: QButtonGroup | Sequence[QAbstractButton])
     """
 
     _ChosenOptionStop(options)
-
-
-_CHOSEN_OPTION_PROPERTY = "chosenOptionGroupMember"
 
 
 class _ChosenOptionStop(QObject):
@@ -95,12 +90,11 @@ class _ChosenOptionStop(QObject):
         self._options = list(options.buttons() if grouped else options)
         if not self._options:
             raise ValueError("keep_tab_on_chosen_option needs the group's options added first")
+        if any(not o.focusPolicy().value & Qt.FocusPolicy.ClickFocus.value for o in self._options):
+            raise ValueError("keep_tab_on_chosen_option needs options that keep click focus")
         # It lives as long as the options, made with or without a parent yet.
         super().__init__(self._options[0])
         for option in self._options:
-            if option.focusPolicy().value & Qt.FocusPolicy.TabFocus.value:
-                # A Tab-only option keeps its place in the Tab order while unchosen.
-                option.setProperty(_CHOSEN_OPTION_PROPERTY, True)
             option.toggled.connect(self.place_stop)
             option.installEventFilter(self)
         self.place_stop()
@@ -166,15 +160,8 @@ def set_screen_tab_order(root: QWidget, *, followed_by: QWidget | None = None) -
     else:
         start = order.index(_first_in_focus_chain(root.window(), order))
         order = order[start:] + order[:start]
-    # Qt chains no widget without focus: an unchosen Tab-only option has its focus
-    # lent while it takes its place.
-    lent = [stop for stop in order if stop.focusPolicy() == Qt.FocusPolicy.NoFocus]
-    for stop in lent:
-        stop.setFocusPolicy(Qt.FocusPolicy.TabFocus)
     for earlier, later in itertools.pairwise(order):
         QWidget.setTabOrder(earlier, later)
-    for stop in lent:
-        stop.setFocusPolicy(Qt.FocusPolicy.NoFocus)
 
 
 KEEP_OWN_TAB_ORDER = "keepOwnTabOrder"
