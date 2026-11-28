@@ -104,7 +104,9 @@ class FailedJobDialog(QDialog):
         if excerpt:
             self._add_log_excerpt(layout, excerpt)
 
-        buttons = QDialogButtonBox()
+        # Made with its parent: a box made without one and adopted by the layout later
+        # can leave its added buttons out of the dialog's Tab path.
+        buttons = QDialogButtonBox(self)
         self.resubmit_button: QPushButton | None = None
         self.continue_button: QPushButton | None = None
         self.open_folder_button: QPushButton | None = None
