@@ -95,11 +95,13 @@ def _action_buttons(dialog: ConvergenceExaminerDialog) -> list[QRect]:
     ]
 
 
-@pytest.mark.parametrize("size", [(1080, 900), (880, 640)], ids=["default", "minimum"])
-def test_convergence_examiner_shows_the_whole_plot_without_scrolling(qapp, size) -> None:
+@pytest.mark.parametrize("size", [(1080, 900), (880, 646)], ids=["default", "minimum"])
+def test_convergence_examiner_shows_the_whole_plot_without_scrolling(
+    qapp, designed_text_scale, size
+) -> None:
     dialog = _analysed_dialog(qapp, size)
     try:
-        assert (dialog.minimumWidth(), dialog.minimumHeight()) == (880, 640)
+        assert (dialog.minimumWidth(), dialog.minimumHeight()) == (880, 646)
         assert (dialog.width(), dialog.height()) == size
         assert not dialog.findChildren(QScrollArea)
         for widget in (
@@ -224,7 +226,7 @@ def _assert_legends_clear(dialog: ConvergenceExaminerDialog) -> None:
         assert axes.xaxis.get_offset_text().get_text() == ""
 
 
-@pytest.mark.parametrize("size", [(1080, 900), (880, 640)], ids=["default", "minimum"])
+@pytest.mark.parametrize("size", [(1080, 900), (880, 646)], ids=["default", "minimum"])
 @pytest.mark.parametrize("ratio", [1.0, 2.0], ids=["dpr1", "dpr2"])
 @pytest.mark.parametrize(
     ("kind", "stress", "narrow"),
@@ -333,7 +335,7 @@ def _run_examiner(dialog, qapp, size, ratio, **thresholds) -> None:
 
 
 @pytest.mark.parametrize("ratio", [1.0, 2.0], ids=["dpr1", "dpr2"])
-@pytest.mark.parametrize("size", [(880, 640), (1080, 900)], ids=["minimum", "default"])
+@pytest.mark.parametrize("size", [(880, 646), (1080, 900)], ids=["minimum", "default"])
 @pytest.mark.parametrize("stress", [False, True], ids=["no-stress", "stress"])
 @pytest.mark.parametrize("energy_threshold", [1e-6, 1e-3, 1.0])
 @pytest.mark.parametrize("kind", ["cutoff", "kpoint"])
@@ -368,7 +370,7 @@ def test_convergence_examiner_tick_rule_on_the_kpoint_force_panel_at_a_tight_thr
         dialog.close()
 
 
-@pytest.mark.parametrize("size", [(880, 640), (1080, 900)], ids=["minimum", "default"])
+@pytest.mark.parametrize("size", [(880, 646), (1080, 900)], ids=["minimum", "default"])
 def test_convergence_examiner_tick_rule_below_the_band(qapp, size) -> None:
     # Energies that rise towards the densest grid: every offset is negative.
     grids = {float(math.prod(grid)): grid for grid in _COF2_KPOINT_SWEEP}
@@ -391,7 +393,7 @@ def test_convergence_examiner_tick_rule_below_the_band(qapp, size) -> None:
 
 
 @pytest.mark.parametrize("kind", ["cutoff", "kpoint"])
-@pytest.mark.parametrize("size", [(880, 640), (1080, 900)], ids=["minimum", "default"])
+@pytest.mark.parametrize("size", [(880, 646), (1080, 900)], ids=["minimum", "default"])
 def test_convergence_examiner_tick_rule_with_two_points(qapp, kind, size) -> None:
     options: dict[str, object] = {}
     values = (300.0, 800.0)
@@ -421,7 +423,7 @@ def test_convergence_examiner_tick_rule_with_two_points(qapp, kind, size) -> Non
 def test_convergence_examiner_drops_only_the_negative_threshold_label_when_crowded(qapp) -> None:
     dialog = _cof2_examiner("kpoint")
     try:
-        _run_examiner(dialog, qapp, (880, 640), 2.0, energy=1e-6)
+        _run_examiner(dialog, qapp, (880, 646), 2.0, energy=1e-6)
         dialog._canvas.draw()
         axes = dialog._energy_ax
         ticks = list(axes.get_yticks())
@@ -454,7 +456,7 @@ def _marker_boxes(axes) -> list:
     return boxes
 
 
-@pytest.mark.parametrize("size", [(880, 640), (980, 760), (1080, 900)])
+@pytest.mark.parametrize("size", [(880, 646), (980, 760), (1080, 900)])
 @pytest.mark.parametrize("energy_threshold", [1.0, 0.002, 0.001])
 def test_convergence_examiner_limit_label_covers_nothing(qapp, size, energy_threshold) -> None:
     dialog = _cof2_examiner("cutoff")
@@ -484,7 +486,7 @@ def test_convergence_examiner_force_legend_sits_right_of_the_stress_axis(qapp) -
     dialog = _cof2_examiner("cutoff", stress=True)
     try:
         dialog.show()
-        dialog.resize(880, 640)
+        dialog.resize(880, 646)
         _settle(qapp)
         dialog._include_stress.setChecked(True)
         dialog._run_button.click()
@@ -534,7 +536,7 @@ def _pop_out_examiner(kind: str, state: str) -> ConvergenceExaminerDialog:
     return ConvergenceExaminerDialog(points, num_atoms=2, **options)
 
 
-@pytest.mark.parametrize("size", [(1080, 900), (880, 640)], ids=["default", "minimum"])
+@pytest.mark.parametrize("size", [(1080, 900), (880, 646)], ids=["default", "minimum"])
 @pytest.mark.parametrize("kind", ["cutoff", "kpoint"])
 @pytest.mark.parametrize("state", ["no points", "one point", "open", "analysed", "stress"])
 def test_convergence_examiner_keeps_the_plot_clear_of_the_pop_out_button(
@@ -580,11 +582,11 @@ def test_convergence_examiner_keeps_the_plot_clear_of_the_pop_out_button(
 
 
 def test_convergence_examiner_gives_extra_height_to_the_plot_alone(qapp) -> None:
-    dialog = _analysed_dialog(qapp, (880, 640))
+    dialog = _analysed_dialog(qapp, (880, 646))
     try:
         results_height = dialog._results.height()
         canvas_height = dialog._canvas.height()
-        dialog.resize(880, 840)
+        dialog.resize(880, 846)
         _settle(qapp)
         assert dialog._results.height() == results_height
         assert dialog._canvas.height() == canvas_height + 200
@@ -653,7 +655,7 @@ def test_convergence_examiner_actions_sit_beside_the_thresholds_when_they_fit(qa
 
         # At the minimum the value-bearing adopt text does not fit: the actions
         # wrap under the thresholds, still side by side and nothing clipped.
-        dialog.resize(880, 640)
+        dialog.resize(880, 646)
         _settle(qapp)
         fields = _bounds_in_dialog(dialog, dialog._stress_threshold)
         buttons = _action_buttons(dialog)
@@ -1655,7 +1657,7 @@ def _assert_hover_notes_whole_beside_their_points(dialog: ConvergenceExaminerDia
     return checked
 
 
-@pytest.mark.parametrize("size", [(1080, 900), (880, 640)], ids=["default", "minimum"])
+@pytest.mark.parametrize("size", [(1080, 900), (880, 646)], ids=["default", "minimum"])
 @pytest.mark.parametrize(
     ("kind", "stress"),
     [("cutoff", False), ("cutoff", True), ("kpoint", False)],
@@ -1678,7 +1680,7 @@ def test_convergence_examiner_hover_note_stays_whole_beside_its_point(
         dialog.close()
 
 
-@pytest.mark.parametrize("window_size", [(960, 680), (480, 320)], ids=["default", "smallest"])
+@pytest.mark.parametrize("window_size", [(960, 680), (100, 100)], ids=["default", "smallest"])
 def test_convergence_examiner_hover_note_stays_whole_in_the_pop_out(qapp, window_size) -> None:
     dialog = _cof2_examiner("cutoff", stress=True)
     try:
@@ -1697,13 +1699,92 @@ def test_convergence_examiner_hover_note_stays_whole_in_the_pop_out(qapp, window
         dialog.close()
 
 
+@pytest.mark.parametrize(
+    ("kind", "stress"),
+    [("cutoff", True), ("cutoff", False), ("kpoint", False)],
+    ids=["cutoff-stress", "cutoff", "kpoint"],
+)
+def test_convergence_examiner_pop_out_at_its_smallest_keeps_usable_panels(
+    qapp, kind, stress
+) -> None:
+    # Below the smallest pop-out, the energy legend's overhang leaves no settled
+    # layout and each redraw (a pointer move) shrinks the panels away.
+    dialog = _cof2_examiner(kind, stress=stress)
+    try:
+        dialog.show()
+        dialog.resize(880, 646)
+        _settle(qapp)
+        if stress:
+            dialog._include_stress.setChecked(True)
+        dialog._run_button.click()
+        _settle(qapp)
+        canvas = dialog._canvas
+        frame = canvas.parentWidget()
+        frame.pop_out()
+        frame.popped_out_window.resize(100, 100)
+        _settle(qapp)
+
+        # The pop-out cannot be made shorter than its minimum.
+        assert canvas.width() >= 480
+        assert canvas.height() >= 366
+        panels = (dialog._energy_ax, dialog._force_ax)
+        heights = []
+        for _ in range(50):
+            canvas.draw()
+            heights.append([axes.bbox.height for axes in panels])
+
+        assert min(heights[-1]) >= 60
+        for later in heights[-10:]:
+            assert later == pytest.approx(heights[-1], abs=0.01)
+    finally:
+        dialog.close()
+
+
+@pytest.mark.parametrize("scale", [1.0, 1.5], ids=["designed-text", "large-text"])
+def test_convergence_examiner_at_its_minimum_size_keeps_usable_panels(
+    qapp, monkeypatch, scale
+) -> None:
+    # With the app's theme, the docked plot at the dialog's minimum size gets at least the
+    # height at which the layout settles; each redraw (a pointer move) leaves the panels be.
+    monkeypatch.setattr(theme_module, "text_scale", lambda: scale)
+    theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)
+    dialog = _cof2_examiner("cutoff", stress=True)
+    try:
+        dialog.show()
+        dialog.resize(100, 100)
+        _settle(qapp)
+        dialog._include_stress.setChecked(True)
+        dialog._run_button.click()
+        _settle(qapp)
+        canvas = dialog._canvas
+        assert canvas.height() >= 366
+        # The whole canvas is inside the dialog: nothing below the cutoff axis is cut off.
+        assert canvas.mapTo(dialog, canvas.rect().bottomLeft()).y() < dialog.height()
+        panels = (dialog._energy_ax, dialog._force_ax)
+        heights = []
+        for _ in range(200 if scale == 1.0 else 20):
+            canvas.draw()
+            heights.append([axes.bbox.height for axes in panels])
+
+        assert min(heights[-1]) >= 60
+        for later in heights[-10:]:
+            assert later == pytest.approx(heights[-1], abs=0.01)
+        # The cutoff axis label stays on the canvas.
+        label = dialog._force_ax.xaxis.label.get_window_extent(canvas.get_renderer())
+        assert label.y0 >= 0
+    finally:
+        dialog.close()
+        monkeypatch.undo()
+        theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)
+
+
 def test_convergence_examiner_last_kpoint_note_is_drawn_over_the_legend(qapp, monkeypatch) -> None:
     """At the minimum size the finest grid's note reaches the legend and is drawn over it."""
 
     dialog = _cof2_examiner("kpoint")
     try:
         dialog.show()
-        dialog.resize(880, 640)
+        dialog.resize(880, 646)
         _settle(qapp)
         dialog._run_button.click()
         _settle(qapp)
