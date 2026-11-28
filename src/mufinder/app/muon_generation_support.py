@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 )
 
 from mufinder.app.theme import style_section_subtitle, style_section_title
+from mufinder.app.table_keyboard import keep_tab_on_chosen_option
 from mufinder.domain.charge_states import MUONIUM_CHARGE_STATE, POSITIVE_MUON_CHARGE_STATE
 from mufinder.domain.text import plain_error
 from mufinder.science.site_generation import SiteGenerationError
@@ -58,6 +59,7 @@ class MuonChargeStateDialog(QDialog):
         self._both.setProperty("chargeStateOption", "true")
         for index, button in enumerate((self._positive, self._muonium, self._both)):
             self._button_group.addButton(button, index)
+        keep_tab_on_chosen_option(self._button_group)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(18, 18, 18, 14)

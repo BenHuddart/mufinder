@@ -247,6 +247,33 @@ def screen_order_faults(stops: list[QWidget], root: QWidget, *, cycle: bool = Tr
     return faults
 
 
+def option_group_faults(stops: list[QWidget]) -> list[tuple[QWidget, str]]:
+    """Where a walk's ``stops`` take an exclusive group other than at its chosen option.
+
+    Each exclusive group a stop belongs to must take exactly one stop, and that stop
+    is the chosen option whenever it is shown and enabled.
+    """
+
+    faults = []
+    seen: set[int] = set()
+    for stop in stops:
+        group = _exclusive_group(stop) if isinstance(stop, QAbstractButton) else []
+        key = min((address(member) for member in group), default=None)
+        if key is None or key in seen:
+            continue
+        seen.add(key)
+        taken = [member for member in group if any(member is other for other in stops)]
+        chosen = next((member for member in group if member.isChecked()), None)
+        if len(taken) != 1:
+            names = ", ".join(describe(member) for member in taken)
+            faults.append((stop, f"Tab stops on {len(taken)} options of one group: {names}"))
+        elif chosen is not None and taken[0] is not chosen:
+            faults.append(
+                (stop, f"Tab stops on {describe(taken[0])}, not the chosen {describe(chosen)}")
+            )
+    return faults
+
+
 def reverse_faults(forward: list[QWidget], backward: list[QWidget]) -> str:
     """Whether Shift+Tab visits the Tab walk in reverse; cell controls are Tab's alone."""
 

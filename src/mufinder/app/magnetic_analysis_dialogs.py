@@ -27,7 +27,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from mufinder.app.table_keyboard import TabStopTable, set_screen_tab_order
+from mufinder.app.table_keyboard import (
+    TabStopTable,
+    keep_tab_on_chosen_option,
+    set_screen_tab_order,
+)
 from mufinder.app.blocking_call import BlockingCallCancelled
 from mufinder.app.decimal_input import DecimalLineEdit
 from mufinder.app.magnetic_component_dialogs import selector_label
@@ -434,6 +438,7 @@ class DipolarTensorDialog(QDialog):
         ):
             self._target_group.addButton(button)
             button.toggled.connect(self._refresh_enabled_state)
+        keep_tab_on_chosen_option(self._target_group)
 
         self._assigned_radio.setEnabled(bool(self._assigned_indices))
         self._species_combo = QComboBox()

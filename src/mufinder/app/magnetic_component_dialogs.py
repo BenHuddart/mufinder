@@ -40,7 +40,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from mufinder.app.table_keyboard import TabStopTable
+from mufinder.app.table_keyboard import TabStopTable, keep_tab_on_chosen_option
 from mufinder.app import workflow_table_utils
 from mufinder.app.decimal_input import DecimalLineEdit
 from mufinder.app.icons import icon
@@ -271,6 +271,7 @@ class MagneticComponentDialog(AtomTargetCardsMixin, QDialog):
         self._target_group.addButton(self._species_radio)
         self._target_group.addButton(self._equivalent_radio)
         self._target_group.addButton(self._selected_radio)
+        keep_tab_on_chosen_option(self._target_group)
 
         self._species_combo = QComboBox()
         for species in sorted(set(str(symbol) for symbol in structure.species)):
