@@ -18,8 +18,10 @@ from PySide6.QtGui import QInputMethodEvent, QKeyEvent, QMouseEvent
 from PySide6.QtWidgets import (
     QAbstractButton,
     QAbstractItemView,
-    QAbstractScrollArea,
+    QAbstractSpinBox,
     QApplication,
+    QComboBox,
+    QDialogButtonBox,
     QScrollBar,
     QTableWidget,
     QWidget,
@@ -27,6 +29,10 @@ from PySide6.QtWidgets import (
 
 # Two panels may overlap by this many pixels and still read as one after the other.
 _OVERLAP_TOLERANCE = 3
+# Controls Tab takes whole, whatever widgets they are made of.
+_WHOLE_CONTROLS = (QAbstractSpinBox, QComboBox, QAbstractItemView)
+# How far back from a control to look for the one before it in the focus chain.
+_CHAIN_STEPS = 200
 
 
 def is_tab_stop(widget: QWidget) -> bool:
@@ -51,10 +57,12 @@ def screen_tab_order(
     put in reading order by where they are, top to bottom and then left to right
     within a band, and each child's own stops follow in their turn. So a panel, a
     form column, a viewer's toolbar, a splitter pane or a scroll area, is read whole
-    before the panel beside it. A control that takes Tab is one stop; a table's cell
-    controls are left to the table, and a scroll area that is a stop is followed by
-    its content. A ``QDialogButtonBox`` orders its own Tab path by its layout, so it
-    reads the same. Hidden widgets are left out. ``blocks`` gives, for a container,
+    before the panel beside it. A control that takes Tab is one stop, whole: a spin
+    box or combo box with its parts, a table with its cell controls, which the table
+    leads Tab through. A stop that holds stops of its own, such as a scroll area or a
+    checkable group box, comes before them, and a tab widget is read through its tab
+    bar and the page showing. A ``QDialogButtonBox`` keeps its own order, the order
+    of its layout. Hidden widgets are left out. ``blocks`` gives, for a container,
     its stops in an order the caller keeps.
     """
 
@@ -75,11 +83,12 @@ def set_screen_tab_order(
     """
 
     order = _stops_in(root, blocks or {})
-    if len(order) < 2:
+    if not order:
         return
     if followed_by is not None:
         previous = _focusable_before(followed_by, root)
-        order = order if previous is None else [previous, *order]
+        # With nothing found before it, the part is at least led into ``followed_by``.
+        order = [*order, followed_by] if previous is None else [previous, *order]
     else:
         start = order.index(_first_in_focus_chain(root.window(), order))
         order = order[start:] + order[:start]
@@ -99,14 +108,19 @@ def _stops_in(container: QWidget, blocks: Mapping[QWidget, Sequence[QWidget]]) -
             continue
         if child in blocks:
             stops = list(blocks[child])
-        elif not is_tab_stop(child):
+        elif isinstance(child, _WHOLE_CONTROLS):
+            stops = [child] if is_tab_stop(child) else []
+        elif not is_tab_stop(child) or child.focusProxy() is not None:
             stops = _stops_in(child, blocks)
-        elif isinstance(child, QAbstractScrollArea) and not isinstance(child, QAbstractItemView):
-            stops = [child, *_stops_in(child, blocks)]
         else:
-            stops = [child]
+            stops = [child, *_stops_in(child, blocks)]
         if stops:
             panels.append((child.geometry(), stops))
+    if isinstance(container, QDialogButtonBox):
+        layout = container.layout()
+        laid_out = [layout.itemAt(index).widget() for index in range(layout.count())]
+        panels = [panel for widget in laid_out for panel in panels if panel[1][0] is widget]
+        return [stop for _rect, stops in panels for stop in stops]
     return [stop for _rect, stops in _reading_order(panels) for stop in stops]
 
 
@@ -164,7 +178,9 @@ def _focusable_before(widget: QWidget, root: QWidget) -> QWidget | None:
     """
 
     previous = widget.previousInFocusChain()
-    while previous is not widget:
+    for _ in range(_CHAIN_STEPS):
+        if previous is widget:
+            break
         if previous.focusPolicy() != Qt.FocusPolicy.NoFocus and not (
             previous is root or root.isAncestorOf(previous)
         ):

@@ -39,6 +39,7 @@ from PySide6.QtWidgets import (
 import shiboken6
 
 import mufinder.app
+from tests.support.qt import open_and_take_focus
 from tests.support.keyboard import (
     DialogKeys,
     address,
@@ -47,23 +48,26 @@ from tests.support.keyboard import (
     describe,
     reverse_faults,
     screen_order_faults,
-    show_active,
     tab_walk,
     unreached,
 )
 
-# (target, rule): why it keeps its difference. The rules are "reach", "order",
+# (target, rule): (the dialog attribute holding the control it is excused on, or None
+# for every control, and why it keeps its difference). The rules are "reach", "order",
 # "enter" and "escape".
-KNOWN_EXCEPTIONS: dict[tuple[str, str], str] = {
+KNOWN_EXCEPTIONS: dict[tuple[str, str], tuple[str | None, str]] = {
     ("ClusterSubmissionDialog", "enter"): (
-        "Enter in the editable queue box keeps the typed queue name instead of pressing OK."
+        "_queue_combo",
+        "Enter in the editable queue box keeps the typed queue name instead of pressing OK.",
     ),
     ("MagneticStructureBuilderDialog", "enter"): (
+        None,
         "Enter reaches the dialog after a preview-repeat spin box commits its value, so it "
-        "presses Use Structure only from a focused button and never closes the builder."
+        "presses Use Structure only from a focused button and never closes the builder.",
     ),
     ("GeometryProgressDialog", "reach"): (
-        "The criteria table is display-only and is not a Tab stop."
+        "_table",
+        "The criteria table is display-only and is not a Tab stop.",
     ),
 }
 
@@ -571,20 +575,37 @@ DIALOGS: dict[str, Callable[[_Context], QDialog]] = {
 # ------------------------------------------------------------------- checks
 
 
-def _check(target: str, faults: dict[str, list[str]]) -> None:
-    """Fail on any fault that is not a known exception, and on an exception that passes."""
+# A fault: the control it is on, when there is one, and what went wrong.
+Fault = tuple[QWidget | None, str]
+
+
+def _check(target: str, faults: dict[str, list[Fault]], owner: QWidget | None = None) -> None:
+    """Fail on a fault that no known exception excuses, and on an exception that excuses none."""
+
+    def excused(rule: str, widget: QWidget | None) -> bool:
+        if (target, rule) not in KNOWN_EXCEPTIONS:
+            return False
+        attribute = KNOWN_EXCEPTIONS[(target, rule)][0]
+        if attribute is None:
+            return True
+        control = getattr(owner, attribute)
+        return widget is not None and (widget is control or control.isAncestorOf(widget))
 
     unexpected = {
-        rule: found
+        rule: [text for widget, text in found if not excused(rule, widget)]
         for rule, found in faults.items()
-        if found and (target, rule) not in KNOWN_EXCEPTIONS
     }
-    stale = [rule for (name, rule) in KNOWN_EXCEPTIONS if name == target and not faults.get(rule)]
+    unexpected = {rule: texts for rule, texts in unexpected.items() if texts}
+    stale = [
+        rule
+        for (name, rule) in KNOWN_EXCEPTIONS
+        if name == target and not any(excused(rule, widget) for widget, _ in faults.get(rule, ()))
+    ]
     assert not unexpected, f"{target} breaks the keyboard baseline: {unexpected}"
     assert not stale, f"{target} now meets {stale}: take it out of KNOWN_EXCEPTIONS"
 
 
-def _walk_faults(root: QWidget, window: QWidget) -> tuple[dict[str, list[str]], list[QWidget]]:
+def _walk_faults(root: QWidget, window: QWidget) -> tuple[dict[str, list[Fault]], list[QWidget]]:
     """Rules 1 and 2 for ``root``, walked round ``window`` from the control that has focus.
 
     A part of a window (``root`` is not ``window``) must be walked from its first
@@ -594,10 +615,10 @@ def _walk_faults(root: QWidget, window: QWidget) -> tuple[dict[str, list[str]], 
     start = QApplication.focusWidget()
     forward = tab_walk(window)
     backward = tab_walk(window, backward=True)
-    faults: dict[str, list[str]] = {"reach": [], "order": []}
+    faults: dict[str, list[Fault]] = {"reach": [], "order": []}
     for walk in (forward, backward):
         if walk.fault:
-            faults["reach"].append(walk.fault)
+            faults["reach"].append((None, walk.fault))
     whole = root is window
     stops = forward.stops
     if not whole and stops and start is not None:
@@ -608,20 +629,24 @@ def _walk_faults(root: QWidget, window: QWidget) -> tuple[dict[str, list[str]], 
         if any(inside[leaves:]):
             back_at = stops[leaves + inside[leaves:].index(True)]
             faults["order"].append(
-                f"Tab leaves it for {describe(stops[leaves])} and comes back at {describe(back_at)}"
+                (
+                    back_at,
+                    f"Tab leaves it for {describe(stops[leaves])} and comes back at "
+                    f"{describe(back_at)}",
+                )
             )
     ahead = [stop for stop in stops if whole or root.isAncestorOf(stop)]
     back = [stop for stop in backward.stops if whole or root.isAncestorOf(stop)]
     required = controls_to_reach(root)
-    faults["reach"] += [f"Tab misses {name}" for name in unreached(required, ahead)]
+    faults["reach"] += [(w, f"Tab misses {describe(w)}") for w in unreached(required, ahead)]
     faults["reach"] += [
-        f"Shift+Tab misses {name}"
-        for name in unreached([e for e in required if cell_table(e[0]) is None], back)
+        (w, f"Shift+Tab misses {describe(w)}")
+        for w in unreached([e for e in required if cell_table(e[0]) is None], back)
     ]
-    faults["order"] += screen_order_faults(ahead, root, cycle=whole)
+    faults["order"] += [(None, text) for text in screen_order_faults(ahead, root, cycle=whole)]
     reverse = reverse_faults(ahead, back)
     if reverse:
-        faults["order"].append(reverse)
+        faults["order"].append((None, reverse))
     return faults, ahead
 
 
@@ -630,7 +655,7 @@ def _key_faults(dialog: QDialog, opening: QWidget | None, stops: list[QWidget]) 
 
     keys = DialogKeys(dialog)
     defaults = keys.default_buttons()
-    faults: dict[str, list[str]] = {"enter": [], "escape": []}
+    faults: dict[str, list[Fault]] = {"enter": [], "escape": []}
     starts = [opening] if opening is not None else []
     starts += [stop for stop in stops if stop is not opening]
     for start in starts:
@@ -641,10 +666,10 @@ def _key_faults(dialog: QDialog, opening: QWidget | None, stops: list[QWidget]) 
             # Enter on a focused push button presses that button.
             wanted = [describe(start)] if isinstance(start, QPushButton) else defaults[:1]
             if result.pressed[:1] != wanted:
-                faults["enter"].append(f"{describe(start)}: {result.pressed or 'nothing'}")
+                faults["enter"].append((start, f"{describe(start)}: {result.pressed or 'nothing'}"))
         result = keys.press(Qt.Key.Key_Escape, start)
         if result.closed not in ("reject", "done(0)"):
-            faults["escape"].append(f"{describe(start)}: {result.closed or 'nothing'}")
+            faults["escape"].append((start, f"{describe(start)}: {result.closed or 'nothing'}"))
     return faults
 
 
@@ -654,10 +679,10 @@ def test_dialog_meets_the_keyboard_baseline(target, qapp, tmp_path, monkeypatch)
     dialog = DIALOGS[target](ctx)
     try:
         assert type(dialog).__name__ == target.split(" (")[0]
-        opening = show_active(dialog)
+        opening = open_and_take_focus(dialog)
         faults, stops = _walk_faults(dialog, dialog)
         faults.update(_key_faults(dialog, opening, stops))
-        _check(target, faults)
+        _check(target, faults, dialog)
     finally:
         for widget in (dialog, *ctx.keep):
             if shiboken6.isValid(widget):
@@ -720,9 +745,7 @@ def staged_window(project_with_host, qapp):
         add_dashboard_job(service, document, f"keyboard_{index}", status)
     window._refresh_jobs_table()
     window.resize(*WINDOW_SIZE)
-    show_active(window)
-    if window._job_tray.is_collapsed():
-        window._job_tray.set_collapsed(False)
+    open_and_take_focus(window)
     QApplication.processEvents()
     yield window
     window.hide()

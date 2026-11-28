@@ -33,7 +33,7 @@ from PySide6.QtWidgets import (
 )
 
 from mufinder.app.table_keyboard import TabStopTable, screen_tab_order
-from tests.support.qt import release_keyboard_modifiers
+from tests.support.qt import open_and_take_focus, press_key
 
 #: Presses after which a walk that has not come back round is reported as a trap.
 WALK_LIMIT = 300
@@ -76,18 +76,6 @@ def describe(widget: QWidget | None) -> str:
     return f"{type(widget).__name__}({label!r})" if label else type(widget).__name__
 
 
-def show_active(window: QWidget) -> QWidget | None:
-    """Show ``window``, wait until it is active, and return the control it opened on."""
-
-    window.show()
-    window.raise_()
-    window.activateWindow()
-    QTest.qWaitForWindowActive(window, 2000)
-    for _ in range(3):
-        QApplication.processEvents()
-    return QApplication.focusWidget()
-
-
 @dataclass
 class Walk:
     """The stops one walk round a window visited, and why it stopped if not back at its start."""
@@ -102,14 +90,18 @@ def tab_walk(window: QWidget, *, backward: bool = False) -> Walk:
     modifiers = Qt.KeyboardModifier.ShiftModifier if backward else Qt.KeyboardModifier.NoModifier
     stops: list[QWidget] = []
     seen: set[int] = set()
+    start = QApplication.focusWidget()
+    if start is None:
+        # A window with no control that takes Tab has nothing to walk.
+        return Walk(stops)
+    if start is not window and not window.isAncestorOf(start):
+        return Walk(stops, f"the walk starts outside the window, on {describe(start)}")
     for _ in range(WALK_LIMIT):
-        QTest.keyClick(QApplication.focusWidget() or window, Qt.Key.Key_Tab, modifiers)
-        release_keyboard_modifiers()
-        QApplication.processEvents()
-        widget = QApplication.focusWidget()
+        if QApplication.focusWidget() is None:
+            return Walk(stops, "focus went to nothing")
+        widget = press_key(Qt.Key.Key_Tab, modifiers)
         if widget is None:
-            # A window with no control that takes Tab has nothing to walk.
-            return Walk(stops, "focus went to nothing" if stops else "")
+            return Walk(stops, "focus went to nothing")
         if widget is not window and not window.isAncestorOf(widget):
             return Walk(stops, f"focus left the window for {describe(widget)}")
         if stops and address(widget) == address(stops[0]):
@@ -210,7 +202,7 @@ def controls_to_reach(root: QWidget) -> list[list[QWidget]]:
     return required
 
 
-def unreached(required: list[list[QWidget]], stops: list[QWidget]) -> list[str]:
+def unreached(required: list[list[QWidget]], stops: list[QWidget]) -> list[QWidget]:
     """The required controls no stop is, or is part of."""
 
     keys = {address(stop) for stop in stops}
@@ -223,7 +215,7 @@ def unreached(required: list[list[QWidget]], stops: list[QWidget]) -> list[str]:
             for member in entry
         )
         if not reached:
-            missing.append(describe(entry[0]))
+            missing.append(entry[0])
     return missing
 
 
@@ -317,7 +309,7 @@ class DialogKeys:
                 button.setDown(False)
                 button.blockSignals(False)
         if not self.dialog.isVisible():
-            show_active(self.dialog)
+            open_and_take_focus(self.dialog)
         return KeyResult([describe(button) for button in self._pressed], self._closed)
 
     def _on_pressed(self, button: QAbstractButton) -> None:

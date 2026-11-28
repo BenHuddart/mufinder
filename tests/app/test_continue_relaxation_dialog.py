@@ -6,7 +6,7 @@ from collections.abc import Iterable, Mapping
 
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QDialog, QDialogButtonBox
+from PySide6.QtWidgets import QApplication, QDialog, QDialogButtonBox
 
 from mufinder.app.continue_relaxation_dialog import ContinueRelaxationDialog, RenderJobInputs
 from mufinder.app.param_dialog import ParameterDialog
@@ -517,6 +517,27 @@ def test_tab_reaches_the_changes_table_between_add_parameter_and_continue(qapp) 
 
     assert forward == expected
     assert backward == [*reversed(expected[:-1]), dialog._add_advanced_button]
+    dialog.close()
+
+
+def test_the_changes_table_takes_its_place_in_the_tab_order_when_an_edit_shows_it(
+    qapp,
+) -> None:
+    dialog = _make_dialog(parameter_values={"basis_precision": "FINE"})
+    dialog.show()
+    dialog.activateWindow()
+    assert QTest.qWaitForWindowActive(dialog)
+    assert dialog._diff_table.isHidden()
+
+    dialog._rows["basis_precision"].editor.set_value("PRECISE")
+    QApplication.processEvents()
+    expected = [
+        dialog._diff_table,
+        *buttons_left_to_right(dialog.findChild(QDialogButtonBox)),
+    ]
+    dialog._add_advanced_button.setFocus()
+
+    assert [press_key(Qt.Key.Key_Tab) for _ in expected] == expected
     dialog.close()
 
 

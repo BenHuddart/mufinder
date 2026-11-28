@@ -878,3 +878,71 @@ def test_set_screen_tab_order_never_walks_the_rest_of_the_window(qapp, monkeypat
         widget = widget.nextInFocusChain()
     focusable = [widget for widget in chain if widget in (*others, first, second, after)]
     assert focusable == [*others, first, second, after]
+
+
+def test_a_checkable_group_box_comes_before_the_controls_in_it(qapp) -> None:
+    from PySide6.QtWidgets import QGroupBox
+
+    from mufinder.app.table_keyboard import set_screen_tab_order
+
+    window = QWidget()
+    group = QGroupBox("Group", window)
+    group.setCheckable(True)
+    inside = QLineEdit(group)
+    QVBoxLayout(group).addWidget(inside)
+    above = QLineEdit(window)
+    layout = QVBoxLayout(window)
+    layout.addWidget(above)
+    layout.addWidget(group)
+    set_screen_tab_order(window)
+    _show(window)
+    try:
+        above.setFocus()
+        assert [_tab() for _ in range(3)] == [group, inside, above]
+    finally:
+        window.close()
+
+
+def test_a_part_with_one_stop_still_goes_before_the_control_after_it(qapp) -> None:
+    from mufinder.app.table_keyboard import set_screen_tab_order
+
+    window = QWidget()
+    before = QLineEdit(window)
+    panel = QWidget(window)
+    after = QLineEdit(window)
+    only = QPushButton("only", panel)
+    QVBoxLayout(panel).addWidget(only)
+    layout = QVBoxLayout(window)
+    for widget in (before, panel, after):
+        layout.addWidget(widget)
+    set_screen_tab_order(panel, followed_by=after)
+    _show(window)
+    try:
+        before.setFocus()
+        assert [_tab() for _ in range(3)] == [only, after, before]
+    finally:
+        window.close()
+
+
+def test_a_button_box_keeps_its_own_order_right_to_left(qapp) -> None:
+    from PySide6.QtWidgets import QDialogButtonBox
+
+    from mufinder.app.table_keyboard import screen_tab_order
+
+    window = QWidget()
+    window.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+    buttons = QDialogButtonBox(
+        QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel, window
+    )
+    QVBoxLayout(window).addWidget(buttons)
+    window.show()
+    try:
+        ok = buttons.button(QDialogButtonBox.StandardButton.Ok)
+        cancel = buttons.button(QDialogButtonBox.StandardButton.Cancel)
+        own = [ok, cancel] if ok.nextInFocusChain() is cancel else [cancel, ok]
+        # Right to left, the box's own order is not the order left to right on screen.
+        assert own != buttons_left_to_right(buttons)
+
+        assert screen_tab_order(window) == own
+    finally:
+        window.close()
