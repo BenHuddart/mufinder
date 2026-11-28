@@ -1535,3 +1535,53 @@ def test_a_marked_window_is_not_reordered_by_a_direct_call(qapp) -> None:
 def test_the_mark_needs_a_reason(qapp) -> None:
     with pytest.raises(ValueError, match="reason"):
         keep_own_tab_order(QWidget(), "")
+
+
+def test_a_box_in_a_widget_laid_out_right_to_left_is_read_as_drawn(qapp) -> None:
+    from PySide6.QtWidgets import QHBoxLayout
+
+    window = QWidget()
+    window.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+    a, b, c = _named(window, "A", "B", "C")
+    row = QHBoxLayout(window)
+    for edit in (a, b, c):
+        row.addWidget(edit)
+    _ordered_and_shown(window)
+    try:
+        assert c.x() < b.x() < a.x()
+        assert _tab_names_from(c, 3) == ["B", "A", "C"]
+    finally:
+        window.close()
+
+
+def test_the_dipolar_tensor_results_take_their_place_when_calculated_while_open(qapp) -> None:
+    from mufinder.app.magnetic_analysis_dialogs import DipolarTensorDialog
+    from tests.support.keyboard import screen_order_faults, tab_walk
+    from tests.support.qt import open_and_take_focus
+
+    tensor = {
+        "site_label": "site 1",
+        "muon_position": [0.25, 0.25, 0.25],
+        "dipolar_tensor_T_per_muB": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, -2.0]],
+    }
+    dialog = DipolarTensorDialog(
+        feo_host_structure(),
+        MagneticStructureModel(components=(z_moment_component("one", "One", 0),)),
+        custom_muon_site((0.25, 0.25, 0.25)),
+        include_equivalent_sites=False,
+        calculate_callback=lambda _dialog: (tensor,),
+    )
+    open_and_take_focus(dialog)
+    try:
+        calculate = next(b for b in dialog.findChildren(QPushButton) if b.text() == "Calculate")
+        calculate.click()
+        QApplication.processEvents()
+        calculate.setFocus()
+        QApplication.processEvents()
+
+        walk = tab_walk(dialog)
+
+        assert any(isinstance(stop, TabStopTable) for stop in walk.stops)
+        assert screen_order_faults(walk.stops, dialog) == []
+    finally:
+        dialog.close()

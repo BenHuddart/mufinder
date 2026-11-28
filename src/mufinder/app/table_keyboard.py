@@ -58,16 +58,19 @@ def is_tab_stop(widget: QWidget) -> bool:
 
 
 def screen_tab_order(root: QWidget) -> list[QWidget]:
-    """Return the shown Tab stops in ``root`` in the order they read on screen, panel by panel.
+    """Return the Tab stops in ``root`` in the order they read on screen, panel by panel.
 
-    It reads where the controls are, not how they are laid out. The widget tree is read container by container: a container's children are
+    The widget tree is read container by container: a container's children are
     put in reading order by where they are, top to bottom and then left to right
-    within a band, and each child's own stops follow in their turn. A control that
-    takes Tab is one stop, whole: a spin box or combo box with its parts, a table
-    with its cell controls. A stop that holds stops of its own, such as a scroll
-    area or a checkable group box, comes before them; a tab widget, like any control
-    whose focus goes to a part of it, is one stop. A ``QDialogButtonBox`` keeps the
-    order of its layout. Hidden widgets are left out.
+    within a band, and each child's own stops follow in their turn. So a panel, a
+    form column, a viewer's toolbar, a splitter pane or a scroll area, is read whole
+    before the panel beside it. A control that takes Tab is one stop, whole: a spin
+    box or combo box with its parts, a table with its cell controls, which the table
+    leads Tab through. A stop that holds stops of its own, such as a scroll area or a
+    checkable group box, comes before them; a tab widget, like any control whose
+    focus goes to a part of it, is one stop. A ``QDialogButtonBox`` keeps its own order, the order
+    of its layout. Hidden widgets are left out. It reads where controls are, not
+    their layouts: the reference the layout order is tested against.
     """
 
     return _stops_in(root, by_layout=False)
@@ -76,12 +79,11 @@ def screen_tab_order(root: QWidget) -> list[QWidget]:
 def set_screen_tab_order(root: QWidget, *, followed_by: QWidget | None = None) -> None:
     """Chain Tab through ``root`` in the order its layouts place its controls.
 
-    Hidden controls are placed too, so one shown later is already in its place. A
-    box is read by its items (backwards when right to left or bottom to top), a grid
-    by row then column, a form by row, a splitter by its panes, a nested layout in
-    its place; children no layout places go by where they are on screen. A control
-    created later needs this to run again. A window keeps the control it opens on;
-    a part of a window goes just before ``followed_by``.
+    Hidden controls are placed too: a box by its items, as drawn; a grid by row then
+    column; a form by row; a splitter by its panes; a nested layout in its place;
+    children no layout places by where they are. A control created later needs this
+    to run again. A window keeps the control it opens on; a part goes just before
+    ``followed_by``.
     """
 
     order = [] if root.property(KEEP_OWN_TAB_ORDER) else _stops_in(root, by_layout=True)
@@ -115,12 +117,8 @@ def install_screen_tab_order(app: QApplication) -> None:
     It is one signal connection, no event filter; a marked dialog is left alone.
     """
 
-    if isinstance(app, QApplication) and not app.property(_INSTALLED):
-        app.setProperty(_INSTALLED, True)
+    if isinstance(app, QApplication):
         app.focusWindowChanged.connect(_order_active_dialog)
-
-
-_INSTALLED = "mufinderScreenTabOrder"
 
 
 def _order_active_dialog(window: object = None) -> None:
@@ -135,11 +133,8 @@ def _order_active_dialog(window: object = None) -> None:
 
 
 def _children_in_order(container: QWidget, by_layout: bool) -> tuple[list, list]:
-    """``container``'s children its layout places, in its order, and the shown rest.
-
-    Reading by layout keeps hidden children. Reading the screen uses a layout only
-    for a button box, whose order is the platform's.
-    """
+    """The children ``container``'s layout places, hidden ones too when ``by_layout``
+    (otherwise only a button box's), and the shown rest."""
 
     children = [
         child
@@ -162,21 +157,26 @@ def _children_in_order(container: QWidget, by_layout: bool) -> tuple[list, list]
 def _laid_out(layout: QLayout) -> list[QWidget]:
     """The widgets ``layout`` places, in its order, the layouts in it read in their place."""
 
-    indexes = list(range(layout.count()))
-    if isinstance(layout, QGridLayout):
-        indexes.sort(key=lambda index: layout.getItemPosition(index)[:2])
-    elif isinstance(layout, QFormLayout):
-        indexes.sort(
-            key=lambda index: (
-                layout.getItemPosition(index)[0],
-                layout.getItemPosition(index)[1].value,
-            )
+    # A widget laid out right to left mirrors its layouts, but not a button box's
+    # platform order; the screen reads left to right.
+    owner = layout.parentWidget()
+    across = -1 if owner is not None and owner.isRightToLeft() else 1
+    if isinstance(owner, QDialogButtonBox):
+        across = 1
+    if isinstance(layout, (QGridLayout, QFormLayout)):
+        # A grid by (row, column), a form by (row, side): label side first.
+        place = [layout.getItemPosition(index)[:2] for index in range(layout.count())]
+        indexes = sorted(
+            range(layout.count()),
+            key=lambda i: (place[i][0], across * getattr(place[i][1], "value", place[i][1])),
         )
-    elif isinstance(layout, QBoxLayout) and layout.direction() in (
-        QBoxLayout.Direction.RightToLeft,
-        QBoxLayout.Direction.BottomToTop,
-    ):
-        indexes.reverse()
+    else:
+        indexes = list(range(layout.count()))
+        backwards = {QBoxLayout.Direction.RightToLeft, QBoxLayout.Direction.BottomToTop}
+        if isinstance(layout, QBoxLayout) and (layout.direction() in backwards) != (
+            across < 0 and layout.direction() in _HORIZONTAL
+        ):
+            indexes.reverse()
     widgets: list[QWidget] = []
     for index in indexes:
         item = layout.itemAt(index)
@@ -185,6 +185,9 @@ def _laid_out(layout: QLayout) -> list[QWidget]:
         elif item.layout() is not None:
             widgets.extend(_laid_out(item.layout()))
     return widgets
+
+
+_HORIZONTAL = {QBoxLayout.Direction.LeftToRight, QBoxLayout.Direction.RightToLeft}
 
 
 def _stops_in(container: QWidget, *, by_layout: bool) -> list[QWidget]:

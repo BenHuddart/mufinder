@@ -2660,10 +2660,11 @@ Qt's Tab order is the order controls were made in, and a control made without a
 parent joins it where a layout adopts it. ``set_screen_tab_order``
 (``mufinder.app.table_keyboard``) chains Tab in the order the layouts place the
 controls instead, hidden controls included, so a control a dialog shows later is
-already in its place. A box layout is read by its items (backwards for a
-right-to-left or bottom-to-top box), a grid by row then column, a form by row
-with the label side first, a splitter by its panes, and a layout inside another
-in its place. Children no layout places, such as a button set by hand in a
+already in its place. A box layout is read by its items as they are drawn
+(backwards for a right-to-left or bottom-to-top box, and inside a widget laid out
+right to left), a grid by row then column, a form by row with the label side
+first, a splitter by its panes, and a layout inside another in its place; the
+screen is read left to right, and a button box keeps its own order. Children no layout places, such as a button set by hand in a
 corner, are put by where they are on screen among the laid-out ones. A table, a
 spin box or a combo box is one stop, a tab widget is one stop whose pages keep
 Qt's own order, a stop that holds stops of its own (a checkable group box, a
@@ -2690,13 +2691,12 @@ each walk is compared with it. What the layout reading does not cover:
 - A control created after a dialog has its order takes Qt's place until the
   helper runs again, so a dialog that builds controls while open calls
   ``set_screen_tab_order`` after building them. The parameter dialog and the
-  dialogs built on it do so after rebuilding their rows. A table's cell controls
-  and a tab widget's pages need no call.
+  dialogs built on it do so after rebuilding their rows, and the dipolar tensor
+  dialog after adding its result tables. A table's cell controls and a tab
+  widget's pages need no call.
 - Children no layout places are put by position among the laid-out ones, shown
   ones only; one shown later takes Qt's place. A focusable panel marked with
   ``keep_own_tab_order`` comes before its own controls.
-- A box inside a widget laid out right to left is read backwards; screen order is
-  read left to right.
 - Top-level windows that are not dialogs, Qt's own dialogs (message boxes, file
   dialogs) and a plain ``QDialog`` built in place keep Qt's order.
 

@@ -1798,11 +1798,12 @@ def test_tab_reaches_the_graph_pop_out_before_scan_tolerances_once_connected_is_
 ) -> None:
     """Choosing Connected Components shows Scan Tolerances under the graph's pop-out.
 
+    The scan itself is not run: the button and both pop-outs are there without it.
+
     Tab reaches the upper plot's pop-out first, then the scan plot's controls.
     """
 
     from PySide6.QtCore import Qt as QtKeys
-    from PySide6.QtTest import QTest
 
     from tests.support.keyboard import describe
     from tests.support.qt import open_and_take_focus, press_key
@@ -1827,17 +1828,7 @@ def test_tab_reaches_the_graph_pop_out_before_scan_tolerances_once_connected_is_
     open_and_take_focus(dialog)
     try:
         dialog._method_combo.setCurrentIndex(dialog._method_combo.findText("Connected Components"))
-        scan = next(
-            button
-            for button in dialog.findChildren(QPushButton)
-            if button.text() == "Scan Tolerances"
-        )
-        scan.click()
-        for _ in range(400):  # the scan runs on a worker thread
-            if scan.isEnabled():
-                break
-            QTest.qWait(50)
-        assert scan.isEnabled()
+        qapp.processEvents()
         dialog._method_combo.setFocus()
         qapp.processEvents()
 
