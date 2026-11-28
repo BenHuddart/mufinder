@@ -2663,23 +2663,26 @@ reads the widget tree container by container, puts each container's children
 in reading order by where they are, and chains Tab through the result. A window
 keeps the control it opens on; a part of a window is given the control Tab
 reaches after it (``followed_by``) and goes just before it. A tab widget is one
-stop whose pages keep Qt's own order, and hidden widgets are left out. Screen
+stop whose pages keep Qt's own order, and hidden widgets are left out. A scroll
+area keeps its place in the chain whether or not Tab stops on it now: a reading
+scroll area becomes a stop only while its content overflows. Screen
 order is read left to right; a window laid out right to left is not covered.
 Finding the control a window opens on walks at most 200 steps of its focus
 chain, so a main window's whole chain is never walked.
 
 Dialogs write no Tab-order code. ``install_screen_tab_order``, installed by
-``mufinder.main`` once the main window is shown, orders every MuFinder
-``QDialog`` when it first becomes the active window and each time it is shown
-again. While the dialog is shown, a change to its layouts orders it again, so a
+``mufinder.main`` once the main window is shown, orders every dialog of a
+``QDialog`` subclass defined in MuFinder when it first becomes the active window
+and each time it is shown again. While the dialog is shown, a change to its layouts orders it again, so a
 control it reveals, adds or hides takes its place on screen: the hook watches
 the widgets that receive the dialog's layout requests (the dialog and each
 widget no layout places, such as a scroll area's content), and orders the
-dialog when the first request arrives or, if a Tab press comes first, at that
-press. A dialog is ordered once per change, not once per request. The hook
+dialog when the first request arrives or one of those widgets is deleted, or,
+if a Tab press comes first, at that press. A dialog is ordered once per change, not once per request. The hook
 installs nothing on the application: it listens to the application's focus
 signals and watches only the shown dialogs' own widgets. Qt's own dialogs
-(message boxes, file dialogs) are left alone. ``keep_own_tab_order(widget,
+(message boxes, file dialogs) and a plain ``QDialog`` built in place keep the
+order their controls were made in. ``keep_own_tab_order(widget,
 reason)`` marks a widget that keeps its own order: on a dialog the hook leaves
 the whole dialog alone, on a panel the order leaves that panel's stops in the
 order they have. No widget carries the mark now.

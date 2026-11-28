@@ -21,6 +21,7 @@ from PySide6.QtGui import QInputMethodEvent, QKeyEvent, QMouseEvent
 from PySide6.QtWidgets import (
     QAbstractButton,
     QAbstractItemView,
+    QAbstractScrollArea,
     QAbstractSpinBox,
     QApplication,
     QComboBox,
@@ -107,17 +108,12 @@ def keep_own_tab_order(widget: QWidget, reason: str) -> None:
 
 
 def install_screen_tab_order(app: QApplication) -> None:
-    """Chain Tab through every MuFinder dialog in screen order.
+    """Chain Tab through every dialog class defined in MuFinder in screen order.
 
-    A dialog is ordered when it first becomes the active window and each time it is
-    shown again. While it is shown, a change to its layouts orders it again, so a
-    control it reveals, adds or hides takes its place on screen: as soon as the
-    change returns to the event loop, or at the next Tab press if that comes first.
-    Nothing is installed on the application: it listens to the application's focus
-    signals and watches only the shown dialogs' own widgets. Qt's own dialogs
-    (message boxes, file dialogs) and a dialog marked with :func:`keep_own_tab_order`
-    are left alone. Main windows and their pages keep the order their controls were
-    made in.
+    A dialog is ordered when it first becomes active, when it is shown again, and
+    when its layouts change while it is shown, so a control it reveals takes its
+    place. Nothing is installed on the application itself. Qt's own dialogs, a plain
+    ``QDialog`` and a dialog marked with :func:`keep_own_tab_order` are left alone.
     """
 
     if isinstance(app, QApplication) and getattr(app, "_mufinder_screen_tab_order", None) is None:
@@ -140,15 +136,10 @@ def _key(widget: QWidget) -> int:
 
 
 class _ScreenTabOrderHook(QObject):
-    """Orders a dialog as it becomes active, and again when its layouts change.
-
-    A layout change is posted as a ``LayoutRequest`` to the widget at the top of
-    that layout hierarchy: the dialog, or a widget no layout places, such as a
-    scroll area's content. Those widgets are watched while the dialog is shown.
-    The order is set as the first request arrives, after whatever changed the
-    dialog has returned to the event loop; the requests still queued then, the
-    order's own among them, are delivered at once and start no second run. A
-    hidden dialog keeps only the watch on itself, to be ordered when shown again.
+    """Watches each shown dialog's layout tops (:func:`_layout_tops`), which receive
+    its ``LayoutRequest`` events, and orders the dialog when the first arrives. The
+    requests still queued then, its own among them, are delivered at once and start
+    no second run. A hidden dialog keeps only the watch on itself, for its next show.
     """
 
     def __init__(self, parent: QObject) -> None:
@@ -167,8 +158,7 @@ class _ScreenTabOrderHook(QObject):
             self.follow_focus(None, QApplication.focusWidget())
 
     def follow_focus(self, old: QWidget | None, now: QWidget | None) -> None:
-        """Watch the focused control's keys, so Tab never runs on an order not yet set."""
-
+        # Watch the focused control's keys, so Tab never runs on an order not yet set.
         if old is not None and shiboken6.isValid(old) and not old.isWindow():
             if not any(old is top for top in self._watched.get(_key(old.window()), [])):
                 old.removeEventFilter(self)
@@ -179,7 +169,7 @@ class _ScreenTabOrderHook(QObject):
         kind = event.type()
         if kind == QEvent.Type.KeyPress and event.key() in (Qt.Key.Key_Tab, Qt.Key.Key_Backtab):
             # A change not yet ordered orders the dialog now, before Tab moves.
-            for top in self._watched.get(_key(watched.window()), []):
+            for top in self._live_tops(_key(watched.window())):
                 QApplication.sendPostedEvents(top, QEvent.Type.LayoutRequest.value)
         elif kind == QEvent.Type.LayoutRequest and not self._ordering:
             dialog = watched.window()
@@ -197,19 +187,33 @@ class _ScreenTabOrderHook(QObject):
         self._ordering = True
         try:
             set_screen_tab_order(dialog)
-            watched = self._watched[_key(dialog)]
+            key = _key(dialog)
+            watched = self._live_tops(key)
             for top in _layout_tops(dialog):
                 if top not in watched:
                     top.installEventFilter(self)
+                    if top is not dialog:
+                        top.destroyed.connect(lambda _=None, key=key: self._top_gone(key))
                     watched.append(top)
             for top in watched:
                 QApplication.sendPostedEvents(top, QEvent.Type.LayoutRequest.value)
         finally:
             self._ordering = False
 
-    def _unwatch(self, dialog: QWidget) -> None:
-        """Drop every watch but the one on ``dialog`` itself."""
+    def _top_gone(self, key: int) -> None:
+        # A watched widget was deleted, as a scroll area's replaced content is.
+        watched = self._watched.get(key)
+        if watched and shiboken6.isValid(watched[0]):
+            QApplication.postEvent(watched[0], QEvent(QEvent.Type.LayoutRequest))
 
+    def _live_tops(self, key: int) -> list[QWidget]:
+        watched = self._watched.get(key)
+        if watched is None:
+            return []
+        watched[:] = [top for top in watched if shiboken6.isValid(top)]
+        return watched
+
+    def _unwatch(self, dialog: QWidget) -> None:
         self._hidden.add(_key(dialog))
         for top in self._watched.pop(_key(dialog), [])[1:]:
             if shiboken6.isValid(top):
@@ -250,6 +254,15 @@ def _taken_whole(widget: QWidget) -> bool:
     )
 
 
+def _keeps_a_place(widget: QWidget) -> bool:
+    """A scroll area keeps its place while Tab passes over it: a reading one becomes
+    a stop when its content overflows, with no layout change to reorder on."""
+
+    return isinstance(widget, QAbstractScrollArea) and widget.focusPolicy() != (
+        Qt.FocusPolicy.NoFocus
+    )
+
+
 def _placed_by(layout: QLayout | None) -> set[int]:
     """The widgets ``layout`` and the layouts in it place."""
 
@@ -267,16 +280,25 @@ def _placed_by(layout: QLayout | None) -> set[int]:
 
 
 def _own_order(panel: QWidget) -> list[QWidget]:
-    """``panel``'s stops in the order its focus chain has them now."""
+    """``panel``'s stops in the order its focus chain has them now.
+
+    A stop the walk does not find comes after the others, in screen order.
+    """
 
     stops = _stops_in(panel)
     ordered: list[QWidget] = []
-    # The panel's own run of the chain: it ends where the chain leaves the panel.
-    widget = panel.nextInFocusChain()
-    while widget is not panel and panel.isAncestorOf(widget):
+    # Other widgets can sit between the panel's own in the chain: the walk goes on
+    # until every stop is found, or ``_CHAIN_STEPS`` widgets pass without one.
+    widget, passed = panel, 0
+    while len(ordered) < len(stops) and passed < _CHAIN_STEPS:
+        widget = widget.nextInFocusChain()
+        if widget is panel:
+            break
         if widget in stops and widget not in ordered:
             ordered.append(widget)
-        widget = widget.nextInFocusChain()
+            passed = 0
+        else:
+            passed += 1
     lead = [panel] if is_tab_stop(panel) else []
     return [*lead, *ordered, *(stop for stop in stops if stop not in ordered)]
 
@@ -296,10 +318,10 @@ def _stops_in(container: QWidget) -> list[QWidget]:
         elif _taken_whole(child):
             # Qt leads Tab through it, and through a tab widget's pages, itself.
             stops = [child] if is_tab_stop(child) else []
-        elif not is_tab_stop(child):
-            stops = _stops_in(child)
-        else:
+        elif is_tab_stop(child) or _keeps_a_place(child):
             stops = [child, *_stops_in(child)]
+        else:
+            stops = _stops_in(child)
         if stops:
             panels.append((child.geometry(), stops))
     if isinstance(container, QDialogButtonBox):

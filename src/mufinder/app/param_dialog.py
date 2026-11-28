@@ -84,15 +84,13 @@ class WorkflowTableRow:
     It sits directly below the row of the keyword ``after``, or last when that
     keyword has no row, and keeps its widgets when the rows are rebuilt. The
     search shows it while the query occurs in ``search_text``; without one it
-    follows the row of ``after``. ``focus`` is the control the Tab key reaches
-    in it, if any.
+    follows the row of ``after``.
     """
 
     after: str
     label: QWidget
     value: QWidget
     search_text: str | None = None
-    focus: QWidget | None = None
 
 
 class _AdvancedSelectionDialog(QDialog):

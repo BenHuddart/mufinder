@@ -1126,11 +1126,12 @@ def _chain_names(start: QWidget) -> list[str]:
 
 def test_a_dialog_shown_without_activation_is_ordered_once_it_is_activated(qapp) -> None:
     dialog, a, _b = _hooked_dialog()
-    # The window system activates a shown window later, through the event loop.
+    # The offscreen platform the tests run on activates a shown window later,
+    # through the event loop; a platform that activates it at once orders it then.
     dialog.show()
     try:
-        assert QApplication.activeWindow() is not dialog
-        assert _chain_names(a) == _CREATION_FROM_A
+        if QApplication.activeWindow() is not dialog:
+            assert _chain_names(a) == _CREATION_FROM_A
 
         dialog.activateWindow()
         assert QTest.qWaitForWindowActive(dialog)
@@ -1205,3 +1206,97 @@ def test_ordering_a_window_walks_only_a_bounded_part_of_its_focus_chain(qapp, mo
         assert _chain_names(a)[:1] == ["B"]
     finally:
         window.close()
+
+
+def test_a_dialog_whose_scroll_area_content_is_replaced_keeps_working(qapp) -> None:
+    """A watched widget deleted while its dialog is shown is dropped, not used."""
+
+    from mufinder.app.theme import controls_scroll_area
+
+    dialog = _HookedDialog()
+    area = controls_scroll_area(dialog)
+    first = QWidget()
+    QVBoxLayout(first).addWidget(QLineEdit(first))
+    area.setWidget(first)
+    after = QLineEdit(dialog)
+    after.setAccessibleName("After")
+    layout = QVBoxLayout(dialog)
+    layout.addWidget(area)
+    layout.addWidget(after)
+    _show(dialog)
+    try:
+        second = QWidget()
+        b, a = QLineEdit(second), QLineEdit(second)
+        a.setAccessibleName("A")
+        b.setAccessibleName("B")
+        column = QVBoxLayout(second)
+        column.addWidget(a)
+        column.addWidget(b)
+        area.setWidget(second)  # deletes the first content, a watched widget
+        QApplication.processEvents()
+        a.setFocus()
+        QApplication.processEvents()
+
+        assert [press_key(Qt.Key.Key_Tab).accessibleName() for _ in range(2)] == ["B", "After"]
+    finally:
+        dialog.close()
+
+
+def test_a_reading_scroll_area_keeps_its_place_when_its_content_starts_to_overflow(qapp) -> None:
+    from PySide6.QtWidgets import QDialogButtonBox, QLabel
+
+    from mufinder.app.theme import reading_scroll_area
+
+    dialog = _HookedDialog()
+    search = QLineEdit(dialog)
+    search.setAccessibleName("Search")
+    area = reading_scroll_area(dialog)
+    area.setAccessibleName("Reading")
+    content = QWidget()
+    column = QVBoxLayout(content)
+    for index in range(20):
+        column.addWidget(QLabel(f"line {index}", content))
+    area.setWidget(content)
+    buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close, dialog)
+    layout = QVBoxLayout(dialog)
+    for widget in (search, area, buttons):
+        layout.addWidget(widget)
+    dialog.resize(400, 1200)
+    _show(dialog)
+    try:
+        assert not area.focusPolicy() & Qt.FocusPolicy.TabFocus
+        dialog.resize(400, 200)
+        QApplication.processEvents()
+        assert area.focusPolicy() & Qt.FocusPolicy.TabFocus
+        search.setFocus()
+        QApplication.processEvents()
+
+        assert press_key(Qt.Key.Key_Tab) is area
+    finally:
+        dialog.close()
+
+
+def test_a_marked_panel_keeps_its_order_when_other_widgets_sit_between_in_the_chain(qapp) -> None:
+    dialog = _HookedDialog()
+    panel = QWidget(dialog)
+    keep_own_tab_order(panel, "Set by hand.")
+    sibling = QPushButton("Sibling", dialog)
+    sibling.setAccessibleName("Sibling")
+    a, b = QLineEdit(panel), QLineEdit(panel)
+    a.setAccessibleName("A")
+    b.setAccessibleName("B")
+    QWidget.setTabOrder(b, a)
+    column = QVBoxLayout(panel)
+    column.addWidget(a)
+    column.addWidget(b)
+    layout = QVBoxLayout(dialog)
+    layout.addWidget(panel)
+    layout.addWidget(sibling)
+    _show(dialog)
+    try:
+        b.setFocus()
+        QApplication.processEvents()
+
+        assert press_key(Qt.Key.Key_Tab) is a
+    finally:
+        dialog.close()
