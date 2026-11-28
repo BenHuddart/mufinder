@@ -13,7 +13,7 @@ import re
 from uuid import uuid4
 
 import pytest
-from PySide6.QtCore import QObject, QPoint, QPointF, Qt
+from PySide6.QtCore import QPoint, QPointF, Qt
 from PySide6.QtGui import QInputMethodEvent, QWheelEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import (
@@ -1141,35 +1141,71 @@ def test_a_dialog_shown_without_activation_is_ordered_once_it_is_activated(qapp)
         dialog.close()
 
 
-def test_the_hook_installs_no_event_filter_on_the_application(qapp, monkeypatch) -> None:
-    """Nothing of the hook runs for every event in the application."""
+_FRESH_APPLICATION_SCRIPT = """
+from PySide6.QtCore import QObject, Qt
+from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QApplication, QDialog, QLineEdit, QVBoxLayout
 
-    from mufinder.app.table_keyboard import install_screen_tab_order
+installed_on = []
+original = QObject.installEventFilter
 
-    installed_on = []
-    original = QObject.installEventFilter
 
-    def recording(self, watcher):
-        installed_on.append(self)
-        return original(self, watcher)
+def recording(self, watcher):
+    installed_on.append(self)
+    return original(self, watcher)
 
-    monkeypatch.setattr(QObject, "installEventFilter", recording)
-    monkeypatch.delattr(qapp, "_mufinder_screen_tab_order")
-    install_screen_tab_order(qapp)
-    hook = qapp._mufinder_screen_tab_order
-    try:
-        dialog, a, _b = _hooked_dialog()
-        _show(dialog)
-        assert _tab_names(a) == _SCREEN_FROM_A
-        dialog.close()
 
-        assert installed_on
-        assert all(watched is not qapp for watched in installed_on)
-    finally:
-        # The session's own hook stays the only one.
-        qapp.focusWindowChanged.disconnect(hook.order_active_dialog)
-        qapp.focusChanged.disconnect(hook.follow_focus)
-        hook.deleteLater()
+QObject.installEventFilter = recording
+app = QApplication([])
+from mufinder.app.table_keyboard import install_screen_tab_order
+
+install_screen_tab_order(app)
+
+
+class Dialog(QDialog):
+    pass
+
+
+Dialog.__module__ = "mufinder.fresh"
+dialog = Dialog()
+b, a, c = QLineEdit(dialog), QLineEdit(dialog), QLineEdit(dialog)
+layout = QVBoxLayout(dialog)
+for edit in (a, b, c):
+    layout.addWidget(edit)
+dialog.show()
+dialog.activateWindow()
+assert QTest.qWaitForWindowActive(dialog)
+app.processEvents()
+a.setFocus()
+app.processEvents()
+QTest.keyClick(a, Qt.Key.Key_Tab)
+assert app.focusWidget() is b, "the dialog is not in screen order"
+assert installed_on, "the hook watches nothing"
+assert all(watched is not app for watched in installed_on), "a filter is on the application"
+print("ok")
+"""
+
+
+def test_the_hook_installs_no_event_filter_on_the_application() -> None:
+    """Nothing of the hook runs for every event in the application.
+
+    It runs in a fresh process, so the test session's own hook plays no part.
+    """
+
+    import os
+    import subprocess
+    import sys
+
+    result = subprocess.run(
+        [sys.executable, "-c", _FRESH_APPLICATION_SCRIPT],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env={**os.environ, "QT_QPA_PLATFORM": "offscreen"},
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "ok"
 
 
 def test_ordering_a_window_walks_only_a_bounded_part_of_its_focus_chain(qapp, monkeypatch) -> None:

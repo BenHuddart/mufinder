@@ -2671,7 +2671,8 @@ Finding the control a window opens on walks at most 200 steps of its focus
 chain, so a main window's whole chain is never walked.
 
 Dialogs write no Tab-order code. ``install_screen_tab_order``, installed by
-``mufinder.main`` once the main window is shown, orders every dialog of a
+``mufinder.main`` once the main window is shown (and by the documentation
+screenshot renderer), orders every dialog of a
 ``QDialog`` subclass defined in MuFinder when it first becomes the active window
 and each time it is shown again. While the dialog is shown, a change to its layouts orders it again, so a
 control it reveals, adds or hides takes its place on screen: the hook watches

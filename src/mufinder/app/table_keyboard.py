@@ -146,6 +146,7 @@ class _ScreenTabOrderHook(QObject):
         super().__init__(parent)
         self._watched: dict[int, list[QWidget]] = {}  # shown dialogs: their layout tops
         self._hidden: set[int] = set()
+        self._connected: set[int] = set()  # watched widgets whose deletion is heard
         self._ordering = False
 
     def order_active_dialog(self, _window: object = None) -> None:
@@ -169,8 +170,7 @@ class _ScreenTabOrderHook(QObject):
         kind = event.type()
         if kind == QEvent.Type.KeyPress and event.key() in (Qt.Key.Key_Tab, Qt.Key.Key_Backtab):
             # A change not yet ordered orders the dialog now, before Tab moves.
-            for top in self._live_tops(_key(watched.window())):
-                QApplication.sendPostedEvents(top, QEvent.Type.LayoutRequest.value)
+            QApplication.sendPostedEvents(None, QEvent.Type.LayoutRequest.value)
         elif kind == QEvent.Type.LayoutRequest and not self._ordering:
             dialog = watched.window()
             if _key(dialog) in self._watched and dialog.isVisible():
@@ -192,16 +192,22 @@ class _ScreenTabOrderHook(QObject):
             for top in _layout_tops(dialog):
                 if top not in watched:
                     top.installEventFilter(self)
-                    if top is not dialog:
-                        top.destroyed.connect(lambda _=None, key=key: self._top_gone(key))
                     watched.append(top)
-            for top in watched:
-                QApplication.sendPostedEvents(top, QEvent.Type.LayoutRequest.value)
+                    if top is not dialog and _key(top) not in self._connected:
+                        self._connected.add(_key(top))
+                        top.destroyed.connect(
+                            lambda _=None, key=key, top_key=_key(top): self._top_gone(key, top_key)
+                        )
+            for top in list(watched):
+                # A handler run here can delete another watched widget.
+                if shiboken6.isValid(top):
+                    QApplication.sendPostedEvents(top, QEvent.Type.LayoutRequest.value)
         finally:
             self._ordering = False
 
-    def _top_gone(self, key: int) -> None:
+    def _top_gone(self, key: int, top_key: int) -> None:
         # A watched widget was deleted, as a scroll area's replaced content is.
+        self._connected.discard(top_key)
         watched = self._watched.get(key)
         if watched and shiboken6.isValid(watched[0]):
             QApplication.postEvent(watched[0], QEvent(QEvent.Type.LayoutRequest))
