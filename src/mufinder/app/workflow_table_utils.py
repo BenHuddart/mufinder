@@ -316,6 +316,7 @@ def create_workflow_table(
     default_resize_mode: QHeaderView.ResizeMode = QHeaderView.ResizeMode.Stretch,
     accessible_name: str = "",
     prefer_maximum_height: bool = False,
+    parent: QWidget | None = None,
 ) -> QTableWidget:
     """Build a table with MuFinder's shared chrome.
 
@@ -337,10 +338,14 @@ def create_workflow_table(
     ``accessible_name`` is what a screen reader announces for the table: the
     title of the group or dialog that shows it, in Title Case. With
     ``prefer_maximum_height`` the table asks a layout for its maximum height, which
-    the caller sets to hold the rows it may show.
+    the caller sets to hold the rows it may show. A table made with its ``parent``
+    takes its place in the Tab order where it is made; one made without joins it
+    where a layout adopts it.
     """
 
-    table = (_MaximumHeightTable if prefer_maximum_height else TabStopTable)(0, len(headers))
+    table = (_MaximumHeightTable if prefer_maximum_height else TabStopTable)(
+        0, len(headers), parent
+    )
     if accessible_name:
         table.setAccessibleName(accessible_name)
     table.setHorizontalHeaderLabels(list(headers))

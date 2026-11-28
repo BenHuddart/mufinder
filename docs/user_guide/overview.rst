@@ -105,7 +105,14 @@ Application shell
   and leaves that cell as it was.
 - The 3D structure viewer is used with the mouse and is not a Tab stop; Tab
   reaches the boxes and buttons above it.
-- Tab moves through a CASTEP parameter dialog in reading order: the controls
+- Tab moves through every dialog and page in screen order, panel by panel: it
+  finishes one panel, such as a form column, a viewer's controls or a scrolling
+  list, before the next, and inside a panel goes top to bottom, then left to
+  right along a row. Shift+Tab goes back the same way. In a dialog, Enter
+  presses the highlighted default button and Escape cancels; Enter in the
+  cluster submission dialog's queue box keeps the queue name you typed, and the
+  Magnetic Structure Builder closes on Enter only from a focused button.
+- In a CASTEP parameter dialog, Tab goes through the controls
   above the parameter table, including the search box, then each shown
   parameter row from top to bottom, left to right along the row (its choice
   button, value, ``Reset``, ``Info`` and remove button), then

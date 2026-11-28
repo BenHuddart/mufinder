@@ -42,7 +42,7 @@ from tests.support.magnetic_fields import (
     two_row_helix_model,
     z_moment_component,
 )
-from tests.support.qt import assert_tab_leaves_table, press_key
+from tests.support.qt import assert_tab_leaves_table, buttons_left_to_right, press_key
 from tests.support.structures import magnetic_silicon_oxide_host
 
 
@@ -733,3 +733,107 @@ def _reachable_tab_controls(table, row: int, had_tab_focus: dict) -> list[QWidge
             if control.isEnabled() and control.isVisibleTo(table)
         )
     return controls
+
+
+def _two_columns() -> tuple[QWidget, list[QWidget]]:
+    """A window of two columns whose controls are made in reverse screen order.
+
+    Left column: edits ``a`` over ``b``; right column: buttons ``c`` over ``d``.
+    """
+
+    from PySide6.QtWidgets import QHBoxLayout
+
+    window = QWidget()
+    left, right = QWidget(window), QWidget(window)
+    d, c = QPushButton("d", right), QPushButton("c", right)
+    b, a = QLineEdit(left), QLineEdit(left)
+    for column, controls in ((left, (a, b)), (right, (c, d))):
+        column_layout = QVBoxLayout(column)
+        for control in controls:
+            column_layout.addWidget(control)
+    row = QHBoxLayout(window)
+    row.addWidget(left)
+    row.addWidget(right)
+    return window, [a, b, c, d]
+
+
+def test_screen_tab_order_finishes_a_panel_before_the_next(qapp) -> None:
+    from mufinder.app.table_keyboard import screen_tab_order
+
+    window, (a, b, c, d) = _two_columns()
+
+    assert screen_tab_order(window) == [a, b, c, d]
+
+
+def test_set_screen_tab_order_chains_tab_by_the_screen_and_keeps_the_opening_control(
+    qapp,
+) -> None:
+    from mufinder.app.table_keyboard import set_screen_tab_order
+
+    window, (a, b, c, d) = _two_columns()
+    set_screen_tab_order(window)
+    _show(window)
+    try:
+        # Qt opens on the control made first; the order does not move it.
+        assert QApplication.focusWidget() is d
+        assert [_tab() for _ in range(4)] == [a, b, c, d]
+        assert [_shift_tab() for _ in range(4)] == [c, b, a, d]
+    finally:
+        window.close()
+
+
+def test_set_screen_tab_order_puts_a_part_of_a_window_before_the_control_after_it(qapp) -> None:
+    from PySide6.QtWidgets import QHBoxLayout
+
+    from mufinder.app.table_keyboard import set_screen_tab_order
+
+    window = QWidget()
+    before = QLineEdit(window)
+    panel = QWidget(window)
+    after = QLineEdit(window)
+    # Made last, so Qt's own order has them after ``after``.
+    second, first = QPushButton("second", panel), QPushButton("first", panel)
+    panel_layout = QHBoxLayout(panel)
+    panel_layout.addWidget(first)
+    panel_layout.addWidget(second)
+    layout = QVBoxLayout(window)
+    for widget in (before, panel, after):
+        layout.addWidget(widget)
+    set_screen_tab_order(panel, followed_by=after)
+    _show(window)
+    try:
+        before.setFocus()
+        assert [_tab() for _ in range(4)] == [first, second, after, before]
+    finally:
+        window.close()
+
+
+def test_screen_tab_order_keeps_a_block_and_a_button_box_in_their_own_order(qapp) -> None:
+    from PySide6.QtWidgets import QDialogButtonBox
+
+    from mufinder.app.table_keyboard import screen_tab_order
+
+    window = QWidget()
+    block = QWidget(window)
+    upper, lower = QLineEdit(block), QLineEdit(block)
+    block_layout = QVBoxLayout(block)
+    block_layout.addWidget(upper)
+    block_layout.addWidget(lower)
+    hidden = QLineEdit(window)
+    hidden.hide()
+    buttons = QDialogButtonBox(
+        QDialogButtonBox.StandardButton.Ok
+        | QDialogButtonBox.StandardButton.Cancel
+        | QDialogButtonBox.StandardButton.Help,
+        window,
+    )
+    layout = QVBoxLayout(window)
+    for widget in (block, hidden, buttons):
+        layout.addWidget(widget)
+    window.show()
+    try:
+        order = screen_tab_order(window, blocks={block: [lower, upper]})
+
+        assert order == [lower, upper, *buttons_left_to_right(buttons)]
+    finally:
+        window.close()

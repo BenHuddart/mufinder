@@ -4,13 +4,11 @@ from __future__ import annotations
 
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
-import itertools
 from typing import Any, Iterable
 
 from PySide6.QtCore import QModelIndex, QRect, QSize, Qt, QTimer
 from PySide6.QtGui import QFont, QShowEvent
 from PySide6.QtWidgets import (
-    QAbstractButton,
     QAbstractItemView,
     QApplication,
     QButtonGroup,
@@ -20,7 +18,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
-    QLayoutItem,
     QLineEdit,
     QMessageBox,
     QPushButton,
@@ -50,6 +47,7 @@ from mufinder.castep_io.gui_metadata import (
     validate_gui_values,
 )
 from mufinder.app.keyword_catalog_notice import CATALOG_SETUP_HINT
+from mufinder.app.table_keyboard import is_tab_stop, set_screen_tab_order
 from mufinder.app.theme import (
     controls_scroll_area,
     reading_scroll_area,
@@ -267,39 +265,19 @@ _ROW_PADDING = 6
 def _tab_stops_in(widget: QWidget) -> list[QWidget]:
     """The controls in ``widget`` that take Tab focus, in the order they were created.
 
-    A control is taken whole, without its inner widgets. Hidden and disabled
-    controls are kept, since Tab skips them until the search shows them again.
-    So is a button whatever its Tab focus is now: Qt takes Tab focus from the
-    unchosen option of an exclusive pair and gives it back once it is chosen.
-    It walks ``children()``, as ``table_keyboard`` does, not ``findChildren``.
+    A control is taken whole, without its inner widgets (``is_tab_stop``). Hidden
+    and disabled controls are kept, since Tab skips them until the search shows
+    them again. It walks ``children()``, as ``table_keyboard`` does, not
+    ``findChildren``.
     """
 
-    policy = widget.focusPolicy()
-    if policy & Qt.FocusPolicy.TabFocus or (
-        isinstance(widget, QAbstractButton) and policy != Qt.FocusPolicy.NoFocus
-    ):
+    if is_tab_stop(widget):
         return [widget]
     return [
         control
         for child in widget.children()
         if isinstance(child, QWidget) and not child.isWindow()
         for control in _tab_stops_in(child)
-    ]
-
-
-def _tab_stops_in_layout_item(item: QLayoutItem) -> list[QWidget]:
-    """The controls of a layout item, in the order the layout places them."""
-
-    widget = item.widget()
-    if widget is not None:
-        return _tab_stops_in(widget)
-    layout = item.layout()
-    if layout is None:
-        return []
-    return [
-        control
-        for index in range(layout.count())
-        for control in _tab_stops_in_layout_item(layout.itemAt(index))
     ]
 
 
@@ -1090,42 +1068,25 @@ class ParameterDialog(QDialog):
             self._table_layout.addWidget(workflow_row.value, row_index, 1, 1, 4)
 
     def _order_tab_stops(self) -> None:
-        """Chain Tab through the dialog in reading order, top to bottom.
+        """Chain Tab through the dialog in screen order (``set_screen_tab_order``).
 
-        The controls above the table come first, then the table's rows, then the
-        controls below it, as the dialog's layout places them. Rows are built
-        after the buttons, and workflow rows outlive a rebuild, so Qt's creation
-        order would put them out of their place on screen. The dialog's buttons
-        keep their own order after the last control. It runs again when the
-        dialog is shown, so controls a subclass adds to the layout after the
-        rows are built take their place too.
+        Rows are built after the buttons, and workflow rows outlive a rebuild, so
+        Qt's creation order would put them out of their place on screen. The
+        table is read by its grid rows (:meth:`_table_tab_stops`), hidden rows
+        included, so a row the search shows again is already in its place. It
+        runs again when the dialog is shown, so controls a subclass adds to the
+        layout after the rows are built take their place too.
 
-        The chain starts at the first control the dialog creates, the task, which
-        it never moves: Qt opens the dialog on the first control after it, so the
-        dialog opens on the task, or on the search box when the task cannot be
-        changed. A subclass's control laid out above the task is created after
-        the buttons and stays after them, so Tab from the last button reaches it
-        before the task.
+        The chain keeps starting at the first control the dialog creates, the
+        task, so the dialog opens on the task, or on the search box when the task
+        cannot be changed. A subclass's control laid out above the task comes
+        after the buttons, so Tab from the last button reaches it before the task.
         """
 
-        chain: list[QWidget] = []
-        root = self.layout()
-        for index in range(root.count()):
-            item = root.itemAt(index)
-            if isinstance(item.widget(), QDialogButtonBox):
-                break
-            if item.widget() is self._scroll_area:
-                # A reading scroll area becomes a Tab stop once its content
-                # overflows, so it keeps its place whatever its policy is now.
-                chain.append(self._scroll_area)
-                chain.extend(self._table_tab_stops())
-            else:
-                chain.extend(_tab_stops_in_layout_item(item))
-        first_created = next(iter(_tab_stops_in(self._task_control)), self._search_input)
-        if first_created in chain:
-            chain = chain[chain.index(first_created) :]
-        for first, second in itertools.pairwise(chain):
-            QWidget.setTabOrder(first, second)
+        # A reading scroll area becomes a Tab stop once its content overflows, so
+        # it keeps its place whatever its policy is now.
+        table = [self._scroll_area, *self._table_tab_stops()]
+        set_screen_tab_order(self, blocks={self._scroll_area: table})
 
     def showEvent(self, event: QShowEvent) -> None:  # noqa: N802 - Qt API naming.
         self._order_tab_stops()
