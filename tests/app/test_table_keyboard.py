@@ -837,3 +837,44 @@ def test_screen_tab_order_keeps_a_block_and_a_button_box_in_their_own_order(qapp
         assert order == [lower, upper, *buttons_left_to_right(buttons)]
     finally:
         window.close()
+
+
+def test_set_screen_tab_order_never_walks_the_rest_of_the_window(qapp, monkeypatch) -> None:
+    """It reads only the part it orders: walking a whole window's focus chain wraps
+    every widget in it, which has crashed a main window holding 3D viewers."""
+
+    from PySide6.QtWidgets import QHBoxLayout
+
+    from mufinder.app.table_keyboard import set_screen_tab_order
+
+    window = QWidget()
+    layout = QVBoxLayout(window)
+    others = [QLineEdit(window) for _ in range(50)]
+    panel = QWidget(window)
+    after = QLineEdit(window)
+    second, first = QPushButton("second", panel), QPushButton("first", panel)
+    panel_layout = QHBoxLayout(panel)
+    panel_layout.addWidget(first)
+    panel_layout.addWidget(second)
+    for widget in (*others, panel, after):
+        layout.addWidget(widget)
+    steps = []
+    for name in ("nextInFocusChain", "previousInFocusChain"):
+        original = getattr(QWidget, name)
+
+        def counted(self, _original=original):
+            steps.append(self)
+            return _original(self)
+
+        monkeypatch.setattr(QWidget, name, counted)
+
+    set_screen_tab_order(panel, followed_by=after)
+
+    assert len(steps) < 5
+    monkeypatch.undo()
+    chain, widget = [], window.nextInFocusChain()
+    while widget is not window:
+        chain.append(widget)
+        widget = widget.nextInFocusChain()
+    focusable = [widget for widget in chain if widget in (*others, first, second, after)]
+    assert focusable == [*others, first, second, after]

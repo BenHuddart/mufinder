@@ -298,7 +298,6 @@ class MuonGenerationWidget(QWidget):
         viewer_label = QLabel("Preview Muon Sites")
         style_section_subtitle(viewer_label)
         viewer_layout.addWidget(viewer_label)
-        viewer_layout.addWidget(self._viewer, 1)
 
         form_box = QGroupBox("Generation Setup")
         form_box.setObjectName("muonGenerationSetupCard")
@@ -409,6 +408,9 @@ class MuonGenerationWidget(QWidget):
         self._coordinate_warning.hide()
         left_layout.addWidget(self._coordinate_warning)
         left_layout.addWidget(self._site_table)
+        # The viewer and the form's controls join the Tab order as the layouts adopt
+        # them, so the viewer, on the right, goes in after the form on the left.
+        viewer_layout.addWidget(self._viewer, 1)
         splitter.addWidget(left_panel)
         splitter.addWidget(viewer_panel)
         splitter.setStretchFactor(0, 1)
