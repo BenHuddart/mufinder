@@ -387,7 +387,6 @@ class NudgedElasticBandConfigDialog(ParameterDialog):
                 label=farms_label,
                 value=farms_value,
                 search_text="task farms num_farms",
-                focus=self._num_farms_spin,
             ),
         )
 

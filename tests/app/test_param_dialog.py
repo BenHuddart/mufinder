@@ -1792,6 +1792,32 @@ def test_tab_follows_the_screen_after_the_search_filters_the_rows(qapp) -> None:
     dialog.close()
 
 
+def test_tab_follows_the_screen_after_the_search_is_cleared(qapp) -> None:
+    dialog = _tall_parameter_dialog(read_only=False)
+    dialog._search_input.setFocus()
+    QTest.keyClicks(dialog._search_input, "copy_1")
+    QApplication.processEvents()
+
+    dialog._search_input.clear()
+    QApplication.processEvents()
+
+    assert dialog._displayed_names() == list(dialog._rows)
+    _assert_tab_follows_the_screen(dialog)
+    dialog.close()
+
+
+def test_tab_follows_the_screen_after_a_parameter_is_added_and_removed_while_open(qapp) -> None:
+    dialog = _tall_parameter_dialog(read_only=False)
+    dialog.set_advanced_names({"basis_precision"})
+    _assert_tab_follows_the_screen(dialog)
+
+    dialog.set_advanced_names(())
+
+    assert "basis_precision" not in dialog._rows
+    _assert_tab_follows_the_screen(dialog)
+    dialog.close()
+
+
 def test_tab_from_a_newly_chosen_exclusive_option_reaches_its_value_after_a_restore(qapp) -> None:
     dialog = ParameterDialog(
         specs=_dialog_specs(),

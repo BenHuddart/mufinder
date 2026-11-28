@@ -1791,3 +1791,54 @@ def test_tab_leaves_the_add_dialogs_and_the_clustering_summarys_tables(qapp) -> 
     finally:
         add_dialog.close()
         clustering.close()
+
+
+def test_tab_reaches_the_graph_pop_out_before_scan_tolerances_once_connected_is_chosen(
+    qapp,
+) -> None:
+    """Choosing Connected Components shows Scan Tolerances under the graph's pop-out.
+
+    The scan itself is not run: the button and both pop-outs are there without it.
+
+    Tab reaches the upper plot's pop-out first, then the scan plot's controls.
+    """
+
+    from PySide6.QtCore import Qt as QtKeys
+
+    from tests.support.keyboard import describe
+    from tests.support.qt import open_and_take_focus, press_key
+
+    host = host_structure()
+    workspace = default_workspace_state(
+        name="Relaxation analysis",
+        charge_state="positive_muon",
+        host_structure_id=host.id,
+        job_ids=[],
+    )
+    dialog = RelaxationClusteringDialog(
+        workspace=workspace,
+        host_structure=host,
+        sites=[
+            _relaxed_site(host, (0.100, 0.100, 0.100), -10.0),
+            _relaxed_site(host, (0.112, 0.100, 0.100), -9.9),
+            _relaxed_site(host, (0.500, 0.500, 0.500), -9.8),
+        ],
+    )
+    dialog._method_combo.setCurrentIndex(dialog._method_combo.findText("Hierarchical"))
+    open_and_take_focus(dialog)
+    try:
+        dialog._method_combo.setCurrentIndex(dialog._method_combo.findText("Connected Components"))
+        qapp.processEvents()
+        dialog._method_combo.setFocus()
+        qapp.processEvents()
+
+        names = [describe(press_key(QtKeys.Key.Key_Tab)) for _ in range(60)]
+        graph_pop_out = names.index("QToolButton('Open Connected components in a separate window')")
+        scan_index = names.index("QPushButton('Scan Tolerances')")
+
+        assert graph_pop_out < scan_index
+        assert (
+            names.index("QToolButton('Open Tolerance scan in a separate window')") == scan_index + 1
+        )
+    finally:
+        dialog.close()

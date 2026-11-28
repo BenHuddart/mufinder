@@ -27,7 +27,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from mufinder.app.table_keyboard import TabStopTable
+from mufinder.app.table_keyboard import TabStopTable, set_screen_tab_order
 from mufinder.app.blocking_call import BlockingCallCancelled
 from mufinder.app.decimal_input import DecimalLineEdit
 from mufinder.app.magnetic_component_dialogs import selector_label
@@ -723,6 +723,8 @@ class DipolarTensorDialog(QDialog):
         for result in results:
             self._result_content_layout.addWidget(self._result_card(result))
         self._result_content_layout.addStretch(1)
+        # The result tables are made after the dialog may be open: they take their place.
+        set_screen_tab_order(self)
 
     def _result_card(self, result: Mapping[str, object]) -> QWidget:
         title = str(result.get("site_label", "site"))
