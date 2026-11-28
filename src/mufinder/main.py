@@ -43,6 +43,12 @@ def _install_text_editing_shortcuts(app: QApplication) -> None:
     install_text_editing_shortcuts(app)
 
 
+def _install_screen_tab_order(app: QApplication) -> None:
+    from mufinder.app.table_keyboard import install_screen_tab_order
+
+    install_screen_tab_order(app)
+
+
 def _install_gui_garbage_collector(app: QApplication) -> None:
     from mufinder.app.gui_garbage_collector import install_gui_garbage_collector
 
@@ -273,6 +279,8 @@ def run() -> int:
 
     splash.set_progress(95, "Finalising UI…")
     window.show()
+    # After the splash, like every other import of an app module; no dialog opens before.
+    _install_screen_tab_order(app)
     _process_events(app, max_ms=10)
 
     should_delay = app.__class__.__module__.startswith("PySide6.")

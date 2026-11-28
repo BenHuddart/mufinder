@@ -133,6 +133,40 @@ def test_run_bootstraps_qt_and_returns_exit_code(monkeypatch):
     assert created["collected_by"] is created["app"]
 
 
+def test_run_puts_dialogs_on_the_screen_tab_order_after_the_window_is_shown(monkeypatch):
+    """The hook is installed only once the splash has shown and the window is up."""
+
+    events = []
+    window = _FakeWindow()
+    window.show = lambda: events.append("window shown")
+
+    class _RecordingSplash(_FakeSplash):
+        def show(self):
+            events.append("splash shown")
+
+    monkeypatch.setattr(
+        main_module, "_install_screen_tab_order", lambda _app: events.append("hook installed")
+    )
+    monkeypatch.setattr(main_module, "QApplication", _FakeApp)
+    monkeypatch.setattr(main_module, "_install_gui_garbage_collector", lambda _app: None)
+    monkeypatch.setattr(main_module, "_main_window_ctor", lambda: lambda: window)
+    monkeypatch.setattr(
+        main_module, "_apply_saved_castep_environment", lambda *_args, **_kwargs: None
+    )
+    monkeypatch.setattr(main_module, "_app_icon", lambda: "icon-object")
+    monkeypatch.setattr(main_module, "_install_text_editing_shortcuts", lambda _app: None)
+    monkeypatch.setattr(
+        main_module,
+        "_theme_helpers",
+        lambda: (lambda *_args, **_kwargs: "light", lambda _settings: "system"),
+    )
+    monkeypatch.setattr(main_module, "_splash_screen_ctor", lambda: _RecordingSplash)
+
+    assert main_module.run() == 77
+
+    assert events == ["splash shown", "window shown", "hook installed"]
+
+
 class _ProjectWindow(_FakeWindow):
     """A window double that records the command-line project and page requests."""
 

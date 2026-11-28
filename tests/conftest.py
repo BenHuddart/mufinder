@@ -247,6 +247,9 @@ def qapp() -> Generator[QApplication, None, None]:
         app = QApplication([])
     app.setQuitOnLastWindowClosed(False)
     _session_garbage_collector = install_gui_garbage_collector(app)
+    from mufinder.app.table_keyboard import install_screen_tab_order
+
+    install_screen_tab_order(app)
 
     yield app
 

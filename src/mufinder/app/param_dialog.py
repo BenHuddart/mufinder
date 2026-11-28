@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Any, Iterable
 
 from PySide6.QtCore import QModelIndex, QRect, QSize, Qt, QTimer
-from PySide6.QtGui import QFont, QShowEvent
+from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -47,7 +47,7 @@ from mufinder.castep_io.gui_metadata import (
     validate_gui_values,
 )
 from mufinder.app.keyword_catalog_notice import CATALOG_SETUP_HINT
-from mufinder.app.table_keyboard import is_tab_stop, set_screen_tab_order
+from mufinder.app.table_keyboard import is_tab_stop
 from mufinder.app.theme import (
     controls_scroll_area,
     reading_scroll_area,
@@ -1027,7 +1027,6 @@ class ParameterDialog(QDialog):
             )
 
         self._place_workflow_rows(workflow_row_indexes)
-        self._order_tab_stops()
         self._table_layout.setRowStretch(row_count, 1)
         self._apply_search_filter()
         self._refresh_add_button_state()
@@ -1066,47 +1065,6 @@ class ParameterDialog(QDialog):
         for workflow_row, row_index in zip(self._workflow_rows, row_indexes, strict=True):
             self._table_layout.addWidget(workflow_row.label, row_index, 0)
             self._table_layout.addWidget(workflow_row.value, row_index, 1, 1, 4)
-
-    def _order_tab_stops(self) -> None:
-        """Chain Tab through the dialog in screen order (``set_screen_tab_order``).
-
-        Rows are built after the buttons, and workflow rows outlive a rebuild, so
-        Qt's creation order would put them out of their place on screen. The
-        table is read by its grid rows (:meth:`_table_tab_stops`), hidden rows
-        included, so a row the search shows again is already in its place. It
-        runs again when the dialog is shown, so controls a subclass adds to the
-        layout after the rows are built take their place too.
-
-        The chain keeps starting at the first control the dialog creates, the
-        task, so the dialog opens on the task, or on the search box when the task
-        cannot be changed. A subclass's control laid out above the task comes
-        after the buttons, so Tab from the last button reaches it before the task.
-        """
-
-        # A reading scroll area becomes a Tab stop once its content overflows, so
-        # it keeps its place whatever its policy is now.
-        table = [self._scroll_area, *self._table_tab_stops()]
-        set_screen_tab_order(self, blocks={self._scroll_area: table})
-
-    def showEvent(self, event: QShowEvent) -> None:  # noqa: N802 - Qt API naming.
-        self._order_tab_stops()
-        super().showEvent(event)
-
-    def _table_tab_stops(self) -> list[QWidget]:
-        """The controls of the table's rows, top to bottom, each row's left to right."""
-
-        def grid_row(widget: QWidget) -> int:
-            return self._table_layout.getItemPosition(self._table_layout.indexOf(widget))[0]
-
-        controls_by_row: dict[int, list[QWidget]] = {}
-        for row in self._rows.values():
-            controls_by_row[grid_row(row.cells[0])] = [
-                control for cell in row.cells for control in _tab_stops_in(cell)
-            ]
-        for workflow_row in self._workflow_rows:
-            if workflow_row.focus is not None:
-                controls_by_row[grid_row(workflow_row.label)] = [workflow_row.focus]
-        return [control for index in sorted(controls_by_row) for control in controls_by_row[index]]
 
     def _show_help(self, spec: KeywordSpec) -> None:
         dialog = ParameterHelpDialog(spec, self)

@@ -13,12 +13,13 @@ import re
 from uuid import uuid4
 
 import pytest
-from PySide6.QtCore import QPoint, QPointF, Qt
+from PySide6.QtCore import QObject, QPoint, QPointF, Qt
 from PySide6.QtGui import QInputMethodEvent, QWheelEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
+    QDialog,
     QDoubleSpinBox,
     QLineEdit,
     QPushButton,
@@ -31,7 +32,7 @@ from PySide6.QtWidgets import (
 from mufinder.app.host_structure_widget import HostStructureWidget
 from mufinder.app.hubbard_u_editor import HubbardUDialog
 from mufinder.app.relaxation_widget import PristineRelaxationWidget
-from mufinder.app.table_keyboard import TabStopTable
+from mufinder.app.table_keyboard import TabStopTable, keep_own_tab_order
 from mufinder.app.workflow_table_utils import create_workflow_table
 from mufinder.science.magnetic_structure import MagneticStructureModel
 from mufinder.services.project_service import ProjectService
@@ -808,7 +809,7 @@ def test_set_screen_tab_order_puts_a_part_of_a_window_before_the_control_after_i
         window.close()
 
 
-def test_screen_tab_order_keeps_a_block_and_a_button_box_in_their_own_order(qapp) -> None:
+def test_screen_tab_order_keeps_a_marked_panel_and_a_button_box_in_their_own_order(qapp) -> None:
     from PySide6.QtWidgets import QDialogButtonBox
 
     from mufinder.app.table_keyboard import screen_tab_order
@@ -830,9 +831,11 @@ def test_screen_tab_order_keeps_a_block_and_a_button_box_in_their_own_order(qapp
     layout = QVBoxLayout(window)
     for widget in (block, hidden, buttons):
         layout.addWidget(widget)
+    QWidget.setTabOrder(lower, upper)
+    keep_own_tab_order(block, "Lower first, by hand.")
     window.show()
     try:
-        order = screen_tab_order(window, blocks={block: [lower, upper]})
+        order = screen_tab_order(window)
 
         assert order == [lower, upper, *buttons_left_to_right(buttons)]
     finally:
@@ -986,5 +989,219 @@ def test_set_screen_tab_order_keeps_the_opening_control_when_the_first_is_disabl
     _show(window)
     try:
         assert QApplication.focusWidget() is c
+    finally:
+        window.close()
+
+
+# ------------------------------------------------------------- the central hook
+
+
+class _HookedDialog(QDialog):
+    """A dialog the hook orders: its class is defined in a MuFinder module."""
+
+
+_HookedDialog.__module__ = "mufinder.test_hook"  # not mufinder.app: not a registry dialog
+
+# Made B, A, C: from A, Qt's creation order Tabs to C, then B.
+_CREATION_FROM_A = ["C", "B", "A"]
+_SCREEN_FROM_A = ["B", "C", "A"]
+
+
+def _hooked_dialog(*, mark: str | None = None, mark_panel: bool = False):
+    """A dialog whose line edits A, B, C read top to bottom but were made B, A, C."""
+
+    dialog = _HookedDialog()
+    if mark is not None:
+        keep_own_tab_order(dialog, mark)
+    panel = QWidget(dialog)
+    b, a, c = QLineEdit(panel), QLineEdit(panel), QLineEdit(panel)
+    column = QVBoxLayout(panel)
+    for edit, name in ((a, "A"), (b, "B"), (c, "C")):
+        edit.setAccessibleName(name)
+        column.addWidget(edit)
+    QVBoxLayout(dialog).addWidget(panel)
+    if mark_panel:
+        keep_own_tab_order(panel, "Made in the order Tab takes.")
+    return dialog, a, b
+
+
+def _tab_names(start: QWidget) -> list[str]:
+    start.setFocus()
+    QApplication.processEvents()
+    return [press_key(Qt.Key.Key_Tab).accessibleName() for _ in range(3)]
+
+
+def test_a_dialog_is_chained_in_screen_order_when_it_is_shown(qapp) -> None:
+    dialog, a, _b = _hooked_dialog()
+    _show(dialog)
+    try:
+        assert _tab_names(a) == _SCREEN_FROM_A
+    finally:
+        dialog.close()
+
+
+def test_a_control_a_shown_dialog_reveals_takes_its_place_on_screen(qapp) -> None:
+    dialog, a, b = _hooked_dialog()
+    b.hide()
+    _show(dialog)
+    try:
+        b.show()
+        QApplication.processEvents()
+
+        assert _tab_names(a) == _SCREEN_FROM_A
+    finally:
+        dialog.close()
+
+
+def test_tab_pressed_before_the_event_loop_turns_follows_a_reveal(qapp) -> None:
+    dialog, a, b = _hooked_dialog()
+    b.hide()
+    _show(dialog)
+    a.setFocus()
+    QApplication.processEvents()
+    try:
+        b.show()
+
+        assert [press_key(Qt.Key.Key_Tab).accessibleName() for _ in range(3)] == _SCREEN_FROM_A
+    finally:
+        dialog.close()
+
+
+def test_a_dialog_shown_again_is_ordered_for_what_changed_while_it_was_hidden(qapp) -> None:
+    dialog, a, b = _hooked_dialog()
+    b.hide()
+    _show(dialog)
+    dialog.hide()
+    b.show()
+    other = _HookedDialog()  # another window active in between, as in the application
+    _show(other)
+    other.close()
+    _show(dialog)
+    try:
+        assert _tab_names(a) == _SCREEN_FROM_A
+    finally:
+        dialog.close()
+
+
+def test_a_marked_dialog_keeps_the_order_its_controls_were_made_in(qapp) -> None:
+    dialog, a, _b = _hooked_dialog(mark="Its order is set by hand.")
+    _show(dialog)
+    try:
+        assert _tab_names(a) == _CREATION_FROM_A
+    finally:
+        dialog.close()
+
+
+def test_a_marked_panel_keeps_its_own_order_inside_a_hooked_dialog(qapp) -> None:
+    dialog, a, _b = _hooked_dialog(mark_panel=True)
+    _show(dialog)
+    try:
+        assert _tab_names(a) == _CREATION_FROM_A
+    finally:
+        dialog.close()
+
+
+def test_qt_dialogs_are_left_alone(qapp) -> None:
+    from PySide6.QtWidgets import QMessageBox
+
+    box = QMessageBox()
+    before = box.nextInFocusChain()
+    _show(box)
+    try:
+        assert box.nextInFocusChain() is before
+    finally:
+        box.close()
+
+
+def _chain_names(start: QWidget) -> list[str]:
+    """The next three named controls after ``start`` in the focus chain, as Tab takes them."""
+
+    names, widget = [], start.nextInFocusChain()
+    while widget is not start:
+        if widget.accessibleName():
+            names.append(widget.accessibleName())
+        widget = widget.nextInFocusChain()
+    return [*names, start.accessibleName()][:3]
+
+
+def test_a_dialog_shown_without_activation_is_ordered_once_it_is_activated(qapp) -> None:
+    dialog, a, _b = _hooked_dialog()
+    # The window system activates a shown window later, through the event loop.
+    dialog.show()
+    try:
+        assert QApplication.activeWindow() is not dialog
+        assert _chain_names(a) == _CREATION_FROM_A
+
+        dialog.activateWindow()
+        assert QTest.qWaitForWindowActive(dialog)
+
+        assert _chain_names(a) == _SCREEN_FROM_A
+    finally:
+        dialog.close()
+
+
+def test_the_hook_installs_no_event_filter_on_the_application(qapp, monkeypatch) -> None:
+    """Nothing of the hook runs for every event in the application."""
+
+    from mufinder.app.table_keyboard import install_screen_tab_order
+
+    installed_on = []
+    original = QObject.installEventFilter
+
+    def recording(self, watcher):
+        installed_on.append(self)
+        return original(self, watcher)
+
+    monkeypatch.setattr(QObject, "installEventFilter", recording)
+    monkeypatch.delattr(qapp, "_mufinder_screen_tab_order")
+    install_screen_tab_order(qapp)
+    hook = qapp._mufinder_screen_tab_order
+    try:
+        dialog, a, _b = _hooked_dialog()
+        _show(dialog)
+        assert _tab_names(a) == _SCREEN_FROM_A
+        dialog.close()
+
+        assert installed_on
+        assert all(watched is not qapp for watched in installed_on)
+    finally:
+        # The session's own hook stays the only one.
+        qapp.focusWindowChanged.disconnect(hook.order_active_dialog)
+        qapp.focusChanged.disconnect(hook.follow_focus)
+        hook.deleteLater()
+
+
+def test_ordering_a_window_walks_only_a_bounded_part_of_its_focus_chain(qapp, monkeypatch) -> None:
+    """Finding where a window opens never walks its whole focus chain."""
+
+    from PySide6.QtWidgets import QLabel
+
+    from mufinder.app.table_keyboard import set_screen_tab_order
+
+    window = QWidget()
+    layout = QVBoxLayout(window)
+    for index in range(400):
+        layout.addWidget(QLabel(f"label {index}", window))
+    b, a = QLineEdit(window), QLineEdit(window)
+    for edit, name in ((a, "A"), (b, "B")):
+        edit.setAccessibleName(name)
+        layout.addWidget(edit)
+    window.resize(300, 9000)
+    window.show()
+    steps = []
+    original = QWidget.nextInFocusChain
+
+    def counted(self):
+        steps.append(self)
+        return original(self)
+
+    monkeypatch.setattr(QWidget, "nextInFocusChain", counted)
+    try:
+        set_screen_tab_order(window)
+
+        # The chain holds over 400 widgets before the first stop; the walk gives up at 200.
+        assert len(steps) <= 201
+        monkeypatch.undo()
+        assert _chain_names(a)[:1] == ["B"]
     finally:
         window.close()

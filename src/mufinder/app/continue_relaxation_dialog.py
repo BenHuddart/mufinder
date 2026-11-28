@@ -384,13 +384,9 @@ class ContinueRelaxationDialog(ParameterDialog):
         self._diff_table.resizeColumnsToContents()
 
         has_changes = bool(changes)
-        table_shows = not self._diff_table.isHidden()
         self._diff_table.setVisible(has_changes)
         self._diff_no_changes_label.setText(_NO_CHANGES_TEXT if compared else _NOT_COMPARED_TEXT)
         self._diff_no_changes_label.setVisible(not has_changes)
-        if has_changes and not table_shows:
-            # A hidden table has no place in the screen's Tab order; it takes one now.
-            self._order_tab_stops()
 
     # -- result -------------------------------------------------------------
 

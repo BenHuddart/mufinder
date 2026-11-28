@@ -1572,7 +1572,8 @@ def test_neb_dialog_task_farm_row_survives_a_row_rebuild(qapp) -> None:
 def test_neb_dialog_tab_order_reaches_task_farms_after_the_force_tolerance(qapp) -> None:
     dialog = _neb_dialog()
 
-    dialog.show()
+    # The screen's Tab order is set once the dialog is the active window.
+    open_and_take_focus(dialog)
     tab_stops = []
     widget = dialog.nextInFocusChain()
     while widget is not dialog:

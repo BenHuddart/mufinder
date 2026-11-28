@@ -87,8 +87,8 @@ sibling workflow's implementation. The harness pins duplication (`PINNED_DUPLICA
   first, from every entry point, with the safe choice as the default.
 - **Startup.** Nothing heavyweight runs before the splash screen is shown.
 - **Accessible names.** Name every control; `tests/app/test_accessible_names.py` checks pages.
-- **Keyboard.** Tab reaches every control in screen order, panel by panel (`set_screen_tab_order`);
-  Enter presses the default button, Escape cancels; register new dialogs in `test_keyboard_baseline.py`.
+- **Keyboard.** Dialogs write no Tab-order code: a hook orders them by screen (`keep_own_tab_order` opts
+  out). Enter presses the default, Escape cancels; register new dialogs in `test_keyboard_baseline.py`.
 
 ## CASTEP rules
 

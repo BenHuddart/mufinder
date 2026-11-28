@@ -39,6 +39,7 @@ from PySide6.QtWidgets import (
 import shiboken6
 
 import mufinder.app
+from mufinder.app.table_keyboard import KEEP_OWN_TAB_ORDER
 from tests.support.qt import open_and_take_focus, press_key
 from tests.support.keyboard import (
     WALK_LIMIT,
@@ -686,6 +687,10 @@ def _walk_faults(root: QWidget, window: QWidget) -> tuple[dict[str, list[Fault]]
     reverse = reverse_faults(ahead, back)
     if reverse:
         faults["order"].append((None, reverse))
+    if root.property(KEEP_OWN_TAB_ORDER):
+        # Its own order, kept with a reason by ``keep_own_tab_order``; a marked panel
+        # is read in its own order by ``screen_tab_order`` itself.
+        faults["order"] = []
     return faults, ahead
 
 
