@@ -96,7 +96,9 @@ def _action_buttons(dialog: ConvergenceExaminerDialog) -> list[QRect]:
 
 
 @pytest.mark.parametrize("size", [(1080, 900), (880, 646)], ids=["default", "minimum"])
-def test_convergence_examiner_shows_the_whole_plot_without_scrolling(qapp, size) -> None:
+def test_convergence_examiner_shows_the_whole_plot_without_scrolling(
+    qapp, designed_text_scale, size
+) -> None:
     dialog = _analysed_dialog(qapp, size)
     try:
         assert (dialog.minimumWidth(), dialog.minimumHeight()) == (880, 646)
@@ -1678,7 +1680,7 @@ def test_convergence_examiner_hover_note_stays_whole_beside_its_point(
         dialog.close()
 
 
-@pytest.mark.parametrize("window_size", [(960, 680), (480, 320)], ids=["default", "smallest"])
+@pytest.mark.parametrize("window_size", [(960, 680), (100, 100)], ids=["default", "smallest"])
 def test_convergence_examiner_hover_note_stays_whole_in_the_pop_out(qapp, window_size) -> None:
     dialog = _cof2_examiner("cutoff", stress=True)
     try:
@@ -1738,11 +1740,14 @@ def test_convergence_examiner_pop_out_at_its_smallest_keeps_usable_panels(
         dialog.close()
 
 
+@pytest.mark.parametrize("scale", [1.0, 1.5], ids=["designed-text", "large-text"])
 def test_convergence_examiner_at_its_minimum_size_keeps_usable_panels(
-    qapp, designed_text_scale
+    qapp, monkeypatch, scale
 ) -> None:
     # With the app's theme, the docked plot at the dialog's minimum size gets at least the
     # height at which the layout settles; each redraw (a pointer move) leaves the panels be.
+    monkeypatch.setattr(theme_module, "text_scale", lambda: scale)
+    theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)
     dialog = _cof2_examiner("cutoff", stress=True)
     try:
         dialog.show()
@@ -1753,10 +1758,11 @@ def test_convergence_examiner_at_its_minimum_size_keeps_usable_panels(
         _settle(qapp)
         canvas = dialog._canvas
         assert canvas.height() >= 366
-        assert canvas.geometry().bottom() < dialog.height()
+        # The whole canvas is inside the dialog: nothing below the cutoff axis is cut off.
+        assert canvas.mapTo(dialog, canvas.rect().bottomLeft()).y() < dialog.height()
         panels = (dialog._energy_ax, dialog._force_ax)
         heights = []
-        for _ in range(200):
+        for _ in range(200 if scale == 1.0 else 20):
             canvas.draw()
             heights.append([axes.bbox.height for axes in panels])
 
@@ -1768,6 +1774,8 @@ def test_convergence_examiner_at_its_minimum_size_keeps_usable_panels(
         assert label.y0 >= 0
     finally:
         dialog.close()
+        monkeypatch.undo()
+        theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)
 
 
 def test_convergence_examiner_last_kpoint_note_is_drawn_over_the_legend(qapp, monkeypatch) -> None:

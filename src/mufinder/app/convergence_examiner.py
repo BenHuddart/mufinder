@@ -71,7 +71,7 @@ _THRESHOLD_FIELD_PADDING = 28
 _RESULTS_HEIGHT = 120
 #: The plot's smallest size, docked or popped out. On a shorter canvas (below about 361 px) the
 #: energy legend outgrows its panel so far that no layout settles, and each redraw (a pointer
-#: move) shrinks the panels away. The dialog's minimum height leaves the plot this much.
+#: move) shrinks the panels away. The dialog's minimum height follows from it.
 _CANVAS_MINIMUM_SIZE = (480, 366)
 
 
@@ -157,7 +157,6 @@ class ConvergenceExaminerDialog(QDialog):
             else "Examine K-Point Convergence"
         )
         self.resize(clamped_size(self, 1080, 900))
-        self.setMinimumSize(880, 646)
 
         self._num_atoms = int(num_atoms)
         self._completed = self._collect_completed(sweep_data)
@@ -215,6 +214,8 @@ class ConvergenceExaminerDialog(QDialog):
         self._close_button = QPushButton("Close", self)
 
         self._build_layout()
+        # As short as the header, the results and the plot's minimum allow, at any text size.
+        self.setMinimumSize(880, self.layout().minimumSize().height())
         self._connect_signals()
         self._update_availability()
         self._write_initial_summary()
