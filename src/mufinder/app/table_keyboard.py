@@ -5,18 +5,14 @@ its cells on Tab and wraps round from the last cell to the first, so Tab never l
 it and the controls after it cannot be reached from the keyboard.
 
 Qt's Tab order is the order controls were created in. ``set_screen_tab_order`` sets it
-from the order the layouts place the controls in, hidden ones included, so a control
-shown later is already in its place; ``install_screen_tab_order`` applies it to every
-MuFinder dialog as it becomes active. ``screen_tab_order`` reads the shown controls by
-where they are on screen instead: it is the reference the keyboard baseline test
-checks the layout order against. A widget marked with ``keep_own_tab_order`` keeps the
-order it has.
+from the layouts, and ``install_screen_tab_order`` applies it to every MuFinder dialog.
+``screen_tab_order`` reads where the controls are on screen: the reference the
+keyboard baseline test checks the layout order against.
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
-import functools
 import itertools
 
 from PySide6.QtCore import QEvent, QItemSelectionModel, QObject, QRect, Qt
@@ -64,10 +60,7 @@ def is_tab_stop(widget: QWidget) -> bool:
 def screen_tab_order(root: QWidget) -> list[QWidget]:
     """Return the shown Tab stops in ``root`` in the order they read on screen, panel by panel.
 
-    It reads where the controls are, not how they are laid out, so it is the screen
-    reference that :func:`set_screen_tab_order`'s layout order is tested against.
-
-    The widget tree is read container by container: a container's children are
+    It reads where the controls are, not how they are laid out. The widget tree is read container by container: a container's children are
     put in reading order by where they are, top to bottom and then left to right
     within a band, and each child's own stops follow in their turn. A control that
     takes Tab is one stop, whole: a spin box or combo box with its parts, a table
@@ -91,7 +84,7 @@ def set_screen_tab_order(root: QWidget, *, followed_by: QWidget | None = None) -
     a part of a window goes just before ``followed_by``.
     """
 
-    order = _stops_in(root, by_layout=True)
+    order = [] if root.property(KEEP_OWN_TAB_ORDER) else _stops_in(root, by_layout=True)
     if not order:
         return
     if followed_by is not None:
@@ -111,15 +104,15 @@ KEEP_OWN_TAB_ORDER = "keepOwnTabOrder"
 def keep_own_tab_order(widget: QWidget, reason: str) -> None:
     """Leave ``widget``'s Tab order as it is: a panel's stops, or a whole dialog's."""
 
+    if not reason:
+        raise ValueError("keep_own_tab_order needs the reason the order is kept")
     widget.setProperty(KEEP_OWN_TAB_ORDER, reason)
 
 
 def install_screen_tab_order(app: QApplication) -> None:
-    """Order each MuFinder dialog (a ``QDialog`` subclass defined in MuFinder) with
-    :func:`set_screen_tab_order` each time it becomes the active window.
+    """Order each MuFinder dialog class's dialog as it becomes the active window.
 
-    It is one signal connection, no event filter. A dialog marked with
-    :func:`keep_own_tab_order` is left alone.
+    It is one signal connection, no event filter; a marked dialog is left alone.
     """
 
     if isinstance(app, QApplication) and not app.property(_INSTALLED):
@@ -130,10 +123,11 @@ def install_screen_tab_order(app: QApplication) -> None:
 _INSTALLED = "mufinderScreenTabOrder"
 
 
-def _order_active_dialog(_window: object = None) -> None:
+def _order_active_dialog(window: object = None) -> None:
     dialog = QApplication.activeWindow()
     if (
         isinstance(dialog, QDialog)
+        and window is dialog.windowHandle()  # not a popup, such as a combo box's list
         and type(dialog).__module__.startswith("mufinder.")
         and not dialog.property(KEEP_OWN_TAB_ORDER)
     ):
@@ -198,14 +192,19 @@ def _stops_in(container: QWidget, *, by_layout: bool) -> list[QWidget]:
         # Controls just added or shown have their places only once the layout has run.
         container.layout().activate()
     placed, rest = _children_in_order(container, by_layout)
-    panels = [(child.geometry(), _child_stops(child, by_layout)) for child in rest]
-    stops = [stop for child in placed for stop in _child_stops(child, by_layout)]
-    if stops:
-        # The laid-out children read as one panel where they are, among those no layout places.
-        shown = [child.geometry() for child in placed if not child.isHidden()]
-        panels.append((functools.reduce(QRect.united, shown) if shown else container.rect(), stops))
-    panels = [panel for panel in panels if panel[1]]
-    return [stop for _rect, child_stops in _reading_order(panels) for stop in child_stops]
+    entries = [(child, _child_stops(child, by_layout)) for child in placed]
+    unplaced = [(child.geometry(), _child_stops(child, by_layout)) for child in rest]
+    for rect, stops in _reading_order([panel for panel in unplaced if panel[1]]):
+        # It goes before the first shown laid-out child that reads after it on screen.
+        shown = [
+            (child.geometry(), [index])
+            for index, (child, _stops) in enumerate(entries)
+            if child is not None and not child.isHidden()
+        ]
+        reading = [marks for _rect, marks in _reading_order([*shown, (rect, [None])])]
+        after = reading[reading.index([None]) + 1 :]
+        entries.insert(after[0][0] if after else len(entries), (None, stops))
+    return [stop for _child, stops in entries for stop in stops]
 
 
 def _child_stops(child: QWidget, by_layout: bool) -> list[QWidget]:
@@ -227,12 +226,8 @@ def _child_stops(child: QWidget, by_layout: bool) -> list[QWidget]:
 
 
 def _own_order(panel: QWidget, by_layout: bool) -> list[QWidget]:
-    """``panel``'s stops in the order its focus chain has them now.
-
-    Other widgets can sit between the panel's own in the chain: the walk goes on
-    until every stop is found, or ``_CHAIN_STEPS`` widgets pass without one. A stop
-    it does not find comes after the others.
-    """
+    """``panel``'s stops in the order its focus chain has them now, found within
+    ``_CHAIN_STEPS`` widgets of each other; one not found comes after the others."""
 
     stops = _stops_in(panel, by_layout=by_layout)
     ordered: list[QWidget] = []
@@ -290,18 +285,25 @@ def _first_in_focus_chain(window: QWidget, stops: list[QWidget]) -> QWidget:
     application. With none found by then, the first stop on screen opens it.
     """
 
+    def opens_on(widget: QWidget) -> bool:
+        # Qt opens a window on the first control that can take Tab focus now.
+        return (
+            widget.isEnabled()
+            and widget.isVisibleTo(window)
+            and bool(widget.focusPolicy().value & Qt.FocusPolicy.TabFocus.value)
+        )
+
     first = None
     widget = window.nextInFocusChain()
     for _ in range(_CHAIN_STEPS):
         if widget is window:
             break
         if widget in stops:
-            # Qt opens a window on the first control that can take Tab focus now.
-            if widget.isEnabled() and widget.focusPolicy().value & Qt.FocusPolicy.TabFocus.value:
+            if opens_on(widget):
                 return widget
             first = first or widget
         widget = widget.nextInFocusChain()
-    return first or stops[0]
+    return next((stop for stop in stops if opens_on(stop)), first or stops[0])
 
 
 def _focusable_before(widget: QWidget, root: QWidget) -> QWidget | None:

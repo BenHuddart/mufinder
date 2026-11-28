@@ -185,6 +185,10 @@ def _render_here(
     from mufinder.app.theme import THEME_LIGHT, apply_theme
 
     apply_theme(app, THEME_LIGHT)
+    from mufinder.app.table_keyboard import install_screen_tab_order
+
+    # Dialogs take the Tab order they have in the application.
+    install_screen_tab_order(app)
     install_offscreen_viewers()
     seconds: dict[str, float] = {}
     for name in names:

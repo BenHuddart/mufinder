@@ -2674,7 +2674,8 @@ Finding the control a window opens on walks at most 200 steps of its focus
 chain, so a main window's whole chain is never walked.
 
 Dialogs write no Tab-order code. ``install_screen_tab_order``, installed by
-``mufinder.main`` once the main window is shown, orders every dialog of a
+``mufinder.main`` once the main window is shown (and by the documentation
+screenshot renderer), orders every dialog of a
 ``QDialog`` subclass defined in MuFinder each time it becomes the active window.
 It is one connection to the application's ``focusWindowChanged`` signal: no
 event filter, nothing watched. ``keep_own_tab_order(widget, reason)`` marks a
@@ -2691,8 +2692,9 @@ each walk is compared with it. What the layout reading does not cover:
   ``set_screen_tab_order`` after building them. The parameter dialog and the
   dialogs built on it do so after rebuilding their rows. A table's cell controls
   and a tab widget's pages need no call.
-- Children no layout places are put by position, shown ones only; one shown later
-  takes Qt's place.
+- Children no layout places are put by position among the laid-out ones, shown
+  ones only; one shown later takes Qt's place. A focusable panel marked with
+  ``keep_own_tab_order`` comes before its own controls.
 - A box inside a widget laid out right to left is read backwards; screen order is
   read left to right.
 - Top-level windows that are not dialogs, Qt's own dialogs (message boxes, file

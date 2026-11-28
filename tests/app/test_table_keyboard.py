@@ -1061,24 +1061,31 @@ def test_tab_pressed_before_the_event_loop_turns_follows_a_reveal(qapp) -> None:
     QApplication.processEvents()
     try:
         b.show()
+        # The first Tab is sent before the event loop turns, and read before it does.
+        QTest.keyClick(a, Qt.Key.Key_Tab)
+        first = QApplication.focusWidget().accessibleName()
 
-        assert [press_key(Qt.Key.Key_Tab).accessibleName() for _ in range(3)] == _SCREEN_FROM_A
+        assert [first, *(press_key(Qt.Key.Key_Tab).accessibleName() for _ in range(2))] == (
+            _SCREEN_FROM_A
+        )
     finally:
         dialog.close()
 
 
 def test_a_dialog_shown_again_is_ordered_for_what_changed_while_it_was_hidden(qapp) -> None:
     dialog, a, b = _hooked_dialog()
-    b.hide()
     _show(dialog)
     dialog.hide()
-    b.show()
+    # Moved to the end of its column while the dialog is hidden: A, C, B on screen.
+    column = b.parentWidget().layout()
+    column.removeWidget(b)
+    column.addWidget(b)
     other = _HookedDialog()  # another window active in between, as in the application
     _show(other)
     other.close()
     _show(dialog)
     try:
-        assert _tab_names(a) == _SCREEN_FROM_A
+        assert _tab_names(a) == ["C", "B", "A"]
     finally:
         dialog.close()
 
@@ -1231,13 +1238,13 @@ def test_ordering_a_window_walks_only_a_bounded_part_of_its_focus_chain(qapp, mo
         steps.append(self)
         return original(self)
 
-    monkeypatch.setattr(QWidget, "nextInFocusChain", counted)
     try:
-        set_screen_tab_order(window)
+        with monkeypatch.context() as patched:
+            patched.setattr(QWidget, "nextInFocusChain", counted)
+            set_screen_tab_order(window)
 
         # The chain holds over 400 widgets before the first stop; the walk gives up at 200.
         assert len(steps) <= 201
-        monkeypatch.undo()
         assert _chain_names(a)[:1] == ["B"]
     finally:
         window.close()
@@ -1468,3 +1475,63 @@ def test_a_button_box_is_read_in_the_order_it_lays_its_buttons_out(qapp) -> None
         assert [_tab() for _ in range(3)] == [*buttons_left_to_right(buttons), field]
     finally:
         window.close()
+
+
+def test_a_control_placed_by_hand_between_two_rows_is_read_between_them(qapp) -> None:
+    from PySide6.QtWidgets import QToolButton
+
+    from mufinder.app.table_keyboard import set_screen_tab_order
+
+    window = QWidget()
+    lower, upper = _named(window, "Lower", "Upper")
+    between = QToolButton(window)
+    between.setAccessibleName("Between")
+    layout = QVBoxLayout(window)
+    layout.setSpacing(60)
+    layout.addWidget(upper)
+    layout.addWidget(lower)
+    _ordered_and_shown(window)
+    try:
+        between.move(0, (upper.geometry().bottom() + lower.geometry().top()) // 2 - 5)
+        between.resize(20, 10)
+        set_screen_tab_order(window)
+
+        assert _tab_names_from(upper, 3) == ["Between", "Lower", "Upper"]
+    finally:
+        window.close()
+
+
+def test_a_window_does_not_open_on_a_hidden_control(qapp) -> None:
+    window = QWidget()
+    hidden, a, b = _named(window, "Hidden", "A", "B")
+    layout = QVBoxLayout(window)
+    for edit in (hidden, a, b):
+        layout.addWidget(edit)
+    hidden.hide()
+    _ordered_and_shown(window)
+    try:
+        assert QApplication.focusWidget() is a
+    finally:
+        window.close()
+
+
+def test_a_marked_window_is_not_reordered_by_a_direct_call(qapp) -> None:
+    from mufinder.app.table_keyboard import set_screen_tab_order
+
+    window = QWidget()
+    b, a, c = _named(window, "B", "A", "C")
+    layout = QVBoxLayout(window)
+    for edit in (a, b, c):
+        layout.addWidget(edit)
+    keep_own_tab_order(window, "Set by hand.")
+    set_screen_tab_order(window)
+    _show(window)
+    try:
+        assert _chain_names(a)[:1] == ["C"]  # still the order they were made in
+    finally:
+        window.close()
+
+
+def test_the_mark_needs_a_reason(qapp) -> None:
+    with pytest.raises(ValueError, match="reason"):
+        keep_own_tab_order(QWidget(), "")
