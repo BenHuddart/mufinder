@@ -35,7 +35,6 @@ from mufinder.app.plot_canvas import (
     nearest_point_on_screen,
 )
 from mufinder.app.screen_utils import clamped_size
-from mufinder.app.table_keyboard import set_screen_tab_order
 from mufinder.app.theme import current_palette, plot_badge_box
 from mufinder.castep_io.output_parser import (
     CASTEP_FORCE_PRINT_RESOLUTION_EV_ANG,
@@ -285,9 +284,6 @@ class ConvergenceExaminerDialog(QDialog):
         layout.addWidget(PlotFrame(self._canvas, title="Convergence plot", parent=self), 1)
 
         self._arrange_header()
-        # The results and the plot are made before the adopt and close buttons, so
-        # Tab follows the screen instead of the order the controls were made in.
-        set_screen_tab_order(self)
 
     def _show_threshold_starts(self) -> None:
         """Show each narrow threshold field from its start, so a long value keeps its point."""

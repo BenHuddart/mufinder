@@ -489,9 +489,11 @@ defined by two of these modules, and a pinned count may only fall.
        and the arrow keys move between cells. Every table in ``mufinder.app``
        is a ``TabStopTable`` or a subclass, directly or through
        ``create_workflow_table``; a plain ``QTableWidget`` walks its cells on
-       Tab and never leaves. The Tab order of a dialog or page that follows
-       the screen panel by panel (``set_screen_tab_order``, ``screen_tab_order``,
-       ``is_tab_stop``; see Keyboard baseline).
+       Tab and never leaves. The Tab order every dialog gets from its layouts
+       (``set_screen_tab_order``, applied by ``install_screen_tab_order``), the
+       screen reading it is tested against (``screen_tab_order``), ``is_tab_stop``
+       and the one exception marker (``keep_own_tab_order``); see Keyboard
+       baseline. No dialog sets its own Tab order.
    * - ``mufinder.app.blocking_call``
      - Running a blocking call off the GUI thread with the caller's
        synchronous semantics (``run_blocking_call``): user input is held back,
@@ -2655,29 +2657,61 @@ promised:
 4. Every control has an accessible name (``tests/app/test_accessible_names.py``).
 
 Qt's Tab order is the order controls were made in, and a control made without a
-parent joins it where a layout adopts it. A widget whose controls are made in
-screen order needs no Tab code; one that is not, or that builds controls after
-its others, calls ``set_screen_tab_order`` (``mufinder.app.table_keyboard``)
-once its layout holds them. It reads the widget tree container by container,
-puts each container's children in reading order by where they are, and chains
-Tab through the result. A window keeps the control it opens on; a part of a
-window is given the control Tab reaches after it (``followed_by``) and goes
-just before it. A caller can give a container's stops in an order it keeps, as
-the CASTEP parameter dialog does for its grid of rows. The parameter dialog,
-the convergence examiner and the job dashboard's header strip use it; the
-parameter dialog runs it again when it is shown and after its rows are
-rebuilt, the strip when a count appears or goes. A tab widget is one stop whose
-pages keep Qt's own order, and hidden widgets keep Qt's order. Screen order is read left to right; a window laid out
-right to left is not covered.
+parent joins it where a layout adopts it. ``set_screen_tab_order``
+(``mufinder.app.table_keyboard``) chains Tab in the order the layouts place the
+controls instead, hidden controls included, so a control a dialog shows later is
+already in its place. A box layout is read by its items (backwards for a
+right-to-left or bottom-to-top box), a grid by row then column, a form by row
+with the label side first, a splitter by its panes, and a layout inside another
+in its place. Children no layout places, such as a button set by hand in a
+corner, are put by where they are on screen among the laid-out ones. A table, a
+spin box or a combo box is one stop, a tab widget is one stop whose pages keep
+Qt's own order, a stop that holds stops of its own (a checkable group box, a
+scroll area) comes before them, and a scroll area keeps its place while Tab
+passes over it. A window keeps the control it opens on; a part of a window is
+given the control Tab reaches after it (``followed_by``) and goes just before it.
+Finding the control a window opens on walks at most 200 steps of its focus
+chain, so a main window's whole chain is never walked.
+
+Dialogs write no Tab-order code. ``install_screen_tab_order``, installed by
+``mufinder.main`` once the main window is shown, orders every dialog of a
+``QDialog`` subclass defined in MuFinder each time it becomes the active window.
+It is one connection to the application's ``focusWindowChanged`` signal: no
+event filter, nothing watched. ``keep_own_tab_order(widget, reason)`` marks a
+widget that keeps its own order: on a dialog the hook leaves the whole dialog
+alone, on a panel the order keeps the panel's stops in the order they have. No
+widget carries the mark now.
+
+The layout order is meant to be the screen's order, and the baseline test checks
+that it is: ``screen_tab_order`` reads the shown controls by where they are, and
+each walk is compared with it. What the layout reading does not cover:
+
+- A control created after a dialog has its order takes Qt's place until the
+  helper runs again, so a dialog that builds controls while open calls
+  ``set_screen_tab_order`` after building them. The parameter dialog and the
+  dialogs built on it do so after rebuilding their rows. A table's cell controls
+  and a tab widget's pages need no call.
+- Children no layout places are put by position, shown ones only; one shown later
+  takes Qt's place.
+- A box inside a widget laid out right to left is read backwards; screen order is
+  read left to right.
+- Top-level windows that are not dialogs, Qt's own dialogs (message boxes, file
+  dialogs) and a plain ``QDialog`` built in place keep Qt's order.
+
+Main windows and their workflow pages keep the order their controls were made
+in, which meets the baseline; the job dashboard's header strip, whose buttons
+come and go, calls ``set_screen_tab_order`` with ``followed_by`` itself.
 
 ``tests/app/test_keyboard_baseline.py`` builds every ``QDialog`` subclass in
 ``mufinder.app`` and opens every workflow page and the job dashboard, walks
 each with real Tab and Shift+Tab presses against rules 1 and 2, and presses
 Enter and Escape in each dialog from every stop. It also checks where Tab goes
 after a page in the main window: to the job dashboard, then the status bar,
-then the navigator, and Shift+Tab the other way round. A new dialog class that is not
-in its registry fails the test. Its ``KNOWN_EXCEPTIONS`` lists the places that
-keep a deliberate difference, each with its reason, and fails once one meets
+then the navigator, and Shift+Tab the other way round. A new dialog class that
+is not in its registry fails the test. A dialog marked with
+``keep_own_tab_order`` is not checked against rule 2, and a marked panel is
+read in its own order. Its ``KNOWN_EXCEPTIONS`` lists the places that keep a
+deliberate difference, each with its reason, and fails once one meets
 the baseline: Enter in the cluster submission dialog's editable queue box keeps
 the typed name instead of pressing OK, Enter in the Magnetic Structure Builder
 presses Use Structure only from a focused button, and the Geometry Progress
