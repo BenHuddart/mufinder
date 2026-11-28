@@ -2684,7 +2684,9 @@ presses Use Structure only from a focused button, and the Geometry Progress
 dialog's criteria table is display-only and not a Tab stop. The Energy Barriers
 page and a pinned Magnetic Fields workspace are built after the job dashboard,
 when first opened or pinned, so Qt puts them last in the window's Tab chain and
-Tab leaves them for the navigator first.
+Tab leaves them for the navigator first. So is each analysis's tab on Muon Site
+Analysis, so Tab leaves its tab bar for the dashboard and comes back to the
+analysis.
 
 Cross-platform appearance
 -------------------------
