@@ -27,7 +27,6 @@ from uuid import uuid4
 import pytest
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QAbstractButton,
     QApplication,
     QDialog,
     QFileDialog,
@@ -661,9 +660,10 @@ def _key_faults(dialog: QDialog, opening: QWidget | None, stops: list[QWidget]) 
     for start in starts:
         if not shiboken6.isValid(start) or not start.isVisible():
             continue
-        if defaults and (start is opening or not isinstance(start, QAbstractButton)):
+        # Enter on a focused push button presses that button; it is checked where the
+        # dialog opens, and every other stop must press the default button.
+        if defaults and (start is opening or not isinstance(start, QPushButton)):
             result = keys.press(Qt.Key.Key_Return, start)
-            # Enter on a focused push button presses that button.
             wanted = [describe(start)] if isinstance(start, QPushButton) else defaults[:1]
             if result.pressed[:1] != wanted:
                 faults["enter"].append((start, f"{describe(start)}: {result.pressed or 'nothing'}"))
@@ -745,10 +745,12 @@ def staged_window(project_with_host, qapp):
         add_dashboard_job(service, document, f"keyboard_{index}", status)
     window._refresh_jobs_table()
     window.resize(*WINDOW_SIZE)
-    open_and_take_focus(window)
-    QApplication.processEvents()
-    yield window
-    window.hide()
+    try:
+        open_and_take_focus(window)
+        QApplication.processEvents()
+        yield window
+    finally:
+        window.hide()
 
 
 def _focus_first_stop(root: QWidget) -> None:

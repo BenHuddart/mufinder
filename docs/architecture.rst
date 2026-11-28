@@ -2650,7 +2650,7 @@ promised:
    a viewer's toolbar, a splitter pane, a scroll area) before the next, and
    inside a panel goes top to bottom, then left to right within a row. A
    table is one stop (``TabStopTable``), a ``QDialogButtonBox`` keeps its own
-   order and an exclusive group of options is one stop, its chosen option.
+   order and an exclusive group of options is one stop, as Qt makes it.
 3. Enter presses the default button, where a dialog has one, and Escape cancels.
 4. Every control has an accessible name (``tests/app/test_accessible_names.py``).
 
@@ -2666,9 +2666,8 @@ just before it. A caller can give a container's stops in an order it keeps, as
 the CASTEP parameter dialog does for its grid of rows. The parameter dialog,
 the convergence examiner and the job dashboard's header strip use it; the
 parameter dialog runs it again when it is shown and after its rows are
-rebuilt, the strip when a count appears or goes. A tab widget is read through
-its tab bar and the page showing; hidden widgets, such as the pages that are not
-showing, keep Qt's order. Screen order is read left to right; a window laid out
+rebuilt, the strip when a count appears or goes. A tab widget is one stop whose
+pages keep Qt's own order, and hidden widgets keep Qt's order. Screen order is read left to right; a window laid out
 right to left is not covered.
 
 ``tests/app/test_keyboard_baseline.py`` builds every ``QDialog`` subclass in

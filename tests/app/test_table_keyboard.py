@@ -946,3 +946,45 @@ def test_a_button_box_keeps_its_own_order_right_to_left(qapp) -> None:
         assert screen_tab_order(window) == own
     finally:
         window.close()
+
+
+def test_a_tab_widget_is_one_stop_and_keeps_its_own_way_through_its_pages(qapp) -> None:
+    from PySide6.QtWidgets import QTabWidget
+
+    from mufinder.app.table_keyboard import set_screen_tab_order
+
+    window = QWidget()
+    above = QLineEdit(window)
+    tabs = QTabWidget(window)
+    pages = [QWidget(), QWidget()]
+    fields = [QLineEdit(page) for page in pages]
+    for index, page in enumerate(pages):
+        QVBoxLayout(page).addWidget(fields[index])
+        tabs.addTab(page, f"Page {index + 1}")
+    below = QLineEdit(window)
+    layout = QVBoxLayout(window)
+    for widget in (above, tabs, below):
+        layout.addWidget(widget)
+    set_screen_tab_order(window)
+    _show(window)
+    try:
+        above.setFocus()
+        assert [_tab() for _ in range(4)] == [tabs.tabBar(), fields[0], below, above]
+        tabs.setCurrentIndex(1)
+        above.setFocus()
+        assert [_tab() for _ in range(4)] == [tabs.tabBar(), fields[1], below, above]
+    finally:
+        window.close()
+
+
+def test_set_screen_tab_order_keeps_the_opening_control_when_the_first_is_disabled(qapp) -> None:
+    from mufinder.app.table_keyboard import set_screen_tab_order
+
+    window, (a, b, c, d) = _two_columns()
+    d.setEnabled(False)
+    set_screen_tab_order(window)
+    _show(window)
+    try:
+        assert QApplication.focusWidget() is c
+    finally:
+        window.close()

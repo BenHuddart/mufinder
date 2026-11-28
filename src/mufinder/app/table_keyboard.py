@@ -60,8 +60,8 @@ def screen_tab_order(
     before the panel beside it. A control that takes Tab is one stop, whole: a spin
     box or combo box with its parts, a table with its cell controls, which the table
     leads Tab through. A stop that holds stops of its own, such as a scroll area or a
-    checkable group box, comes before them, and a tab widget is read through its tab
-    bar and the page showing. A ``QDialogButtonBox`` keeps its own order, the order
+    checkable group box, comes before them; a tab widget, like any control whose
+    focus goes to a part of it, is one stop. A ``QDialogButtonBox`` keeps its own order, the order
     of its layout. Hidden widgets are left out. ``blocks`` gives, for a container,
     its stops in an order the caller keeps.
     """
@@ -108,10 +108,11 @@ def _stops_in(container: QWidget, blocks: Mapping[QWidget, Sequence[QWidget]]) -
             continue
         if child in blocks:
             stops = list(blocks[child])
-        elif isinstance(child, _WHOLE_CONTROLS):
-            stops = [child] if is_tab_stop(child) else []
-        elif not is_tab_stop(child) or child.focusProxy() is not None:
-            stops = _stops_in(child, blocks)
+        elif not is_tab_stop(child):
+            stops = [] if isinstance(child, _WHOLE_CONTROLS) else _stops_in(child, blocks)
+        elif isinstance(child, _WHOLE_CONTROLS) or child.focusProxy() is not None:
+            # Qt leads Tab through it, and through a tab widget's pages, itself.
+            stops = [child]
         else:
             stops = [child, *_stops_in(child, blocks)]
         if stops:
@@ -163,12 +164,16 @@ def _first_in_focus_chain(window: QWidget, stops: list[QWidget]) -> QWidget:
     that holds 3D viewers has crashed the application.
     """
 
+    first = None
     widget = window.nextInFocusChain()
     while widget is not window:
         if widget in stops:
-            return widget
+            # Qt opens a window on the first control that can take Tab focus now.
+            if widget.isEnabled() and widget.focusPolicy().value & Qt.FocusPolicy.TabFocus.value:
+                return widget
+            first = first or widget
         widget = widget.nextInFocusChain()
-    return stops[0]
+    return first or stops[0]
 
 
 def _focusable_before(widget: QWidget, root: QWidget) -> QWidget | None:
