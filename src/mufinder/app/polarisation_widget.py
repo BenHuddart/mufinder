@@ -162,6 +162,7 @@ class PolarisationWidget(QWidget):
             resize_to_contents_columns=(_USE_COLUMN, _APPLIED_COLUMN, _WEIGHT_COLUMN),
             stretch_last_section=False,
             accessible_name="Field Results",
+            parent=self,
         )
         self._sources_table.horizontalHeader().setSectionResizeMode(
             _SOURCE_COLUMN, QHeaderView.ResizeMode.Stretch
@@ -180,6 +181,7 @@ class PolarisationWidget(QWidget):
             resize_to_contents_columns=(0, 1, 2, 4),
             stretch_last_section=False,
             accessible_name="Simulations",
+            parent=self,
         )
         self._simulations_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         for table in (self._sources_table, self._simulations_table):
@@ -402,22 +404,27 @@ class PolarisationWidget(QWidget):
             "the spin lies along or across the applied field."
         )
         self._spin = VectorInput(
-            (0.0, 0.0, 1.0), name="Initial Polarisation", tooltip="Initial muon spin, lab frame"
+            (0.0, 0.0, 1.0),
+            name="Initial Polarisation",
+            tooltip="Initial muon spin, lab frame",
+            parent=self,
         )
         self._detector_along_spin = QCheckBox("Along the spin", self)
         self._detector_along_spin.setChecked(True)
         self._detector = VectorInput(
-            (0.0, 0.0, 1.0), name="Detector", tooltip="Detector axis, lab frame"
+            (0.0, 0.0, 1.0), name="Detector", tooltip="Detector axis, lab frame", parent=self
         )
         self._along_z = VectorInput(
             (0.0, 0.0, 1.0),
             name="Crystal [uvw] Along z",
             tooltip="Lattice direction [uvw] along lab z",
+            parent=self,
         )
         self._along_x = VectorInput(
             (1.0, 0.0, 0.0),
             name="Crystal [uvw] Along x",
             tooltip="Lattice direction [uvw] along lab x",
+            parent=self,
         )
         self._applied_summary = QLabel("", self)
         self._applied_summary.setWordWrap(True)
@@ -426,6 +433,7 @@ class PolarisationWidget(QWidget):
             (0.0, 0.0, 0.0),
             name="Add Applied Field (T)",
             tooltip="Applied field added to zero-field results, T, crystal frame",
+            parent=self,
         )
 
         self._sample = QComboBox(self)
@@ -439,10 +447,10 @@ class PolarisationWidget(QWidget):
             "Orientations of the applied field in a polycrystal; the zero-field average is exact."
         )
 
-        self._lambda_z = _rate_input("Longitudinal relaxation rate λ_z")
+        self._lambda_z = _rate_input("Longitudinal relaxation rate λ_z", self)
         # The form label is rich text (λ<sub>z</sub>), which a buddy would read out as markup.
         self._lambda_z.setAccessibleName("λz")
-        self._sigma = _rate_input("Gaussian width σ of the oscillating part")
+        self._sigma = _rate_input("Gaussian width σ of the oscillating part", self)
         self._sigma.setAccessibleName("σ")
         self._sigma_from_widths = QCheckBox("From nuclear widths", self)
         self._sigma_from_widths.setToolTip(
@@ -460,7 +468,7 @@ class PolarisationWidget(QWidget):
         self._time_points.setRange(2, MAX_TIME_POINTS)
         self._time_points.setMaximumWidth(100)
 
-        self._collision_rate = _rate_input("Strong-collision rate ν; 0 is static")
+        self._collision_rate = _rate_input("Strong-collision rate ν; 0 is static", self)
         self._collision_rate.setAccessibleName("Collision Rate ν")
         self._dynamics_method = QComboBox(self)
         self._dynamics_method.setAccessibleName("Dynamics Method")
@@ -468,8 +476,8 @@ class PolarisationWidget(QWidget):
             self._dynamics_method.addItem(label, key)
 
         self._subtract_baseline = QCheckBox("Subtract baseline", self)
-        self._apodisation_sigma = _optional_time_input("Gaussian apodisation time")
-        self._apodisation_lambda = _optional_time_input("Exponential apodisation time")
+        self._apodisation_sigma = _optional_time_input("Gaussian apodisation time", self)
+        self._apodisation_lambda = _optional_time_input("Exponential apodisation time", self)
         self._apodisation_sigma.setAccessibleName("Apodisation σ")
         self._apodisation_lambda.setAccessibleName("Apodisation λ")
         self._padding = QSpinBox(self)
@@ -1253,8 +1261,8 @@ def _spectrum_upper_limit(frequencies: np.ndarray, amplitudes: np.ndarray, nyqui
     return min(max(upper, 1e-6), nyquist) if nyquist > 0.0 else upper
 
 
-def _rate_input(tooltip: str) -> QDoubleSpinBox:
-    spin = QDoubleSpinBox()
+def _rate_input(tooltip: str, parent: QWidget) -> QDoubleSpinBox:
+    spin = QDoubleSpinBox(parent)
     spin.setRange(0.0, 1_000.0)
     spin.setDecimals(4)
     spin.setSuffix(" μs⁻¹")
@@ -1263,8 +1271,8 @@ def _rate_input(tooltip: str) -> QDoubleSpinBox:
     return spin
 
 
-def _optional_time_input(tooltip: str) -> QLineEdit:
-    edit = QLineEdit()
+def _optional_time_input(tooltip: str, parent: QWidget) -> QLineEdit:
+    edit = QLineEdit(parent)
     edit.setValidator(QDoubleValidator(0.0, 1_000_000.0, 6, edit))
     edit.setPlaceholderText("none")
     edit.setMaximumWidth(90)

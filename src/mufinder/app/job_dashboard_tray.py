@@ -55,6 +55,7 @@ from PySide6.QtWidgets import (
 from mufinder.app.icons import icon, job_state_icon
 from mufinder.app.job_dashboard import JobDashboard
 from mufinder.app.settings_values import read_bool_setting
+from mufinder.app.table_keyboard import set_screen_tab_order
 from mufinder.app.theme import SPACING, refresh_widget_style
 from mufinder.domain.text import plural
 
@@ -279,9 +280,11 @@ class JobSummary(QWidget):
         self._counts: tuple[tuple[str, int], ...] = ()
         self._filter: tuple[str, ...] = ()
         self._buttons: dict[str, QToolButton] = {}
-        # The controls Tab reaches just before and just after the summary's buttons.
-        self._tab_before: QWidget | None = None
+        # The strip whose Tab order follows the screen as the buttons come and go,
+        # the control Tab reaches after it, and the control just before the buttons.
+        self._tab_root: QWidget | None = None
         self._tab_after: QWidget | None = None
+        self._tab_before: QWidget | None = None
 
         self._empty = QLabel("No jobs", self)
         self._empty.setObjectName("jobSummaryEmpty")
@@ -338,11 +341,17 @@ class JobSummary(QWidget):
         if words != self._filter:
             self._sync(self._counts, words)
 
-    def set_tab_neighbours(self, before: QWidget, after: QWidget) -> None:
-        """Put the buttons in the Tab order between ``before`` and ``after``, left to right."""
+    def set_tab_root(self, root: QWidget, *, before: QWidget, after: QWidget) -> None:
+        """Keep the Tab order of ``root``, the strip that holds the buttons, following the screen.
 
-        self._tab_before = before
+        Tab reaches ``after`` once it leaves the strip. ``before`` is the control
+        just before the buttons; it takes focus when the focused button goes and
+        no other is left.
+        """
+
+        self._tab_root = root
         self._tab_after = after
+        self._tab_before = before
         self._apply_tab_order()
 
     def _strip_controls(self) -> list[QWidget]:
@@ -378,6 +387,9 @@ class JobSummary(QWidget):
                 self._buttons[word] = button
             self._show_count(button, word, count)
             self._layout.addWidget(button)
+            # Shown now rather than when the layout next runs, so the Tab order
+            # below already has the new button in its place on screen.
+            button.show()
         self.show_all_button.setVisible(bool(self._filter))
         self._layout.addWidget(self.show_all_button)
         self._layout.addStretch(1)
@@ -407,11 +419,8 @@ class JobSummary(QWidget):
             target.setFocus(Qt.FocusReason.OtherFocusReason)
 
     def _apply_tab_order(self) -> None:
-        if self._tab_before is None or self._tab_after is None:
-            return
-        chain = [self._tab_before, *self.count_buttons(), self.show_all_button, self._tab_after]
-        for first, second in zip(chain, chain[1:], strict=False):
-            QWidget.setTabOrder(first, second)
+        if self._tab_root is not None:
+            set_screen_tab_order(self._tab_root, followed_by=self._tab_after)
 
     def _new_button(self, word: str) -> QToolButton:
         button = QToolButton(self)
@@ -524,11 +533,9 @@ class JobDashboardTray(QObject):
         self.dock = dock
         # Tab goes through the strip, left to right, before the table under it:
         # the toggle, each count, ``Show all`` while it shows, ``Show dismissed``.
-        toggle = self.header.toggle_button
-        before_table = dashboard.table.previousInFocusChain()
-        if before_table is not toggle:
-            QWidget.setTabOrder(before_table, toggle)
-        self.header.summary.set_tab_neighbours(toggle, dashboard.show_dismissed_box)
+        self.header.summary.set_tab_root(
+            self.header, before=self.header.toggle_button, after=dashboard.table
+        )
 
         self.toggle_shortcut = QShortcut(TOGGLE_SHORTCUT, window)
         self.toggle_shortcut.setContext(Qt.ShortcutContext.WindowShortcut)

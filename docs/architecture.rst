@@ -489,7 +489,9 @@ defined by two of these modules, and a pinned count may only fall.
        and the arrow keys move between cells. Every table in ``mufinder.app``
        is a ``TabStopTable`` or a subclass, directly or through
        ``create_workflow_table``; a plain ``QTableWidget`` walks its cells on
-       Tab and never leaves.
+       Tab and never leaves. The Tab order of a dialog or page that follows
+       the screen panel by panel (``set_screen_tab_order``, ``screen_tab_order``,
+       ``is_tab_stop``; see Keyboard baseline).
    * - ``mufinder.app.blocking_call``
      - Running a blocking call off the GUI thread with the caller's
        synchronous semantics (``run_blocking_call``): user input is held back,
@@ -2636,6 +2638,48 @@ text and warnings, the column labels and structure ids, the warnings and the
 parameter differences. The widget takes each row's label, unit, group and
 tooltip from the metric registry, looked up by those keys; the method behind
 the metrics is described in the user guide, which the table links to.
+
+Keyboard baseline
+-----------------
+
+Every dialog and workflow page meets one keyboard baseline, and nothing more is
+promised:
+
+1. Tab and Shift+Tab reach every enabled, shown control.
+2. Tab follows the screen panel by panel: it finishes one panel (a form column,
+   a viewer's toolbar, a splitter pane, a scroll area) before the next, and
+   inside a panel goes top to bottom, then left to right within a row. A
+   table is one stop (``TabStopTable``), a ``QDialogButtonBox`` keeps its own
+   order and an exclusive group of options is one stop, as Qt makes it.
+3. Enter presses the default button, where a dialog has one, and Escape cancels.
+4. Every control has an accessible name (``tests/app/test_accessible_names.py``).
+
+Qt's Tab order is the order controls were made in, and a control made without a
+parent joins it where a layout adopts it. A widget whose controls are made in
+screen order needs no Tab code; one that is not, or that builds controls after
+its others, calls ``set_screen_tab_order`` (``mufinder.app.table_keyboard``)
+once its layout holds them. It reads the widget tree container by container,
+puts each container's children in reading order by where they are, and chains
+Tab through the result. A window keeps the control it opens on; a part of a
+window is given the control Tab reaches after it (``followed_by``) and goes
+just before it. A caller can give a container's stops in an order it keeps, as
+the CASTEP parameter dialog does for its grid of rows. The parameter dialog,
+the convergence examiner and the job dashboard's header strip use it; the
+parameter dialog runs it again when it is shown and after its rows are
+rebuilt, the strip when a count appears or goes. A tab widget is one stop whose
+pages keep Qt's own order, and hidden widgets keep Qt's order. Screen order is read left to right; a window laid out
+right to left is not covered.
+
+``tests/app/test_keyboard_baseline.py`` builds every ``QDialog`` subclass in
+``mufinder.app`` and opens every workflow page and the job dashboard, walks
+each with real Tab and Shift+Tab presses against rules 1 and 2, and presses
+Enter and Escape in each dialog from every stop. A new dialog class that is not
+in its registry fails the test. Its ``KNOWN_EXCEPTIONS`` lists the places that
+keep a deliberate difference, each with its reason, and fails once one meets
+the baseline: Enter in the cluster submission dialog's editable queue box keeps
+the typed name instead of pressing OK, Enter in the Magnetic Structure Builder
+presses Use Structure only from a focused button, and the Geometry Progress
+dialog's criteria table is display-only and not a Tab stop.
 
 Cross-platform appearance
 -------------------------

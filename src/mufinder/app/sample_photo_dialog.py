@@ -79,10 +79,16 @@ def load_greyscale_image(path: str | Path, *, max_edge: int = PHOTO_WORKING_EDGE
     return buffer.reshape(height, stride)[:, :width].copy()
 
 
-def demag_length_input(value: float, *, step: float = 0.25) -> QDoubleSpinBox:
-    """Return a spin box for a sample length; only ratios of lengths matter, so the unit is arbitrary."""
+def demag_length_input(
+    value: float, *, step: float = 0.25, parent: QWidget | None = None
+) -> QDoubleSpinBox:
+    """Return a spin box for a sample length; only ratios of lengths matter, so the unit is arbitrary.
 
-    spinbox = QDoubleSpinBox()
+    Give the ``parent`` it is laid out in: a spin box made without one joins the
+    Tab order where the layout adopts it, after the controls made with a parent.
+    """
+
+    spinbox = QDoubleSpinBox(parent)
     spinbox.setRange(0.0001, 1_000_000.0)
     spinbox.setDecimals(4)
     spinbox.setSingleStep(step)
@@ -185,15 +191,15 @@ class SamplePhotoDialog(QDialog):
         self._fill_holes.setChecked(photo.fill_holes)
 
         defaults = seed or DemagnetizingSample(shape="image_plate")
-        self._width = demag_length_input(defaults.plate_size[0], step=0.1)
-        self._height = demag_length_input(defaults.plate_size[1], step=0.1)
+        self._width = demag_length_input(defaults.plate_size[0], step=0.1, parent=self)
+        self._height = demag_length_input(defaults.plate_size[1], step=0.1, parent=self)
         self._height.setAccessibleName("Height (along b)")
         self._match_button = QPushButton("Match photo", self)
         self._match_button.setToolTip(
             "Set the height from the width and the outline's aspect ratio in the photo."
         )
         self._match_button.clicked.connect(self._match_photo_aspect)
-        self._thickness = demag_length_input(defaults.plate_thickness, step=0.1)
+        self._thickness = demag_length_input(defaults.plate_thickness, step=0.1, parent=self)
 
         self._status = QLabel("", self)
         self._status.setWordWrap(True)

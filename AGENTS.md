@@ -6,11 +6,10 @@ docs give the rationale. `tests/test_agent_harness.py` caps it at 140 lines and 
 
 ## What MuFinder is
 
-A PySide6 desktop application for muon stopping-site workflows with CASTEP. A project
-starts from a host crystal structure and moves through supercells, convergence testing,
-pristine relaxation, UEP screening, site generation, muon relaxation and analysis,
-magnetic fields, quantum corrections and energy barriers. Jobs run locally or on a
-cluster and are tracked in a job dashboard.
+A PySide6 desktop application for muon stopping-site workflows with CASTEP. A project starts from a
+host crystal structure and moves through supercells, convergence testing, pristine relaxation, UEP
+screening, site generation, muon relaxation and analysis, magnetic fields, quantum corrections and
+energy barriers. Jobs run locally or on a cluster and are tracked in a job dashboard.
 
 ## Where to read first
 
@@ -58,10 +57,9 @@ Dependencies flow inward: `app` → `services` / `workflow` / `science` → `dom
 
 ## Reuse before you write
 
-Every cross-workflow concern has exactly one home, listed under "Shared workflow
-infrastructure" in `docs/architecture.rst`; read it before adding a helper, extend the
-helper there and never copy a sibling workflow's implementation. The harness pins
-duplication (`PINNED_DUPLICATED_WIDGET_METHODS`).
+Every cross-workflow concern has exactly one home, listed under "Shared workflow infrastructure" in
+`docs/architecture.rst`; read it before adding a helper, extend the helper there and never copy a
+sibling workflow's implementation. The harness pins duplication (`PINNED_DUPLICATED_WIDGET_METHODS`).
 
 - A new workflow is a `WorkflowJobController` subclass plus a widget built from the shared
   helpers. Never add `_on_submit_*` / `_materialize_*` handlers to `MainWindow`.
@@ -89,6 +87,8 @@ duplication (`PINNED_DUPLICATED_WIDGET_METHODS`).
   first, from every entry point, with the safe choice as the default.
 - **Startup.** Nothing heavyweight runs before the splash screen is shown.
 - **Accessible names.** Name every control; `tests/app/test_accessible_names.py` checks pages.
+- **Keyboard.** Tab reaches every control in screen order, panel by panel (`set_screen_tab_order`);
+  Enter presses the default button, Escape cancels; register new dialogs in `test_keyboard_baseline.py`.
 
 ## CASTEP rules
 
