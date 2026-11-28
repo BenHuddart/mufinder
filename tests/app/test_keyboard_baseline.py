@@ -27,6 +27,7 @@ from uuid import uuid4
 import pytest
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QAbstractButton,
     QApplication,
     QDialog,
     QFileDialog,
@@ -79,12 +80,12 @@ KNOWN_EXCEPTIONS: dict[tuple[str, str], tuple[str | None, str]] = {
         "Built when pinned, after the job dashboard, so Qt puts it last in the window's "
         "Tab chain and Tab leaves it for the navigator first.",
     ),
-    ("page:muon_analysis", "order"): (
-        None,
+    ("page:muon_analysis (with an analysis)", "order"): (
+        "_workspace_tabs",
         "An analysis's tab is built after the job dashboard, so Qt puts it last in the "
         "window's Tab chain: Tab leaves the tab bar for the dashboard and comes back.",
     ),
-    ("page:muon_analysis", "exit"): (
+    ("page:muon_analysis (with an analysis)", "exit"): (
         None,
         "An analysis's tab is built after the job dashboard, so Tab leaves the tab bar "
         "for the dashboard and Shift+Tab leaves it for the navigator.",
@@ -102,7 +103,7 @@ LATE_EXITS: dict[str, tuple[list[str], list[str]]] = {
         ["navigator", "dashboard", "status bar"],
         ["status bar", "dashboard", "navigator"],
     ),
-    "page:muon_analysis": (["dashboard", "status bar"], ["navigator"]),
+    "page:muon_analysis (with an analysis)": (["dashboard", "status bar"], ["navigator"]),
 }
 
 # Dialog classes in ``mufinder.app`` that the registry does not build, with the reason.
@@ -754,12 +755,14 @@ def test_every_dialog_class_is_walked() -> None:
 
 
 def test_every_known_exception_names_a_target_and_a_rule() -> None:
-    pages = {f"page:{route}" for route in _page_routes()} | {"page:magnetic_fields_workspace"}
+    # The rules each kind of target is checked against.
+    checked = {name: {"reach", "order", "enter", "escape"} for name in DIALOGS}
+    checked |= {f"page:{case}": {"reach", "order", "exit"} for case in _page_cases()}
+    checked["page:magnetic_fields_workspace"] = {"exit"}
 
     for target, rule in KNOWN_EXCEPTIONS:
-        assert target in set(DIALOGS) | pages, target
-        rules = {"reach", "order", "exit"} if target in pages else {"reach", "order", "enter"}
-        assert rule in rules | ({"escape"} if target in DIALOGS else set()), (target, rule)
+        assert target in checked, target
+        assert rule in checked[target], (target, rule)
     assert set(LATE_EXITS) == {target for target, rule in KNOWN_EXCEPTIONS if rule == "exit"}
 
 
@@ -770,6 +773,14 @@ def _page_routes() -> tuple[str, ...]:
     from tests.app.test_accessible_names import PAGE_ROUTES
 
     return PAGE_ROUTES
+
+
+# A page walked in a second state too, named after its route.
+WITH_AN_ANALYSIS = "muon_analysis (with an analysis)"
+
+
+def _page_cases() -> tuple[str, ...]:
+    return (*_page_routes(), WITH_AN_ANALYSIS)
 
 
 @pytest.fixture
@@ -807,17 +818,18 @@ def _focus_first_stop(root: QWidget) -> bool:
     return False
 
 
-def _show_page(window, route: str) -> QWidget:
-    """Open ``route`` in ``window`` with its rows put in, and return the page.
+def _show_page(window, case: str) -> QWidget:
+    """Open a page case in ``window`` with its rows put in, and return the page.
 
-    Muon Site Analysis is given an analysis, which the page shows as a tab.
+    ``WITH_AN_ANALYSIS`` is Muon Site Analysis given an analysis, which it shows as a tab.
     """
 
     from mufinder.app.relaxation_analysis_widget import default_workspace_state
     from mufinder.domain.charge_states import POSITIVE_MUON_CHARGE_STATE
     from tests.app.test_accessible_names import _SHOW_ROWS
 
-    if route == "muon_analysis":
+    route = case.split(" (")[0]
+    if case == WITH_AN_ANALYSIS:
         document = window._document
         document.ui_state["relaxation_analysis_workspaces"] = [
             default_workspace_state(
@@ -834,13 +846,13 @@ def _show_page(window, route: str) -> QWidget:
     return window._main_stack.currentWidget()
 
 
-@pytest.mark.parametrize("route", _page_routes())
-def test_page_meets_the_keyboard_baseline(route, staged_window) -> None:
+@pytest.mark.parametrize("case", _page_cases())
+def test_page_meets_the_keyboard_baseline(case, staged_window) -> None:
     window = staged_window
-    page = _show_page(window, route)
+    page = _show_page(window, case)
     _focus_first_stop(page)
     faults, _stops = _walk_faults(page, window)
-    _check(f"page:{route}", faults)
+    _check(f"page:{case}", faults, page)
 
 
 def _window_tab_path(window, page: QWidget, *, backward: bool = False) -> list[str]:
@@ -879,6 +891,9 @@ def _exit_faults(target: str, window, page: QWidget) -> dict[str, list[Fault]]:
     the path given there instead, and no other.
     """
 
+    # The dashboard shows as it was left last time; the path runs through it shown.
+    window._job_tray.dock.show()
+    QApplication.processEvents()
     assert _focus_first_stop(page)
     forward = _window_tab_path(window, page)
     _focus_first_stop(page)
@@ -892,11 +907,16 @@ def _exit_faults(target: str, window, page: QWidget) -> dict[str, list[Fault]]:
     return {"exit": faults}
 
 
-@pytest.mark.parametrize("route", _page_routes())
-def test_tab_leaves_every_page_for_the_dashboard_then_the_navigator(route, staged_window) -> None:
+@pytest.mark.parametrize("case", _page_cases())
+def test_tab_leaves_every_page_for_the_dashboard_then_the_navigator(case, staged_window) -> None:
     window = staged_window
-    page = _show_page(window, route)
-    _check(f"page:{route}", _exit_faults(f"page:{route}", window, page))
+    page = _show_page(window, case)
+    if case == "muon_analysis":
+        # With no analysis, nothing on the page takes Tab.
+        assert not _focus_first_stop(page)
+        return
+
+    _check(f"page:{case}", _exit_faults(f"page:{case}", window, page))
 
 
 def test_tab_leaves_a_pinned_magnetic_fields_workspace_for_the_dashboard(
@@ -905,10 +925,15 @@ def test_tab_leaves_a_pinned_magnetic_fields_workspace_for_the_dashboard(
     window = staged_window
     monkeypatch.setattr(QInputDialog, "getText", lambda *args, **kwargs: ("Pinned", True))
     assert window.show_page("magnetic_fields")
-    window._magnetic_field_view._pin_button.click()
+    (save,) = [
+        button
+        for button in window._magnetic_field_view.findChildren(QAbstractButton)
+        if button.accessibleName() == "Save Workspace" and button.isVisible()
+    ]
+    save.click()
     QApplication.processEvents()
     page = window._main_stack.currentWidget()
-    assert page in window._magnetic_field_workspace_widgets.values()
+    assert page.workspace_title() == "Pinned"
 
     target = "page:magnetic_fields_workspace"
     _check(target, _exit_faults(target, window, page))
