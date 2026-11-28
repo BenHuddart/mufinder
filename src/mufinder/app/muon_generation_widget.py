@@ -49,6 +49,7 @@ from mufinder.app.theme import (
     style_warning_text,
 )
 from mufinder.app.workflow_table_utils import create_workflow_table
+from mufinder.app.table_keyboard import keep_tab_on_chosen_option
 from mufinder.domain.models import GENERATION_METHOD_LABELS, Structure
 from mufinder.science.site_generation import (
     SiteGenerationError,
@@ -181,6 +182,7 @@ class MuonGenerationWidget(QWidget):
         self._random_mode_group.addButton(self._random_by_separation)
         self._random_mode_group.addButton(self._random_by_count)
         self._random_by_separation.setChecked(True)
+        keep_tab_on_chosen_option(self._random_mode_group)
 
         self._random_count = QSpinBox()
         self._random_count.setRange(1, 2000)

@@ -9,7 +9,7 @@ from uuid import uuid4
 
 import numpy as np
 import pytest
-from PySide6.QtCore import QCoreApplication, QEvent, QItemSelectionModel, Qt, QTimer
+from PySide6.QtCore import QCoreApplication, QEvent, QItemSelectionModel, QPoint, Qt, QTimer
 from PySide6.QtGui import QDoubleValidator
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import (
@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QApplication,
     QDialog,
     QProgressDialog,
+    QRadioButton,
     QWidget,
 )
 
@@ -1363,6 +1364,39 @@ def test_magnetic_field_widget_defaults_demag_shape_to_none(qapp, tmp_path) -> N
     assert restored._demag_shape() == "none"
     widget.close()
     restored.close()
+
+
+def _demag_stops(widget: MagneticFieldWidget, *, backward: bool = False) -> list[str]:
+    """The demagnetizing-field options a Tab walk round ``widget`` stops on."""
+
+    from tests.support.keyboard import tab_walk
+
+    options = {"Sphere", "Infinite plate", "None", "Advanced shape"}
+    stops = tab_walk(widget, backward=backward).stops
+    return [
+        stop.text() for stop in stops if isinstance(stop, QRadioButton) and stop.text() in options
+    ]
+
+
+@pytest.mark.parametrize("backward", [False, True], ids=["tab", "shift-tab"])
+def test_tab_takes_the_demagnetizing_field_options_at_the_chosen_one(
+    qapp, tmp_path, backward: bool
+) -> None:
+    from tests.support.qt import open_and_take_focus
+
+    widget = _ready_widget(tmp_path)
+    open_and_take_focus(widget)
+    try:
+        assert _demag_stops(widget, backward=backward) == ["None"]
+        # A choice made by code, with focus elsewhere, moves the stop with it.
+        widget.set_form_state({"demag_shape": "infinite_plate"})
+        assert _demag_stops(widget, backward=backward) == ["Infinite plate"]
+        (sphere,) = [b for b in widget.findChildren(QRadioButton) if b.text() == "Sphere"]
+        QTest.mouseClick(sphere, Qt.MouseButton.LeftButton, pos=QPoint(8, sphere.height() // 2))
+        assert sphere.isChecked()
+        assert _demag_stops(widget, backward=backward) == ["Sphere"]
+    finally:
+        widget.close()
 
 
 def test_magnetic_field_widget_opens_advanced_demag_dialog(qapp, tmp_path, monkeypatch) -> None:

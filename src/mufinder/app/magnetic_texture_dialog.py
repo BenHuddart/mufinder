@@ -72,6 +72,7 @@ from mufinder.app.theme import (
     texture_preview_colors,
     use_square_top_table_corners,
 )
+from mufinder.app.table_keyboard import keep_tab_on_chosen_option
 from mufinder.domain.models import Structure
 from mufinder.domain.text import plural
 from mufinder.science.lattice import reciprocal_to_cartesian
@@ -513,6 +514,7 @@ class MagneticTextureDialog(AtomTargetCardsMixin, QDialog):
             button = QRadioButton(label)
             self._mode_group.addButton(button)
             self._mode_buttons[key] = button
+        keep_tab_on_chosen_option(self._mode_group)
 
         self._amplitude = DecimalLineEdit(
             standard_notation=True, text="1.0", minimum=0.0, maximum=1000.0, placeholder="1.0"
@@ -582,6 +584,7 @@ class MagneticTextureDialog(AtomTargetCardsMixin, QDialog):
             self._selected_radio,
         ):
             self._target_group.addButton(button)
+        keep_tab_on_chosen_option(self._target_group)
         self._species_combo = QComboBox()
         for species in sorted(set(str(symbol) for symbol in structure.species)):
             self._species_combo.addItem(species)
@@ -600,6 +603,7 @@ class MagneticTextureDialog(AtomTargetCardsMixin, QDialog):
         self._preview_light_button = self._preview_canvas_button("Light canvas", "appearance_light")
         self._preview_dark_button = self._preview_canvas_button("Dark canvas", "appearance_dark")
         self._preview_light_button.setChecked(True)
+        keep_tab_on_chosen_option(self._preview_canvas_group)
         self._preview_canvas_group.buttonClicked.connect(self._refresh_preview_canvas_mode)
         self._magnitude_map_check = QCheckBox("Show |m| map")
         self._magnitude_map_check.setToolTip(

@@ -491,8 +491,10 @@ defined by two of these modules, and a pinned count may only fall.
        ``create_workflow_table``; a plain ``QTableWidget`` walks its cells on
        Tab and never leaves. The Tab order every dialog gets from its layouts
        (``set_screen_tab_order``, applied by ``install_screen_tab_order``), the
-       screen reading it is tested against (``screen_tab_order``), ``is_tab_stop``
-       and the one exception marker (``keep_own_tab_order``); see Keyboard
+       screen reading it is tested against (``screen_tab_order``), ``is_tab_stop``,
+       the chosen option as an exclusive group's one stop
+       (``keep_tab_on_chosen_option``) and the one exception marker
+       (``keep_own_tab_order``); see Keyboard
        baseline. No dialog sets its own Tab order.
    * - ``mufinder.app.blocking_call``
      - Running a blocking call off the GUI thread with the caller's
@@ -2652,7 +2654,7 @@ promised:
    a viewer's toolbar, a splitter pane, a scroll area) before the next, and
    inside a panel goes top to bottom, then left to right within a row. A
    table is one stop (``TabStopTable``), a ``QDialogButtonBox`` keeps its own
-   order and an exclusive group of options is one stop, as Qt makes it.
+   order and an exclusive group of options is one stop, its chosen option.
 3. Enter presses the default button, where a dialog has one, and Escape cancels.
 4. Every control has an accessible name (``tests/app/test_accessible_names.py``).
 
@@ -2700,6 +2702,18 @@ each walk is compared with it. What the layout reading does not cover:
 - Top-level windows that are not dialogs, Qt's own dialogs (message boxes, file
   dialogs) and a plain ``QDialog`` built in place keep Qt's order.
 
+Qt keeps Tab on one option of an exclusive group only once one of its options
+has had focus, so until then the first Tab into the group stops on its first
+option, chosen or not. Every exclusive group of options, on a page or in a
+dialog, is passed to ``keep_tab_on_chosen_option`` where it is built: a
+``QButtonGroup``, or radio buttons that exclude each other as siblings. Only
+the chosen option then has Tab focus, from the first Tab on. The stop follows
+the choice, made by click, key or code; while the chosen option is disabled or
+hidden, the first option that is neither takes the stop, so the group stays in
+reach; with nothing chosen every option keeps Tab focus, as Qt leaves it. It
+watches only the group's own options, for their choice and for being enabled,
+shown or hidden: no other widget and nothing application-wide.
+
 Main windows and their workflow pages keep the order their controls were made
 in, which meets the baseline; the job dashboard's header strip, whose buttons
 come and go, calls ``set_screen_tab_order`` with ``followed_by`` itself.
@@ -2707,7 +2721,9 @@ come and go, calls ``set_screen_tab_order`` with ``followed_by`` itself.
 ``tests/app/test_keyboard_baseline.py`` builds every ``QDialog`` subclass in
 ``mufinder.app`` and opens every workflow page and the job dashboard, walks
 each with real Tab and Shift+Tab presses against rules 1 and 2, and presses
-Enter and Escape in each dialog from every stop. It also checks where Tab goes
+Enter and Escape in each dialog from every stop. Each walk takes every
+exclusive group it reaches at exactly one option, the chosen one whenever it is
+shown and enabled. It also checks where Tab goes
 after a page in the main window: to the job dashboard, then the status bar,
 then the navigator, and Shift+Tab the other way round. A new dialog class that
 is not in its registry fails the test. A dialog marked with

@@ -47,7 +47,11 @@ from mufinder.castep_io.gui_metadata import (
     validate_gui_values,
 )
 from mufinder.app.keyword_catalog_notice import CATALOG_SETUP_HINT
-from mufinder.app.table_keyboard import is_tab_stop, set_screen_tab_order
+from mufinder.app.table_keyboard import (
+    is_tab_stop,
+    keep_tab_on_chosen_option,
+    set_screen_tab_order,
+)
 from mufinder.app.theme import (
     controls_scroll_area,
     reading_scroll_area,
@@ -277,32 +281,6 @@ def _tab_stops_in(widget: QWidget) -> list[QWidget]:
         if isinstance(child, QWidget) and not child.isWindow()
         for control in _tab_stops_in(child)
     ]
-
-
-def _give_tab_to_the_chosen_option(button_group: QButtonGroup, root: QWidget) -> None:
-    """Let Tab stop on one option of an either-or pair: the chosen one where it can.
-
-    Qt splits Tab focus this way within an exclusive group, but only when one of
-    its options takes focus. Until then every option keeps Tab focus, so the
-    first Tab into the pair stops on whichever option comes first, chosen or not.
-    When the chosen option is disabled, or hidden by the search, the first option
-    shown and enabled takes the stop instead, so the pair stays in reach.
-    """
-
-    buttons = button_group.buttons()
-    reachable = [
-        button for button in buttons if button.isEnabledTo(root) and button.isVisibleTo(root)
-    ]
-    stop = next((button for button in reachable if button.isChecked()), None)
-    if stop is None and reachable:
-        stop = reachable[0]
-    for button in buttons:
-        policy = button.focusPolicy()
-        button.setFocusPolicy(
-            policy | Qt.FocusPolicy.TabFocus
-            if button is stop
-            else policy & ~Qt.FocusPolicy.TabFocus
-        )
 
 
 def _spec_display_key(spec: KeywordSpec) -> tuple[str, str]:
@@ -801,8 +779,6 @@ class ParameterDialog(QDialog):
                 )
             workflow_row.label.setVisible(shown)
             workflow_row.value.setVisible(shown)
-        for button_group in self._exclusive_button_groups.values():
-            _give_tab_to_the_chosen_option(button_group, self)
 
     def _group_key_for_name(self, name: str) -> tuple[str, ...] | None:
         for group_key, names in self._exclusive_groups.items():
@@ -1024,6 +1000,8 @@ class ParameterDialog(QDialog):
                 ),
             )
 
+        for button_group in self._exclusive_button_groups.values():
+            keep_tab_on_chosen_option(button_group)
         self._place_workflow_rows(workflow_row_indexes)
         # The rows are made anew, after the dialog may already be open: their places
         # in the Tab order come from the layout (``set_screen_tab_order``).
@@ -1214,9 +1192,6 @@ class ParameterDialog(QDialog):
             return
 
         self._exclusive_selection[group_key] = name
-        button_group = self._exclusive_button_groups.get(group_key)
-        if button_group is not None:
-            _give_tab_to_the_chosen_option(button_group, self)
         # Choosing which member of the group is active is a choice for every row.
         self._mark_edited(name)
         for candidate in self._exclusive_groups.get(group_key, set()):

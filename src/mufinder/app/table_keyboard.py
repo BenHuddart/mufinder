@@ -7,7 +7,8 @@ it and the controls after it cannot be reached from the keyboard.
 Qt's Tab order is the order controls were created in. ``set_screen_tab_order`` sets it
 from the layouts, and ``install_screen_tab_order`` applies it to every MuFinder dialog.
 ``screen_tab_order`` reads where the controls are on screen: the reference the
-keyboard baseline test checks the layout order against.
+keyboard baseline test checks the layout order against. ``keep_tab_on_chosen_option``
+makes an exclusive group's chosen option its one stop.
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 import itertools
 
+import shiboken6
 from PySide6.QtCore import QEvent, QItemSelectionModel, QObject, QRect, Qt
 from PySide6.QtGui import QInputMethodEvent, QKeyEvent, QMouseEvent
 from PySide6.QtWidgets import (
@@ -24,6 +26,7 @@ from PySide6.QtWidgets import (
     QAbstractSpinBox,
     QApplication,
     QBoxLayout,
+    QButtonGroup,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -55,6 +58,54 @@ def is_tab_stop(widget: QWidget) -> bool:
     return bool(policy.value & Qt.FocusPolicy.TabFocus.value) or (
         isinstance(widget, QAbstractButton) and policy != Qt.FocusPolicy.NoFocus
     )
+
+
+def keep_tab_on_chosen_option(options: QButtonGroup | Sequence[QAbstractButton]) -> None:
+    """Make the chosen option the one Tab stop of an exclusive group, from the first Tab.
+
+    Qt keeps Tab on one option of an exclusive group only once one of them has had
+    focus; until then the first Tab into the group stops on its first option, chosen
+    or not. ``options`` is a built ``QButtonGroup`` or radio buttons that exclude each
+    other as siblings. The stop follows the choice, by click, key or code; while the
+    chosen option is disabled or hidden, the first option that is neither takes it.
+    With nothing chosen every option keeps Tab focus, as Qt leaves them.
+    """
+
+    _ChosenOptionStop(options)
+
+
+class _ChosenOptionStop(QObject):
+    """Puts a group's Tab stop on its chosen option whenever its options change."""
+
+    _EVENTS = frozenset({QEvent.Type.EnabledChange, QEvent.Type.Show, QEvent.Type.Hide})
+
+    def __init__(self, options: QButtonGroup | Sequence[QAbstractButton]) -> None:
+        grouped = isinstance(options, QButtonGroup)
+        self._options = list(options.buttons() if grouped else options)
+        # It lives as long as the options, made with or without a parent yet.
+        super().__init__(self._options[0])
+        for option in self._options:
+            option.toggled.connect(self.place_stop)
+            option.installEventFilter(self)
+        self.place_stop()
+
+    def eventFilter(self, watched, event) -> bool:  # noqa: N802 - Qt API naming.
+        if event.type() in self._EVENTS:
+            self.place_stop()
+        return False
+
+    def place_stop(self) -> None:
+        options = [option for option in self._options if shiboken6.isValid(option)]
+        stop = next((option for option in options if option.isChecked()), None)
+        shown = [option for option in options if option.isEnabled() and option.isVisible()]
+        if stop is not None and shown and not any(option is stop for option in shown):
+            stop = shown[0]
+        for option in options:
+            policy = option.focusPolicy()
+            take = stop is None or option is stop
+            option.setFocusPolicy(
+                policy | Qt.FocusPolicy.TabFocus if take else policy & ~Qt.FocusPolicy.TabFocus
+            )
 
 
 def screen_tab_order(root: QWidget) -> list[QWidget]:

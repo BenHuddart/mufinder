@@ -18,11 +18,13 @@ from PySide6.QtGui import QInputMethodEvent, QWheelEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import (
     QApplication,
+    QButtonGroup,
     QComboBox,
     QDialog,
     QDoubleSpinBox,
     QLineEdit,
     QPushButton,
+    QRadioButton,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -32,7 +34,11 @@ from PySide6.QtWidgets import (
 from mufinder.app.host_structure_widget import HostStructureWidget
 from mufinder.app.hubbard_u_editor import HubbardUDialog
 from mufinder.app.relaxation_widget import PristineRelaxationWidget
-from mufinder.app.table_keyboard import TabStopTable, keep_own_tab_order
+from mufinder.app.table_keyboard import (
+    TabStopTable,
+    keep_own_tab_order,
+    keep_tab_on_chosen_option,
+)
 from mufinder.app.workflow_table_utils import create_workflow_table
 from mufinder.science.magnetic_structure import MagneticStructureModel
 from mufinder.services.project_service import ProjectService
@@ -1585,3 +1591,149 @@ def test_the_dipolar_tensor_results_take_their_place_when_calculated_while_open(
         assert screen_order_faults(walk.stops, dialog) == []
     finally:
         dialog.close()
+
+
+# ------------------------------------------------------------- exclusive option groups
+
+
+class _Options(QWidget):
+    """A button, three exclusive options A, B and C, and a button, in that order.
+
+    ``grouped`` puts the options in a ``QButtonGroup``; otherwise they are radio
+    buttons that exclude each other as siblings.
+    """
+
+    def __init__(self, *, chosen: str | None, grouped: bool) -> None:
+        super().__init__()
+        layout = QVBoxLayout(self)
+        self.before = QPushButton("Before", self)
+        layout.addWidget(self.before)
+        holder = QWidget(self)
+        holder_layout = QVBoxLayout(holder)
+        self.options = {name: QRadioButton(name, holder) for name in "ABC"}
+        for option in self.options.values():
+            holder_layout.addWidget(option)
+        layout.addWidget(holder)
+        self.after = QPushButton("After", self)
+        layout.addWidget(self.after)
+        if chosen is not None:
+            self.options[chosen].setChecked(True)
+        if grouped:
+            group = QButtonGroup(self)
+            for option in self.options.values():
+                group.addButton(option)
+            keep_tab_on_chosen_option(group)
+        else:
+            keep_tab_on_chosen_option(list(self.options.values()))
+
+    def stops(self, *, backward: bool = False) -> list[str]:
+        """The options one walk from Before to After, or back, stops on."""
+
+        start, end = (self.after, self.before) if backward else (self.before, self.after)
+        _focus(start)
+        names = []
+        for _ in range(6):
+            widget = _shift_tab() if backward else _tab()
+            if widget is end:
+                return names
+            names.append(widget.text())
+        raise AssertionError(f"Tab never reached {end.text()}: {names}")
+
+
+@pytest.fixture(params=[True, False], ids=["button group", "siblings"])
+def grouped(request) -> bool:
+    return request.param
+
+
+@pytest.mark.parametrize("backward", [False, True], ids=["tab", "shift-tab"])
+def test_the_first_tab_into_an_option_group_stops_on_the_chosen_option(
+    qapp, grouped: bool, backward: bool
+) -> None:
+    window = _Options(chosen="B", grouped=grouped)
+    _show(window)
+    try:
+        assert window.stops(backward=backward) == ["B"]
+    finally:
+        window.close()
+
+
+@pytest.mark.parametrize("how", ["code", "click", "key"])
+def test_the_stop_follows_a_choice_made_later(qapp, grouped: bool, how: str) -> None:
+    window = _Options(chosen="A", grouped=grouped)
+    _show(window)
+    try:
+        assert window.stops() == ["A"]
+        if how == "code":
+            window.options["C"].setChecked(True)
+        elif how == "click":
+            option = window.options["C"]
+            QTest.mouseClick(option, Qt.MouseButton.LeftButton, pos=QPoint(8, option.height() // 2))
+        else:
+            _focus(window.options["A"])
+            press_key(Qt.Key.Key_Down)
+            press_key(Qt.Key.Key_Down)
+        assert window.options["C"].isChecked()
+        assert window.stops() == ["C"]
+        assert window.stops(backward=True) == ["C"]
+    finally:
+        window.close()
+
+
+def test_a_group_with_no_option_chosen_keeps_qts_tab_stops(qapp, grouped: bool) -> None:
+    window = _Options(chosen=None, grouped=grouped)
+    try:
+        assert all(
+            option.focusPolicy() & Qt.FocusPolicy.TabFocus for option in window.options.values()
+        )
+        _show(window)
+        assert window.stops() == ["A"]
+    finally:
+        window.close()
+
+
+@pytest.mark.parametrize("change", ["disabled", "hidden"])
+def test_a_disabled_or_hidden_choice_leaves_the_group_in_reach(
+    qapp, grouped: bool, change: str
+) -> None:
+    window = _Options(chosen="B", grouped=grouped)
+    _show(window)
+    chosen = window.options["B"]
+    try:
+        assert window.stops() == ["B"]
+        if change == "disabled":
+            chosen.setEnabled(False)
+        else:
+            chosen.hide()
+        QApplication.processEvents()
+        assert window.stops() == ["A"]
+        assert window.stops(backward=True) == ["A"]
+        chosen.setEnabled(True)
+        chosen.show()
+        QApplication.processEvents()
+        assert window.stops() == ["B"]
+    finally:
+        window.close()
+
+
+def test_a_disabled_window_gives_the_stop_back_to_the_choice(qapp, grouped: bool) -> None:
+    window = _Options(chosen="A", grouped=grouped)
+    _show(window)
+    try:
+        window.setEnabled(False)
+        window.options["C"].setChecked(True)
+        window.setEnabled(True)
+        assert window.stops() == ["C"]
+    finally:
+        window.close()
+
+
+def test_a_choice_hidden_before_the_window_opens_leaves_the_group_in_reach(
+    qapp, grouped: bool
+) -> None:
+    window = _Options(chosen="A", grouped=grouped)
+    window.options["A"].hide()
+    _show(window)
+    try:
+        assert window.stops() == ["B"]
+    finally:
+        window.close()

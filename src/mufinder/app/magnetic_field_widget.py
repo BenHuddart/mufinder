@@ -65,6 +65,7 @@ from mufinder.app.workflow_table_utils import (
     format_table_number,
     format_vector_components,
 )
+from mufinder.app.table_keyboard import keep_tab_on_chosen_option
 from mufinder.domain.models import Structure
 from mufinder.domain.text import plural
 from mufinder.persistence.codec import float_triplet_or_none, to_jsonable, uuid_or_none
@@ -686,13 +687,15 @@ class MagneticFieldWidget(QWidget):
         results_layout = QVBoxLayout(results_group)
         demag_row = QHBoxLayout()
         demag_row.addWidget(QLabel("Demagnetizing field"))
-        for button in (
+        demag_options = (
             self._sphere_radio,
             self._plate_radio,
             self._none_radio,
             self._advanced_demag_radio,
-        ):
+        )
+        for button in demag_options:
             demag_row.addWidget(button)
+        keep_tab_on_chosen_option(demag_options)
         demag_row.addWidget(self._advanced_demag_button)
         demag_row.addStretch(1)
         results_layout.addLayout(demag_row)

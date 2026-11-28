@@ -48,6 +48,7 @@ from tests.support.keyboard import (
     cell_table,
     controls_to_reach,
     describe,
+    option_group_faults,
     reverse_faults,
     screen_order_faults,
     tab_walk,
@@ -56,7 +57,8 @@ from tests.support.keyboard import (
 
 # (target, rule): (the dialog attribute holding the control it is excused on, or None
 # for every control, and why it keeps its difference). The rules are "reach", "order",
-# "enter", "escape" and, for a main-window page, "exit": where Tab goes after the page.
+# "group" (Tab takes an exclusive group at its chosen option), "enter", "escape" and,
+# for a main-window page, "exit": where Tab goes after the page.
 KNOWN_EXCEPTIONS: dict[tuple[str, str], tuple[str | None, str]] = {
     ("ClusterSubmissionDialog", "enter"): (
         "_queue_combo",
@@ -655,7 +657,7 @@ def _walk_faults(root: QWidget, window: QWidget) -> tuple[dict[str, list[Fault]]
     start = QApplication.focusWidget()
     forward = tab_walk(window)
     backward = tab_walk(window, backward=True)
-    faults: dict[str, list[Fault]] = {"reach": [], "order": []}
+    faults: dict[str, list[Fault]] = {"reach": [], "order": [], "group": []}
     for walk in (forward, backward):
         if walk.fault:
             faults["reach"].append((None, walk.fault))
@@ -684,6 +686,8 @@ def _walk_faults(root: QWidget, window: QWidget) -> tuple[dict[str, list[Fault]]
         for w in unreached([e for e in required if cell_table(e[0]) is None], back)
     ]
     faults["order"] += [(None, text) for text in screen_order_faults(ahead, root, cycle=whole)]
+    faults["group"] += option_group_faults(ahead)
+    faults["group"] += [(w, f"Shift+Tab: {text}") for w, text in option_group_faults(back)]
     reverse = reverse_faults(ahead, back)
     if reverse:
         faults["order"].append((None, reverse))
@@ -759,8 +763,8 @@ def test_every_dialog_class_is_walked() -> None:
 
 def test_every_known_exception_names_a_target_and_a_rule() -> None:
     # The rules each kind of target is checked against.
-    checked = {name: {"reach", "order", "enter", "escape"} for name in DIALOGS}
-    checked |= {f"page:{case}": {"reach", "order", "exit"} for case in _page_cases()}
+    checked = {name: {"reach", "order", "group", "enter", "escape"} for name in DIALOGS}
+    checked |= {f"page:{case}": {"reach", "order", "group", "exit"} for case in _page_cases()}
     checked["page:magnetic_fields_workspace"] = {"exit"}
 
     for target, rule in KNOWN_EXCEPTIONS:

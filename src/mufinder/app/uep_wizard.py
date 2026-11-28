@@ -76,6 +76,7 @@ from mufinder.app.theme import (
     style_warning_text,
     use_square_top_table_corners,
 )
+from mufinder.app.table_keyboard import keep_tab_on_chosen_option
 from mufinder.domain.models import Structure
 from mufinder.domain.text import plural
 from mufinder.science.site_generation import generate_random_sites, lattice_frac_to_cart
@@ -684,6 +685,7 @@ class _AddSlicePlaneDialog(QDialog):
             self._method_group.addButton(button)
             methods_layout.addWidget(self._build_method_card(button, hint, methods_group))
             button.toggled.connect(self._refresh_method_card_styles)
+        keep_tab_on_chosen_option(self._method_group)
         layout.addWidget(methods_group)
 
         geometry_group = QGroupBox("Point + Normal", self)
