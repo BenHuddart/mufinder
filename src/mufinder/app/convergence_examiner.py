@@ -69,7 +69,10 @@ _THRESHOLD_FIELD_TEXT = "0.00005"
 _THRESHOLD_FIELD_PADDING = 28
 #: The results box holds about six rows, and scrolls inside itself; the plot takes the rest.
 _RESULTS_HEIGHT = 120
-_CANVAS_MINIMUM_SIZE = (480, 320)
+#: The plot's smallest size, docked or popped out: the height the examiner gives it at its own
+#: minimum size. On a shorter canvas the energy legend outgrows its panel so far that no layout
+#: settles, and each redraw (a pointer move) shrinks the panels away.
+_CANVAS_MINIMUM_SIZE = (480, 366)
 
 
 _NO_RECOMMENDED_GRID_TOOLTIP = (

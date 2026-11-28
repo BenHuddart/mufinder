@@ -1697,6 +1697,51 @@ def test_convergence_examiner_hover_note_stays_whole_in_the_pop_out(qapp, window
         dialog.close()
 
 
+@pytest.mark.parametrize(
+    ("kind", "stress"),
+    [("cutoff", True), ("cutoff", False), ("kpoint", False)],
+    ids=["cutoff-stress", "cutoff", "kpoint"],
+)
+def test_convergence_examiner_pop_out_at_its_smallest_keeps_usable_panels(
+    qapp, kind, stress
+) -> None:
+    # Below the smallest pop-out, the energy legend's overhang leaves no settled
+    # layout and each redraw (a pointer move) shrinks the panels away.
+    dialog = _cof2_examiner(kind, stress=stress)
+    try:
+        dialog.show()
+        dialog.resize(880, 640)
+        _settle(qapp)
+        if stress:
+            dialog._include_stress.setChecked(True)
+        dialog._run_button.click()
+        _settle(qapp)
+        docked = (dialog._canvas.width(), dialog._canvas.height())
+        frame = dialog._canvas.parentWidget()
+        frame.pop_out()
+        frame.popped_out_window.resize(100, 100)
+        _settle(qapp)
+
+        # The pop-out cannot show the plot smaller than the examiner does at its own minimum size.
+        canvas = dialog._canvas
+        assert canvas.height() >= docked[1]
+        assert (canvas.width(), canvas.height()) >= (
+            canvas.minimumWidth(),
+            canvas.minimumHeight(),
+        )
+        panels = (dialog._energy_ax, dialog._force_ax)
+        heights = []
+        for _ in range(50):
+            canvas.draw()
+            heights.append([axes.bbox.height for axes in panels])
+
+        assert min(heights[-1]) >= 60
+        for later in heights[-10:]:
+            assert later == pytest.approx(heights[-1], abs=0.01)
+    finally:
+        dialog.close()
+
+
 def test_convergence_examiner_last_kpoint_note_is_drawn_over_the_legend(qapp, monkeypatch) -> None:
     """At the minimum size the finest grid's note reaches the legend and is drawn over it."""
 
