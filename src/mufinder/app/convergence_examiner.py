@@ -69,11 +69,10 @@ _THRESHOLD_FIELD_TEXT = "0.00005"
 _THRESHOLD_FIELD_PADDING = 28
 #: The results box holds about six rows, and scrolls inside itself; the plot takes the rest.
 _RESULTS_HEIGHT = 120
-_CANVAS_MINIMUM_SIZE = (480, 320)
-#: The popped-out plot's smallest height, about the height the examiner gives it at its own
-#: minimum size. On a shorter canvas (below about 361 px) the energy legend outgrows its panel so
-#: far that no layout settles, and each redraw (a pointer move) shrinks the panels away.
-_POP_OUT_CANVAS_MINIMUM_HEIGHT = 366
+#: The plot's smallest size, docked or popped out. On a shorter canvas (below about 361 px) the
+#: energy legend outgrows its panel so far that no layout settles, and each redraw (a pointer
+#: move) shrinks the panels away. The dialog's minimum height leaves the plot this much.
+_CANVAS_MINIMUM_SIZE = (480, 366)
 
 
 _NO_RECOMMENDED_GRID_TOOLTIP = (
@@ -158,7 +157,7 @@ class ConvergenceExaminerDialog(QDialog):
             else "Examine K-Point Convergence"
         )
         self.resize(clamped_size(self, 1080, 900))
-        self.setMinimumSize(880, 640)
+        self.setMinimumSize(880, 646)
 
         self._num_atoms = int(num_atoms)
         self._completed = self._collect_completed(sweep_data)
@@ -285,18 +284,9 @@ class ConvergenceExaminerDialog(QDialog):
 
         self._results.setFixedHeight(_RESULTS_HEIGHT)
         layout.addWidget(self._results)
-        plot_frame = PlotFrame(self._canvas, title="Convergence plot", parent=self)
-        plot_frame.popped_out_changed.connect(self._set_canvas_minimum)
-        layout.addWidget(plot_frame, 1)
+        layout.addWidget(PlotFrame(self._canvas, title="Convergence plot", parent=self), 1)
 
         self._arrange_header()
-
-    def _set_canvas_minimum(self, popped_out: bool) -> None:
-        """Hold a popped-out plot at its taller minimum; docked, the dialog's minimum bounds it."""
-
-        self._canvas.setMinimumHeight(
-            _POP_OUT_CANVAS_MINIMUM_HEIGHT if popped_out else _CANVAS_MINIMUM_SIZE[1]
-        )
 
     def _show_threshold_starts(self) -> None:
         """Show each narrow threshold field from its start, so a long value keeps its point."""
