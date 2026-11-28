@@ -1679,6 +1679,29 @@ def test_the_stop_follows_a_choice_made_later(qapp, grouped: bool, how: str) -> 
         window.close()
 
 
+def test_focus_on_an_option_that_is_not_chosen_gives_the_stop_back_when_it_leaves(
+    qapp, grouped: bool
+) -> None:
+    window = _Options(chosen="B", grouped=grouped)
+    _show(window)
+    try:
+        # A right click focuses an option without choosing it.
+        option = window.options["C"]
+        QTest.mouseClick(option, Qt.MouseButton.RightButton, pos=QPoint(8, option.height() // 2))
+        QApplication.processEvents()
+        assert QApplication.focusWidget() is option
+        assert window.options["B"].isChecked()
+        assert window.stops() == ["B"]
+        assert window.stops(backward=True) == ["B"]
+    finally:
+        window.close()
+
+
+def test_an_empty_group_is_refused(qapp) -> None:
+    with pytest.raises(ValueError, match="options added first"):
+        keep_tab_on_chosen_option(QButtonGroup())
+
+
 def test_a_group_with_no_option_chosen_keeps_qts_tab_stops(qapp, grouped: bool) -> None:
     window = _Options(chosen=None, grouped=grouped)
     try:

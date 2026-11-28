@@ -2705,14 +2705,17 @@ each walk is compared with it. What the layout reading does not cover:
 Qt keeps Tab on one option of an exclusive group only once one of its options
 has had focus, so until then the first Tab into the group stops on its first
 option, chosen or not. Every exclusive group of options, on a page or in a
-dialog, is passed to ``keep_tab_on_chosen_option`` where it is built: a
-``QButtonGroup``, or radio buttons that exclude each other as siblings. Only
-the chosen option then has Tab focus, from the first Tab on. The stop follows
-the choice, made by click, key or code; while the chosen option is disabled or
-hidden, the first option that is neither takes the stop, so the group stays in
-reach; with nothing chosen every option keeps Tab focus, as Qt leaves it. It
-watches only the group's own options, for their choice and for being enabled,
-shown or hidden: no other widget and nothing application-wide.
+dialog, is passed to ``keep_tab_on_chosen_option`` once it is built: a
+``QButtonGroup`` with its buttons added, or radio buttons that exclude each
+other as siblings. Only the chosen option then has Tab focus, from the first
+Tab on. The stop follows the choice, made by click, key or code, and comes back
+to it when focus leaves an option that was focused without being chosen, as by
+a right click; while the chosen option is disabled or hidden, the first option
+that is neither takes the stop, so the group stays in reach; with nothing
+chosen the stops are left as Qt has them. It watches only the group's own
+options, for their choice, for losing focus and for being enabled, shown or
+hidden: no other widget and nothing application-wide. A group's options are
+removed together.
 
 Main windows and their workflow pages keep the order their controls were made
 in, which meets the baseline; the job dashboard's header strip, whose buttons

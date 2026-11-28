@@ -1379,12 +1379,10 @@ def _demag_stops(widget: MagneticFieldWidget, *, backward: bool = False) -> list
 
 
 @pytest.mark.parametrize("backward", [False, True], ids=["tab", "shift-tab"])
-def test_tab_takes_the_demagnetizing_field_options_at_the_chosen_one(
-    qapp, tmp_path, backward: bool
-) -> None:
+def test_tab_takes_the_demagnetizing_field_options_at_the_chosen_one(qapp, backward: bool) -> None:
     from tests.support.qt import open_and_take_focus
 
-    widget = _ready_widget(tmp_path)
+    widget = MagneticFieldWidget()
     open_and_take_focus(widget)
     try:
         assert _demag_stops(widget, backward=backward) == ["None"]

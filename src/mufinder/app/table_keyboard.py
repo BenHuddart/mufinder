@@ -65,10 +65,12 @@ def keep_tab_on_chosen_option(options: QButtonGroup | Sequence[QAbstractButton])
 
     Qt keeps Tab on one option of an exclusive group only once one of them has had
     focus; until then the first Tab into the group stops on its first option, chosen
-    or not. ``options`` is a built ``QButtonGroup`` or radio buttons that exclude each
-    other as siblings. The stop follows the choice, by click, key or code; while the
-    chosen option is disabled or hidden, the first option that is neither takes it.
-    With nothing chosen every option keeps Tab focus, as Qt leaves them.
+    or not. ``options`` is a ``QButtonGroup`` with all its buttons added, or radio
+    buttons that exclude each other as siblings; they are removed together. The stop
+    follows the choice, by click, key or code, and comes back to it when focus leaves
+    an option that was not chosen; while the chosen option is disabled or hidden, the
+    first option that is neither takes it. With nothing chosen the Tab stops are left
+    as Qt has them.
     """
 
     _ChosenOptionStop(options)
@@ -77,11 +79,15 @@ def keep_tab_on_chosen_option(options: QButtonGroup | Sequence[QAbstractButton])
 class _ChosenOptionStop(QObject):
     """Puts a group's Tab stop on its chosen option whenever its options change."""
 
-    _EVENTS = frozenset({QEvent.Type.EnabledChange, QEvent.Type.Show, QEvent.Type.Hide})
+    _EVENTS = frozenset(
+        {QEvent.Type.EnabledChange, QEvent.Type.Show, QEvent.Type.Hide, QEvent.Type.FocusOut}
+    )
 
     def __init__(self, options: QButtonGroup | Sequence[QAbstractButton]) -> None:
         grouped = isinstance(options, QButtonGroup)
         self._options = list(options.buttons() if grouped else options)
+        if not self._options:
+            raise ValueError("keep_tab_on_chosen_option needs the group's options added first")
         # It lives as long as the options, made with or without a parent yet.
         super().__init__(self._options[0])
         for option in self._options:
@@ -97,14 +103,17 @@ class _ChosenOptionStop(QObject):
     def place_stop(self) -> None:
         options = [option for option in self._options if shiboken6.isValid(option)]
         stop = next((option for option in options if option.isChecked()), None)
+        if stop is None:
+            return
         shown = [option for option in options if option.isEnabled() and option.isVisible()]
-        if stop is not None and shown and not any(option is stop for option in shown):
+        if shown and not any(option is stop for option in shown):
             stop = shown[0]
         for option in options:
             policy = option.focusPolicy()
-            take = stop is None or option is stop
             option.setFocusPolicy(
-                policy | Qt.FocusPolicy.TabFocus if take else policy & ~Qt.FocusPolicy.TabFocus
+                policy | Qt.FocusPolicy.TabFocus
+                if option is stop
+                else policy & ~Qt.FocusPolicy.TabFocus
             )
 
 
