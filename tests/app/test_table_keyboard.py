@@ -1697,6 +1697,37 @@ def test_focus_on_an_option_that_is_not_chosen_gives_the_stop_back_when_it_leave
         window.close()
 
 
+def test_tab_only_options_keep_their_layout_place_while_not_chosen(qapp) -> None:
+    from PySide6.QtWidgets import QHBoxLayout, QToolButton
+
+    from mufinder.app.table_keyboard import set_screen_tab_order
+
+    window = QWidget()
+    # Made in another order than the layout's: the second option first.
+    dark = QToolButton(window)
+    before, after = _named(window, "Before", "After")
+    light = QToolButton(window)
+    for button, text in ((light, "Light"), (dark, "Dark")):
+        button.setText(text)
+        button.setCheckable(True)
+    layout = QHBoxLayout(window)
+    for widget in (before, light, dark, after):
+        layout.addWidget(widget)
+    group = QButtonGroup(window)
+    group.addButton(light)
+    group.addButton(dark)
+    light.setChecked(True)
+    keep_tab_on_chosen_option(group)
+    set_screen_tab_order(window)
+    _show(window)
+    try:
+        dark.setChecked(True)
+        _focus(before)
+        assert [_tab(), _tab()] == [dark, after]
+    finally:
+        window.close()
+
+
 def test_an_empty_group_is_refused(qapp) -> None:
     with pytest.raises(ValueError, match="options added first"):
         keep_tab_on_chosen_option(QButtonGroup())

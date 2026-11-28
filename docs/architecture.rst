@@ -2715,7 +2715,9 @@ that is neither takes the stop, so the group stays in reach; with nothing
 chosen the stops are left as Qt has them. It watches only the group's own
 options, for their choice, for losing focus and for being enabled, shown or
 hidden: no other widget and nothing application-wide. A group's options are
-removed together.
+removed together. An unchosen option that takes focus only by Tab, such as a
+tool button, has no focus left, and ``set_screen_tab_order`` still puts it in
+its layout place, so it is in place once chosen.
 
 Main windows and their workflow pages keep the order their controls were made
 in, which meets the baseline; the job dashboard's header strip, whose buttons
