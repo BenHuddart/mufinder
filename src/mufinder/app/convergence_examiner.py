@@ -69,10 +69,11 @@ _THRESHOLD_FIELD_TEXT = "0.00005"
 _THRESHOLD_FIELD_PADDING = 28
 #: The results box holds about six rows, and scrolls inside itself; the plot takes the rest.
 _RESULTS_HEIGHT = 120
-#: The plot's smallest size, docked or popped out: the height the examiner gives it at its own
-#: minimum size. On a shorter canvas the energy legend outgrows its panel so far that no layout
-#: settles, and each redraw (a pointer move) shrinks the panels away.
-_CANVAS_MINIMUM_SIZE = (480, 366)
+_CANVAS_MINIMUM_SIZE = (480, 320)
+#: The popped-out plot's smallest height, about the height the examiner gives it at its own
+#: minimum size. On a shorter canvas (below about 361 px) the energy legend outgrows its panel so
+#: far that no layout settles, and each redraw (a pointer move) shrinks the panels away.
+_POP_OUT_CANVAS_MINIMUM_HEIGHT = 366
 
 
 _NO_RECOMMENDED_GRID_TOOLTIP = (
@@ -284,7 +285,14 @@ class ConvergenceExaminerDialog(QDialog):
 
         self._results.setFixedHeight(_RESULTS_HEIGHT)
         layout.addWidget(self._results)
-        layout.addWidget(PlotFrame(self._canvas, title="Convergence plot", parent=self), 1)
+        plot_frame = PlotFrame(self._canvas, title="Convergence plot", parent=self)
+        # Docked, the dialog's own minimum size bounds the plot and the layout keeps its slack.
+        plot_frame.popped_out_changed.connect(
+            lambda popped_out: self._canvas.setMinimumHeight(
+                _POP_OUT_CANVAS_MINIMUM_HEIGHT if popped_out else _CANVAS_MINIMUM_SIZE[1]
+            )
+        )
+        layout.addWidget(plot_frame, 1)
 
         self._arrange_header()
 

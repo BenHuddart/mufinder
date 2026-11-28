@@ -1716,19 +1716,15 @@ def test_convergence_examiner_pop_out_at_its_smallest_keeps_usable_panels(
             dialog._include_stress.setChecked(True)
         dialog._run_button.click()
         _settle(qapp)
-        docked = (dialog._canvas.width(), dialog._canvas.height())
-        frame = dialog._canvas.parentWidget()
+        canvas = dialog._canvas
+        frame = canvas.parentWidget()
         frame.pop_out()
         frame.popped_out_window.resize(100, 100)
         _settle(qapp)
 
-        # The pop-out cannot show the plot smaller than the examiner does at its own minimum size.
-        canvas = dialog._canvas
-        assert canvas.height() >= docked[1]
-        assert (canvas.width(), canvas.height()) >= (
-            canvas.minimumWidth(),
-            canvas.minimumHeight(),
-        )
+        # The pop-out cannot be made shorter than its minimum.
+        assert canvas.width() >= 480
+        assert canvas.height() >= 366
         panels = (dialog._energy_ax, dialog._force_ax)
         heights = []
         for _ in range(50):
@@ -1738,6 +1734,11 @@ def test_convergence_examiner_pop_out_at_its_smallest_keeps_usable_panels(
         assert min(heights[-1]) >= 60
         for later in heights[-10:]:
             assert later == pytest.approx(heights[-1], abs=0.01)
+
+        # Back in the dialog, the plot keeps its smaller docked minimum.
+        frame.show_here()
+        _settle(qapp)
+        assert canvas.minimumHeight() == 320
     finally:
         dialog.close()
 
